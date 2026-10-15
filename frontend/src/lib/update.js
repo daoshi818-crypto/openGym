@@ -51,8 +51,10 @@ function compareSemver(a, b) {
 let cached = null
 export function resetUpdateCheck() { cached = null }
 export async function checkForUpdate() {
-  if (!cached) cached = fetchLatest().catch(e => { cached = null; throw e })
-  return cached
+  // [fork] 个人构建使用自己的签名，官方 release 的 APK 签名不一致，系统会拒绝覆盖安装。
+  // 更新走本地流程：电脑上运行 build-apk.sh update（git pull 后重建并重新签名）。
+  // 因此这里停用官方包检查，设置页的"检查更新"将始终显示已是最新。
+  return { hasUpdate: false, latestVersion: __APP_VERSION__, apkUrl: null, hashUrl: null }
 }
 async function fetchLatest() {
   const res = await fetch(LATEST_URL, { headers: { Accept: 'application/vnd.github+json' } })

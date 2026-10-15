@@ -90,4 +90,14 @@ describe('instance default language', () => {
     expect(useStore.getState().S.lang).toBe('de')
     expect(shown()).toBe('en')
   })
+
+  it('[fork] a fresh copy whose browser language the app does not speak falls back to Simplified Chinese', () => {
+    nav(['ja-JP'])   // openGym 没有日语包
+    useStore.setState({ S: freshState(), config: { invite_only: false } })
+    expect(shown()).toBe('zh')
+    // And in local mode, where no instance config ever arrives:
+    useStore.setState({ config: null })
+    localStorage.clear()
+    expect(shown()).toBe('zh')
+  })
 })

@@ -35,9 +35,10 @@ export function matchLocale(tag) {
 /** The language a copy that never chose one should be in, or null for a copy that chose. */
 export function autoLang(S, config, navLangs = []) {
   if (!S || S.langAuto !== true) return null
+  // [fork] 兜底语言从 'en' 改为 'zh'：个人构建默认简体中文
   return matchLocale(config?.default_lang)
     || (navLangs || []).map(matchLocale).find(Boolean)
-    || 'en'
+    || 'zh'
 }
 
 // The instance's DEFAULT_LANG as last seen on this device, so a boot does not show the browser's
@@ -62,7 +63,8 @@ export function effectiveLang(S, config, navLangs = browserLangs()) {
   let cfg = config
   if (!cfg) {
     const seen = cachedDefaultLang()
-    if (seen === null) return own
+    // [fork] 从未见过实例配置（本地模式）时不再直接用存储值，而是走浏览器语言 + 中文兜底
+    if (seen === null) return autoLang(S, {}, navLangs) || own
     cfg = { default_lang: seen }
   }
   return autoLang(S, cfg, navLangs) || own
