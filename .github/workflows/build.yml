@@ -53,5 +53,7 @@ jobs:
             Auto-built from upstream main plus local customisations (Simplified Chinese by default,
             domestic exercise names). Signed with a personal key: do not install the official
             release over this build.
-          files: openGym.apk openGym.apk.sha256
+          files: |
+            openGym.apk
+            openGym.apk.sha256
           make_latest: true
