@@ -89,6 +89,25 @@ export default {
       })
     }
 
+    // 代查官方更新（手机在国内直连 api.github.com 经常失败，这里由 Cloudflare 代劳）
+    if (url.pathname === '/update' && request.method === 'GET') {
+      const r = await fetch('https://api.github.com/repos/daoshi818-crypto/openGym/releases/latest', {
+        headers: { 'user-agent': 'gym-watch-worker', accept: 'application/vnd.github+json' },
+      })
+      if (!r.ok) return json({ ok: false, error: 'github ' + r.status }, 502)
+      const rel = await r.json()
+      const apk = (rel.assets || []).find((a) => /.apk$/.test(a.name))
+      const hash = (rel.assets || []).find((a) => /.apk.sha256$/.test(a.name))
+      return json({
+        ok: true,
+        tag_name: rel.tag_name,
+        published_at: rel.published_at,
+        apk_url: apk ? apk.browser_download_url : null,
+        hash_url: hash ? hash.browser_download_url : null,
+        notes: (rel.body || '').slice(0, 2000),
+      })
+    }
+
     if (url.pathname === '/' ) {
       return json({ ok: true, endpoints: ['/config', '/session (POST)', '/export.csv'] })
     }

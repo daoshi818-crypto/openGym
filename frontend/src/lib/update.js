@@ -15,6 +15,11 @@ const REPO = 'daoshi818-crypto/openGym'   // [fork] 指向自己的 fork：Actio
 const LATEST_URL = `https://api.github.com/repos/${REPO}/releases/latest`
 export const RELEASES_PAGE = `https://github.com/${REPO}/releases/latest`
 
+// [fork] 国内直连 api.github.com 经常连不上（点"检查更新"会提示网络问题）。部署了 worker/
+// 之后把它的 /update 地址填在这里，检查更新就由 Cloudflare 代查——Cloudflare 能连 GitHub，
+// 手机只需要能连上这个地址。留空则直连 GitHub。
+const UPDATE_PROXY = ''   // 例：'https://gym-watch.你的账号.workers.dev/update?token=你的口令'
+
 /**
  * Compares two semver strings (e.g. "1.2.11" vs "1.3.0").
  * Returns  1 if a > b, -1 if a < b, 0 if equal.
@@ -58,6 +63,20 @@ export async function checkForUpdate() {
   return cached
 }
 async function fetchLatest() {
+  // [fork] 配了代理就走 Cloudflare（国内直连 GitHub 基本不通）
+  if (UPDATE_PROXY) {
+    const res = await fetch(UPDATE_PROXY)
+    if (!res.ok) throw new Error(`update proxy ${res.status}`)
+    const p = await res.json()
+    const latestVersion = String(p.tag_name || '').replace(/^v/, '')
+    if (!latestVersion) return { hasUpdate: false, latestVersion: __APP_VERSION__, apkUrl: null, hashUrl: null }
+    return {
+      hasUpdate: compareSemver(latestVersion, __APP_VERSION__) > 0,
+      latestVersion,
+      apkUrl: p.apk_url || null,
+      hashUrl: p.hash_url || null,
+    }
+  }
   const res = await fetch(LATEST_URL, { headers: { Accept: 'application/vnd.github+json' } })
   // 404: the repository has no published release yet
   if (res.status === 404) return { hasUpdate: false, latestVersion: __APP_VERSION__, apkUrl: null, hashUrl: null }
