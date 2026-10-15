@@ -62,7 +62,19 @@ public class WatchBlePlugin extends Plugin {
 
     private static final int MTU = 185; // 一条 plan 消息往往超过 20 字节；协商一次 MTU，失败也能按 20 分片走
 
-    private BluetoothAdapter adapter;
+    private BluetoothAdapter adapter; // 懒初始化：Plugin 的 context 在 load() 里还拿不到
+
+    private BluetoothAdapter adapter() {
+        if (adapter == null) {
+            Context c = getContext();
+            if (c != null) {
+                BluetoothManager mgr = (BluetoothManager) c.getApplicationContext().getSystemService(Context.BLUETOOTH_SERVICE);
+                adapter = mgr == null ? null : mgr.getAdapter();
+            }
+        }
+        return adapter;
+    }
+
     private BluetoothLeScanner scanner;
     private BluetoothGatt gatt;
     private BluetoothGattCharacteristic planChar;
@@ -71,14 +83,6 @@ public class WatchBlePlugin extends Plugin {
     private boolean subscribed; // 完成特征值的 CCCD 订阅是否已生效
     private final StringBuilder rx = new StringBuilder(); // 完成特征值的重组缓冲
     private final List<byte[]> planQueue = new ArrayList<>(); // 计划分片写队列
-
-    @Override
-    public void load() {
-        super.load();
-        Context appCtx = ctx.getApplicationContext();
-        BluetoothManager mgr = (BluetoothManager) appCtx.getSystemService(Context.BLUETOOTH_SERVICE);
-        adapter = mgr == null ? null : mgr.getAdapter();
-    }
 
     @Override
     protected void handleOnDestroy() {
@@ -121,7 +125,8 @@ public class WatchBlePlugin extends Plugin {
     @PluginMethod
     public void isSupported(PluginCall call) {
         JSObject ret = new JSObject();
-        boolean hw = adapter != null && adapter.isEnabled();
+        BluetoothAdapter a = adapter();
+        boolean hw = a != null && a.isEnabled();
         ret.put("granted", hw && hasPerms());
         ret.put("bluetoothOn", hw);
         ret.put("permission", hasPerms());
@@ -131,7 +136,8 @@ public class WatchBlePlugin extends Plugin {
     /** 运行时申请权限（Android 12+）；已授权直接返回 true。 */
     @PluginMethod
     public void requestPermissions(PluginCall call) {
-        if (adapter == null || !adapter.isEnabled()) {
+        BluetoothAdapter a = adapter();
+        if (a == null || !a.isEnabled()) {
             call.resolve(new JSObject().put("granted", false).put("bluetoothOn", false));
             return;
         }
@@ -171,13 +177,14 @@ public class WatchBlePlugin extends Plugin {
     @PluginMethod
     public void startScan(PluginCall call) {
         if (!hasPerms()) { call.reject("permission missing"); return; }
-        if (adapter == null || !adapter.isEnabled() || adapter.getBluetoothLeScanner() == null) {
+        BluetoothAdapter a = adapter();
+        if (a == null || !a.isEnabled() || a.getBluetoothLeScanner() == null) {
             call.reject("bluetooth off");
             return;
         }
         if (scanning) { call.resolve(); return; }
         try {
-            scanner = adapter.getBluetoothLeScanner();
+            scanner = a.getBluetoothLeScanner();
             List<ScanFilter> filters = Collections.singletonList(
                     new ScanFilter.Builder().setServiceUuid(new ParcelUuid(SVC)).build());
             ScanSettings settings = new ScanSettings.Builder()
@@ -301,10 +308,12 @@ public class WatchBlePlugin extends Plugin {
     @PluginMethod
     public void connect(PluginCall call) {
         if (!hasPerms()) { call.reject("permission missing"); return; }
+        BluetoothAdapter a = adapter();
+        if (a == null || !a.isEnabled()) { call.reject("bluetooth off"); return; }
         String address = call.getString("address");
         BluetoothDevice device = null;
         if (address != null && !address.isEmpty()) {
-            try { device = adapter.getRemoteDevice(address); } catch (Exception ignored) { }
+            try { device = a.getRemoteDevice(address); } catch (Exception ignored) { }
         } else {
             // 没给地址：先扫一轮，找到广播本服务的第一个设备就直连
             device = findFirstByScan();
@@ -325,7 +334,7 @@ public class WatchBlePlugin extends Plugin {
         // 同步等待一轮扫描（BLE 广播 interval 150 slot ≈ 94ms，1.5s 足够）；免回调链的简化。
         final BluetoothDevice[] found = new BluetoothDevice[1];
         try {
-            BluetoothLeScanner s = adapter.getBluetoothLeScanner();
+            BluetoothLeScanner s = adapter().getBluetoothLeScanner();
             CountDownLatch1 latch = new CountDownLatch1();
             ScanCallback cb = new ScanCallback() {
                 @Override
@@ -336,7 +345,8 @@ public class WatchBlePlugin extends Plugin {
                 @Override public void onScanFailed(int code) { latch.countDown(); }
             };
             s.startScan(Collections.singletonList(
-                    new ScanFilter.Builder().setServiceUuid(new ParcelUuid(SVC)).build()), cb);
+                    new ScanFilter.Builder().setServiceUuid(new ParcelUuid(SVC)).build()),
+                new ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), cb);
             latch.await(1500);
             try { s.stopScan(cb); } catch (Exception ignored) { }
         } catch (Exception ignored) { }
