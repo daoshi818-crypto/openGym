@@ -68,13 +68,15 @@ public class WatchBlePlugin extends Plugin {
     private BluetoothGattCharacteristic planChar;
     private PluginCall pendingPermCall;
     private boolean scanning;
+    private boolean subscribed; // 完成特征值的 CCCD 订阅是否已生效
     private final StringBuilder rx = new StringBuilder(); // 完成特征值的重组缓冲
     private final List<byte[]> planQueue = new ArrayList<>(); // 计划分片写队列
 
     @Override
     public void load() {
         super.load();
-        BluetoothManager mgr = (BluetoothManager) ctx.getSystemService(Context.BLUETOOTH_SERVICE);
+        Context appCtx = ctx.getApplicationContext();
+        BluetoothManager mgr = (BluetoothManager) appCtx.getSystemService(Context.BLUETOOTH_SERVICE);
         adapter = mgr == null ? null : mgr.getAdapter();
     }
 
