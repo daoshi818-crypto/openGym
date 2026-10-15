@@ -11,7 +11,7 @@
 
 import { MOBILE } from './mobile.js'
 
-const REPO = 'DuarteSantos8/openGym'
+const REPO = 'daoshi818-crypto/openGym'   // [fork] 指向自己的 fork：Actions 会把官方更新 rebase 本地定制后自动构建签名，发布到这里
 const LATEST_URL = `https://api.github.com/repos/${REPO}/releases/latest`
 export const RELEASES_PAGE = `https://github.com/${REPO}/releases/latest`
 
@@ -51,10 +51,11 @@ function compareSemver(a, b) {
 let cached = null
 export function resetUpdateCheck() { cached = null }
 export async function checkForUpdate() {
-  // [fork] 个人构建使用自己的签名，官方 release 的 APK 签名不一致，系统会拒绝覆盖安装。
-  // 更新走本地流程：电脑上运行 build-apk.sh update（git pull 后重建并重新签名）。
-  // 因此这里停用官方包检查，设置页的"检查更新"将始终显示已是最新。
-  return { hasUpdate: false, latestVersion: __APP_VERSION__, apkUrl: null, hashUrl: null }
+  // [fork] 重新启用应用内更新，检查对象是自己的 fork 仓库：
+  // Actions 构建的 APK 与本机安装签名一致，可以正常覆盖安装。
+  // 官方 DuarteSantos8/openGym 的 release 签名不同，不能用来升级本版本。
+  if (!cached) cached = fetchLatest().catch(e => { cached = null; throw e })
+  return cached
 }
 async function fetchLatest() {
   const res = await fetch(LATEST_URL, { headers: { Accept: 'application/vnd.github+json' } })
