@@ -2,7 +2,7 @@ name: Build signed APK
 
 on:
   schedule:
-    # 北京时间每天 09:30（UTC 01:30），检查官方是否有新版本
+    # Daily at 09:30 Beijing time (UTC 01:30): check upstream for a new release
     - cron: '30 1 * * *'
   workflow_dispatch: {}
 
@@ -33,7 +33,7 @@ jobs:
             https://api.github.com/repos/${{ github.repository }}/releases/latest | jq -r '.tag_name // empty')
           echo "version=$VER" >> "$GITHUB_OUTPUT"
           if [ "v$VER" = "$OURS" ]; then
-            echo "v$VER already released — nothing to do"
+            echo "v$VER already released, nothing to do"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -91,11 +91,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.guard.outputs.version }}
-          name: openGym 定制版 v${{ steps.guard.outputs.version }}
+          name: openGym custom v${{ steps.guard.outputs.version }}
           body: |
-            自动构建：官方 v${{ steps.guard.outputs.version }} + 本地定制（默认简体中文等）。
-
-            本 APK 使用个人签名，与官方 release 的签名不同——请通过本仓库的应用内
-            「检查更新」或直接下载本文件安装，不要安装官方 release 覆盖本版本。
+            Auto-built from upstream v${{ steps.guard.outputs.version }} plus local customisations.
+            Signed with a personal key: do not install the official release over this build.
           files: openGym.apk openGym.apk.sha256
           make_latest: true
