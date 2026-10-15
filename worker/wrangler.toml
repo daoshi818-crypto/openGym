@@ -1,0 +1,11 @@
+name = "gym-watch"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+# 训练会话存储
+kv_namespaces = [
+  { binding = "GYM_KV", id = "REPLACE_WITH_YOUR_KV_ID" }
+]
+
+# 访问口令用 secret 设置（不要写在这里）：
+#   npx wrangler secret put GYM_TOKEN

@@ -1,0 +1,140 @@
+<script>
+// 训练页：完成一组 → 记录 → 开休息倒计时 → 结束震动。
+// 每次操作都落盘，闪退重进这个页面会恢复到最后的状态。
+import router from '@blueos.app.appmanager.router'
+import { loadState, completeSet, addHr, flushHr, endSession, save } from '../../lib/session.js'
+import { pushSession } from '../../lib/cloud.js'
+import { startHr, stopHr, tick, restOver } from '../../lib/sensors.js'
+
+export default {
+  data: {
+    exName: '',
+    setLabel: '',
+    restLabel: '',
+    hrLabel: '',
+    kcalLabel: '',
+    finished: false,
+    restUntil: 0,
+    profile: null,
+  },
+
+  onInit() {
+    this.state = loadState()
+    if (!this.state.active || !this.state.workout) {
+      // 没有进行中的会话（比如存储被清过）→ 回开始页
+      router.push({ uri: '/Index' })
+      return
+    }
+    this.profile = this.state.profile || null
+
+    // 休息是在应用没运行的时候结束的 → 补一次提醒，并把休息清掉
+    if (this.state.restUntil && this.state.restUntil <= Date.now()) {
+      this.state.restUntil = 0
+      save(this.state)
+      restOver()
+    }
+
+    this.timer = setInterval(() => this.tickClock(), 1000)
+    this.hrFlush = setInterval(() => flushHr(this.state), 10000)
+
+    startHr((bpm) => {
+      addHr(this.state, bpm)
+      this.hrLabel = '心率 ' + bpm
+    })
+
+    this.refresh()
+  },
+
+  onDestroy() {
+    if (this.timer) clearInterval(this.timer)
+    if (this.hrFlush) clearInterval(this.hrFlush)
+    stopHr()
+  },
+
+  refresh() {
+    const s = this.state
+    const ex = s.workout.exercises[s.exIdx]
+    if (!ex) { this.finished = true; return }
+    this.exName = ex.name
+    this.setLabel = '第 ' + (s.setIdx + 1) + ' / ' + (ex.sets || 1) + ' 组'
+    this.restUntil = s.restUntil || 0
+    this.tickClock()
+  },
+
+  tickClock() {
+    const s = this.state
+    const left = s.restUntil ? Math.ceil((s.restUntil - Date.now()) / 1000) : 0
+    if (s.restUntil && left <= 0) {
+      s.restUntil = 0
+      save(s)
+      restOver()
+    }
+    this.restLabel = left > 0 ? (Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0')) : '休息就绪'
+    const avg = s.hr.count ? Math.round(s.hr.sum / s.hr.count) : 0
+    this.hrLabel = avg ? '心率 ' + avg : '心率 --'
+    const mins = Math.max(1, Math.round((Date.now() - s.startedAt) / 60000))
+    this.kcalLabel = '约 ' + Math.round(this.kcalNow(s, mins)) + ' 千卡'
+  },
+
+  kcalNow(s, mins) {
+    // 与 session.js 里的公式一致，仅用于实时显示
+    if (!s.hr.count) return 0
+    const hr = Math.round(s.hr.sum / s.hr.count)
+    const w = (this.profile && this.profile.weight) || 70
+    const a = (this.profile && this.profile.age) || 30
+    return Math.max(0, (-55.0969 + 0.6309 * hr + 0.1988 * a + 0.2017 * w) / 4.184 * mins)
+  },
+
+  onDone() {
+    const s = this.state
+    if (s.finished) return
+    completeSet(s)
+    tick()
+    this.refresh()
+  },
+
+  onEnd() {
+    const session = endSession(this.state, this.profile)
+    // 上传失败也不丢：session.js 已经把它放进待上传队列，下次启动重试
+    pushSession(session).catch(() => {})
+    stopHr()
+    router.push({ uri: '/Index' })
+  },
+}
+</script>
+
+<template>
+  <div class="page">
+    <text class="ex">{{ exName }}</text>
+    <text class="set">{{ setLabel }}</text>
+
+    <text class="rest" if="{{ restUntil }}">{{ restLabel }}</text>
+    <text class="ready" else="true">可以开始下一组</text>
+
+    <text class="stat">{{ hrLabel }} · {{ kcalLabel }}</text>
+
+    <input class="btn done" type="button" value="完成一组" onclick="onDone" if="{{ !finished }}" />
+    <text class="finish" if="{{ finished }}">动作已做完</text>
+    <input class="btn end" type="button" value="结束训练" onclick="onEnd" />
+  </div>
+</template>
+
+<style>
+.page {
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  width: 466px;
+  height: 466px;
+  background-color: #0c0e12;
+}
+.ex { font-size: 30px; color: #f5f5f7; text-align: center; max-width: 420px; }
+.set { font-size: 24px; color: #9aa0a6; margin-top: 6px; }
+.rest { font-size: 64px; color: #a3e635; margin: 10px 0; }
+.ready { font-size: 28px; color: #a3e635; margin: 10px 0; }
+.stat { font-size: 22px; color: #9aa0a6; margin-bottom: 10px; }
+.finish { font-size: 26px; color: #a3e635; margin-bottom: 10px; }
+.btn { width: 260px; height: 76px; font-size: 30px; border-radius: 38px; margin-top: 10px; }
+.done { background-color: #a3e635; color: #0c0e12; }
+.end { background-color: #2a2d34; color: #f5f5f7; }
+</style>

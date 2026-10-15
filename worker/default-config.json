@@ -1,0 +1,513 @@
+{
+  "profile": {
+    "age": 30,
+    "weight": 73.25,
+    "sex": "male"
+  },
+  "workout": {
+    "name": "背",
+    "exercises": [
+      {
+        "name": "反手高位下拉",
+        "gym": "cable underhand pulldown",
+        "sets": 4,
+        "reps": "12",
+        "restSec": 60,
+        "weight": "35"
+      },
+      {
+        "name": "坐姿划船-窄距",
+        "gym": "lever narrow grip seated row",
+        "sets": 5,
+        "reps": "12",
+        "restSec": 60,
+        "weight": "30"
+      },
+      {
+        "name": "单臂哑铃划船",
+        "gym": "dumbbell one arm bent-over row",
+        "sets": 4,
+        "reps": "10",
+        "restSec": 60,
+        "weight": "14"
+      },
+      {
+        "name": "面拉",
+        "gym": "cable rear delt row (with rope)",
+        "sets": 3,
+        "reps": "12",
+        "restSec": 60,
+        "weight": "35"
+      },
+      {
+        "name": "悬吊抬腿",
+        "gym": "hanging leg raise",
+        "sets": 4,
+        "reps": "8",
+        "restSec": 120,
+        "weight": ""
+      }
+    ]
+  },
+  "allWorkouts": [
+    {
+      "name": "背",
+      "exercises": [
+        {
+          "name": "反手高位下拉",
+          "gym": "cable underhand pulldown",
+          "sets": 4,
+          "reps": "12",
+          "restSec": 60,
+          "weight": "35"
+        },
+        {
+          "name": "坐姿划船-窄距",
+          "gym": "lever narrow grip seated row",
+          "sets": 5,
+          "reps": "12",
+          "restSec": 60,
+          "weight": "30"
+        },
+        {
+          "name": "单臂哑铃划船",
+          "gym": "dumbbell one arm bent-over row",
+          "sets": 4,
+          "reps": "10",
+          "restSec": 60,
+          "weight": "14"
+        },
+        {
+          "name": "面拉",
+          "gym": "cable rear delt row (with rope)",
+          "sets": 3,
+          "reps": "12",
+          "restSec": 60,
+          "weight": "35"
+        },
+        {
+          "name": "悬吊抬腿",
+          "gym": "hanging leg raise",
+          "sets": 4,
+          "reps": "8",
+          "restSec": 120,
+          "weight": ""
+        }
+      ]
+    },
+    {
+      "name": "胸",
+      "exercises": [
+        {
+          "name": "哑铃推胸",
+          "gym": "dumbbell bench press",
+          "sets": 4,
+          "reps": "12",
+          "restSec": 120,
+          "weight": "16"
+        },
+        {
+          "name": "器械上斜推胸",
+          "gym": "lever incline chest press",
+          "sets": 4,
+          "reps": "12",
+          "restSec": 60,
+          "weight": "20"
+        },
+        {
+          "name": "辅助双杠臂屈伸",
+          "gym": "assisted chest dip (kneeling)",
+          "sets": 5,
+          "reps": "12",
+          "restSec": 60,
+          "weight": ""
+        },
+        {
+          "name": "蝴蝶机夹胸",
+          "gym": "lever pec deck fly",
+          "sets": 4,
+          "reps": "12",
+          "restSec": 60,
+          "weight": "25"
+        },
+        {
+          "name": "悬吊抬腿",
+          "gym": "hanging leg raise",
+          "sets": 2,
+          "reps": "12",
+          "restSec": 120,
+          "weight": ""
+        }
+      ]
+    },
+    {
+      "name": "肩三头",
+      "exercises": [
+        {
+          "name": "俯身哑铃臂屈伸",
+          "gym": "dumbbell kickback",
+          "sets": 4,
+          "reps": "12",
+          "restSec": 60,
+          "weight": "8"
+        },
+        {
+          "name": "史密斯推肩",
+          "gym": "smith shoulder press",
+          "sets": 4,
+          "reps": "12",
+          "restSec": 60,
+          "weight": "25"
+        },
+        {
+          "name": "蝴蝶机反向飞鸟",
+          "gym": "lever seated reverse fly",
+          "sets": 4,
+          "reps": "12",
+          "restSec": 60,
+          "weight": "20"
+        },
+        {
+          "name": "哑铃侧平举",
+          "gym": "dumbbell lateral raise",
+          "sets": 4,
+          "reps": "12",
+          "restSec": 120,
+          "weight": "6"
+        },
+        {
+          "name": "哑铃前平举",
+          "gym": "dumbbell front raise",
+          "sets": 4,
+          "reps": "10",
+          "restSec": 90,
+          "weight": "6"
+        }
+      ]
+    },
+    {
+      "name": "胸背腹部",
+      "exercises": [
+        {
+          "name": "史密斯推胸",
+          "gym": "smith bench press",
+          "sets": 5,
+          "reps": "12",
+          "restSec": 60,
+          "weight": "10"
+        },
+        {
+          "name": "上斜哑铃推胸",
+          "gym": "dumbbell incline bench press",
+          "sets": 4,
+          "reps": "12",
+          "restSec": 60,
+          "weight": "12"
+        },
+        {
+          "name": "蝴蝶机夹胸",
+          "gym": "lever pec deck fly",
+          "sets": 4,
+          "reps": "12",
+          "restSec": 60,
+          "weight": "20"
+        },
+        {
+          "name": "直臂下压",
+          "gym": "cable straight arm pulldown",
+          "sets": 4,
+          "reps": "20",
+          "restSec": 60,
+          "weight": "5"
+        },
+        {
+          "name": "仰卧抬腿",
+          "gym": "lying leg raise",
+          "sets": 3,
+          "reps": "15",
+          "restSec": 60,
+          "weight": ""
+        }
+      ]
+    },
+    {
+      "name": "肩",
+      "exercises": [
+        {
+          "name": "蝴蝶机反向飞鸟",
+          "gym": "lever seated reverse fly",
+          "sets": 4,
+          "reps": "12",
+          "restSec": 60,
+          "weight": "20"
+        },
+        {
+          "name": "哑铃推肩",
+          "gym": "dumbbell seated shoulder press",
+          "sets": 4,
+          "reps": "10",
+          "restSec": 60,
+          "weight": "14"
+        },
+        {
+          "name": "哑铃侧平举",
+          "gym": "dumbbell lateral raise",
+          "sets": 4,
+          "reps": "12",
+          "restSec": 60,
+          "weight": "4"
+        },
+        {
+          "name": "哑铃前平举",
+          "gym": "dumbbell front raise",
+          "sets": 3,
+          "reps": "10",
+          "restSec": 60,
+          "weight": "6"
+        }
+      ]
+    },
+    {
+      "name": "背肩二头",
+      "exercises": [
+        {
+          "name": "俯身哑铃划船",
+          "gym": "dumbbell bent over row",
+          "sets": 4,
+          "reps": "12",
+          "restSec": 60,
+          "weight": "12"
+        }
+      ]
+    },
+    {
+      "name": "肩背胸",
+      "exercises": [
+        {
+          "name": "哑铃推胸",
+          "gym": "dumbbell bench press",
+          "sets": 3,
+          "reps": "12",
+          "restSec": 60,
+          "weight": "12"
+        },
+        {
+          "name": "宽距高位下拉",
+          "gym": "cable wide grip lat pulldown",
+          "sets": 2,
+          "reps": "12",
+          "restSec": 60,
+          "weight": "30"
+        }
+      ]
+    },
+    {
+      "name": "腿肩",
+      "exercises": [
+        {
+          "name": "哑铃推肩",
+          "gym": "dumbbell seated shoulder press",
+          "sets": 3,
+          "reps": "12",
+          "restSec": 60,
+          "weight": "6"
+        },
+        {
+          "name": "高脚杯深蹲",
+          "gym": "dumbbell goblet squat",
+          "sets": 2,
+          "reps": "12",
+          "restSec": 60,
+          "weight": "10"
+        },
+        {
+          "name": "哑铃直腿硬拉",
+          "gym": "dumbbell stiff leg deadlift",
+          "sets": 3,
+          "reps": "12",
+          "restSec": 60,
+          "weight": "10"
+        },
+        {
+          "name": "哑铃侧平举",
+          "gym": "dumbbell lateral raise",
+          "sets": 3,
+          "reps": "12",
+          "restSec": 60,
+          "weight": "5"
+        }
+      ]
+    },
+    {
+      "name": "胸背",
+      "exercises": [
+        {
+          "name": "哑铃推胸",
+          "gym": "dumbbell bench press",
+          "sets": 3,
+          "reps": "12",
+          "restSec": 60,
+          "weight": "9"
+        },
+        {
+          "name": "单臂哑铃划船",
+          "gym": "dumbbell one arm bent-over row",
+          "sets": 3,
+          "reps": "12",
+          "restSec": 60,
+          "weight": ""
+        }
+      ]
+    },
+    {
+      "name": "肩腹",
+      "exercises": [
+        {
+          "name": "9分钟腹肌跟练",
+          "gym": "9分钟腹肌跟练",
+          "sets": 1,
+          "reps": "",
+          "restSec": 60,
+          "weight": ""
+        },
+        {
+          "name": "哑铃推肩",
+          "gym": "dumbbell seated shoulder press",
+          "sets": 3,
+          "reps": "12",
+          "restSec": 60,
+          "weight": "3.25"
+        },
+        {
+          "name": "哑铃侧平举",
+          "gym": "dumbbell lateral raise",
+          "sets": 3,
+          "reps": "12",
+          "restSec": 60,
+          "weight": ""
+        }
+      ]
+    },
+    {
+      "name": "胸腹部",
+      "exercises": [
+        {
+          "name": "9分钟腹肌跟练",
+          "gym": "9分钟腹肌跟练",
+          "sets": 1,
+          "reps": "",
+          "restSec": 60,
+          "weight": ""
+        },
+        {
+          "name": "哑铃推胸",
+          "gym": "dumbbell bench press",
+          "sets": 4,
+          "reps": "12",
+          "restSec": 60,
+          "weight": "3.5"
+        }
+      ]
+    },
+    {
+      "name": "腹部",
+      "exercises": [
+        {
+          "name": "9分钟腹肌跟练",
+          "gym": "9分钟腹肌跟练",
+          "sets": 1,
+          "reps": "",
+          "restSec": 60,
+          "weight": ""
+        }
+      ]
+    },
+    {
+      "name": "腿腹部",
+      "exercises": [
+        {
+          "name": "9分钟腹肌跟练",
+          "gym": "9分钟腹肌跟练",
+          "sets": 1,
+          "reps": "",
+          "restSec": 60,
+          "weight": ""
+        },
+        {
+          "name": "高脚杯深蹲",
+          "gym": "dumbbell goblet squat",
+          "sets": 4,
+          "reps": "12",
+          "restSec": 60,
+          "weight": "10"
+        },
+        {
+          "name": "哑铃前弓步蹲",
+          "gym": "dumbbell lunge",
+          "sets": 4,
+          "reps": "10",
+          "restSec": 60,
+          "weight": "7"
+        }
+      ]
+    },
+    {
+      "name": "胸腹肩",
+      "exercises": [
+        {
+          "name": "哑铃推胸",
+          "gym": "dumbbell bench press",
+          "sets": 3,
+          "reps": "12",
+          "restSec": 60,
+          "weight": "3.5"
+        },
+        {
+          "name": "9分钟腹肌跟练",
+          "gym": "9分钟腹肌跟练",
+          "sets": 1,
+          "reps": "",
+          "restSec": 60,
+          "weight": ""
+        },
+        {
+          "name": "哑铃推肩",
+          "gym": "dumbbell seated shoulder press",
+          "sets": 3,
+          "reps": "12",
+          "restSec": 60,
+          "weight": ""
+        }
+      ]
+    },
+    {
+      "name": "腿肩腹部",
+      "exercises": [
+        {
+          "name": "9分钟腹肌跟练",
+          "gym": "9分钟腹肌跟练",
+          "sets": 1,
+          "reps": "",
+          "restSec": 60,
+          "weight": ""
+        },
+        {
+          "name": "哑铃深蹲",
+          "gym": "dumbbell squat",
+          "sets": 3,
+          "reps": "12",
+          "restSec": 60,
+          "weight": ""
+        },
+        {
+          "name": "哑铃推肩",
+          "gym": "dumbbell seated shoulder press",
+          "sets": 3,
+          "reps": "12",
+          "restSec": 60,
+          "weight": ""
+        }
+      ]
+    }
+  ]
+}
