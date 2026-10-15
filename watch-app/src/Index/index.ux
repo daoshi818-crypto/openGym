@@ -1,0 +1,124 @@
+<script>
+// 开始页：手机通过 BLE 推送今天的训练计划（主路径）；Worker 云端配置是备选。
+// 有未结束的会话时优先显示"继续训练"。
+import router from '@blueos.app.appmanager.router'
+import { loadState, startSession } from '../lib/session.js'
+import { fetchConfig, flushPending } from '../lib/cloud.js'
+import { startServer, isConnected } from '../lib/ble.js'
+
+export default {
+  data: {
+    status: '正在启动…',
+    workoutName: '',
+    exerciseCount: 0,
+    canStart: false,
+    canResume: false,
+    bleLabel: '',
+    plan: null, // { sid, name, exercises, profile }
+  },
+
+  onInit() {
+    // 有未结束的会话 → 直接给出"继续训练"
+    const s = loadState()
+    if (s.active && s.workout) {
+      this.canResume = true
+      this.workoutName = s.workout.name || '上次的训练'
+      this.exerciseCount = s.workout.exercises.length
+      this.status = '上次训练还没结束'
+    } else {
+      this.status = '等待手机推送训练安排…'
+    }
+
+    // BLE 服务端：广播自己，等手机连上来写计划（见 lib/ble.js）
+    startServer({
+      onPlan: (msg) => this.onPlanMsg(msg),
+      onRest: () => { /* 休息调整只在训练页有意义，开始页忽略 */ },
+      onState: (connected) => {
+        this.bleLabel = connected ? '手机已连接' : ''
+      },
+    })
+
+    // 云端备选：Worker 配了地址才会成功，BLE 没等到计划时兜底
+    if (!this.canResume) {
+      fetchConfig().then((cfg) => {
+        const w = cfg && cfg.workout
+        if (!this.plan && w) {
+          this.applyPlan(w.name || '训练', w.exercises || [], '', (cfg && cfg.profile) || null)
+        }
+      }).catch((e) => {
+        if (!this.canResume && !this.plan) this.status = '等手机推送\n（云端：' + e.message + '）'
+      })
+    }
+
+    // 补传之前没上传成功的会话（云端备选路径），失败就算了，下次启动再试
+    flushPending().catch(() => {})
+  },
+
+  // 手机写来的计划：{ t:'plan', v:1, sid, workout:'背', exercises:[…], profile? }
+  onPlanMsg(msg) {
+    if (this.canResume) return // 训练进行中收到新计划：忽略，别打断当前会话
+    this.applyPlan(msg.workout, msg.exercises || [], msg.sid || '', msg.profile || null)
+  },
+
+  applyPlan(name, exercises, sid, profile) {
+    if (!exercises.length) return
+    this.plan = { sid, name, exercises, profile }
+    this.workoutName = name
+    this.exerciseCount = exercises.length
+    this.status = '今天：' + name
+    this.canStart = true
+  },
+
+  // 内置示例训练：模拟器没有 BLE 也没有网，真机等不到手机推送时也想先体验全流程。
+  // 只是兜底，手机一旦推送就按收到的计划来。
+  onDemo() {
+    this.applyPlan('示例 · 全身', [
+      { name: '俯卧撑', sets: 3, reps: '12', restSec: 10, weight: '' },
+      { name: '自重深蹲', sets: 3, reps: '15', restSec: 10, weight: '' },
+      { name: '平板支撑', sets: 2, reps: '45秒', restSec: 10, weight: '' },
+    ], 'demo', null)
+  },
+
+  onStart() {
+    const p = this.plan
+    if (!p) return
+    startSession({ name: p.name, sid: p.sid, exercises: p.exercises }, p.profile)
+    router.push({ uri: '/Workout' })
+  },
+
+  onResume() {
+    router.push({ uri: '/Workout' })
+  },
+}
+</script>
+
+<template>
+  <div class="page">
+    <text class="title">训练助手</text>
+    <text class="status">{{ status }}</text>
+    <text class="sub" if="{{ exerciseCount }}">{{ exerciseCount }} 个动作</text>
+    <text class="ble" if="{{ bleLabel }}">{{ bleLabel }}</text>
+
+    <input class="btn primary" type="button" value="继续训练" onclick="onResume" if="{{ canResume }}" />
+    <input class="btn primary" type="button" value="开始训练" onclick="onStart" if="{{ canStart }}" />
+    <input class="btn demo" type="button" value="试试示例训练" onclick="onDemo" if="{{ !canResume && !canStart }}" />
+  </div>
+</template>
+
+<style>
+.page {
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  width: 466px;
+  height: 466px;
+  background-color: #0c0e12;
+}
+.title { font-size: 34px; color: #a3e635; margin-bottom: 12px; }
+.status { font-size: 26px; color: #f5f5f7; text-align: center; margin-bottom: 8px; }
+.sub { font-size: 22px; color: #9aa0a6; margin-bottom: 16px; }
+.ble { font-size: 20px; color: #4ade80; margin-bottom: 8px; }
+.btn { width: 240px; height: 72px; font-size: 28px; border-radius: 36px; margin-top: 12px; }
+.primary { background-color: #a3e635; color: #0c0e12; }
+.demo { background-color: #2a2d34; color: #f5f5f7; }
+</style>

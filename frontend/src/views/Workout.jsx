@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
 import { workoutControls } from '../lib/workout-controls.js'
 import { useUI } from '../store/useUI.js'
+import { pushPlanToWatch, bindWatchSync, pushRestToWatch, pushWeightToWatch, pushUnsetToWatch } from '../lib/watch-link.js'
 import { exOr, betterWeight } from '../lib/exercises.js'
 import { usesBar } from '../lib/bar.js'
 import { loadKindFor, baseWeightFor, inventoryFor, rowLoad, sameLoad, plateDelta, dropGrid } from '../lib/plates.js'
@@ -1286,7 +1287,7 @@ function ActiveWorkout() {
     busy: !!work,
     onToggle: (i, onFocusProgress) => toggle(idx, i, undefined, { onFocusProgress }),
     onToggleSide: (i, side, onFocusProgress) => toggle(idx, i, side, { onFocusProgress }),
-    onField: (i, f, v) => setField(idx, i, f, v),
+    onField: (i, f, v) => watchField(idx, i, f, v),
     onMutateSet: (i, fn) => mutEntry(idx, entry => { entry.sets[i] = fn(entry.sets[i]) }),
     onAddSet: () => addSet(idx),
     onRemoveSet: () => removeSet(idx),
@@ -1658,6 +1659,12 @@ function ActiveWorkout() {
       }
     }, true)
     if (editing) return
+    // 手机上勾/取消 → 同步给手表：勾了不必发（手表自己的事件带去重），取消了要发 unset
+    // 让手表把那组的完成态抹掉。side set 不发（手表端没有左右概念）。
+    if (!side && sid) {
+      const ordinal = workSetOrdinal(A.entries[idx], i)
+      if (ordinal > 0 && !checked) pushUnsetToWatch(sid, idx, ordinal)
+    }
     if (workoutDone) workoutCompleteSheet()
     else if (exJustDone && cardioEntry) useUI.getState().toast(t('Cardio logged'))
     else if (exJustDone && m === 'time') useUI.getState().toast(t('Hold logged'))
@@ -1739,6 +1746,109 @@ function ActiveWorkout() {
       }
       onFocusProgress?.({ unitDone: freshUnitDone })
     }
+  }
+
+  // 手表联动：训练开始把计划推到手表；手表上点"完成一组"实时打钩、开休息——
+  // 与在手机上点同一条 toggle 路径，休息、进度、完成判定全部一致（DESIGN.md 第 6 节）。
+  // 事件带 sid 幂等：手机按 sid+动作下标+组号去重，重连重发不会记两次。
+  // 双向实时同步：手机±休息/改重量 → 推给手表；手表±休息/改重量 → 落到手机会话。
+  // 计划变更（加/删动作）时 A.entries 变了，effect 重跑整包重推，手表热替换。
+  const seenWatchSets = useRef(new Set())
+  const sid = A.start ? String(A.start) : ''
+  useEffect(() => {
+    if (editing) return
+    pushPlanToWatch({ name: A.name, exercises: A.entries.map(e => ({
+      name: e.name, sets: e.sets.filter(x => !isWarmupRow(x)).length,
+      reps: e.sets.find(x => !isWarmupRow(x))?.reps ?? '',
+      restSec: e.target?.restSec > 0 ? e.target.restSec : S.restSec || 60,
+      weight: e.sets.find(x => !isWarmupRow(x))?.w ?? '',
+    })) }, sid)
+  }, [editing, sid, A.name, A.entries.length])
+
+  // 休息调整 → 手表。timer 变化驱动；本地应用远端消息时 remoteRestSeq 挡住回环。
+  const watchRestSeq = useRef(0)
+  useEffect(() => {
+    if (editing || !timer || timer.paused || timer.ready) return
+    pushRestToWatch(sid, Math.max(0, Math.round((timer.endsAt - Date.now()) / 1000)))
+  }, [editing, sid, timer?.endsAt])
+
+  // 手表的 rest/weight 调整 → 手机。rest 用 useUI 的 addRest/stopRest（通知/闹钟一条不落）；
+  // weight 直接写活动会话的组重量。手表侧带 seq，防两端互相跟风。
+  useEffect(() => {
+    if (editing) return
+    return bindWatchSync(ev => {
+      if (!ev || ev.sid !== sid) return
+      const A2 = useStore.getState().S.active
+      if (!A2) return
+      if (ev.t === 'rest') {
+        if (typeof ev.seq === 'number') {
+          if (ev.seq <= watchRestSeq.current) return
+          watchRestSeq.current = ev.seq
+        }
+        const ui = useUI.getState()
+        if (ev.leftSec > 0) {
+          const left = Math.max(1, Math.min(REST_MAX, Math.round(ev.leftSec)))
+          if (ui.timer && !ui.timer.ready && !ui.timer.paused) ui.addRest(left - ui.timer.left)
+          else ui.startRest(left, ui.timer?.forIdx ?? A2.cur)
+        } else if (ui.timer && !ui.timer.ready) ui.stopRest()
+        return
+      }
+      if (ev.t === 'weight') {
+        const entry = A2.entries[ev.ex]
+        if (!entry) return
+        const row = entry.sets.filter(x => !isWarmupRow(x))[ev.set - 1]
+        if (!row) return
+        const w = parseFloat(ev.weight)
+        update(s => {
+          const e2 = s.active?.entries[ev.ex]
+          const r2 = e2 && e2.sets[entry.sets.indexOf(row)]
+          if (r2) r2.w = w > 0 ? w : undefined
+        })
+        return
+      }
+      // 完成/撤销一组（手表点"完成"或"撤销重做"）：写活动会话的组重量/次数（手表上
+      // 录的为准），再走与手点完全相同的 toggle 路径（休息、进度、完成判定全一致）。
+      if (ev.t === 'set') {
+        const key = ev.sid + ':' + ev.ex + ':' + ev.set
+        if (seenWatchSets.current.has(key)) return
+        const entry = A2.entries[ev.ex]
+        if (!entry) return
+        const row = entry.sets.filter(x => !isWarmupRow(x))[ev.set - 1]
+        if (!row || row.done) return
+        seenWatchSets.current.add(key)
+        const w = ev.weight != null && ev.weight !== '' ? parseFloat(ev.weight) : NaN
+        const reps = ev.reps != null && ev.reps !== '' ? ev.reps : null
+        update(s => {
+          const e2 = s.active?.entries[ev.ex]
+          const r2 = e2 && e2.sets[entry.sets.indexOf(row)]
+          if (!r2) return
+          if (Number.isFinite(w) && w > 0) r2.w = w
+          if (reps != null && r2.reps == null) r2.reps = reps
+        })
+        toggle(entry.sets.indexOf(row), ev.set - 1, undefined, {})
+        return
+      }
+      if (ev.t === 'unset') {
+        // 手表撤销重做：把那组的 done 抹掉（手机侧同一 toggle 反打）
+        const entry = A2.entries[ev.ex]
+        if (!entry) return
+        const row = entry.sets.filter(x => !isWarmupRow(x))[ev.set - 1]
+        if (!row || !row.done) return
+        toggle(entry.sets.indexOf(row), ev.set - 1, undefined, {})
+      }
+    })
+  }, [editing, sid])
+
+  // 重量编辑 → 手表：setField 走这里（onField），只对活动会话的组行下发。
+  const watchField = (idx, i, f, v) => {
+    setField(idx, i, f, v)
+    if (f === 'w' && sid) pushWeightToWatch(sid, idx, workSetOrdinal(A.entries[idx], i), v)
+  }
+  // 组号（1 起）：该行在"非热身行"里的序号——与手表计划的 set 编号同一套。
+  const workSetOrdinal = (entry, i) => {
+    let n = 0
+    for (let k = 0; k <= i && entry?.sets?.[k]; k++) if (!isWarmupRow(entry.sets[k])) n++
+    return n
   }
 
   // After the finished exercise folded away (toggle, above): the new current one is the next thing

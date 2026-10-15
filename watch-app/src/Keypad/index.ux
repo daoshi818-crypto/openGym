@@ -1,0 +1,115 @@
+<script>
+// 计算器输入页：改重量/次数。字段与目标组由 URL 参数带来，算完写回会话并回传手机。
+import router from '@blueos.app.appmanager.router'
+import { loadState, save, setRowValue } from '../lib/session.js'
+import { sendControl } from '../lib/ble.js'
+
+export default {
+  data: {
+    show: '0',        // 输入框显示
+    label: '重量 kg', // 字段标题
+    unit: 'kg',
+  },
+
+  onInit() {
+    const s = loadState()
+    if (!s.active || !s.workout) { router.back(); return }
+    this.state = s
+    this.exIdx = Number(this.exIdxParam || 0)
+    this.setIdx = Number(this.setIdxParam || 0)
+    this.field = this.fieldParam === 'r' ? 'r' : 'w'
+    const row = s.workout.rows[this.exIdx] && s.workout.rows[this.exIdx][this.setIdx]
+    if (!row) { router.back(); return }
+    this.buffer = ''
+    const cur = this.field === 'w' ? row.w : row.r
+    // 进来先显示现值，按 C 清掉重输
+    this.initVal = cur === '' || cur == null ? '' : String(cur)
+    this.show = this.initVal || '0'
+    if (this.field === 'w') { this.label = '重量'; this.unit = 'kg' }
+    else {
+      const ex = s.workout.exercises[this.exIdx]
+      const timed = ex && String(ex.reps || '').indexOf('秒') >= 0
+      this.label = timed ? '时长' : '次数'
+      this.unit = timed ? '秒' : '次'
+    }
+  },
+
+  onKey(k) {
+    if (k === 'C') { this.buffer = ''; this.show = '0'; return }
+    if (k === 'ok') { this.commit(); return }
+    if (k === '.') {
+      if (this.field !== 'w' || this.buffer.indexOf('.') >= 0) return
+      if (!this.buffer) this.buffer = '0'
+      this.buffer += '.'
+    } else {
+      if (this.buffer.replace('.', '').length >= 5) return // 手表场景够用
+      this.buffer += k
+    }
+    this.show = this.buffer === '.' ? '0.' : String(parseFloat(this.buffer))
+  },
+
+  onKey1() { this.onKey('1') },
+  onKey2() { this.onKey('2') },
+  onKey3() { this.onKey('3') },
+  onKey4() { this.onKey('4') },
+  onKey5() { this.onKey('5') },
+  onKey6() { this.onKey('6') },
+  onKey7() { this.onKey('7') },
+  onKey8() { this.onKey('8') },
+  onKey9() { this.onKey('9') },
+  onKey0() { this.onKey('0') },
+  onKeyDot() { this.onKey('.') },
+  onKeyC() { this.onKey('C') },
+  onKeyOk() { this.onKey('ok') },
+
+  commit() {
+    const v = this.buffer === '' ? '' : String(parseFloat(this.buffer) || 0)
+    const s = this.state
+    setRowValue(s, this.exIdx, this.setIdx, this.field, v)
+    // 实时回传手机（重量字段；次数手机暂不收，协议预留）
+    if (this.field === 'w') sendControl({ t: 'weight', sid: s.sid, ex: this.exIdx, set: this.setIdx + 1, weight: v })
+    router.back()
+  },
+}
+</script>
+
+<template>
+  <div class="page">
+    <text class="label">{{ label }}（{{ unit }}）</text>
+    <text class="show">{{ show }}</text>
+
+    <div class="grid">
+      <input class="k" type="button" value="1" onclick="onKey1" />
+      <input class="k" type="button" value="2" onclick="onKey2" />
+      <input class="k" type="button" value="3" onclick="onKey3" />
+      <input class="k" type="button" value="4" onclick="onKey4" />
+      <input class="k" type="button" value="5" onclick="onKey5" />
+      <input class="k" type="button" value="6" onclick="onKey6" />
+      <input class="k" type="button" value="7" onclick="onKey7" />
+      <input class="k" type="button" value="8" onclick="onKey8" />
+      <input class="k" type="button" value="9" onclick="onKey9" />
+      <input class="k" type="button" value="." onclick="onKeyDot" if="{{ field === 'w' }}" />
+      <input class="k" type="button" value="0" onclick="onKey0" />
+      <input class="k c" type="button" value="C" onclick="onKeyC" />
+    </div>
+
+    <input class="ok" type="button" value="确定" onclick="onKeyOk" />  </div>
+</template>
+
+<style>
+.page {
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  width: 466px;
+  height: 466px;
+  background-color: #000000;
+  padding-top: 14px;
+}
+.label { font-size: 22px; color: #8e8e93; }
+.show { font-size: 46px; color: #30d158; margin: 4px 0 8px; }
+.grid { flex-direction: row; flex-wrap: wrap; justify-content: center; width: 380px; }
+.k { width: 120px; height: 68px; font-size: 28px; border-radius: 14px; background-color: #1c1c1e; color: #ffffff; margin: 3px; }
+.c { color: #ff453a; }
+.ok { width: 380px; height: 66px; font-size: 28px; border-radius: 16px; background-color: #30d158; color: #ffffff; margin-top: 8px; }
+</style>

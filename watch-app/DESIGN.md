@@ -61,7 +61,7 @@
 |---|---|
 | Service UUID | `0000a100-0000-1000-8000-00805f9b34fb`（自定义，避开 SIG 保留段） |
 | 广播内容 | `serviceUuids: [上面这个]`，`manufactureData` 放 4 字节设备标识（可选） |
-| 广播参数 | `interval: 150`、`txPower: 60`、`connectable: true` |
+| 广播参数 | `interval: 150`、`connectable: true`（txPower 文档范围 -127~1，草稿里的 60 超范围，不传用默认值） |
 
 ### 4.2 服务与特征值
 
@@ -114,6 +114,17 @@
 { "t": "ack", "upto": 1760000000000 }                  // 手机→手表，确认收到该时间戳之前的记录
 ```
 
+**双向：实时同步**（2026-10 增补；rest/weight 走各自的特征值，任何一方改动，另一方立即跟上）
+
+```json
+{ "t": "rest",   "sid": "…", "leftSec": 42, "totalSec": 60, "seq": 3 }            // 休息调整（双向）
+{ "t": "weight", "sid": "…", "ex": 0, "set": 2, "weight": "37.5" }               // 某组重量修改（双向）
+{ "t": "plan",   "sid": "…", "v": 1, "workout": "背", "exercises": [ … ] }        // 计划变更重推（手机→手表，训练中途加/删动作后整包热替换）
+```
+
+`seq` 只在 `rest` 上递增（发送方维护），接收方忽略比自己记录小的序号，防止两端互相跟风造成回环。
+`rest`/`weight` 是控制消息，**不进**手表的待发队列（发不出去就丢弃，重连后旧倒计时/旧重量回放反而错）。
+
 ### 4.4 时序
 
 ```
@@ -141,16 +152,20 @@
 
 ## 5. 手表端要做什么
 
+> **2026-10-15 更新：本节已实现。** `src/lib/ble.js`（GATT 服务端 + 收发分片重组 + 待发队列）、
+> 两个页面的 BLE 接入、manifest 蓝牙权限都已落地；收发消息统一为"UTF-8 JSON 以 `\n` 结尾"，
+> 收发两个方向都按 20 字节分片/重组。剩余工作是第 6 节的手机端插件和真机联调。
+
 现有代码在 `watch-app/`，已经实现的部分**可以直接复用**：
 
 | 文件 | 现状 | 蓝牙方案要改的 |
 |---|---|---|
-| `src/lib/session.js` | ✅ 会话状态机 + 每次事件落盘 + 绝对时间戳休息 + 心率累计 + 待发送队列 | 队列的"发送"改成 BLE 回传，其余不动 |
+| `src/lib/session.js` | ✅ 会话状态机 + 每次事件落盘 + 绝对时间戳休息 + 心率累计 + 待发送队列 | ✅ 已完成：补 `sid`/`profile` 字段，状态与落盘逻辑不动 |
 | `src/lib/sensors.js` | ✅ 心率订阅 + 震动（连震三下） | 不动 |
-| `src/pages/Workout/index.ux` | ✅ 完成一组 / 倒计时 / 心率热量显示 / 恢复逻辑 | 加一个"未同步 N 条"的小提示 |
-| `src/pages/Index/index.ux` | ✅ 开始/继续 | 计划来源从 HTTP 改成 BLE 收包；加"等待手机推送"状态 |
-| `src/lib/cloud.js` | HTTP 上传 | **新增** `src/lib/ble.js`（GATT 服务端），cloud.js 保留为备选 |
-| `manifest.json` | ✅ 权限/路由 | 加 `blueos.permission.BLUETOOTH` + feature `blueos.bluetooth.ble` |
+| `src/Workout/index.ux` | ✅ 完成一组 / 倒计时 / 心率热量显示 / 恢复逻辑 | ✅ 已完成：完成/结束时 BLE 回传 + "未同步 N 条"提示 |
+| `src/Index/index.ux` | ✅ 开始/继续 | ✅ 已完成：计划来源改为 BLE 收包，云端降为兜底；有"等待手机推送"状态 |
+| `src/lib/ble.js` | ✅ **已新增**（GATT 服务端：广播、收计划、回传事件、分片重组、待发队列） | cloud.js 保留为备选 |
+| `manifest.json` | ✅ 权限/路由 | ✅ 已完成：`blueos.permission.BLUETOOTH` + feature `blueos.bluetooth.ble` |
 
 `src/lib/ble.js` 需要实现：
 
@@ -244,7 +259,8 @@ openGym 是 Capacitor 应用，加一个原生插件（**照抄 `HealthConnectPl
 - 打开 `watch-app/` 目录 → 装依赖 → 右侧模拟器跑界面逻辑
 - 真机：构建 `rpk` → 调试包安装到手表（个人使用走调试安装；对外分发需在 vivo 开放平台签名）
 - 机型要求：**跑蓝河系统的手表**（WATCH 3 / WATCH GT 等），手环不支持第三方应用
-- API 文档：<https://blueos.niceshare.site/>（第三方整理，比官方好用；官方入口 <https://blueos.vivo.com/>）
+- API 文档：官方 <https://developers-watch.vivo.com.cn/>（离线镜像见 <https://github.com/Sein925/blueos-dev-skill>，173 篇已核对）；第三方整理 <https://blueos.niceshare.site/> 可交叉参考
+- 工程结构（2026-10-15 已按官方规范修正）：`manifest.json` 必须在 `src/` 下，根目录必须有 `package.json` + `jsconfig.json`，否则 BlueOS Studio 不识别（提示"未打开蓝河应用项目"）
 
 **手机端**
 - Android SDK + JDK 21（本机已有：`C:/Android`、Temurin 21）
@@ -265,8 +281,8 @@ openGym 是 Capacitor 应用，加一个原生插件（**照抄 `HealthConnectPl
 watch-app/                          手表端（本方案的主体，已可运行）
   manifest.json                     路由/features/权限
   src/app.ux                        入口
-  src/pages/Index/index.ux          开始页（计划来源待改成 BLE）
-  src/pages/Workout/index.ux        训练页（完成一组/倒计时/心率）
+  src/Index/index.ux          开始页（计划来源待改成 BLE）
+  src/Workout/index.ux        训练页（完成一组/倒计时/心率）
   src/lib/session.js                ★ 防闪退核心：落盘 + 恢复 + 待发送队列
   src/lib/sensors.js                心率订阅 + 震动
   src/lib/cloud.js                  云端上传（保留为备选路径）
@@ -294,9 +310,10 @@ frontend/src/lib/
 import bluetooth from '@blueos.bluetooth.ble'      // feature: blueos.bluetooth.ble
 // permission: blueos.permission.BLUETOOTH
 const server = bluetooth.BLE.createGattServer()
-server.startAdvertising({ interval: 150, txPower: 60, connectable: true },
+server.startAdvertising({ interval: 150, connectable: true },   // txPower 范围 -127~1，勿传 60
                         { serviceUuids: ['0000a100-0000-1000-8000-00805f9b34fb'] })
 server.addService({ serviceUuid, isPrimary: true, characteristics, includeServices: [] })
+// 注意实际顺序：先 addService 再 startAdvertising（先有服务再广播）
 server.notifyCharacteristicChanged(...)           // 回传完成事件
 server.subscribeCharacteristicWrite({ callback })  // 接收计划
 server.subscribeConnectStateChange({ callback })   // 连接状态

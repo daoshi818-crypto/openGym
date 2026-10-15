@@ -36,11 +36,14 @@ public class RestAlertPlugin extends Plugin {
     @Override
     protected void handleOnStart() {
         inFront = true;
+        // 悬浮窗只在离开 app 时出现：回前台立刻收起（页内本来就有计时器）
+        RestOverlay.setAppInFront(true);
     }
 
     @Override
     protected void handleOnStop() {
         inFront = false;
+        RestOverlay.setAppInFront(false);
     }
 
     /**
@@ -66,6 +69,13 @@ public class RestAlertPlugin extends Plugin {
     @PluginMethod
     public void hideOverlay(PluginCall call) {
         RestOverlay.hide();
+        call.resolve();
+    }
+
+    /** 设置悬浮窗样式：'card'（卡片）或 'ring'（圆形进度环）。设置页切换时调用。 */
+    @PluginMethod
+    public void setOverlayStyle(PluginCall call) {
+        RestOverlay.setStyle(getContext(), call.getString("style", "card"));
         call.resolve();
     }
 

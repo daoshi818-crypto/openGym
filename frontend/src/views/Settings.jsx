@@ -29,7 +29,8 @@ import { mediaStore } from '../lib/media-store.js'
 import { syncMedia, fetchToStore } from '../lib/media-sync.js'
 import { getMediaStatus, subscribeMediaStatus, pendingRefCount } from '../lib/media-owed.js'
 import { limitsFrom, fmtMB, MB } from '../lib/media-limits.js'
-import { setRestAccent, overlayStatus, requestOverlay, hideOverlay } from '../lib/rest-alert.js'
+import { setRestAccent, overlayStatus, requestOverlay, hideOverlay, setOverlayStyle } from '../lib/rest-alert.js'
+import { watchAvailable, watchState, onWatchState, connectWatch, disconnectWatch } from '../lib/watch-link.js'
 import { CUSTOM, accentKey, adjustedIn, applyAccent, cleanHex, inkOn, isGrey } from '../lib/accent.js'
 import { checkForUpdate, downloadAndInstall, fetchChecksum, RELEASES_PAGE } from '../lib/update.js'
 import { forgetCoach } from '../lib/coach-api.js'
@@ -152,6 +153,8 @@ export default function Settings({ page = null, find = null, via = null }) {
   const [updateInfo, setUpdateInfo] = useState(null) // { hasUpdate, latestVersion, apkUrl, hashUrl } | null
   const [android, setAndroid] = useState(false)
   const [overlayOK, setOverlayOK] = useState(null) // 悬浮窗倒计时权限：null=不支持/未知，true/false=已授权与否
+  const [watchSt, setWatchSt] = useState('off') // 手表连接：off|connecting|connected|ready|error
+  const [watchWhy, setWatchWhy] = useState(null) // 不可用原因：bluetoothOff|permission|web
   const [checking, setChecking] = useState(false)
   // Where auto-backup writes on this Android phone, for the Auto-backup row's own subtitle.
   const [backupDir] = useBackupFolder(MOBILE && android && !!S.autoBackup)
@@ -166,9 +169,17 @@ export default function Settings({ page = null, find = null, via = null }) {
     isAndroid().then(ok => {
       setAndroid(ok)
       if (ok) overlayStatus().then(setOverlayOK).catch(() => {})
+      if (ok) watchAvailable().then(r => { setWatchWhy(r.reason || null) }).catch(() => {})
       if (ok && page === 'about') checkForUpdate().then(setUpdateInfo).catch(() => {})
     })
   }, [page])
+
+  // 手表连接状态跟随原生事件；离开页面时退订。
+  useEffect(() => {
+    if (!android) return
+    setWatchSt(watchState())
+    return onWatchState(setWatchSt)
+  }, [android])
 
   // A search hit: scroll its row (or button) into view and flash it once. A row that shows only
   // once the page has heard back from the server (web push, the passkey list) is waited for a
@@ -506,14 +517,42 @@ export default function Settings({ page = null, find = null, via = null }) {
         )}
         {/* 悬浮窗倒计时（原生 RestOverlay）：休息时把倒计时贴在屏幕上，不必依赖通知栏。
             权限是 Android 的"显示在其他应用上层"，只能在系统设置里授予，所以这里是一行动作
-            而不是开关——授权后由休息计时器自动显示，点卡片回到 App。 */}
+            而不是开关——授权后由休息计时器自动显示，点卡片回到 App。
+            只在离开 app 时出现；app 在前台时页内已有计时器，不重复贴。
+            颜色跟随下面的主题色设置。 */}
         {android && (
           <Row icon="timer" iconTint="var(--yellow)" title={t('Floating rest countdown')}
             subtitle={overlayOK
-              ? t('On. While you rest, the countdown floats over other apps; tap the card to come back.')
+              ? t('Shows over other apps when you leave the app during a rest; tap the card to come back.')
               : t('Needs the “display over other apps” permission.')}
             accessory={overlayOK ? undefined : 'chevron'}
             onClick={overlayOK ? undefined : () => requestOverlay().then(setOverlayOK)} />
+        )}
+        {/* 悬浮窗样式：卡片（原样式）或圆环（圆形进度环）。只在 Android 且悬浮窗可用时显示。 */}
+        {android && overlayOK && (
+          <Row icon="target" iconTint="var(--yellow)" title={t('Floating countdown style')}>
+            <Segmented className="seg-inline"
+              options={[{ value: 'card', label: t('Card') }, { value: 'ring', label: t('Ring') }]}
+              value={S.overlayStyle === 'ring' ? 'ring' : 'card'}
+              onChange={v => update(s => { s.overlayStyle = v; setOverlayStyle(v) })} />
+          </Row>
+        )}
+        {/* 连接手表（BLE）：手表要开着训练助手（开始页在广播）。连接后训练开始会自动把
+            计划推到手表，手表上点"完成一组"实时回传进会话。 */}
+        {android && (
+          <Row icon="dumbbell" iconTint="var(--green)" title={t('Connect watch')}
+            subtitle={
+              watchSt === 'ready' || watchSt === 'connected' ? t('Connected. Start a workout and it lands on the watch.')
+              : watchSt === 'connecting' ? t('Looking for the watch… Open the training app on the watch.')
+              : watchWhy === 'bluetoothOff' ? t('Bluetooth is off. Turn it on and try again.')
+              : watchWhy === 'permission' ? t('Bluetooth permission is needed.')
+              : t('Tap to pair. The watch shows your plan during a workout and records a set with one tap.')
+            }
+            accessory="chevron"
+            onClick={() => {
+              if (watchSt === 'ready' || watchSt === 'connected') disconnectWatch()
+              else connectWatch()
+            }} />
         )}
         {/* 'full'/'mini' is also what the tap-toggle on the workout animation writes; 'off' hides
             workout media entirely (library, detail sheet and picker thumbs are unaffected).

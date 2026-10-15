@@ -1,0 +1,135 @@
+<script>
+// 动作列表页（主页左滑进来）：本次训练的所有动作，每组一行
+//   动作名 / 1: 14kg*12 / >   —— 点行跳到主页并把游标切到那一组。
+// 每个动作可展开：标题行点一下展开/收起组行。底部：退出（回开始页）和 保存（结束训练）。
+import router from '@blueos.app.appmanager.router'
+import { loadState, save, nextUndone, addRestTime } from '../lib/session.js'
+import { endSession } from '../lib/session.js'
+import { sendEvent } from '../lib/ble.js'
+import { pushSession } from '../lib/cloud.js'
+import storage from '@blueos.storage.storage'
+
+export default {
+  data: {
+    list: [],   // [{ name, idx, rows: [{ no, txt, done, exIdx, setIdx }] }]
+    expanded: -1,
+  },
+
+  onInit() {
+    const s = loadState()
+    if (!s.active || !s.workout) { router.back(); return }
+    this.state = s
+    this.rebuild()
+  },
+
+  rebuild() {
+    const s = this.state
+    this.list = s.workout.exercises.map((ex, i) => ({
+      name: ex.name,
+      idx: i,
+      rows: (s.workout.rows[i] || []).map((row, j) => ({
+        no: String(j + 1),
+        txt: this.rowTxt(row, ex),
+        done: row.done,
+        exIdx: i,
+        setIdx: j,
+      })),
+    }))
+  },
+
+  rowTxt(row, ex) {
+    const w = row.w === '' || row.w == null ? '' : row.w + 'kg*'
+    const timed = ex && String(ex.reps || '').indexOf('秒') >= 0
+    const r = row.r === '' || row.r == null ? '—' : row.r + (timed ? '秒' : '')
+    return (w + r) || '—'
+  },
+
+  toggleEx(e) {
+    const idx = Number(e.target.attr.dataIdx)
+    this.expanded = this.expanded === idx ? -1 : idx
+  },
+
+  pickRow(e) {
+    const d = e.target.attr
+    const s = this.state
+    s.exIdx = Number(d.exIdx)
+    s.setIdx = Number(d.setIdx)
+    save(s)
+    router.back() // 回主页，游标已切好
+  },
+
+  onExit() {
+    // 退出：不结束会话，状态留在本地，回开始页（还能"继续训练"）
+    router.back()
+  },
+
+  onFinish() {
+    const s = this.state
+    const session = endSession(s, s.profile)
+    sendEvent({
+      t: 'end',
+      sid: session.sid,
+      minutes: session.minutes,
+      avgHr: session.avgHr,
+      maxHr: session.maxHr,
+      calories: session.calories,
+      sets: session.sets.length,
+    })
+    pushSession(session).catch(() => {})
+    storage.set({
+      key: 'summary_last',
+      value: { minutes: session.minutes, sets: session.sets.length, calories: session.calories, avgHr: session.avgHr },
+      fail: () => {},
+    })
+    router.replace({ uri: '/Summary' })
+  },
+}
+</script>
+
+<template>
+  <div class="page">
+    <stack class="body">
+      <list class="scroll">
+        <stack class="exrow" for="{{ item in list }}" onclick="toggleEx" data-idx="{{ item.idx }}">
+          <text class="exname">{{ item.name }}</text>
+          <text class="cnt">{{ item.rows.length }}组</text>
+          <stack class="rows" if="{{ expanded === item.idx }}">
+            <div class="rrow" for="{{ r in item.rows }}" onclick="pickRow" data-ex-idx="{{ r.exIdx }}" data-set-idx="{{ r.setIdx }}">
+              <text class="rno">{{ r.no }}</text>
+              <text class="rtxt {{ r.done ? 'done' : '' }}">{{ r.txt }} {{ r.done ? '✓' : '' }}</text>
+              <text class="chev">›</text>
+            </div>
+          </stack>
+        </stack>
+      </list>
+    </stack>
+
+    <div class="foot">
+      <input class="fbtn" type="button" value="退出" onclick="onExit" />
+      <input class="fbtn save" type="button" value="保存" onclick="onFinish" />
+    </div>
+  </div>
+</template>
+
+<style>
+.page {
+  flex-direction: column;
+  width: 466px;
+  height: 466px;
+  background-color: #000000;
+}
+.body { flex: 1; width: 466px; }
+.scroll { width: 466px; height: 360px; padding-top: 10px; }
+.exrow { flex-direction: column; padding: 10px 24px; }
+.exname { font-size: 26px; color: #ffffff; }
+.cnt { font-size: 20px; color: #8e8e93; margin-top: 2px; }
+.rows { flex-direction: column; margin-top: 6px; }
+.rrow { flex-direction: row; align-items: center; padding: 8px 0; }
+.rno { font-size: 24px; color: #30d158; width: 50px; }
+.rtxt { font-size: 24px; color: #ffffff; flex: 1; }
+.rtxt.done { color: #636366; }
+.chev { font-size: 26px; color: #48484a; }
+.foot { flex-direction: row; justify-content: center; padding: 10px 0 18px; }
+.fbtn { width: 160px; height: 64px; font-size: 26px; border-radius: 18px; background-color: #1c1c1e; color: #ffffff; margin: 0 12px; }
+.save { background-color: #30d158; }
+</style>

@@ -121,6 +121,18 @@ export async function hideOverlay() {
   try { await p.RestAlert.hideOverlay() } catch { /* 没显示过就无所谓 */ }
 }
 
+// 悬浮窗样式：'card'（卡片+进度条）或 'ring'（圆形进度环）。存 profile，切换即生效。
+export function overlayStyleOf(S) {
+  return S && S.overlayStyle === 'ring' ? 'ring' : 'card'
+}
+
+/** 设置页切换样式时下发；正在显示的悬浮窗按新样式重建。 */
+export async function setOverlayStyle(style) {
+  const p = await restPlugin()
+  if (!p) return
+  try { await p.RestAlert.setOverlayStyle({ style: overlayStyleOf({ overlayStyle: style }) }) } catch { /* 非 Android */ }
+}
+
 // Resolves true only when an Android alarm was scheduled. Callers use false as
 // "fall back to the server push" — web, iOS, and a failed schedule.
 export function armRestAlert(at, opts = {}) {
