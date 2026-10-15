@@ -29,7 +29,7 @@ import { mediaStore } from '../lib/media-store.js'
 import { syncMedia, fetchToStore } from '../lib/media-sync.js'
 import { getMediaStatus, subscribeMediaStatus, pendingRefCount } from '../lib/media-owed.js'
 import { limitsFrom, fmtMB, MB } from '../lib/media-limits.js'
-import { setRestAccent } from '../lib/rest-alert.js'
+import { setRestAccent, overlayStatus, requestOverlay, hideOverlay } from '../lib/rest-alert.js'
 import { CUSTOM, accentKey, adjustedIn, applyAccent, cleanHex, inkOn, isGrey } from '../lib/accent.js'
 import { checkForUpdate, downloadAndInstall, fetchChecksum, RELEASES_PAGE } from '../lib/update.js'
 import { forgetCoach } from '../lib/coach-api.js'
@@ -151,6 +151,7 @@ export default function Settings({ page = null, find = null, via = null }) {
   // --- update check state ---
   const [updateInfo, setUpdateInfo] = useState(null) // { hasUpdate, latestVersion, apkUrl, hashUrl } | null
   const [android, setAndroid] = useState(false)
+  const [overlayOK, setOverlayOK] = useState(null) // 悬浮窗倒计时权限：null=不支持/未知，true/false=已授权与否
   const [checking, setChecking] = useState(false)
   // Where auto-backup writes on this Android phone, for the Auto-backup row's own subtitle.
   const [backupDir] = useBackupFolder(MOBILE && android && !!S.autoBackup)
@@ -162,7 +163,11 @@ export default function Settings({ page = null, find = null, via = null }) {
     // from even asking (and from calling GitHub on every Settings visit). Only the pages
     // that show it ask: the root (for nothing but `android`) skips the release check.
     if (!MOBILE) return
-    isAndroid().then(ok => { setAndroid(ok); if (ok && page === 'about') checkForUpdate().then(setUpdateInfo).catch(() => {}) })
+    isAndroid().then(ok => {
+      setAndroid(ok)
+      if (ok) overlayStatus().then(setOverlayOK).catch(() => {})
+      if (ok && page === 'about') checkForUpdate().then(setUpdateInfo).catch(() => {})
+    })
   }, [page])
 
   // A search hit: scroll its row (or button) into view and flash it once. A row that shows only
@@ -498,6 +503,17 @@ export default function Settings({ page = null, find = null, via = null }) {
             <Switch checked={wakeOK && S.keepAwake !== false} disabled={!wakeOK}
               onChange={v => update(s => { s.keepAwake = v })} />
           </Row>
+        )}
+        {/* 悬浮窗倒计时（原生 RestOverlay）：休息时把倒计时贴在屏幕上，不必依赖通知栏。
+            权限是 Android 的"显示在其他应用上层"，只能在系统设置里授予，所以这里是一行动作
+            而不是开关——授权后由休息计时器自动显示，点卡片回到 App。 */}
+        {android && (
+          <Row icon="timer" iconTint="var(--yellow)" title={t('Floating rest countdown')}
+            subtitle={overlayOK
+              ? t('On. While you rest, the countdown floats over other apps; tap the card to come back.')
+              : t('Needs the “display over other apps” permission.')}
+            accessory={overlayOK ? undefined : 'chevron'}
+            onClick={overlayOK ? undefined : () => requestOverlay().then(setOverlayOK)} />
         )}
         {/* 'full'/'mini' is also what the tap-toggle on the workout animation writes; 'off' hides
             workout media entirely (library, detail sheet and picker thumbs are unaffected).

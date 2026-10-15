@@ -26,6 +26,7 @@ public class RestTimerService extends Service {
     private String minusLabel = "\u2212 15s";
     private String plusLabel = "+ 15s";
     private String skipLabel = "Skip";
+    private String overlayTitle = "Rest";
     private int accent = 0xFF30D158;
     private int ink = 0xFF000000;
     private PowerManager.WakeLock cpu;
@@ -102,6 +103,7 @@ public class RestTimerService extends Service {
         minusLabel = text(intent, "minus", minusLabel);
         plusLabel = text(intent, "plus", plusLabel);
         skipLabel = text(intent, "skip", skipLabel);
+        overlayTitle = text(intent, "title", overlayTitle);
         if (intent != null && intent.hasExtra("accent")) accent = intent.getIntExtra("accent", accent);
         if (intent != null && intent.hasExtra("ink")) ink = intent.getIntExtra("ink", ink);
         handler.removeCallbacks(tick);
@@ -115,6 +117,7 @@ public class RestTimerService extends Service {
         handler.removeCallbacks(tick);
         releaseCpu();
         endsAt = 0;
+        RestOverlay.hide();
         stopForegroundCompat();
         super.onDestroy();
     }
@@ -183,6 +186,7 @@ public class RestTimerService extends Service {
      */
     private void reachEnd() {
         running = false;
+        RestOverlay.hide();
         RestAlert.fireFromCountdown(getApplicationContext(), endsAt);
     }
 
@@ -211,6 +215,7 @@ public class RestTimerService extends Service {
 
     private void finishSkip() {
         running = false;
+        RestOverlay.hide();
         handler.removeCallbacks(tick);
         releaseCpu();
         RestAlert.cancelAlarmOnly(this, RestAlert.NOTIFICATION_ID);
@@ -234,6 +239,8 @@ public class RestTimerService extends Service {
             } else {
                 startForeground(RestAlert.COUNTDOWN_ID, n);
             }
+            // 悬浮窗倒计时：授权了才出现，没授权这里静默跳过（通知栏那条照旧）
+            RestOverlay.show(this, overlayTitle, left, totalMs, accent, ink);
         } catch (Exception e) {
             stopSelf();
         }

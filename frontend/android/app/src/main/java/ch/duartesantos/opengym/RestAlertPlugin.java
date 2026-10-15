@@ -43,6 +43,32 @@ public class RestAlertPlugin extends Plugin {
         inFront = false;
     }
 
+    /**
+     * 悬浮窗倒计时（RestOverlay）的权限状态。JS 侧用它决定设置页显示"已开启"还是"去授权"。
+     */
+    @PluginMethod
+    public void canDrawOverlay(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("granted", RestOverlay.canDraw(getContext()));
+        call.resolve(ret);
+    }
+
+    /** 跳系统设置页让用户授予"显示在其他应用上层"。 */
+    @PluginMethod
+    public void requestOverlayPermission(PluginCall call) {
+        RestOverlay.requestPermission(getContext());
+        JSObject ret = new JSObject();
+        ret.put("granted", RestOverlay.canDraw(getContext()));
+        call.resolve(ret);
+    }
+
+    /** 手动隐藏（比如用户关掉了悬浮窗开关）。 */
+    @PluginMethod
+    public void hideOverlay(PluginCall call) {
+        RestOverlay.hide();
+        call.resolve();
+    }
+
     static boolean appInFront() {
         return inFront;
     }

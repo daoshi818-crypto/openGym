@@ -90,6 +90,37 @@ const restPlugin = () => pluginP || (pluginP = (async () => {
   return { RestAlert: registerPlugin('RestAlert') }
 })().catch(() => null))
 
+// 悬浮窗倒计时（原生 RestOverlay）：休息时贴在屏幕上，不依赖通知栏。
+// 权限是 Android 的"显示在其他应用上层"（SYSTEM_ALERT_WINDOW），只能在设置页里由用户授予。
+// 非 Android 平台一律返回 null/false，设置页据此不显示这一项。
+
+/** 权限是否已授予；null = 这台设备不支持（网页/iOS）。 */
+export async function overlayStatus() {
+  const p = await restPlugin()
+  if (!p) return null
+  try {
+    const r = await p.RestAlert.canDrawOverlay()
+    return !!r.granted
+  } catch { return null }
+}
+
+/** 跳系统设置页请求授权，返回授权后的状态。 */
+export async function requestOverlay() {
+  const p = await restPlugin()
+  if (!p) return false
+  try {
+    const r = await p.RestAlert.requestOverlayPermission()
+    return !!r.granted
+  } catch { return false }
+}
+
+/** 关掉开关时立即移除正在显示的悬浮窗。 */
+export async function hideOverlay() {
+  const p = await restPlugin()
+  if (!p) return
+  try { await p.RestAlert.hideOverlay() } catch { /* 没显示过就无所谓 */ }
+}
+
 // Resolves true only when an Android alarm was scheduled. Callers use false as
 // "fall back to the server push" — web, iOS, and a failed schedule.
 export function armRestAlert(at, opts = {}) {
