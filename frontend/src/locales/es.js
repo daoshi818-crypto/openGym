@@ -2242,4 +2242,17 @@ export default {
   'Your sports watch, calling you back.': 'Tu reloj deportivo te llama de vuelta.',
   'Coach wants you back on the bar.': 'El coach te quiere de vuelta en la barra.',
   'Gentle, for headphones or a quiet room.': 'Suave, para auriculares o una sala tranquila.',
+  // [fork] new UI strings: English placeholder until translated
+  "Floating countdown style": "Floating countdown style",
+  "Card": "Card",
+  "Ring": "Ring",
+  "Shows over other apps when you leave the app during a rest; tap the card to come back.": "Shows over other apps when you leave the app during a rest; tap the card to come back.",
+  "Needs the “display over other apps” permission.": "Needs the “display over other apps” permission.",
+  "Floating rest countdown": "Floating rest countdown",
+  "Connect watch": "Connect watch",
+  "Connected. Start a workout and it lands on the watch.": "Connected. Start a workout and it lands on the watch.",
+  "Looking for the watch… Open the training app on the watch.": "Looking for the watch… Open the training app on the watch.",
+  "Bluetooth is off. Turn it on and try again.": "Bluetooth is off. Turn it on and try again.",
+  "Bluetooth permission is needed.": "Bluetooth permission is needed.",
+  "Tap to pair. The watch shows your plan during a workout and records a set with one tap.": "Tap to pair. The watch shows your plan during a workout and records a set with one tap.",
 }

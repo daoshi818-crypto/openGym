@@ -38,7 +38,8 @@ describe('autoLang', () => {
   it('puts DEFAULT_LANG before the browser, the browser before English', () => {
     expect(autoLang(fresh, { default_lang: 'pt-BR' }, ['de-DE'])).toBe('pt-BR')
     expect(autoLang(fresh, {}, ['nl-NL', 'de-DE'])).toBe('de')
-    expect(autoLang(fresh, {}, ['nl-NL'])).toBe('en')
+    // [fork] 兜底语言改成简体中文（上游是 'en'）
+    expect(autoLang(fresh, {}, ['nl-NL'])).toBe('zh')
     expect(autoLang(fresh, { default_lang: 'xx' }, ['fr-FR'])).toBe('fr')
   })
 })

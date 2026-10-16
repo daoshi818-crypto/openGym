@@ -2242,4 +2242,17 @@ export default {
   'Your sports watch, calling you back.': 'आपकी स्पोर्ट्स घड़ी आपको वापस बुला रही है।',
   'Coach wants you back on the bar.': 'कोच आपको बार पर वापस चाहते हैं।',
   'Gentle, for headphones or a quiet room.': 'धीमी, हेडफ़ोन या शांत कमरे के लिए।',
+  // [fork] new UI strings: English placeholder until translated
+  "Floating countdown style": "Floating countdown style",
+  "Card": "Card",
+  "Ring": "Ring",
+  "Shows over other apps when you leave the app during a rest; tap the card to come back.": "Shows over other apps when you leave the app during a rest; tap the card to come back.",
+  "Needs the “display over other apps” permission.": "Needs the “display over other apps” permission.",
+  "Floating rest countdown": "Floating rest countdown",
+  "Connect watch": "Connect watch",
+  "Connected. Start a workout and it lands on the watch.": "Connected. Start a workout and it lands on the watch.",
+  "Looking for the watch… Open the training app on the watch.": "Looking for the watch… Open the training app on the watch.",
+  "Bluetooth is off. Turn it on and try again.": "Bluetooth is off. Turn it on and try again.",
+  "Bluetooth permission is needed.": "Bluetooth permission is needed.",
+  "Tap to pair. The watch shows your plan during a workout and records a set with one tap.": "Tap to pair. The watch shows your plan during a workout and records a set with one tap.",
 }
