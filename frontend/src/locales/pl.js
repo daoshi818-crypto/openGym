@@ -1,5 +1,10 @@
 // Polish UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  'Training calendar': 'Kalendarz treningów',
+  'Trends': 'Trendy',
+  'Training days': 'Dni treningowe',
+  'Muscle groups': 'Grupy mięśniowe',
+  'No workouts on this day.': 'Brak treningów w tym dniu.',
   'Confirm': 'Potwierdź',
   'Cancel': 'Anuluj',
   'Press back again to exit': 'Naciśnij wstecz ponownie, aby wyjść',

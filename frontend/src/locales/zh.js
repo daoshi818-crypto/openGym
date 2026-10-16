@@ -1,5 +1,10 @@
 // Simplified Chinese UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  'Training calendar': '训练日历',
+  'Trends': '趋势统计',
+  'Training days': '训练天数',
+  'Muscle groups': '肌群数量',
+  'No workouts on this day.': '这一天没有训练记录。',
   'Confirm': '确认',
   'Cancel': '取消',
   'Press back again to exit': '再按一次返回退出',

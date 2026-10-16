@@ -1,5 +1,10 @@
 // Ukrainian UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  'Training calendar': 'Календар тренувань',
+  'Trends': 'Тенденції',
+  'Training days': 'Дні тренувань',
+  'Muscle groups': 'Групи м’язів',
+  'No workouts on this day.': 'Цього дня тренувань немає.',
   'Confirm': 'Підтвердити',
   'Cancel': 'Скасувати',
   'Press back again to exit': 'Натисни «Назад» ще раз, щоб вийти',

@@ -1,4 +1,9 @@
 export default {
+  'Training calendar': '訓練日曆',
+  'Trends': '趨勢統計',
+  'Training days': '訓練天數',
+  'Muscle groups': '肌群數量',
+  'No workouts on this day.': '這一天沒有訓練紀錄。',
   'Confirm': '確認',
   'Cancel': '取消',
   'Press back again to exit': '再按一次返回以退出',

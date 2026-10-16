@@ -9,6 +9,7 @@ import { t, exerciseNameFor, exerciseNameClass, getLang } from '../lib/i18n.js'
 import { bwSheet, goalSheet, calendarSheet, dayOverrideSheet, workoutDetailSheet, exerciseHistorySheet, WorkoutRow, bwDeltaColor, weighInsSheet } from '../sheets.jsx'
 import LineChart from '../components/LineChart.jsx'
 import Heatmap from '../components/Heatmap.jsx'
+import TrainingCalendar from '../components/TrainingCalendar.jsx'
 import Icon from '../components/Icon.jsx'
 import BodyMap, { BodyMapLegend } from '../components/BodyMap.jsx'
 import { loadOfWeeklyPlan, loadOfWorkouts, muscleBalanceWindow, rankOf, MUSCLES, MUSCLE_NAME, musclesOf } from '../lib/muscles.js'
@@ -407,6 +408,7 @@ export function WeeklyPlanVolume({ S }) {
 export default function Stats() {
   const nav = useNavigate()
   const S = useStore(s => s.S)
+  const [view, setView] = useState(() => /[?&]focus=weekly-volume\b/.test(window.location.hash || '') ? 'trends' : 'calendar')
   const [range, setRange] = useState(90)
   // Plan's "Weekly muscle volume" row lands here (/stats?focus=weekly-volume). The router is a
   // HashRouter, so the query sits in the hash; the scroll waits a frame for the page's own
@@ -636,6 +638,15 @@ export default function Stats() {
     <div className="hdr"><div><h1>{t('Stats')}</h1><div className="sub">{t('Progress & history')}</div></div>
       <button className="iconbtn" onClick={() => nav('/history')} aria-label={t('History')}><Icon name="history" /></button></div>
 
+    <Segmented className="seg-range" value={view} onChange={setView}
+      options={[{ value: 'calendar', label: t('Training calendar') }, { value: 'trends', label: t('Trends') }]} />
+
+    <div hidden={view !== 'calendar'} className="card">
+      <TrainingCalendar S={S} />
+    </div>
+
+    <div hidden={view !== 'trends'}>
+
     <div className="tiles">
       <div className="tile"><div className="l"><Icon name="dumbbell" />{t('Workouts')}</div><div className="v">{workouts.length}</div></div>
       <div className="tile"><div className="l"><Icon name="calendar" />{t('This month')}</div><div className="v">{monthW}</div></div>
@@ -752,5 +763,6 @@ export default function Stats() {
       </div>
       <div className="list">{[...workouts].reverse().slice(0, 6).map(w => <WorkoutRow key={w.id} w={w} onClick={() => workoutDetailSheet(w)} />)}</div>
     </>}
+    </div>
   </>
 }

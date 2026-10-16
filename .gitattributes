@@ -1,0 +1,2 @@
+# Vitest must load the CLI hashbang with an LF terminator on Windows too.
+frontend/scripts/check-mobile-bundle.mjs text eol=lf

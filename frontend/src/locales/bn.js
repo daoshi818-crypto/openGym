@@ -1,5 +1,10 @@
 // Bengali UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  'Training calendar': 'প্রশিক্ষণ ক্যালেন্ডার',
+  'Trends': 'প্রবণতা',
+  'Training days': 'প্রশিক্ষণের দিন',
+  'Muscle groups': 'পেশিগোষ্ঠী',
+  'No workouts on this day.': 'এই দিনে কোনো ওয়ার্কআউট নেই।',
   'Confirm': 'নিশ্চিত করুন',
   'Cancel': 'বাতিল',
   'Press back again to exit': 'বের হতে আবার ব্যাক চাপুন',

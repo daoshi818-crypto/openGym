@@ -32,8 +32,8 @@ const session = (ago, w) => {
 let root, host
 afterEach(() => { act(() => root.unmount()); host.remove(); mocks.charts = [] })
 
-function mount(workouts) {
-  mocks.S = { body: 'male', effort: 'none', unit: 'kg', targetW: null, bodyweight: [], routines: [], exWeights: {}, workouts }
+function mount(workouts, extra = {}) {
+  mocks.S = { body: 'male', effort: 'none', unit: 'kg', targetW: null, bodyweight: [], routines: [], exWeights: {}, workouts, ...extra }
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
@@ -45,6 +45,22 @@ const exCard = () => [...host.querySelectorAll('.card')].find(c => c.querySelect
 const press = (scope, label) => act(() => [...scope.querySelectorAll('.seg button')].find(b => b.textContent === label).click())
 
 describe('Stats: exercise progress date range', () => {
+  it('defaults to calendar and preserves trend filters when switching views', () => {
+    mount([session(10, 75), session(3, 80)])
+    const calendar = host.querySelector('[data-training-calendar]')
+    const trends = exCard()
+    expect(calendar).toBeTruthy()
+    expect(calendar.closest('[hidden]')).toBeNull()
+    expect(trends.closest('[hidden]')).toBeTruthy()
+    act(() => [...host.querySelectorAll('.seg button')].find(button => button.textContent === 'Trends').click())
+    expect(calendar.closest('[hidden]')).toBeTruthy()
+    expect(trends.closest('[hidden]')).toBeNull()
+    press(trends, '1M')
+    act(() => [...host.querySelectorAll('.seg button')].find(button => button.textContent === 'Training calendar').click())
+    act(() => [...host.querySelectorAll('.seg button')].find(button => button.textContent === 'Trends').click())
+    expect([...trends.querySelectorAll('.seg button.on')].map(button => button.textContent)).toContain('1M')
+  })
+
   it('starts on All and cuts the top-set line to the picked range, Best staying all-time', () => {
     mount([session(400, 100), session(200, 90), session(60, 70), session(10, 75), session(3, 80)])
     const card = exCard()
@@ -89,4 +105,30 @@ describe('Stats: exercise progress date range', () => {
     press(exCard(), '1M')
     expect([...bwCard.querySelectorAll('.seg button.on')].map(b => b.textContent)).toEqual(['3M'])
   })
+})
+
+
+it('keeps the selected month and day across trend changes', () => {
+  mount([session(10, 75), session(3, 80)])
+  act(() => host.querySelector('button[aria-label="Previous month"]').click())
+  const title = host.querySelector('.training-calendar-title h2').textContent
+  const cell = host.querySelector('.training-calendar-day:not(.outside)')
+  act(() => cell.click())
+  const selected = cell.getAttribute('aria-label')
+  press(host, 'Trends')
+  press(exCard(), '1M')
+  press(host, 'Training calendar')
+  expect(host.querySelector('.training-calendar-title h2').textContent).toBe(title)
+  expect(host.querySelector('.training-calendar-day[aria-pressed="true"]').getAttribute('aria-label')).toBe(selected)
+})
+
+it('opens weekly-volume deep links in the visible trends view', () => {
+  const hash = window.location.hash
+  window.location.hash = '#/stats?focus=weekly-volume'
+  try {
+    mount([session(10, 75)], { routines: [{ id: 'push', name: 'Push', ex: [{ id: BENCH, sets: 2 }] }], week: {} })
+    expect(exCard().closest('[hidden]')).toBeNull()
+    expect(host.querySelector('[data-training-calendar]').closest('[hidden]')).toBeTruthy()
+    expect(host.querySelector('#weekly-volume')).toBeTruthy()
+  } finally { window.location.hash = hash }
 })

@@ -1,5 +1,10 @@
 // Thai UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  'Training calendar': 'ปฏิทินการออกกำลังกาย',
+  'Trends': 'แนวโน้ม',
+  'Training days': 'วันที่ออกกำลังกาย',
+  'Muscle groups': 'กลุ่มกล้ามเนื้อ',
+  'No workouts on this day.': 'ไม่มีการออกกำลังกายในวันนี้',
   // --- generic ---
   'Confirm': 'ยืนยัน',
   'Cancel': 'ยกเลิก',

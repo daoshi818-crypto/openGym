@@ -235,5 +235,14 @@ export default function Home() {
         <Icon name="calendar" className="chev" style={{ fontSize: 20 }} />
       </div>
     </div>
+    <div className="card tappable" style={{ cursor: 'pointer' }} {...tappable(() => nav('/stats'))}>
+      <div className="row between">
+        <div>
+          <div className="ttl">{t('Training calendar')}</div>
+          <div className="muted small">{t('Progress & history')}</div>
+        </div>
+        <Icon name="chevronRight" className="chev" />
+      </div>
+    </div>
   </div>
 }

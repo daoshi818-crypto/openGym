@@ -27,7 +27,7 @@ import android.widget.TextView;
  * 通知栏那条照旧。由 RestTimerService 驱动：休息开始时 show()，每秒 update()，结束/跳过时 hide()。
  *
  * 两种样式（Settings → 悬浮窗样式，S.overlayStyle）：
- *   'card'  = 圆角卡片：小标题 + 大倒计时 + 线性进度条（原样式）
+ *   'card'  = 圆角卡片：状态胶囊 + 大倒计时 + 线性进度条
  *   'ring'  = 圆形进度环：环内大倒计时，环按剩余时间走
  *
  * 通用规则：
@@ -41,6 +41,8 @@ public class RestOverlay {
     private static TextView timeView;
     private static TextView labelView;
     private static TextView nextView;
+    private static View statusPill;
+    private static View statusDot;
     private static RingDrawable ring;
     private static View bar;
     private static WindowManager.LayoutParams lp;
@@ -77,6 +79,27 @@ public class RestOverlay {
         return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, ctx.getResources().getDisplayMetrics());
     }
 
+    private static GradientDrawable circle(int color) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(color);
+        drawable.setShape(GradientDrawable.OVAL);
+        return drawable;
+    }
+
+    private static GradientDrawable accentWash(int color) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(Color.argb(36, Color.red(color), Color.green(color), Color.blue(color)));
+        drawable.setCornerRadius(1000);
+        return drawable;
+    }
+
+    private static GradientDrawable progressFill(Context ctx, int color) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(color);
+        drawable.setCornerRadius(dp(ctx, 4));
+        return drawable;
+    }
+
     /** 设置页切换样式时调用：正在显示的悬浮窗按新样式重建。 */
     public static void setStyle(Context ctx, String s) {
         style = "ring".equals(s) ? "ring" : "card";
@@ -94,6 +117,8 @@ public class RestOverlay {
             timeView = null;
             labelView = null;
             nextView = null;
+            statusPill = null;
+            statusDot = null;
             ring = null;
             bar = null;
             wm = null;
@@ -114,6 +139,16 @@ public class RestOverlay {
             int secs = (int) ((left + 999) / 1000);
             timeView.setText(String.format(java.util.Locale.US, "%d:%02d", secs / 60, secs % 60));
             labelView.setText(title == null || title.isEmpty() ? "Rest" : title);
+            if ("ring".equals(style)) {
+                timeView.setTextColor(lastAccent);
+                if (ring != null) ring.setFillColor(lastAccent);
+            } else {
+                timeView.setTextColor(Color.WHITE);
+                if (statusPill != null) statusPill.setBackground(accentWash(lastAccent));
+                if (statusDot != null) statusDot.setBackground(circle(lastAccent));
+                labelView.setTextColor(lastAccent);
+                if (bar != null) bar.setBackground(progressFill(ctx, lastAccent));
+            }
             float frac = lastTotalMs > 0 ? Math.min(1f, (float) left / lastTotalMs) : 0f;
             if (ring != null) {
                 ring.setLevel((int) (frac * 10000f));
@@ -209,39 +244,63 @@ public class RestOverlay {
             frame.setBackground(bg);
             root = frame;
         } else {
-            // 卡片样式：小标题 + 大倒计时 + 线性进度条（原样式）
+            // Card styling follows the app's neutral surfaces and uses its accent sparingly.
             LinearLayout linear = new LinearLayout(ctx);
             linear.setOrientation(LinearLayout.VERTICAL);
             linear.setGravity(Gravity.CENTER_HORIZONTAL);
-            linear.setPadding(dp(ctx, 18), dp(ctx, 12), dp(ctx, 18), dp(ctx, 12));
+            linear.setPadding(dp(ctx, 20), dp(ctx, 14), dp(ctx, 20), dp(ctx, 16));
             GradientDrawable bg = new GradientDrawable();
-            bg.setColor(0xF20C0E12);
-            bg.setCornerRadius(dp(ctx, 20));
-            bg.setStroke(dp(ctx, 1), 0x33FFFFFF);
+            bg.setColor(0xFF1C1C1E);
+            bg.setCornerRadius(dp(ctx, 18));
+            bg.setStroke(dp(ctx, 1), 0x1AFFFFFF);
             linear.setBackground(bg);
 
+            LinearLayout status = new LinearLayout(ctx);
+            status.setOrientation(LinearLayout.HORIZONTAL);
+            status.setGravity(Gravity.CENTER);
+            status.setPadding(dp(ctx, 10), dp(ctx, 5), dp(ctx, 10), dp(ctx, 5));
+            status.setBackground(accentWash(lastAccent));
+            statusPill = status;
+
+            statusDot = new View(ctx);
+            statusDot.setBackground(circle(lastAccent));
+            LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(ctx, 7), dp(ctx, 7));
+            dotLp.setMarginEnd(dp(ctx, 7));
+            status.addView(statusDot, dotLp);
+
             labelView = new TextView(ctx);
-            labelView.setTextColor(0xFF9AA0A6);
+            labelView.setTextColor(lastAccent);
             labelView.setTextSize(12);
-            linear.addView(labelView);
+            labelView.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL));
+            labelView.setText(title == null || title.isEmpty() ? "Rest" : title);
+            status.addView(labelView);
+            linear.addView(status);
 
             timeView = new TextView(ctx);
-            timeView.setTextColor(lastAccent);
-            timeView.setTextSize(34);
-            timeView.setTypeface(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD);
+            timeView.setTextColor(Color.WHITE);
+            timeView.setTextSize(38);
+            timeView.setTypeface(android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD));
+            timeView.setFontFeatureSettings("tnum");
+            LinearLayout.LayoutParams timeLp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            timeLp.topMargin = dp(ctx, 6);
+            timeView.setLayoutParams(timeLp);
             linear.addView(timeView);
 
             LinearLayout track = new LinearLayout(ctx);
             track.setId(BAR_TRACK_ID);
-            track.setBackgroundColor(0x22FFFFFF);
-            LinearLayout.LayoutParams trackLp = new LinearLayout.LayoutParams(dp(ctx, 160), dp(ctx, 4));
-            trackLp.topMargin = dp(ctx, 6);
+            GradientDrawable trackBg = new GradientDrawable();
+            trackBg.setColor(0x22FFFFFF);
+            trackBg.setCornerRadius(dp(ctx, 4));
+            track.setBackground(trackBg);
+            LinearLayout.LayoutParams trackLp = new LinearLayout.LayoutParams(dp(ctx, 184), dp(ctx, 4));
+            trackLp.topMargin = dp(ctx, 8);
             track.setLayoutParams(trackLp);
 
             bar = new View(ctx);
             bar.setId(BAR_FILL_ID);
-            bar.setBackgroundColor(lastAccent);
-            bar.setLayoutParams(new LinearLayout.LayoutParams(dp(ctx, 160), dp(ctx, 4)));
+            bar.setBackground(progressFill(ctx, lastAccent));
+            bar.setLayoutParams(new LinearLayout.LayoutParams(dp(ctx, 184), dp(ctx, 4)));
             track.addView(bar);
             linear.addView(track);
             root = linear;
@@ -313,6 +372,8 @@ public class RestOverlay {
         timeView = null;
         labelView = null;
         nextView = null;
+        statusPill = null;
+        statusDot = null;
         ring = null;
         bar = null;
         wm = null;

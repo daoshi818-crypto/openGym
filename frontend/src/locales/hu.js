@@ -1,5 +1,10 @@
 // Hungarian UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  'Training calendar': 'Edzésnaptár',
+  'Trends': 'Trendek',
+  'Training days': 'Edzésnapok',
+  'Muscle groups': 'Izomcsoportok',
+  'No workouts on this day.': 'Ezen a napon nincs edzés.',
   // --- generic ---
   'Confirm': 'Megerősítés',
   'Cancel': 'Mégse',

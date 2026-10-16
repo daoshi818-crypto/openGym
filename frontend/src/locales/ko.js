@@ -1,5 +1,10 @@
 // Korean UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  'Training calendar': '운동 달력',
+  'Trends': '추세',
+  'Training days': '운동한 날',
+  'Muscle groups': '근육군',
+  'No workouts on this day.': '이날에는 운동 기록이 없습니다.',
   'Confirm': '확인',
   'Cancel': '취소',
   'Press back again to exit': '뒤로를 한 번 더 누르면 종료됩니다',

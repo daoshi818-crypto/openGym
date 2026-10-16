@@ -1,5 +1,10 @@
 // Turkish UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  'Training calendar': 'Antrenman takvimi',
+  'Trends': 'Eğilimler',
+  'Training days': 'Antrenman günleri',
+  'Muscle groups': 'Kas grupları',
+  'No workouts on this day.': 'Bu gün antrenman yok.',
   'Confirm': 'Onayla',
   'Cancel': 'İptal',
   'Press back again to exit': 'Çıkmak için geri tuşuna tekrar basın',

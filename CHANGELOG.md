@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.5.1 (2026-10-16)
+
+- **Rest overlay card** now matches openGym's app style with a neutral dark surface, accent status
+  pill, large readable countdown, and rounded progress bar.
+- **Training calendar** is available from Home and Stats with monthly workout details and trends.
+
 ## v1.5.0 (2026-10-16)
 
 Simplified Chinese localization improvements for the AI Coach.

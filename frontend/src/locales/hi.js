@@ -1,5 +1,10 @@
 // Hindi UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  'Training calendar': 'प्रशिक्षण कैलेंडर',
+  'Trends': 'रुझान',
+  'Training days': 'प्रशिक्षण के दिन',
+  'Muscle groups': 'मांसपेशी समूह',
+  'No workouts on this day.': 'इस दिन कोई वर्कआउट नहीं है।',
   'Confirm': 'पुष्टि करें',
   'Cancel': 'रद्द करें',
   'Press back again to exit': 'बाहर निकलने के लिए फिर से बैक दबाएँ',

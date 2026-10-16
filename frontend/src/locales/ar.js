@@ -1,5 +1,10 @@
 // Arabic UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  'Training calendar': 'تقويم التمارين',
+  'Trends': 'الاتجاهات',
+  'Training days': 'أيام التدريب',
+  'Muscle groups': 'مجموعات العضلات',
+  'No workouts on this day.': 'لا توجد تمارين في هذا اليوم.',
   'Confirm': 'تأكيد',
   'Cancel': 'إلغاء',
   'Press back again to exit': 'اضغط زر الرجوع مرة أخرى للخروج',

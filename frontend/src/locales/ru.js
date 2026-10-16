@@ -1,5 +1,10 @@
 // Russian UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  'Training calendar': 'Календарь тренировок',
+  'Trends': 'Тенденции',
+  'Training days': 'Дни тренировок',
+  'Muscle groups': 'Группы мышц',
+  'No workouts on this day.': 'В этот день тренировок нет.',
   'Confirm': 'Подтвердить',
   'Cancel': 'Отмена',
   'Press back again to exit': 'Нажмите «Назад» ещё раз, чтобы выйти',

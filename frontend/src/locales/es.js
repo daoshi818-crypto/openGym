@@ -1,5 +1,10 @@
 // Spanish UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  'Training calendar': 'Calendario de entrenamiento',
+  'Trends': 'Tendencias',
+  'Training days': 'Días de entrenamiento',
+  'Muscle groups': 'Grupos musculares',
+  'No workouts on this day.': 'No hay entrenamientos este día.',
   'Confirm': 'Confirmar',
   'Cancel': 'Cancelar',
   'Press back again to exit': 'Pulsa atrás otra vez para salir',

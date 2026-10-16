@@ -84,3 +84,16 @@ describe('Home — the way to the Start screen when a plan already owns today', 
     expect(row.querySelector('.tag').textContent).toBe('Resume')
   })
 })
+
+
+it('keeps the existing streak calendar action and links the new entry to Stats', async () => {
+  const { calendarSheet } = await import('../sheets.jsx')
+  calendarSheet.mockClear()
+  setS(); mount()
+  const card = [...host.querySelectorAll('.card')].find(el => el.textContent.includes('Training calendar'))
+  act(() => card.click())
+  expect(nav).toHaveBeenCalledWith('/stats')
+  const streak = [...host.querySelectorAll('.card')].find(el => el.textContent.includes('week streak'))
+  act(() => streak.click())
+  expect(calendarSheet).toHaveBeenCalledTimes(1)
+})
