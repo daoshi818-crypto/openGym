@@ -11,7 +11,7 @@
  * and appearance settings, and every other profile's everything.
  */
 import { glyphStr } from './glyphs.js';
-import { LIBRARY, LIB_BY_ID, libraryHas, libraryName, librarySlice, isStretch, MAX_LIBRARY } from './library.js';
+import { LIBRARY, LIB_BY_ID, libraryHas, libraryName, libraryDisplayName, librarySlice, isStretch, MAX_LIBRARY } from './library.js';
 
 export const CONTRACT = 1;
 // Bounds from FR-22. A review reads a training block, not a training career: more history
@@ -195,8 +195,8 @@ export function stallCount(sessions) {
 }
 
 /* ---------- plan cleaning (mirrors plan-share.js cleanEx) ---------- */
-function cleanEx(e) {
-  const o = { id: ident(e.id), name: LIB_BY_ID.get(e.id)?.n || null, sets: num(e.sets) };
+function cleanEx(e, lang) {
+  const o = { id: ident(e.id), name: libraryDisplayName(e.id, lang) || null, sets: num(e.sets) };
   const mode = modeOf(e, LIB_BY_ID.get(e.id));
   o.mode = mode;
   const put = (k, v) => { if (num(v) !== undefined) o[k] = v; };
@@ -259,7 +259,7 @@ export function canonicalPlan(S) {
   };
 }
 
-export function cleanPlan(S) {
+export function cleanPlan(S, lang = 'en') {
   // Names are typed by the person, so they are cut like the profile's text. The icon is held to
   // what the validator lets a plan carry (an icon key or a legacy emoji, core/glyphs.js): it is
   // the client's state, and free text in it would ride into every prompt.
@@ -267,7 +267,7 @@ export function cleanPlan(S) {
     id: ident(r.id), name: r.name == null ? r.name : text(String(r.name), NAME_MAX),
     emoji: r.emoji == null ? r.emoji : glyphStr(String(r.emoji)),
     ...(policy(r.prog) ? { prog: r.prog } : {}),
-    ex: list(r.ex).filter(e => e && typeof e === 'object').map(cleanEx)
+    ex: list(r.ex).filter(e => e && typeof e === 'object').map(e => cleanEx(e, lang))
   }));
   // A weekday holds routine ids, so each entry is bounded like one.
   const week = {};
@@ -276,7 +276,12 @@ export function cleanPlan(S) {
 }
 
 // The catalogue lives in library.js; re-exported so older imports keep resolving.
-export { LIBRARY, MAX_LIBRARY, libraryHas, libraryName, librarySlice, isStretch };
+export { LIBRARY, MAX_LIBRARY, libraryHas, libraryName, libraryDisplayName, librarySlice, isStretch };
+
+const exerciseName = (S, id, lang) => {
+  const custom = list(S?.customEx).find(e => e && e.id === id);
+  return libraryDisplayName(id, lang) || (custom && text(custom.n, NAME_MAX)) || id;
+};
 
 /* ---------- effort scale (mirrors history.js effortOf) ---------- */
 const effortOf = S => {
@@ -295,7 +300,7 @@ export function reviewWindow(S, since) {
   return all.filter(w => w.d >= from).slice(-MAX_SESSIONS);
 }
 
-function aggregates(S, workouts) {
+function aggregates(S, workouts, lang) {
   // Per-exercise stall/deload picture, computed over the same sessions the engine would see.
   const byEx = new Map();
   const planCfg = new Map();
@@ -309,7 +314,7 @@ function aggregates(S, workouts) {
   for (const [id, sessions] of byEx) {
     const stalls = stallCount(sessions);
     if (stalls > 0 || sessions.length >= 3) {
-      exercises.push({ id: ident(id), name: libraryName(id), sessions: sessions.length, stalls, lastOk: !!sessions[sessions.length - 1]?.ok });
+      exercises.push({ id: ident(id), name: exerciseName(S, id, lang), sessions: sessions.length, stalls, lastOk: !!sessions[sessions.length - 1]?.ok });
     }
   }
 
@@ -377,7 +382,7 @@ const targetOf = en => (en.target && typeof en.target === 'object'
   : null);
 
 /** One older workout as a summary: what was done, the top set, whether targets were hit. */
-function compactWorkout(w) {
+function compactWorkout(S, w, lang) {
   return {
     d: day(w.d),
     name: word(w.name, NAME_MAX),
@@ -394,7 +399,7 @@ function compactWorkout(w) {
       const target = targetOf(en);
       return {
         id: ident(en.id),
-        name: libraryName(en.id),
+        name: exerciseName(S, en.id, lang),
         done: done.length + '/' + sets.length,
         ...(target ? { target: fmtSet({ w: target.weight, r: target.reps, sec: target.sec }) } : {}),
         ...(top ? { top: fmtSet(top) } : {})
@@ -404,7 +409,7 @@ function compactWorkout(w) {
 }
 
 /** One workout, reduced to what a coach reads. */
-function cleanWorkout(w) {
+function cleanWorkout(S, w, lang) {
   return {
     d: day(w.d),
     name: word(w.name, NAME_MAX),
@@ -414,7 +419,7 @@ function cleanWorkout(w) {
     prs: list(w.prs).length,
     entries: entriesOf(w).map(en => ({
       id: ident(en.id),
-      name: libraryName(en.id),
+      name: exerciseName(S, en.id, lang),
       target: targetOf(en),
       sets: setsOf(en).map(cleanSet)
     }))
@@ -431,7 +436,7 @@ function weighIns(S, from, to) {
 /* The room's medians are computed on this server, but from other people's synced workouts —
    state their own clients wrote. cohort.js keeps only catalogue exercises; this copy bounds
    every field again, so what reaches one person's prompt never depends on that filter alone. */
-function cleanCohort(c) {
+function cleanCohort(c, lang) {
   if (!c || typeof c !== 'object') return null;
   const spw = c.sessionsPerWeek && typeof c.sessionsPerWeek === 'object' ? c.sessionsPerWeek : {};
   return {
@@ -439,7 +444,7 @@ function cleanCohort(c) {
     people: num(c.people) ?? null,
     sessionsPerWeek: { median: num(spw.median) ?? null, you: num(spw.you) ?? null },
     exercises: list(c.exercises).filter(x => x && typeof x === 'object').map(x => ({
-      id: ident(x.id), name: word(x.name, NAME_MAX), median: num(x.median) ?? null, you: num(x.you) ?? null
+      id: ident(x.id), name: libraryDisplayName(x.id, lang) || word(x.name, NAME_MAX), median: num(x.median) ?? null, you: num(x.you) ?? null
     }))
   };
 }
@@ -483,6 +488,7 @@ export function build(S, opts = {}) {
   if (typeof opts.handle !== 'string' || !opts.handle) throw new Error('payload.build: opts.handle is required');
   const coach = S.coach || {};
   const profile = opts.intake || coach.profile || null;
+  const requestLang = langTag(opts.lang) || word(S.lang, 16) || 'en';
   const p = {
     coach_contract: CONTRACT,
     task: opts.kind === 'review' ? 'review' : opts.kind === 'debrief' ? 'debrief' : 'create',
@@ -491,13 +497,13 @@ export function build(S, opts = {}) {
       // Both are short codes in any real state; cut anyway, since the state is the client's.
       // `opts.lang` is the language the app is showing when it asked: a profile that never
       // picked one has it worked out per device and never stored (#303).
-      lang: langTag(opts.lang) || word(S.lang, 16) || 'en',
+      lang: requestLang,
       unit: word(S.unit, 8) || 'kg',
       effortScale: effortOf(S),
       today: iso(new Date())
     },
     coachProfile: profile && typeof profile === 'object' ? cleanProfile(profile) : null,
-    plan: cleanPlan(S)
+    plan: cleanPlan(S, requestLang)
   };
   // Someone who set up a home gym under Settings → Equipment and left the Coach's own equipment
   // question empty was handed the whole catalogue, leverage machines and all. The profile they
@@ -524,10 +530,10 @@ export function build(S, opts = {}) {
       const all = (S.workouts || []).filter(x => x && x.d);
       const idx = all.indexOf(w);
       const previous = all.slice(0, idx).filter(x => x.name && x.name === w.name).slice(-3);
-      p.session = { id: ident(w.id) || null, ...cleanWorkout(w) };
-      p.previous = previous.map(cleanWorkout);
+      p.session = { id: ident(w.id) || null, ...cleanWorkout(S, w, requestLang) };
+      p.previous = previous.map(x => cleanWorkout(S, x, requestLang));
       const inSession = new Set(entriesOf(w).map(en => ident(en.id)));
-      const agg = aggregates(S, [w]);
+      const agg = aggregates(S, [w], requestLang);
       p.aggregates = { ...agg, exercises: agg.exercises.filter(e => inSession.has(e.id)) };
       // The four weeks before the session. A session whose date does not parse has no "before",
       // and used to throw here instead.
@@ -540,23 +546,25 @@ export function build(S, opts = {}) {
       p.session = null;
       p.previous = [];
     }
-    if (opts.cohort) p.cohort = cleanCohort(opts.cohort);
+    if (opts.cohort) p.cohort = cleanCohort(opts.cohort, requestLang);
   } else if (opts.kind === 'review') {
     const workouts = reviewWindow(S, coach.lastReview?.at ? String(coach.lastReview.at).slice(0, 10) : null);
     const detailFrom = Math.max(0, workouts.length - FULL_DETAIL_SESSIONS);
     p.window = {
       from: day(workouts[0]?.d),
       to: day(workouts[workouts.length - 1]?.d),
-      workouts: workouts.map((w, i) => (i >= detailFrom ? cleanWorkout(w) : compactWorkout(w)))
+      workouts: workouts.map((w, i) => (i >= detailFrom
+        ? cleanWorkout(S, w, requestLang)
+        : compactWorkout(S, w, requestLang)))
     };
-    p.aggregates = aggregates(S, workouts);
+    p.aggregates = aggregates(S, workouts, requestLang);
     p.bodyweight = { goal: num(S.targetW) ?? null, series: weighIns(S, p.window.from, null) };
     if (opts.note) p.userNote = String(opts.note).slice(0, MAX_NOTE_CHARS);
-    if (opts.cohort) p.cohort = cleanCohort(opts.cohort);
+    if (opts.cohort) p.cohort = cleanCohort(opts.cohort, requestLang);
     // A review names mostly what is already trained; 60 candidates is plenty for a swap.
-    p.library = librarySlice(S, p.coachProfile?.equipment, { keep: trainedIds(S, workouts), max: 60 });
+    p.library = librarySlice(S, p.coachProfile?.equipment, { keep: trainedIds(S, workouts), max: 60, lang: requestLang });
   } else {
-    p.library = librarySlice(S, p.coachProfile?.equipment, { keep: trainedIds(S, S.workouts || []) });
+    p.library = librarySlice(S, p.coachProfile?.equipment, { keep: trainedIds(S, S.workouts || []), lang: requestLang });
     // Creation for a returning user: what they have actually handled, so proposed baselines
     // start from evidence rather than optimism (B2/FR-20).
     const best = {};
@@ -567,7 +575,7 @@ export function build(S, opts = {}) {
       p.history = {
         sessions: (S.workouts || []).length,
         since: day((S.workouts || [])[0]?.d),
-        workingWeights: Object.entries(best).map(([id, w]) => ({ id: ident(id), name: libraryName(id), best: w }))
+        workingWeights: Object.entries(best).map(([id, w]) => ({ id: ident(id), name: exerciseName(S, id, requestLang), best: w }))
       };
     }
     if (opts.refine && opts.previous) {

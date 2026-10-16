@@ -15,7 +15,7 @@
  */
 import * as cfgStore from './config.js';
 import { readState, listUserIds, isSharing } from './jobs.js';
-import { libraryHas, libraryName } from './core/library.js';
+import { libraryHas, libraryName, libraryDisplayName } from './core/library.js';
 
 export const MIN_PEOPLE = 3;
 export const MAX_EXERCISES = 12;
@@ -84,7 +84,7 @@ function rows() {
 }
 
 /** Everything the sheet shows, in the requester's unit. */
-export function computeCohort(uid) {
+export function computeCohort(uid, lang = 'en') {
   if (!isSharing(uid)) return { ok: false, enabled: true, sharing: false };
   const all = rows();
   const people = all.size;
@@ -104,7 +104,7 @@ export function computeCohort(uid) {
   }
   const exercises = [...byEx.entries()]
     .filter(([, list]) => list.length >= MIN_PEOPLE)
-    .map(([id, list]) => ({ id, name: libraryName(id), people: list.length, medianKg: median(list), youKg: me?.best[id] ?? null, list }))
+    .map(([id, list]) => ({ id, name: libraryDisplayName(id, lang), people: list.length, medianKg: median(list), youKg: me?.best[id] ?? null, list }))
     .sort((a, b) => b.people - a.people || a.name.localeCompare(b.name))
     .slice(0, MAX_EXERCISES);
 
@@ -127,7 +127,7 @@ export function computeCohort(uid) {
 }
 
 /** The compact form a prompt gets — kg regardless of the requester's unit, or null. */
-export function cohortForPayload(uid) {
+export function cohortForPayload(uid, lang = 'en') {
   try {
     if (!cfgStore.load().community || !isSharing(uid)) return null;
     const all = rows();
@@ -140,7 +140,7 @@ export function cohortForPayload(uid) {
     }
     const exercises = [...byEx.entries()]
       .filter(([, list]) => list.length >= MIN_PEOPLE)
-      .map(([id, list]) => ({ id, name: libraryName(id), median: round1(median(list)), you: me?.best[id] != null ? round1(me.best[id]) : null }))
+      .map(([id, list]) => ({ id, name: libraryDisplayName(id, lang) || libraryName(id), median: round1(median(list)), you: me?.best[id] != null ? round1(me.best[id]) : null }))
       .sort((a, b) => (b.you != null) - (a.you != null) || a.name.localeCompare(b.name))
       .slice(0, MAX_EXERCISES);
     return {

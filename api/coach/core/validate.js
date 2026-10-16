@@ -14,7 +14,7 @@
  * model verbatim for the one repair round (FR-48) — and a list of six problems produces a
  * better second attempt than the first of them does.
  */
-import { libraryHas, libraryName, equipmentAllows } from './library.js';
+import { libraryHas, libraryName, libraryDisplayName, equipmentAllows } from './library.js';
 
 // A catalogue exercise the person's equipment does not reach, and that was not in the library
 // slice they were offered (which already pins what they train). The prompt says "their
@@ -50,6 +50,8 @@ const safeId = v => isStr(v) && !RESERVED_IDS.includes(v);
 const MAX_CHANGES = 25;
 const MAX_ROUTINES = 7;
 const MAX_EX_PER_ROUTINE = 20;
+
+const displayName = (ctx, id) => libraryDisplayName(id, ctx.lang) || libraryName(id);
 
 const isStr = v => typeof v === 'string' && v.trim().length > 0;
 const isNum = v => typeof v === 'number' && Number.isFinite(v);
@@ -340,7 +342,7 @@ export function validateReview(data, plan, ctx = {}) {
         if (perSide && isInt(a.reps, 1, 100) && a.reps % 2) { errors.push(ODD_PER_SIDE(`${where}.after.reps`)); return; }
         if (isInt(a.repsMax, 1, 100) && isInt(a.repsMin, 1, 100) && a.repsMax < a.repsMin) { errors.push(INVERTED_RANGE(`${where}.after`)); return; }
         out.after = {
-          id: a.id, name: libraryName(a.id),
+          id: a.id, name: displayName(ctx, a.id),
           sets: isInt(a.sets, 1, 10) ? a.sets : 3,
           ...(MODES.includes(a.mode) ? { mode: a.mode } : { mode: 'reps' }),
           ...(isInt(a.reps, 1, 100) ? { reps: a.reps } : {}),
@@ -367,7 +369,7 @@ export function validateReview(data, plan, ctx = {}) {
         if (offEquipment(ctx, a.id)) { errors.push(OFF_EQUIPMENT(`${where}.after.id`, a.id)); return; }
         if (a.id === target.exId) { errors.push(`${where} swaps an exercise for itself`); return; }
         out.after = {
-          id: a.id, name: libraryName(a.id),
+          id: a.id, name: displayName(ctx, a.id),
           ...(isInt(a.sets, 1, 10) ? { sets: a.sets } : {}),
           ...(isInt(a.reps, 1, 100) ? { reps: a.reps } : {}),
           ...(isNum(a.weight) && a.weight > 0 && a.weight <= MAX_WEIGHT ? { weight: a.weight } : {})
@@ -449,7 +451,7 @@ export function validateReview(data, plan, ctx = {}) {
           name: clampStr(a.name, 40), emoji: glyphStr(a.emoji),
           ...(POLICIES.includes(a.prog) ? { prog: a.prog } : {}),
           ex: ex.map(e => ({
-            id: e.id, name: libraryName(e.id),
+            id: e.id, name: displayName(ctx, e.id),
             sets: isInt(e.sets, 1, 10) ? e.sets : 3,
             mode: MODES.includes(e.mode) ? e.mode : 'reps',
             ...(isInt(e.reps, 1, 100) ? { reps: e.reps } : {}),

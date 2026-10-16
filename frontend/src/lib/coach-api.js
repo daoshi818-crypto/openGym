@@ -70,7 +70,7 @@ const _requestDebrief = async workoutId => DEMO ? (await demo()).demoDebrief(S()
 export const requestDebrief = (...a) => _requestDebrief(...a).then(track)
 // The room: anonymous medians across the profiles on this instance that opted in. Only a
 // server has a room; a phone with its own key and the demo both answer locally.
-export const cohortStats = async () => DEMO ? (await demo()).demoCohort(S()) : LOCAL() ? { ok: false, enabled: false } : api('/api/coach/cohort')
+export const cohortStats = async () => DEMO ? (await demo()).demoCohort(S()) : LOCAL() ? { ok: false, enabled: false } : api('/api/coach/cohort?lang=' + encodeURIComponent(getLang()))
 export const setCohortShare = async share => (DEMO || LOCAL()) ? { ok: true, sharing: !!share } : api('/api/coach/cohort/share', { method: 'POST', body: JSON.stringify({ share: !!share }) })
 export const resolvePending = async body => DEMO ? (await demo()).demoResolve() : LOCAL() ? (await local()).localResolve(body) : api('/api/coach/pending/resolve', { method: 'POST', body: JSON.stringify(body) })
 export const forgetCoach = async () => DEMO ? (await demo()).demoResolve() : LOCAL() ? (await local()).localForget() : api('/api/coach/forget', { method: 'POST', body: '{}' })

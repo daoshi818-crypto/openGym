@@ -18,7 +18,7 @@ import { isWarmupRow } from './workout-model.js'
 import { best1RM } from './onerm.js'
 import { fmtNum } from './format.js'
 import { planHash } from './coach.js'
-import { t } from './i18n.js'
+import { t, exerciseNameFor } from './i18n.js'
 
 const DELAY = 2200      // long enough to see "the Coach is thinking…", short enough to forgive
 
@@ -54,7 +54,8 @@ function buildReview(S) {
   const changes = []
   if (swapTo) changes.push({
     id: 'd1', type: 'swap-exercise', target: { routineId: routine.id, exId: first.id },
-    before: EXIDX[first.id]?.n || first.id, after: { id: swapTo.id, name: swapTo.n },
+    before: EXIDX[first.id] ? exerciseNameFor(EXIDX[first.id], false) : first.id,
+    after: { id: swapTo.id, name: exerciseNameFor(swapTo, false) },
     why: t('Every top set on this one came in at RPE 9.5 or above for three sessions and the weight has not moved. Swapping the movement for four weeks usually breaks that stall faster than grinding the same one.')
   })
   if (second) changes.push({
@@ -161,7 +162,7 @@ export function demoCohort(S) {
   const exercises = ids.map(id => {
     const b = best1RM(S, id)
     const mine = b ? Math.round(b.est * 10) / 10 : null
-    return { id, name: EXIDX[id]?.n || id, people: 4, median: mine ? Math.round(mine * 0.92) : 60, you: mine }
+    return { id, name: EXIDX[id] ? exerciseNameFor(EXIDX[id], false) : id, people: 4, median: mine ? Math.round(mine * 0.92) : 60, you: mine }
   })
   return { ok: true, enabled: true, sharing: true, people: 5, minPeople: 3, unit: S.unit, sessionsPerWeek: { median: 3, you }, exercises, rankPct: 62 }
 }

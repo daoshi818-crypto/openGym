@@ -22,7 +22,10 @@ export function buildPromptParts(kind, payload, repair) {
   // plan format to follow at all, and a request like "swap the leverage machine" came back as
   // a review-style change list the plan validator can only reject (#471).
   const rules = task === 'refine' ? PROMPTS.create + '\n\n---\n\n' + PROMPTS.refine : PROMPTS[task];
-  const system = PROMPTS.common + '\n\n---\n\n' + rules;
+  const naming = `## Exercise names
+
+The payload's \`library\` entries contain \`n\` (the canonical English catalogue name) and \`displayName\` (the name for the language in \`meta.lang\`). For every exercise mentioned in a human-readable field, use the exact \`displayName\` belonging to its id. Never translate an exercise name yourself, never use \`n\` when \`displayName\` is present, and never output an English exercise name in a Chinese response. The id remains the only value used in plan changes.`;
+  const system = PROMPTS.common + '\n\n---\n\n' + naming + '\n\n---\n\n' + rules;
   // Compact JSON, not pretty-printed: the indentation was ~30% of the payload's tokens and
   // a model reads either just as well.
   let user = '## Payload\n\n```json\n' + JSON.stringify(payload) + '\n```\n';

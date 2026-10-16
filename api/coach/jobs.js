@@ -344,7 +344,7 @@ async function execute(job) {
     lang: job.lang || (S.langAuto === true ? payloadLib.langTag(process.env.DEFAULT_LANG) : null),
     // The room's medians ride along on a review or a debrief when the admin allows it and
     // this person opted in; null otherwise, and the payload then carries no `cohort` at all.
-    cohort: (job.kind === 'review' || job.kind === 'debrief') ? cohortForPayload(job.uid) : null
+    cohort: (job.kind === 'review' || job.kind === 'debrief') ? cohortForPayload(job.uid, job.lang || 'en') : null
   });
   // The payload is paid for with the instance's key, and it is built from state the client
   // wrote. The builder bounds each field; a payload that is still bigger than any real training

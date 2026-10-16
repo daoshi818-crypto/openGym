@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.5.0 (2026-10-16)
+
+Simplified Chinese localization improvements for the AI Coach.
+
+- **AI Coach exercise names** now consistently use natural Simplified Chinese in plans,
+  insights, reviews, and community comparisons.
+- **Training terminology** and equipment selection labels were revised to better match common
+  Mainland Chinese usage.
+- **Coach payload validation** keeps displayed exercise names aligned with their exercise IDs,
+  including custom exercises.
+
 ## v1.4.1 (2026-10-10)
 
 Bug fixes for v1.4.0, mostly the things you told us about on Discord and GitHub.

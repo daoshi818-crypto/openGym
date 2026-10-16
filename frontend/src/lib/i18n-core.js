@@ -200,7 +200,7 @@ export function _setDetails(newEnInstr, newEnDescs, newDescs, forLang = lang) {
 // be complete: German covers the equipment exercises and not the body-weight ones, and an
 // exercise the pack has no entry for keeps its English title, one exercise at a time.
 // User-created exercises have no entry in the pack and keep their exact chosen name.
-export const exerciseNameFor = ex => {
+export const exerciseNameFor = (ex, includeEnglish = enParens) => {
   // A language that chose "English names only" sees the canonical catalogue title, not the
   // translation — and never the parenthetical either. Custom exercises keep their exact name.
   if (enOnly) return ex?.n || ''
@@ -212,7 +212,7 @@ export const exerciseNameFor = ex => {
   // this only ever differs from ordinary casing for languages with locale-specific rules
   // (e.g. Turkish dotless i), which does not include any language shipped here today.
   return translated.toLocaleLowerCase(lang) === ex.n.toLocaleLowerCase('en')
-      || !enParens
+      || !includeEnglish
     ? translated
     : `${translated} (${ex.n})`
 }

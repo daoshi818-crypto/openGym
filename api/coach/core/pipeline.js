@@ -68,11 +68,12 @@ export async function attemptOnce({ adapter, cfg, kind, payload, model, timeoutM
     ? changesOntoPlan(payload.refine?.previous, parsed.value) || parsed.value
     : parsed.value;
   const checked = kind === 'review'
-    ? validateReview(parsed.value, payload.plan, { customIds, equipment, offered })
+    ? validateReview(parsed.value, payload.plan, { customIds, equipment, offered, lang: payload.meta?.lang })
     : kind === 'debrief'
       ? validateDebrief(parsed.value)
       : validatePlan(answer, {
       customIds, equipment, offered,
+      lang: payload.meta?.lang,
       workingWeights: payload.history?.workingWeights,
       daysPerWeek: payload.coachProfile?.daysPerWeek
     });

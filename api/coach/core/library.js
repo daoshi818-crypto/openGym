@@ -6,12 +6,23 @@
  * needs an import attribute, and this file has to load under both without either knowing.
  */
 import { EXERCISES } from './library-data.js';
+import zhNames from './exercise-names-zh.js';
 
 export const LIBRARY = EXERCISES;
 export const LIB_BY_ID = new Map(LIBRARY.map(e => [e.id, e]));
 
 export const libraryHas = id => LIB_BY_ID.has(id);
 export const libraryName = id => LIB_BY_ID.get(id)?.n || null;
+
+// The API image does not contain the frontend source tree, so the generated Chinese name pack
+// is copied into coach/core as a runtime asset. Keep the catalogue's English name for ids,
+// validation and non-Chinese callers; only the human-readable name sent to the model changes.
+const isSimplifiedChinese = lang => /^zh(?:[-_](?:CN|Hans|简体))?$/i.test(String(lang || ''));
+export const libraryDisplayName = (id, lang = 'en') => {
+  const ex = LIB_BY_ID.get(id);
+  if (!ex) return null;
+  return isSimplifiedChinese(lang) ? (zhNames[id] || ex.n) : ex.n;
+};
 
 /* Whether the person's equipment covers a catalogue exercise. Body weight is never gated, the
    same rule the app's own equipment profiles follow (frontend lib/equipment.js), and an id the
@@ -36,7 +47,13 @@ export const MAX_LIBRARY = 160;
 
 // What one library entry tells the model: enough to pick it, nothing more. The taxonomy
 // fields beyond body part never appear in a rationale and cost ~30 tokens an entry.
-const slim = e => ({ id: e.id, n: e.n, bp: e.bp, ...(e.custom ? { custom: true } : {}) });
+const slim = (e, lang) => ({
+  id: e.id,
+  n: e.n,
+  displayName: e.custom ? e.n : libraryDisplayName(e.id, lang),
+  bp: e.bp,
+  ...(e.custom ? { custom: true } : {})
+});
 
 /* Mobility work is not what a plan is built from, and at an even share per body part the
    catalogue's 57 stretches crowded out the lifts that are: a first plan for someone who
@@ -68,7 +85,7 @@ const LANE_WEIGHT = {
 };
 const laneWeight = bp => LANE_WEIGHT[bp] ?? 1;
 
-export function librarySlice(S, equipment, { keep = [], max = MAX_LIBRARY } = {}) {
+export function librarySlice(S, equipment, { keep = [], max = MAX_LIBRARY, lang = 'en' } = {}) {
   const wanted = (equipment || []).map(x => String(x).toLowerCase());
   // A custom exercise's name and body part are whatever the person typed, and its id is
   // whatever the client wrote; all three ride into every prompt. Cut to the bounds payload.js
@@ -119,5 +136,5 @@ export function librarySlice(S, equipment, { keep = [], max = MAX_LIBRARY } = {}
       }
     }
   }
-  return [...customs, ...out].map(slim);
+  return [...customs, ...out].map(e => slim(e, lang));
 }

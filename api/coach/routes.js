@@ -111,7 +111,8 @@ export function coachRoutes({ json, readBody, readSession, requireAdmin }) {
     'GET /api/coach/cohort': async (req, res) => {
       const user = guard(req, res); if (!user) return;
       if (!cfgStore.load().community) return json(res, 200, { ok: false, enabled: false });
-      json(res, 200, computeCohort(user.id));
+      const lang = new URL(req.url, 'http://x').searchParams.get('lang') || 'en';
+      json(res, 200, computeCohort(user.id, lang));
     },
     'POST /api/coach/cohort/share': async (req, res) => {
       const user = guard(req, res); if (!user) return;

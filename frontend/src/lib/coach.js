@@ -18,7 +18,7 @@ import { uid, todayISO, DAYN } from './format.js'
 import { mergePlan } from './plan-share.js'
 import { deleteRoutine } from './routines.js'
 import { POLICIES } from './progression.js'
-import { t, tn } from './i18n.js'
+import { t, tn, getLang, exerciseNameFor } from './i18n.js'
 
 // Bumping this re-prompts everyone: it means what we share, or who we share it with, changed.
 // 2: the training line names the session notes, which the payload carries and version 1 never
@@ -377,7 +377,10 @@ export function profileLines(p) {
   if (exp) lines.push(t(exp))
   if (p.daysPerWeek) lines.push(tn('1 day a week', '{0} days a week', p.daysPerWeek))
   if (p.sessionMin) lines.push(t('{0} min per session', p.sessionMin))
-  if (p.equipment?.length) lines.push(p.equipment.join(', '))
+  if (p.equipment?.length) {
+    const separator = /^zh(?:-|$)/i.test(getLang()) ? '、' : ', '
+    lines.push(p.equipment.map(e => t(e)).join(separator))
+  }
   if (p.limitations) lines.push(t('Limits: {0}', p.limitations))
   if (p.likes) lines.push(t('Likes: {0}', p.likes))
   if (p.dislikes) lines.push(t('Avoid: {0}', p.dislikes))
@@ -602,19 +605,25 @@ export function recordDebrief(s, proposal) {
 
 /* ============================ display helpers ============================ */
 
-export const exName = id => EXIDX[id]?.n || t('Unknown exercise')
+export const exName = (id, S) => {
+  const ex = EXIDX[id]
+  // Coach cards must stay in the selected language even when Settings shows English aliases.
+  if (ex) return exerciseNameFor(ex, false)
+  const custom = (S?.customEx || []).find(x => x.id === id)
+  return custom?.n || t('Unknown exercise')
+}
 // Catalogue names are lower-case; a title reads better with each word capitalised, and doing it
 // here rather than with CSS keeps a German sentence around the name from being Title Cased too.
 const cap = s => String(s || '').replace(/(^|\s)(\p{L})/gu, (m, sp, ch) => sp + ch.toUpperCase())
-export const exTitle = id => cap(exName(id))
+export const exTitle = (id, S) => cap(exName(id, S))
 
 /** Human label for a change, used on the review screen and in the log. */
 export function changeTitle(c, S) {
-  const ex = c.target?.exId ? exTitle(c.target.exId) : null
+  const ex = c.target?.exId ? exTitle(c.target.exId, S) : null
   switch (c.type) {
-    case 'add-exercise': return t('Add {0}', exTitle(c.after?.id))
+    case 'add-exercise': return t('Add {0}', exTitle(c.after?.id, S))
     case 'remove-exercise': return t('Remove {0}', ex)
-    case 'swap-exercise': return t('Swap {0} for {1}', ex, exTitle(c.after?.id))
+    case 'swap-exercise': return t('Swap {0} for {1}', ex, exTitle(c.after?.id, S))
     case 'sets': return t('{0}: sets', ex)
     case 'reps': return t('{0}: reps', ex)
     case 'repsMin': return t('{0}: rep-range floor', ex)
@@ -625,7 +634,7 @@ export function changeTitle(c, S) {
     case 'exercise-prog': return t('{0}: progression', ex)
     case 'routine-prog': return t('Routine progression')
     case 'reorder': return t('Reorder exercises')
-    case 'superset': return c.after?.link ? t('Superset {0} with {1}', ex, exTitle(c.after.with)) : t('Unlink superset on {0}', ex)
+    case 'superset': return c.after?.link ? t('Superset {0} with {1}', ex, exTitle(c.after.with, S)) : t('Unlink superset on {0}', ex)
     case 'add-routine': return t('Add routine “{0}”', c.after?.name)
     case 'remove-routine': return t('Remove a routine')
     case 'rename-routine': return t('Rename routine to “{0}”', c.after)
@@ -646,7 +655,7 @@ export function changeValues(c, S) {
       return ids.length ? ids.map(routineName).join(' + ') : t('Rest')
     }
     if (v == null) return '–'
-    if (typeof v === 'object') return v.id ? exTitle(v.id) : v.name || JSON.stringify(v)
+    if (typeof v === 'object') return v.id ? exTitle(v.id, S) : v.name || JSON.stringify(v)
     if (Array.isArray(v)) return v.length + ''
     return String(v)
   }

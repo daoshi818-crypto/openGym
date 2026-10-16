@@ -193,6 +193,7 @@ describe('English-name switches with every exercise-name pack', () => {
       // German keeps its own casing; a lower-case pack is title-cased like English.
       const translatedClass = CASED_NAME_LANGS.includes(lang) ? '' : 'capitalize'
       expect(exerciseNameFor(ex)).toBe(`${names[ex.id]} (${ex.n})`)
+      expect(exerciseNameFor(ex, false)).toBe(names[ex.id])
       expect(exerciseNameClass(ex)).toBe(translatedClass)
       _setLangState(lang, {}, null, names, false)
       expect(exerciseNameFor(ex)).toBe(names[ex.id])
