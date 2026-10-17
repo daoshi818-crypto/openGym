@@ -2257,4 +2257,7 @@ export default {
   "Bluetooth is off. Turn it on and try again.": "Bluetooth is off. Turn it on and try again.",
   "Bluetooth permission is needed.": "Bluetooth permission is needed.",
   "Tap to pair. The watch shows your plan during a workout and records a set with one tap.": "Tap to pair. The watch shows your plan during a workout and records a set with one tap.",
+  // [fork] new UI strings: English placeholder until translated
+  "Heatmap": "Heatmap",
+  "Calendar": "Calendar",
 }

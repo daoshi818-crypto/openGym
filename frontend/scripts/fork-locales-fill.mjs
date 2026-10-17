@@ -9,6 +9,8 @@ const KEYS = {
   'Shows over other apps when you leave the app during a rest; tap the card to come back.': 'Shows over other apps when you leave the app during a rest; tap the card to come back.',
   'Needs the “display over other apps” permission.': 'Needs the “display over other apps” permission.',
   'Floating rest countdown': 'Floating rest countdown',
+  'Heatmap': 'Heatmap',
+  'Calendar': 'Calendar',
   'Connect watch': 'Connect watch',
   'Connected. Start a workout and it lands on the watch.': 'Connected. Start a workout and it lands on the watch.',
   'Looking for the watch… Open the training app on the watch.': 'Looking for the watch… Open the training app on the watch.',

@@ -2252,4 +2252,7 @@ export default {
   'Bluetooth is off. Turn it on and try again.': '藍牙未開啟，請開啟後重試。',
   'Bluetooth permission is needed.': '需要藍牙權限。',
   'Tap to pair. The watch shows your plan during a workout and records a set with one tap.': '點按配對。訓練時手錶顯示計劃，點一下即記一組。',
+  // [fork] new UI strings: English placeholder until translated
+  "Heatmap": "Heatmap",
+  "Calendar": "Calendar",
 }
