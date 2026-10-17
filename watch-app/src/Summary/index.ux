@@ -1,19 +1,12 @@
 <script>
-// 结束页：训练结束后停留，显示本次的时长 / 完成组数 / 卡路里 / 心率。
-// 数据由 Workout 页 onEnd 传过来（存在 session_state 前短暂窗口 → 直接用 storage 快照）。
+// 结束页：显示本次训练摘要。
 import storage from '@blueos.storage.storage'
 import router from '@blueos.app.appmanager.router'
 
 export default {
-  data: {
-    minutes: '',
-    sets: '',
-    kcal: '',
-    hr: '',
-  },
+  data: { minutes: '', sets: '', kcal: '', hr: '' },
 
   onInit() {
-    // Workout.onEnd 把总结存到 summary_last，读出来展示；离开本页即清
     try {
       const s = storage.getSync({ key: 'summary_last' })
       if (s && typeof s === 'object') {
@@ -22,7 +15,7 @@ export default {
         this.kcal = String(s.calories || 0)
         this.hr = s.avgHr ? String(s.avgHr) : '--'
       }
-    } catch (e) { /* 没有总结可显示 */ }
+    } catch (e) {}
   },
 
   fmtDur(min) {
@@ -31,10 +24,11 @@ export default {
   },
 
   onBack() {
-    try { storage.delete({ key: 'summary_last' }) } catch (e) { /* 无所谓 */ }
+    try { storage.delete({ key: 'summary_last' }) } catch (e) {}
     router.push({ uri: '/Index' })
   },
-}</script>
+}
+</script>
 
 <template>
   <div class="page">
@@ -64,18 +58,11 @@ export default {
 </template>
 
 <style>
-.page {
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  width: 466px;
-  height: 466px;
-  background-color: #000000;
-}
-.title { font-size: 34px; color: #30d158; margin-bottom: 20px; }
-.grid { flex-direction: row; flex-wrap: wrap; justify-content: center; width: 430px; }
-.cell { flex-direction: column; align-items: center; width: 210px; margin: 10px 0; }
-.num { font-size: 44px; color: #ffffff; }
-.lbl { font-size: 20px; color: #8e8e93; margin-top: 2px; }
-.btn { width: 300px; height: 76px; font-size: 30px; border-radius: 20px; background-color: #30d158; color: #ffffff; margin-top: 18px; }
+.page { flex-direction: column; align-items: center; justify-content: center; width: 450px; height: 390px; background-color: #000000; }
+.title { font-size: 30px; color: #30d158; margin-bottom: 12px; }
+.grid { flex-direction: row; flex-wrap: wrap; justify-content: center; width: 400px; }
+.cell { flex-direction: column; align-items: center; width: 195px; margin: 7px 0; }
+.num { font-size: 38px; color: #ffffff; }
+.lbl { font-size: 17px; color: #8e8e93; margin-top: 1px; }
+.btn { width: 240px; height: 52px; font-size: 23px; border-radius: 14px; background-color: #30d158; color: #ffffff; margin-top: 12px; }
 </style>

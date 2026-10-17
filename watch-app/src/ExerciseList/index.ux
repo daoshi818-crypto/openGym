@@ -1,19 +1,14 @@
 <script>
-// 动作列表页（主页左滑进来）：本次训练的所有动作，每组一行
-//   动作名 / 1: 14kg*12 / >   —— 点行跳到主页并把游标切到那一组。
-// 每个动作可展开：标题行点一下展开/收起组行。底部：退出（回开始页）和 保存（结束训练）。
+// 动作列表页：查看动作和组，点组返回训练页并切换游标。
 import router from '@blueos.app.appmanager.router'
-import { loadState, save, nextUndone, addRestTime } from '../lib/session.js'
+import { loadState, save } from '../lib/session.js'
 import { endSession } from '../lib/session.js'
 import { sendEvent } from '../lib/ble.js'
 import { pushSession } from '../lib/cloud.js'
 import storage from '@blueos.storage.storage'
 
 export default {
-  data: {
-    list: [],   // [{ name, idx, rows: [{ no, txt, done, exIdx, setIdx }] }]
-    expanded: -1,
-  },
+  data: { list: [], expanded: -1 },
 
   onInit() {
     const s = loadState()
@@ -28,11 +23,7 @@ export default {
       name: ex.name,
       idx: i,
       rows: (s.workout.rows[i] || []).map((row, j) => ({
-        no: String(j + 1),
-        txt: this.rowTxt(row, ex),
-        done: row.done,
-        exIdx: i,
-        setIdx: j,
+        no: String(j + 1), txt: this.rowTxt(row, ex), done: row.done, exIdx: i, setIdx: j,
       })),
     }))
   },
@@ -55,25 +46,17 @@ export default {
     s.exIdx = Number(d.exIdx)
     s.setIdx = Number(d.setIdx)
     save(s)
-    router.back() // 回主页，游标已切好
-  },
-
-  onExit() {
-    // 退出：不结束会话，状态留在本地，回开始页（还能"继续训练"）
     router.back()
   },
+
+  onExit() { router.back() },
 
   onFinish() {
     const s = this.state
     const session = endSession(s, s.profile)
     sendEvent({
-      t: 'end',
-      sid: session.sid,
-      minutes: session.minutes,
-      avgHr: session.avgHr,
-      maxHr: session.maxHr,
-      calories: session.calories,
-      sets: session.sets.length,
+      t: 'end', sid: session.sid, minutes: session.minutes, avgHr: session.avgHr,
+      maxHr: session.maxHr, calories: session.calories, sets: session.sets.length,
     })
     pushSession(session).catch(() => {})
     storage.set({
@@ -112,24 +95,19 @@ export default {
 </template>
 
 <style>
-.page {
-  flex-direction: column;
-  width: 466px;
-  height: 466px;
-  background-color: #000000;
-}
-.body { flex: 1; width: 466px; }
-.scroll { width: 466px; height: 360px; padding-top: 10px; }
-.exrow { flex-direction: column; padding: 10px 24px; }
-.exname { font-size: 26px; color: #ffffff; }
-.cnt { font-size: 20px; color: #8e8e93; margin-top: 2px; }
-.rows { flex-direction: column; margin-top: 6px; }
-.rrow { flex-direction: row; align-items: center; padding: 8px 0; }
-.rno { font-size: 24px; color: #30d158; width: 50px; }
-.rtxt { font-size: 24px; color: #ffffff; flex: 1; }
+.page { flex-direction: column; width: 450px; height: 390px; background-color: #000000; }
+.body { flex: 1; width: 450px; }
+.scroll { width: 450px; height: 300px; padding-top: 6px; }
+.exrow { flex-direction: column; padding: 8px 18px; }
+.exname { font-size: 22px; color: #ffffff; }
+.cnt { font-size: 17px; color: #8e8e93; margin-top: 1px; }
+.rows { flex-direction: column; margin-top: 4px; }
+.rrow { flex-direction: row; align-items: center; padding: 6px 0; }
+.rno { font-size: 20px; color: #30d158; width: 38px; }
+.rtxt { font-size: 20px; color: #ffffff; flex: 1; }
 .rtxt.done { color: #636366; }
-.chev { font-size: 26px; color: #48484a; }
-.foot { flex-direction: row; justify-content: center; padding: 10px 0 18px; }
-.fbtn { width: 160px; height: 64px; font-size: 26px; border-radius: 18px; background-color: #1c1c1e; color: #ffffff; margin: 0 12px; }
+.chev { font-size: 22px; color: #48484a; }
+.foot { flex-direction: row; justify-content: center; padding: 8px 0 12px; }
+.fbtn { width: 150px; height: 48px; font-size: 21px; border-radius: 13px; background-color: #1c1c1e; color: #ffffff; margin: 0 8px; }
 .save { background-color: #30d158; }
 </style>
