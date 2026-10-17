@@ -1482,8 +1482,8 @@ describe('active workout whole-unit move controls', () => {
       selected,
     ], 2)
 
-    expect(action('Move up')?.textContent.trim()).toBe('Move up')
-    expect(action('Move down')?.textContent.trim()).toBe('Move down')
+    expect(action('Move up')).toBeTruthy()
+    expect(action('Move down')).toBeTruthy()
     await act(async () => { action('Move up').dispatchEvent(new dom.Event('click', { bubbles: true })) })
 
     expect(mocks.S.active.entries.map(entry => entry.id)).toEqual(['duplicate', 'duplicate', 'middle'])
@@ -2044,16 +2044,14 @@ describe('workout list view', () => {
     expect(focusButton(units()[0])).toBeTruthy()
   })
 
-  it('goes back to cards on Set current when the list was only opened for this session (#260)', async () => {
+  it('stays in the selected list layout when Set current changes the marker (#260)', async () => {
     await mount([exercise('plain-bench', [false]), exercise('plain-row', [false])], 0, {
       workoutView: 'cards', active: { workoutView: 'list' },
     })
 
     await act(async () => { focusButton(units()[1]).dispatchEvent(new dom.Event('click', { bubbles: true })) })
-    // Picking the exercise to look at next is all the tap is for, and cards are where one
-    // exercise is front and centre, so it does not take a second trip through the ⋮ menu.
     expect(mocks.S.active.cur).toBe(1)
-    expect(mocks.S.active.workoutView).toBe('cards')
+    expect(mocks.S.active.workoutView).toBe('list')
   })
 
   it('stays in the list on Set current when the exercise buttons act on the current exercise', async () => {
@@ -2451,10 +2449,11 @@ describe('collapsing completed workout exercises', () => {
   it('leaves the marker alone when the exercise finished last is not the current one', async () => {
     await mount([exercise('bench', [false]), exercise('row', [false]), exercise('squat', [false])], 2,
       { active: { workoutView: 'list', collapseCompleted: true } })
+    await click(units()[0].querySelector('.wl-summary'))
     await toggleSet(0)
     await rerender()
     expect(mocks.S.active.cur).toBe(2)
-    expect(units()[0].querySelector('.wl-summary')).toBeTruthy()
+    expect(units()[0].querySelector('.wl-summary')).toBeNull()
   })
 
   it('stays on the last exercise when nothing is left, and offers the finish', async () => {
@@ -2472,13 +2471,15 @@ describe('collapsing completed workout exercises', () => {
     expect(container.querySelector('.wl-summary')).toBeNull()
   })
 
-  it('keeps an unfinished warm-up, one unfinished side and an empty exercise expanded', async () => {
+  it('keeps partial progress and an empty exercise expanded while untouched exercises fold', async () => {
     await mount([
       exercise('warmup', [false, true], { sets: [{ w: 20, r: 5, phase: 'warmup', done: false }, { w: 60, r: 5, done: true }] }),
       exercise('side', [false], { target: { mode: 'reps', side: true }, sets: [{ done: false, sides: { L: { done: true }, R: { done: false } } }] }),
       exercise('empty', []), exercise('current', [false]),
     ], 3, { active: { workoutView: 'list', collapseCompleted: true } })
-    expect(container.querySelector('.wl-summary')).toBeNull()
+    expect(units()[0].querySelector('.wl-summary')).toBeNull()
+    expect(units()[1].querySelector('.wl-summary')).toBeNull()
+    expect(units()[2].querySelector('.wl-summary')).toBeNull()
   })
 
   it('collapses a superset only after all members are done and the group is no longer current', async () => {
@@ -2496,7 +2497,7 @@ describe('collapsing completed workout exercises', () => {
     await mount([exercise('bench', [true]), exercise('bench', [false]), exercise('row', [false])], 2,
       { active: { workoutView: 'compact', collapseCompleted: true } })
     expect(units()[0].querySelector('.wl-summary')).toBeTruthy()
-    expect(units()[1].querySelector('.wl-summary')).toBeNull()
+    expect(units()[1].querySelector('.wl-summary')).toBeTruthy()
   })
 })
 
@@ -2711,7 +2712,8 @@ describe('workout controls: the more menu and the set menu', () => {
   it('shows one More button per exercise and no legacy button rows by default', async () => {
     await mount([exercise('plain-bench', [false]), exercise('plain-row', [false])])
     expect(container.querySelector('button[aria-label="More"]')).toBeTruthy()
-    for (const label of ['Move up', 'Swap exercise']) expect(container.querySelector(`button[aria-label="${label}"]`)).toBeNull()
+    expect(container.querySelectorAll('.wchip-order-btn')).toHaveLength(2)
+    expect(container.querySelector('button[aria-label="Swap exercise"]')).toBeNull()
     expect([...container.querySelectorAll('button')].some(b => b.textContent.trim() === 'Remove exercise')).toBe(false)
     expect([...container.querySelectorAll('button')].some(b => b.textContent.trim() === '+ Drop')).toBe(false)
     expect([...container.querySelectorAll('button')].some(b => b.textContent.trim() === 'Add set')).toBe(true)

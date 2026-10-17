@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.5.3 (2026-10-18)
+
+- **Workout ordering**: card and focus layouts move the current exercise with the numbered-chip
+  arrows; list and compact layouts keep long-press dragging on each exercise card.
+- **Workout layout**: selecting the current exercise no longer switches a running list or compact
+  session back to cards, and untouched or completed exercises can start collapsed in list layouts.
+- **Watch link**: workout plans retry when the watch becomes ready, reconnect to the last watch, and
+  keep watch actions queued across brief disconnects.
+
 ## v1.5.2 (2026-10-18)
 
 - **Stats training calendar** now shows the selected routine topics instead of muscles inferred from exercises.

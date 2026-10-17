@@ -20,6 +20,10 @@ const watchPlugin = () => pluginP || (pluginP = (async () => {
 // ---- 状态广播：设置页与训练页都订阅这一个 ----
 let state = 'off' // off | connecting | connected | ready | error
 const listeners = new Set()
+let pendingPlan = null
+let latestPlan = null
+let planPushInFlight = false
+let lastWatchAddress = ''
 
 export function watchState() { return state }
 export function onWatchState(cb) {
@@ -42,7 +46,13 @@ async function bindNative() {
   if (!p) return
   bound = true
   p.WatchBle.addListener('watchState', (ev) => {
-    setState(ev && ev.state ? ev.state : 'off')
+    const next = ev && ev.state ? ev.state : 'off'
+    if (ev && ev.address) lastWatchAddress = ev.address
+    setState(next)
+    if (next === 'ready') {
+      if (!pendingPlan && latestPlan) pendingPlan = latestPlan
+      Promise.resolve().then(flushPendingPlan)
+    }
   })
   // 手表推来的事件：完成一组 / 结束训练 / 休息与重量调整
   p.WatchBle.addListener('watchEvent', (ev) => {
@@ -87,7 +97,7 @@ export async function connectWatch() {
   if (!ok) { setState('error'); return false }
   setState('connecting')
   try {
-    await p.WatchBle.connect({})
+    await p.WatchBle.connect(lastWatchAddress ? { address: lastWatchAddress } : {})
     // ready 由原生 watchState 事件带回来；这里不再轮询
     return true
   } catch (e) {
@@ -108,18 +118,37 @@ export async function disconnectWatch() {
 /** 训练开始时调用一次；训练中途计划变了（加/删动作）再调一次，手表整包热替换。 */
 export async function pushPlanToWatch(workout, sid) {
   if (!MOBILE || !workout) return
+  latestPlan = { workout, sid }
+  pendingPlan = latestPlan
   await bindNative()
+  return flushPendingPlan()
+}
+
+export function clearWatchPlan(sid) {
+  if (!sid || latestPlan?.sid !== sid) return
+  latestPlan = null
+  if (pendingPlan?.sid === sid) pendingPlan = null
+}
+
+async function flushPendingPlan() {
+  if (planPushInFlight || !pendingPlan || state !== 'ready') return
   const p = await watchPlugin()
   if (!p) return
+  const next = pendingPlan
+  pendingPlan = null
+  planPushInFlight = true
   try {
     const r = await p.WatchBle.isConnected()
-    if (!r || !r.connected) return
+    if (!r || !r.connected) {
+      pendingPlan = next
+      return
+    }
     const msg = {
       t: 'plan',
       v: 1,
-      sid: sid || '',
-      workout: workout.name || '',
-      exercises: (workout.exercises || []).map(e => ({
+      sid: next.sid || '',
+      workout: next.workout.name || '',
+      exercises: (next.workout.exercises || []).map(e => ({
         name: e.name || '',
         sets: e.sets || 1,
         reps: e.reps != null ? String(e.reps) : '',
@@ -128,7 +157,12 @@ export async function pushPlanToWatch(workout, sid) {
       })),
     }
     await p.WatchBle.sendPlan({ json: JSON.stringify(msg) })
-  } catch { /* 推送失败不打扰训练 */ }
+  } catch {
+    pendingPlan = next
+  } finally {
+    planPushInFlight = false
+    if (pendingPlan && state === 'ready') Promise.resolve().then(flushPendingPlan)
+  }
 }
 
 // ---- 实时同步（双向，都走"完成"特征值，尽力而为、不排队） ----
@@ -176,10 +210,18 @@ export async function pushUnsetToWatch(sid, ex, set) {
 let onWatchSync = () => {}
 
 /** 训练页注册：收到手表 rest/weight 调整时怎么应用到会话。 */
-export function bindWatchSync(cb) { onWatchSync = cb || (() => {}) }
+export function bindWatchSync(cb) {
+  const fn = cb || (() => {})
+  onWatchSync = fn
+  return () => { if (onWatchSync === fn) onWatchSync = () => {} }
+}
 
 // ---- 手表事件 → openGym 会话状态 ----
 
 let onWatchEvent = () => {}
 /** 训练页注册：收到手表"完成一组/结束训练"时怎么写进会话（useStore 的 action）。 */
-export function bindWatchEvents(cb) { onWatchEvent = cb || (() => {}) }
+export function bindWatchEvents(cb) {
+  const fn = cb || (() => {})
+  onWatchEvent = fn
+  return () => { if (onWatchEvent === fn) onWatchEvent = () => {} }
+}

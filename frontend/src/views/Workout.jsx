@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
 import { workoutControls } from '../lib/workout-controls.js'
 import { useUI } from '../store/useUI.js'
-import { pushPlanToWatch, bindWatchSync, pushRestToWatch, pushWeightToWatch, pushUnsetToWatch } from '../lib/watch-link.js'
+import { pushPlanToWatch, clearWatchPlan, bindWatchSync, bindWatchEvents, pushRestToWatch, pushWeightToWatch, pushUnsetToWatch } from '../lib/watch-link.js'
 import { exOr, betterWeight } from '../lib/exercises.js'
 import { usesBar } from '../lib/bar.js'
 import { loadKindFor, baseWeightFor, inventoryFor, rowLoad, sameLoad, plateDelta, dropGrid } from '../lib/plates.js'
@@ -935,10 +935,9 @@ function ActiveWorkout() {
   // pre-existing profile (and a session started before this field) as it was.
   const requestedView = A.workoutView || S.workoutView
   const workoutView = ['list', 'compact', 'focus'].includes(requestedView) ? requestedView : 'cards'
-  const [reorderOverview, setReorderOverview] = useState(false)
-  const listMode = reorderOverview || workoutView === 'list' || workoutView === 'compact'
+  const listMode = workoutView === 'list' || workoutView === 'compact'
   const focusMode = workoutView === 'focus'
-  const dense = reorderOverview || workoutView === 'compact'
+  const dense = workoutView === 'compact'
   const workoutUnitKey = u => activeWorkoutEntryKey(A.entries[u[0]]) || 'pending-' + u[0]
   const idsReady = !needsActiveWorkoutOccurrenceIds(A)
   useEffect(() => {
@@ -951,9 +950,9 @@ function ActiveWorkout() {
     if (m.rest > 0) return t('{0} · back-to-back, {1} rest after each round', m.name || t('Superset'), fmtRest(m.rest))
     return m.name ? t('{0} · do these back-to-back, rest when done', m.name) : t('Superset · do these back-to-back, rest when done')
   }
-  // Collapse finished exercises in the list (#241). The current unit stays open, superset
-  // members included, until you move on (ticking its last set does that, see toggle); an empty
-  // exercise or a half-done warm-up or side stays open too.
+  // Collapse untouched and finished exercises in the list (#241). The current unit stays open,
+  // superset members included, until you move on. An exercise with some progress stays visible
+  // so an unfinished warm-up or side can still be corrected in place.
   // The session's own choice (the Layout menu) wins over the saved one (Settings → Workout), the
   // way the layout itself does, so someone who always wants it switches it on once.
   const collapseOn = listMode && !!(A.collapseCompleted ?? S.collapseCompleted)
@@ -963,9 +962,13 @@ function ActiveWorkout() {
   const [openedState, setOpenedState] = useState(() => ({ len: A.entries.length, keys: new Set() }))
   const opened = openedState.len === A.entries.length ? openedState.keys : new Set()
   const finished = u => u.every(idx => A.entries[idx].sets.length > 0 && A.entries[idx].sets.every(s => s.done))
+  const notStarted = u => u.every(idx => A.entries[idx].sets.length > 0 && A.entries[idx].sets.every(s =>
+    !s.done && !s.at && !Object.values(s.sides || {}).some(side => side.done),
+  ))
+  const collapsible = u => finished(u) || notStarted(u)
   const collapsed = new Set(collapseOn ? units.filter(u =>
-    !u.includes(cur) && !opened.has(workoutUnitKey(u)) && finished(u),
-  ).map(u => u.join('-')) : [])
+    !u.includes(cur) && !opened.has(workoutUnitKey(u)) && collapsible(u),
+  ).map(workoutUnitKey) : [])
   const setUnitOpen = (key, open) => setOpenedState(prev => {
     const keys = new Set(prev.len === A.entries.length ? prev.keys : [])
     if (open) keys.add(key); else keys.delete(key)
@@ -1242,8 +1245,7 @@ function ActiveWorkout() {
   }
 
   const reorder = useWorkoutReorder(A.id, A.entries, moveWorkoutUnitToSlot, {
-    enabled: !editing && idsReady && units.length > 1,
-    onLift: () => { if (!listMode) setReorderOverview(true) },
+    enabled: !editing && idsReady && listMode && units.length > 1,
   })
 
   // "Don't count for progression" from an exercise's ⋯ menu (Discord, asierlama: an injury day).
@@ -1362,7 +1364,11 @@ function ActiveWorkout() {
   const focusUnit = firstIdx => update(s => {
     if (!s.active) return
     s.active.cur = firstIdx
-    if (!workoutControls(s).exerciseButtons && (s.workoutView || 'cards') === 'cards') s.active.workoutView = 'cards'
+    // A list/compact choice made in the running session must stay in that layout when the
+    // current marker changes. Only a temporary list opened over the cards default returns to
+    // cards here; read the active-session override before the saved default.
+    const activeView = s.active.workoutView || s.workoutView || 'cards'
+    if (!workoutControls(s).exerciseButtons && activeView === 'cards') s.active.workoutView = 'cards'
   })
   // The header ⋮ re-lays-out the running session without touching the saved default
   // (Settings → During a workout → Workout view). It writes s.active.workoutView, which the
@@ -1785,6 +1791,7 @@ function ActiveWorkout() {
   // 计划变更（加/删动作）时 A.entries 变了，effect 重跑整包重推，手表热替换。
   const seenWatchSets = useRef(new Set())
   const sid = A.start ? String(A.start) : ''
+  useEffect(() => () => clearWatchPlan(sid), [sid])
   useEffect(() => {
     if (editing) return
     pushPlanToWatch({ name: A.name, exercises: A.entries.map(e => ({
@@ -1806,7 +1813,7 @@ function ActiveWorkout() {
   // weight 直接写活动会话的组重量。手表侧带 seq，防两端互相跟风。
   useEffect(() => {
     if (editing) return
-    return bindWatchSync(ev => {
+    const handleWatch = ev => {
       if (!ev || ev.sid !== sid) return
       const A2 = useStore.getState().S.active
       if (!A2) return
@@ -1865,8 +1872,18 @@ function ActiveWorkout() {
         const row = entry.sets.filter(x => !isWarmupRow(x))[ev.set - 1]
         if (!row || !row.done) return
         toggle(entry.sets.indexOf(row), ev.set - 1, undefined, {})
+        return
       }
-    })
+      if (ev.t === 'end') {
+        finishWorkout()
+      }
+    }
+    const unbindSync = bindWatchSync(handleWatch)
+    const unbindEvents = bindWatchEvents(handleWatch)
+    return () => {
+      unbindSync?.()
+      unbindEvents?.()
+    }
   }, [editing, sid])
 
   // 重量编辑 → 手表：setField 走这里（onField），只对活动会话的组行下发。
@@ -1917,7 +1934,7 @@ function ActiveWorkout() {
   const pickChip = chip => {
     if (listMode) {
       // A folded unit opens as you jump to it: you tapped it to see it.
-      if (collapsed.has(chip.key)) setUnitOpen(workoutUnitKey(chip.unit), true)
+      if (collapsed.has(workoutUnitKey(chip.unit))) setUnitOpen(workoutUnitKey(chip.unit), true)
       const go = () => scrollToUnit(listRef.current?.querySelector(`.wl-unit[data-unit-key="${chip.key}"]`), true)
       if (window.requestAnimationFrame) window.requestAnimationFrame(go)
       else window.setTimeout(go, 0)
@@ -1927,7 +1944,11 @@ function ActiveWorkout() {
     update(s => { if (s.active) s.active.cur = chip.unit[0] })
   }
   const chipRow = wc.exerciseChips && A.entries.length > 0
-    ? <WorkoutChips entries={A.entries} cur={cur} onPick={pickChip} />
+    ? <WorkoutChips entries={A.entries} cur={cur} onPick={pickChip}
+      onMoveUp={!listMode ? () => moveCurrentUnit(-1) : undefined}
+      onMoveDown={!listMode ? () => moveCurrentUnit(1) : undefined}
+      canMoveUp={!work && canMoveActiveWorkoutUnit(A, cur, -1)}
+      canMoveDown={!work && canMoveActiveWorkoutUnit(A, cur, 1)} />
     : null
 
   // Hardware keys (issue #133, lib/workout-keys.js): Space or Enter ticks the next set, ← and →
@@ -2068,11 +2089,7 @@ function ActiveWorkout() {
     {editing && <p className="muted small">{t('Editing a saved workout. Date and duration stay unchanged.')}</p>}
     {A.backfill && <div className="muted small" style={{ marginBottom: 8 }}>{t('Logging a past workout, so no rest timers.')}</div>}
 
-    {reorderOverview && <div className="row between workout-reorder-toolbar">
-      <span className="small dim">{t('Long-press a card to reorder')}</span>
-      <Button size="sm" onClick={() => setReorderOverview(false)}>{t('Done')}</Button>
-    </div>}
-    <div className={'workout-reorder' + (!listMode ? ' card-reorder' : '') + (reorder.drag ? ' is-reordering' : '')}
+    <div className={'workout-reorder' + (reorder.drag ? ' is-reordering' : '')}
       ref={reorder.listRef} onClickCapture={reorder.onClickCapture}>
     {A.entries.length ? (listMode ? (
       <div className={'workout-list' + (reorder.drag ? ' is-reordering' : '')} data-testid="workout-list"
@@ -2081,10 +2098,10 @@ function ActiveWorkout() {
           const multi = u.length > 1
           const isCur = u.includes(cur)
           const unitKey = workoutUnitKey(u)
-          const layoutKey = u.join('-')
-          const isCollapsed = collapsed.has(layoutKey)
-          // Finished and tapped open again: it says it can fold back, and does on a tap.
-          const reopened = collapseOn && !isCur && !isCollapsed && opened.has(unitKey) && finished(u)
+          const isCollapsed = collapsed.has(unitKey)
+          // A collapsed unit opened again keeps the original fold button, whether it was
+          // untouched or finished when the default collapse was applied.
+          const reopened = collapseOn && !isCur && !isCollapsed && opened.has(unitKey) && collapsible(u)
           const dragging = reorder.drag?.first === unitKey
           return <section key={unitKey} className={'wl-unit' + (isCur ? ' cur' : '') + (dragging ? ' is-dragging' : '')} data-exidx={u[0]} data-unit-key={u.join('-')}
             data-workout-unit={unitKey}
@@ -2092,21 +2109,21 @@ function ActiveWorkout() {
             <div className="wl-hd">
               <span className="muted small">{multi ? t('Superset {0} / {1}', ui + 1, units.length) : t('Exercise {0} / {1}', ui + 1, units.length)}</span>
               <span className="row" style={{ gap: 6 }}>
-                {reopened && <button className="chip" aria-expanded="true" aria-controls={'workout-unit-' + unitKey}
+                {reopened && <button className="chip" aria-expanded="true" aria-controls={'workout-unit-content-' + unitKey}
                   onClick={() => setUnitOpen(unitKey, false)}>{t('Fold away')}</button>}
                 {isCur
                   ? <span className="tag acc">{t('Current')}</span>
                   : <button className="chip" onClick={() => focusUnit(u[0])}>{t('Set current')}</button>}
               </span>
             </div>
-            <div id={'workout-unit-' + unitKey}>
+            <div id={'workout-unit-content-' + unitKey}>
             {/* One line per exercise, and the line is the way back in: a tap opens the sets again
                 to fix a number, without making it the current exercise. */}
             {isCollapsed ? <button type="button" className="wl-summary" aria-expanded="false" title={t('Show the sets')}
-              onClick={() => setUnitOpen(unitKey, true)}>
+              aria-controls={'workout-unit-content-' + unitKey} onClick={() => setUnitOpen(unitKey, true)}>
               {u.map(idx => <span key={idx} className="row between" style={{ gap: 8 }}>
                 <span style={{ fontWeight: 600, textTransform: 'capitalize' }}>{exerciseNameFor(exOr(A.entries[idx].id))}</span>
-                <span className="tag acc nocap"><Icon name="check" />{t('{0} sets', A.entries[idx].sets.length)}</span>
+                {finished([idx]) && <span className="tag acc nocap"><Icon name="check" />{t('{0} sets', A.entries[idx].sets.length)}</span>}
               </span>)}
             </button> : multi ? (
               <div className="ss-card">

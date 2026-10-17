@@ -5,31 +5,45 @@ export const REORDER_DRAG_SLOP = 8
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value))
 
 // Shared with the routine editor: long press, pointer ownership, cancellation and edge scrolling.
-function scrollHostFor(node) {
+function scrollHostFor(node, axis = 'y') {
+  const overflow = axis === 'x' ? 'overflowX' : 'overflowY'
+  const scrollSize = axis === 'x' ? 'scrollWidth' : 'scrollHeight'
+  const clientSize = axis === 'x' ? 'clientWidth' : 'clientHeight'
   for (let parent = node.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
-    const overflowY = window.getComputedStyle(parent).overflowY
-    if (/(auto|scroll)/.test(overflowY) && parent.scrollHeight > parent.clientHeight) return parent
+    const overflowValue = window.getComputedStyle(parent)[overflow]
+    if (/(auto|scroll)/.test(overflowValue) && parent[scrollSize] > parent[clientSize]) return parent
   }
   return window
 }
 
-function autoScrollStep(host, clientY) {
+function autoScrollStep(host, clientPosition, axis = 'y') {
   const edge = 64
   const maxStep = 14
-  let top, bottom, scrollTop, maxScroll
+  let start, end, scrollPosition, maxScroll
   if (host === window) {
     const root = document.scrollingElement || document.documentElement
-    top = window.visualViewport?.offsetTop || 0
-    bottom = top + (window.visualViewport?.height || window.innerHeight || root.clientHeight)
-    scrollTop = window.scrollY || root.scrollTop || 0
-    maxScroll = Math.max(root.scrollHeight, document.body?.scrollHeight || 0) - (bottom - top)
+    if (axis === 'x') {
+      start = 0; end = window.innerWidth || root.clientWidth
+      scrollPosition = window.scrollX || root.scrollLeft || 0
+      maxScroll = Math.max(root.scrollWidth, document.body?.scrollWidth || 0) - (end - start)
+    } else {
+      start = window.visualViewport?.offsetTop || 0
+      end = start + (window.visualViewport?.height || window.innerHeight || root.clientHeight)
+      scrollPosition = window.scrollY || root.scrollTop || 0
+      maxScroll = Math.max(root.scrollHeight, document.body?.scrollHeight || 0) - (end - start)
+    }
   } else {
     const rect = host.getBoundingClientRect()
-    top = rect.top; bottom = rect.bottom
-    scrollTop = host.scrollTop; maxScroll = host.scrollHeight - host.clientHeight
+    if (axis === 'x') {
+      start = rect.left; end = rect.right
+      scrollPosition = host.scrollLeft; maxScroll = host.scrollWidth - host.clientWidth
+    } else {
+      start = rect.top; end = rect.bottom
+      scrollPosition = host.scrollTop; maxScroll = host.scrollHeight - host.clientHeight
+    }
   }
-  if (clientY < top + edge && scrollTop > 0) return -Math.ceil(maxStep * clamp((top + edge - clientY) / edge, 0, 1))
-  if (clientY > bottom - edge && scrollTop < maxScroll) return Math.ceil(maxStep * clamp((clientY - bottom + edge) / edge, 0, 1))
+  if (clientPosition < start + edge && scrollPosition > 0) return -Math.ceil(maxStep * clamp((start + edge - clientPosition) / edge, 0, 1))
+  if (clientPosition > end - edge && scrollPosition < maxScroll) return Math.ceil(maxStep * clamp((clientPosition - end + edge) / edge, 0, 1))
   return 0
 }
 

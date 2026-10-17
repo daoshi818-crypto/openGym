@@ -18,7 +18,7 @@ import { t } from '../lib/i18n.js'
 // Functions, so each word is a literal t() call the string checks can see.
 const STATE_WORD = { done: () => t('Finished'), partial: () => t('Started'), todo: () => t('Not started yet') }
 
-export default function WorkoutChips({ entries, cur, onPick }) {
+export default function WorkoutChips({ entries, cur, onPick, onMoveUp, onMoveDown, canMoveUp, canMoveDown }) {
   const strip = useRef(null)
   const chips = exerciseChips(entries, cur)
   const curKey = chips.find(c => c.current)?.key
@@ -36,11 +36,24 @@ export default function WorkoutChips({ entries, cur, onPick }) {
       const label = c.unit.length > 1
         ? t('Superset {0}: {1} ({2})', c.n, names, STATE_WORD[c.state]())
         : t('Exercise {0}: {1} ({2})', c.n, names, STATE_WORD[c.state]())
-      return <button key={c.key} type="button" className={'wchip ' + c.state + (c.current ? ' cur' : '')}
-        data-unit-key={c.key} aria-current={c.current ? 'step' : undefined} aria-label={label} title={names}
-        onClick={() => onPick(c)}>
-        <span>{c.n}</span>{c.unit.length > 1 && <Icon name="link" />}
-      </button>
+      const order = c.current && (onMoveUp || onMoveDown)
+        ? <span className="wchip-order" aria-label={t('Move current exercise')}>
+          <button type="button" className="wchip-order-btn" aria-label={t('Move up')} title={t('Move up')} disabled={!canMoveUp}
+            onClick={event => { event.stopPropagation(); onMoveUp?.() }}><Icon name="chevronUp" /></button>
+          <button type="button" className={'wchip ' + c.state + ' cur'}
+            data-unit-key={c.key} aria-current="step" aria-label={label} title={names}
+            onClick={() => onPick(c)}>
+            <span>{c.n}</span>{c.unit.length > 1 && <Icon name="link" />}
+          </button>
+          <button type="button" className="wchip-order-btn" aria-label={t('Move down')} title={t('Move down')} disabled={!canMoveDown}
+            onClick={event => { event.stopPropagation(); onMoveDown?.() }}><Icon name="chevronDown" /></button>
+        </span>
+        : <button key={c.key} type="button" className={'wchip ' + c.state + (c.current ? ' cur' : '')}
+          data-unit-key={c.key} aria-current={c.current ? 'step' : undefined} aria-label={label} title={names}
+          onClick={() => onPick(c)}>
+          <span>{c.n}</span>{c.unit.length > 1 && <Icon name="link" />}
+        </button>
+      return <span key={c.key} className="wchip-wrap">{order}</span>
     })}
   </nav>
 }

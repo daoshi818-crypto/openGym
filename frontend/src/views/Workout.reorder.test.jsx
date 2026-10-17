@@ -129,21 +129,54 @@ describe('live workout long-press ordering', () => {
     expect(active().groupMeta).toEqual(before.groupMeta)
   })
 
-  it.each(['cards', 'focus'])('%s long press opens a temporary overview and completes the same gesture', view => {
+  it.each(['cards', 'focus'])('%s keeps one card visible and does not start a drag on long press', view => {
     mount(undefined, view, 0)
     expect(rows()).toHaveLength(1)
     lift(rows()[0])
-    expect(rows()).toHaveLength(3)
-    expect(host.querySelector('.is-dragging')).toBeTruthy()
-    const r = rows()[2].getBoundingClientRect()
-    pointer(document, 'pointermove', { y: r.bottom - 1 })
-    pointer(document, 'pointerup', { y: r.bottom - 1 })
-    expect(order()).toEqual(['bb', 'ccc', 'a'])
-    expect(active().workoutView).toBe(view)
-    act(() => [...host.querySelectorAll('.workout-reorder-toolbar button')][0].click())
     expect(rows()).toHaveLength(1)
-    expect(rows()[0].dataset.workoutUnit).toBe('a')
     noDrag()
+    pointer(document, 'pointerup')
+    expect(order()).toEqual(['a', 'bb', 'ccc'])
+    expect(active().workoutView).toBe(view)
+  })
+
+  it.each(['cards', 'focus'])('%s moves the current exercise with the chip arrows', view => {
+    mount(undefined, view, 1)
+    const up = host.querySelector('[aria-label="Move up"]')
+    const down = host.querySelector('[aria-label="Move down"]')
+    expect(up).toBeTruthy()
+    expect(down).toBeTruthy()
+    act(() => up.click())
+    expect(order()).toEqual(['bb', 'a', 'ccc'])
+    expect(active().entries[active().cur].occurrenceId).toBe('bb')
+    act(() => host.querySelector('[aria-label="Move down"]').click())
+    expect(order()).toEqual(['a', 'bb', 'ccc'])
+    expect(active().entries[active().cur].occurrenceId).toBe('bb')
+    expect(active().workoutView).toBe(view)
+  })
+
+  it('keeps the selected list layout when another exercise becomes current', () => {
+    mount(undefined, 'list', 0)
+    const target = rows()[1].querySelector('button.chip')
+    expect(target?.textContent).toContain('Set current')
+    act(() => target.click())
+    expect(active().cur).toBe(1)
+    expect(active().workoutView).toBe('list')
+    expect(host.querySelector('[data-testid="workout-list"]')).toBeTruthy()
+  })
+
+  it('collapses a not-started exercise by default and reuses the tap and fold controls', () => {
+    mount(undefined, 'list', 1, { collapseCompleted: true })
+    const waiting = rows()[0]
+    const summary = waiting.querySelector('.wl-summary')
+    expect(summary).toBeTruthy()
+    expect(summary.getAttribute('aria-expanded')).toBe('false')
+    act(() => summary.click())
+    expect(waiting.querySelector('.wl-summary')).toBeNull()
+    const fold = waiting.querySelector('[aria-expanded="true"]')
+    expect(fold).toBeTruthy()
+    act(() => fold.click())
+    expect(waiting.querySelector('.wl-summary')).toBeTruthy()
   })
 
   it('remaps a running rest without resetting time and restores its new owner', () => {

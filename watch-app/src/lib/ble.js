@@ -73,6 +73,8 @@ export function startServer(h) {
         } else {
           connected = false
           deviceId = null
+          outbox.forEach((entry) => { entry.sent = false })
+          persistOutbox()
         }
         if (handlers.onState) handlers.onState(connected)
       },
@@ -142,7 +144,7 @@ export function stopServer() {
 // 重连后 flush() 补发；手机按 sid+ex+set 幂等去重。
 export function sendEvent(obj) {
   if (!obj.at) obj.at = Date.now()
-  outbox.push({ at: obj.at, json: JSON.stringify(obj) })
+  outbox.push({ at: obj.at, json: JSON.stringify(obj), sent: false })
   persistOutbox()
   flush()
 }
@@ -176,14 +178,14 @@ export function isConnected() {
 // 把待发队列尽量清空。第一条发不出去就停（连接有问题），下次再试。
 export function flush() {
   if (!connected || !deviceId || !server) return
-  while (outbox.length) {
-    if (notifyOne(outbox[0].json)) {
-      outbox.shift()
-      persistOutbox()
-    } else {
-      break
-    }
+  let changed = false
+  for (const entry of outbox) {
+    if (entry.sent) continue
+    if (!notifyOne(entry.json)) break
+    entry.sent = true
+    changed = true
   }
+  if (changed) persistOutbox()
 }
 
 function notifyOne(json) {
@@ -270,6 +272,6 @@ function persistOutbox() {
 function loadOutbox() {
   try {
     const l = storage.getSync({ key: K_OUTBOX })
-    return Array.isArray(l) ? l : []
+    return Array.isArray(l) ? l.map((entry) => ({ ...entry, sent: !!entry.sent })) : []
   } catch (e) { return [] }
 }
