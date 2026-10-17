@@ -2,12 +2,12 @@
   "package": "com.zcode.gymtimer",
   "name": "训练助手",
   "icon": "/assets/images/logo.png",
-  "versionName": "0.3.1",
-  "versionCode": 4,
+  "versionName": "0.3.2",
+  "versionCode": 5,
   "appCategory": ["health"],
   "deviceTypeList": ["watch"],
   "config": {
-    "designWidth": 466
+    "designWidth": 450
   },
   "display": {
     "backgroundColor": "#0c0e12"

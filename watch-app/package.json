@@ -1,6 +1,6 @@
 {
   "name": "watch-app",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "description": "openGym 训练助手（BlueOS 手表应用）",
   "scripts": {},
