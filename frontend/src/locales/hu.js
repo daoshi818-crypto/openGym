@@ -4,6 +4,7 @@ export default {
   'Trends': 'Trendek',
   'Training days': 'Edzésnapok',
   'Muscle groups': 'Izomcsoportok',
+  'Training topics': 'Edzéstémák',
   'No workouts on this day.': 'Ezen a napon nincs edzés.',
   // --- generic ---
   'Confirm': 'Megerősítés',

@@ -4,6 +4,7 @@ export default {
   'Trends': 'रुझान',
   'Training days': 'प्रशिक्षण के दिन',
   'Muscle groups': 'मांसपेशी समूह',
+  'Training topics': 'प्रशिक्षण विषय',
   'No workouts on this day.': 'इस दिन कोई वर्कआउट नहीं है।',
   'Confirm': 'पुष्टि करें',
   'Cancel': 'रद्द करें',

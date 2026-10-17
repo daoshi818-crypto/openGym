@@ -1055,9 +1055,6 @@ body.chips-dragging *{cursor:inherit}
    than number + two floors, so the row's flex hands a starving cell width from the others
    instead of clipping its buttons. */
 .setrow .stp button{width:32px;height:40px}
-/* Only the weight/reps buttons: `.effcell-stp` is a `.stp` too, and its value is a `<button>`,
-   so a rule on `.setrow .stp button` would outrank `.effcell-stp .val` and stop the value from
-   filling the cell (it bunched left with dead space next to it at desktop widths). */
 .setrow .stp.w button,.setrow .stp.r button{flex:0 1 auto;min-width:var(--btn-floor)}
 .setrow .stp.w,.sethead .w-sp{--num:48px}
 .setrow .stp.r,.sethead .r-sp{--num:39px}
@@ -1081,11 +1078,8 @@ body.chips-dragging *{cursor:inherit}
    the generic `.empty` (which is a full-page empty-state with 44px padding — sharing that name
    inflated the cell to ~90px). */
 .setrow .effcell,.sethead .eff-sp{flex:.8 1 0;min-width:0}
-/* The whole effort column — empty cell, logged cell and header label alike, so the row does not
-   jump when a rating is added and the label does not drift — never goes below what the logged
-   stepper needs at its floor: 28 px value + two 16 px buttons + the 1.5 px borders. The row's
-   flex hands the difference back to weight and reps, whose own buttons shrink for it. */
-.setrow .effcell,.setrow .effcell-stp,.setrow.eff3 .effcell-stp,.sethead .eff-sp{min-width:64px}
+/* Empty/logged cells and the header share a value-only floor, without +/- slots. */
+.setrow .effcell,.sethead .eff-sp{min-width:34px}
 .effcell{
   box-sizing:border-box;height:44px;border-radius:10px;
   background:var(--surface-2);border:1.5px solid transparent;
@@ -1096,30 +1090,14 @@ body.chips-dragging *{cursor:inherit}
 }
 .effcell:active{transform:scale(.94)}
 .effcell.is-empty{color:var(--label-2);font-weight:500;font-size:12px;letter-spacing:.02em}
-/* a logged rating becomes a −/value/+ stepper, tinted by its effort band: the band colour
-   fills the cell at low opacity (set inline via color-mix), borders it, and colours the value.
-   the +/− buttons step 0.5 on the profile's scale; the value opens the picker. it carries the
-   same column flex as the plain .effcell so the row does not jump when a rating is added. */
-.setrow .effcell-stp,.setrow.eff3 .effcell-stp{
-  height:44px;border-radius:10px;border:1.5px solid transparent;
-  transition:background var(--fast),border-color var(--fast);
-}
-.effcell-stp button{color:inherit}
-.effcell-stp>button[aria-label="Decrease"],
-.effcell-stp>button[aria-label="Increase"]{width:26px;height:44px;font-size:15px;opacity:.85;flex:0 1 auto;min-width:16px}
-/* the value is the tap target for the picker, so it keeps a 28 px finger's width for "8.5" and
-   the −/+ shrink first — on a 368 px phone it had collapsed to 4 px under its own digits, and a
-   tap on the number stepped the rating instead of opening the picker (QA C22) */
-.effcell-stp .val{
+/* Only the picker retains an exact-value stepper; workout rows use .effcell. */
+.effpick .effcell-stp button{color:inherit}
+.effpick .effcell-stp>button{width:26px;height:44px;font-size:15px;opacity:.85;flex:0 1 auto;min-width:16px}
+.effpick .effcell-stp .val{
   flex:1;min-width:28px;display:flex;align-items:center;justify-content:center;
   font-size:15px;font-weight:600;letter-spacing:-.01em;
   font-variant-numeric:tabular-nums;line-height:1;align-self:stretch;color:inherit;
 }
-.effcell-stp .val:active{background:var(--surface-3)}
-/* the effort cell needs less room now (one short value, no +/- buttons), so weight/reps keep
-   more of the row on narrow phones than they did when three steppers had to share it */
-.setrow .effcell-stp,.setrow.eff3 .effcell-stp{flex:.8 1 0}
-.setrow.eff3 .effcell-stp{flex:.7 1 0}
 .setrow.eff3,.sethead.eff3{gap:6px}
 .setrow.eff3 .stp.w,.sethead.eff3 .w-sp{flex:1.4}
 .setrow.eff3 .stp.r,.sethead.eff3 .r-sp{flex:1.1}
@@ -1129,12 +1107,9 @@ body.chips-dragging *{cursor:inherit}
 /* the same reserved widths as a plain row's, at the smaller font */
 .setrow.eff3 .stp.w,.sethead.eff3 .w-sp{--num:41px}
 .setrow.eff3 .stp.r,.sethead.eff3 .r-sp{--num:30px}
-.setrow.eff3 .effcell-stp>button[aria-label="Decrease"],
-.setrow.eff3 .effcell-stp>button[aria-label="Increase"]{width:22px}
-.setrow.eff3 .effcell-stp .val{font-size:14px}
 /* effort quick picker sheet: colour-coded preset buttons, hardest (purple) first */
 /* effort picker: the ⋯-menu list with the value in the icon square, tinted per band; the
-   exact-value row carries the same stepper as the logged cell in the set row. */
+   exact-value row keeps its stepper for half-step adjustments. */
 .effpick.menu-list .menu-item .effpick-n{
   background:var(--bc);color:#fff;font-size:13px;font-weight:700;letter-spacing:-.02em;
   font-variant-numeric:tabular-nums;
@@ -1210,7 +1185,7 @@ body.chips-dragging *{cursor:inherit}
    buttons here: slimmer buttons, tighter gaps, and reps gets the same share as the weight. */
 .setrow-side .setrow.side.eff3{gap:4px}
 .setrow-side .setrow.side.eff3 .stp.r{flex:1.4}
-.setrow-side .setrow.side.eff3 .effcell,.setrow-side .setrow.side.eff3 .effcell-stp{flex:.6 1 0}
+.setrow-side .setrow.side.eff3 .effcell{flex:.6 1 0}
 .setrow-side .setrow.side.eff3 .stp.w button,.setrow-side .setrow.side.eff3 .stp.r button{width:20px}
 /* The header is laid out like a straight row, but in front of an L/R row's weight cell sit the
    set number, its gap AND the side badge, so over per-side rows the labels stood 17–23 px left
@@ -1238,50 +1213,17 @@ body.chips-dragging *{cursor:inherit}
   .sethead.per-side{gap:4px}
   .sethead.per-side .n-sp{width:49px}
 }
-/* The effort column steps down twice on the way to a narrow screen, not once. Its −/+ are gone
-   below 360 px (see the 359 px query), and from 366 px an L/R row carries them at full size in a
-   sets card two insets deep — in a list unit, or in a superset card. In between it could do
-   neither: the 64 px the pill needs for a 28 px value and two 16 px button floors left the row
-   6, 5, 4, 3, 2 and 1 px wider than its card's content box at 360–365 px, so its done tick sat
-   in the card's side padding. The −/+ give way there too, to a 12 px floor — they are what the
-   cell sheds first, a pixel further down they go altogether — and the row keeps everything that
-   carries meaning: the rating stays a 28 px tap target, the weight and reps columns keep their
-   numbers, their buttons and their floors, and the header keeps its single line ("WEIGHT (KG)"
-   has 1.5 px to spare in a 77 px column and would wrap if the weight column paid instead).
-   An L/R row in a superset in the list view has no −/+ to shrink below 430 px; the rule for it
-   below is more specific and keeps the cell at 34 px. */
-@media (min-width:360px) and (max-width:365px){
-  .setrow.side .effcell,.setrow.side .effcell-stp,.sethead.per-side .eff-sp{min-width:56px}
-  .setrow.side .effcell-stp>button[aria-label="Decrease"],
-  .setrow.side .effcell-stp>button[aria-label="Increase"]{min-width:12px}
-}
-/* An L/R row with an effort column inside a superset in the list view sits behind three insets
-   (unit, superset card, sets card). It used to drop the RIR −/+ here and hand the width to an
-   oversized weight cell — but the rating is the field you reach for most on a unilateral set, so
-   it keeps the same −/+ stepper a normal row has, just shrunk, and the weight cell pays for it
-   instead. The effort cell reserves its 28 px value plus two 12 px button floors (≈54 px); the
-   weight column gives up the matching width (a per-side weight is one limb's load, so its 48 px
-   reserve was generous), so the row's total is unchanged and everything still fits at 412 px. */
+/* Nested list supersets keep their compact weight-column rules; the effort button
+   uses the shared value-only floor, including on unilateral rows. */
 @media (max-width:429px){
-  .wl-unit .ss-card .setrow.side .effcell-stp>button[aria-label="Decrease"],
-  .wl-unit .ss-card .setrow.side .effcell-stp>button[aria-label="Increase"]{min-width:12px}
-  .wl-unit .ss-card .setrow.side .effcell,.wl-unit .ss-card .setrow.side .effcell-stp,.wl-unit .ss-card .sethead.per-side .eff-sp{min-width:54px}
-  /* reclaim the +/-'s room from the weight column: a slimmer number reserve and tighter button
-     floors, the same shape the 320 px step-down below already gives weight on these rows */
   .wl-unit .ss-card .setrow.side.eff3 .stp.w:not(.plain),.wl-unit .ss-card .sethead.per-side.eff3:not(.plain) .w-sp{--btn-floor:12px}
   .wl-unit .ss-card .setrow.side.eff3 .stp.w,.wl-unit .ss-card .sethead.per-side.eff3 .w-sp{--num:33px}
   .wl-unit .ss-card .setrow.side.eff3 .stp.w button{width:18px}
 }
-/* Below 360 px a row with an effort column cannot hold three numbers and six buttons: with the
-   set number, tick and gaps gone a card leaves ~178 px, and 102.5 / 12 / 8.5 at their floors need
-   ~197. The effort −/+ give way there on every row — the value stays (26 px for "8.5" plus the
-   border), still opens the picker on tap, and the picker's exact row steps in halves as before;
-   weight and reps keep their buttons. */
+/* On the narrowest phones tighten the value-only floor alongside the existing
+   per-side weight/reps floors. There are no hidden effort-button placeholders. */
 @media (max-width:359px){
-  .setrow .effcell-stp>button[aria-label="Decrease"],.setrow .effcell-stp>button[aria-label="Increase"]{display:none}
-  .setrow .effcell,.setrow .effcell-stp,.setrow.eff3 .effcell-stp,.sethead .eff-sp,
-  .wl-unit .ss-card .setrow.side .effcell,.wl-unit .ss-card .setrow.side .effcell-stp,.wl-unit .ss-card .sethead.per-side .eff-sp{min-width:29px}
-  .setrow .effcell-stp .val{min-width:26px}
+  .setrow .effcell,.sethead .eff-sp{min-width:29px}
   /* an L/R row with an effort column is still over by 14 px in a card at 320 px (badge 20, 77 + 66 +
      29 for the three cells, tick 30, four gaps): one notch further there — 16 px button floors
      and a 13 px number — and it fits with two pixels to spare. Not with the buttons off (`plain`),
@@ -1616,12 +1558,12 @@ body.no-tabbar #timer.working{box-shadow:inset 0 var(--hair) 0 var(--acc),0 -10p
 .hm-wrap::-webkit-scrollbar{display:none}
 .hm-months{display:flex;margin-inline-start:28px;margin-bottom:5px}
 .hm-months span{flex:none;width:14px;font-size:11px;color:var(--label-3);white-space:nowrap;overflow:visible}
-.hm-body{display:flex}
+.hm-body{display:flex;align-items:flex-start}
 .hm-days{display:flex;flex-direction:column;gap:3px;flex:none;width:28px}
 .hm-days span{height:11px;font-size:10px;color:var(--label-2);line-height:11px}
-.hm-grid{display:flex;gap:3px}
-.hm-col{display:flex;flex-direction:column;gap:3px}
-.hm-c{width:11px;height:11px;border-radius:3px;background:var(--surface-2);flex:none}
+.hm-grid{display:flex;gap:3px;align-items:flex-start;align-self:flex-start}
+.hm-col{display:flex;flex-direction:column;gap:3px;align-items:flex-start;align-self:flex-start;flex:none}
+.hm-c{width:11px;height:11px;min-width:11px;min-height:11px;max-width:11px;max-height:11px;border-radius:3px;background:var(--surface-2);flex:none;position:relative}
 .hm-c.l1{background:color-mix(in srgb,var(--acc) 30%,var(--surface-2))}
 .hm-c.l2{background:color-mix(in srgb,var(--acc) 55%,var(--surface-2))}
 .hm-c.l3{background:color-mix(in srgb,var(--acc) 78%,var(--surface-2))}
@@ -1633,7 +1575,7 @@ body.no-tabbar #timer.working{box-shadow:inset 0 var(--hair) 0 var(--acc),0 -10p
   display:flex;align-items:center;gap:4px;justify-content:flex-end;margin-top:9px;
   font-size:11px;color:var(--label-3);
 }
-.hm-legend .hm-c{width:10px;height:10px}
+.hm-legend .hm-c{width:10px;height:10px;min-width:10px;min-height:10px;max-width:10px;max-height:10px}
 
 /* "Share as image" (#453): the card as it will be sent, at the sheet's width. The placeholder
    holds a portrait card's shape so nothing below it jumps when the picture lands. */
@@ -1769,9 +1711,9 @@ body.no-tabbar.resting #toast{bottom:calc(100px + var(--sab))}
 .training-calendar-summary>div{min-width:0;background:var(--surface-2);border-radius:12px;padding:10px 8px;text-align:center}
 .training-calendar-summary strong{display:block;font-size:21px;line-height:1.1}
 .training-calendar-summary span{display:block;color:var(--label-2);font-size:11px;margin-top:4px;overflow-wrap:anywhere}
-.training-calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px}
+.training-calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;align-items:stretch}
 .training-calendar-weekday{text-align:center;font-size:11px;color:var(--label-3);padding:2px 0}
-.training-calendar-day{min-width:0;min-height:70px;position:relative;display:flex;flex-direction:column;align-items:center;gap:3px;padding:7px 3px;border-radius:10px;background:var(--surface-2);color:var(--label);text-align:center;cursor:pointer}
+.training-calendar-day{min-width:0;block-size:clamp(56px,12vw,64px);position:relative;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:2px;padding:5px 3px;border-radius:10px;background:var(--surface-2);color:var(--label);text-align:center;cursor:pointer;overflow:hidden}
 .training-calendar-day.outside{opacity:.3;cursor:default}
 .training-calendar-day.trained{background:var(--acc-soft)}
 .training-calendar-day.selected{box-shadow:inset 0 0 0 2px var(--acc)}
@@ -1779,12 +1721,12 @@ body.no-tabbar.resting #toast{bottom:calc(100px + var(--sab))}
 .training-calendar-day:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 .training-calendar-number{font-size:14px;font-weight:600}
 .training-calendar-mark{width:5px;height:5px;border-radius:50%;background:var(--acc);flex:none}
-.training-calendar-muscles{max-width:100%;font-size:10px;line-height:1.2;color:var(--label-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.training-calendar-topics{display:block;max-width:100%;font-size:10px;line-height:1.2;color:var(--label-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .training-calendar-details{margin-top:16px;padding-top:15px;border-top:var(--hair) solid var(--sep)}
 .training-calendar-details h3{margin:0 0 3px;font-size:17px}
 .training-calendar-chips{margin-bottom:10px}
 .training-calendar-hint{text-align:center;padding:18px 5px 3px}
-@media(max-width:520px){.training-calendar-grid{gap:3px}.training-calendar-day{min-height:61px;padding:5px 2px}.training-calendar-muscles{font-size:9px}.training-calendar-summary strong{font-size:19px}}
+@media(max-width:520px){.training-calendar-grid{gap:3px}.training-calendar-day{block-size:56px;padding:4px 2px}.training-calendar-topics{font-size:9px}.training-calendar-summary strong{font-size:19px}}
 [dir="rtl"] .training-calendar-grid{direction:rtl}
 
 /* --- accent swatches --- */
@@ -1870,6 +1812,16 @@ body.no-tabbar.resting #toast{bottom:calc(100px + var(--sab))}
    row whose cells have floors (see .setrow .stp) would widen the whole unit past the screen and
    push the ticks off it. Capped, a row that does not fit overflows its own card instead. */
 .workout-list{display:grid;grid-template-columns:minmax(0,1fr);gap:14px}
+.workout-reorder{position:relative}
+.workout-reorder.card-reorder{touch-action:none}
+.workout-reorder-toolbar{margin-bottom:12px}
+.workout-reorder.is-reordering{user-select:none;-webkit-user-select:none}
+.workout-reorder.is-reordering{touch-action:none}
+.workout-reorder.is-reordering .wl-unit{transition:none}
+.workout-list .wl-unit[data-workout-unit]{touch-action:pan-y;-webkit-touch-callout:none;position:relative;transition:transform var(--fast) var(--ease)}
+.workout-reorder .wl-unit.is-dragging{z-index:2;box-shadow:0 10px 28px rgba(0,0,0,.22)}
+.workout-reorder.is-reordering,.workout-reorder.is-reordering *{cursor:grabbing}
+.workout-drop-indicator{position:absolute;left:6px;right:6px;height:3px;border-radius:99px;background:var(--acc);transform:translateY(-50%);pointer-events:none;z-index:3}
 .wl-unit{
   border-radius:var(--r-lg);padding:14px 14px 4px;
   background:var(--surface-2);

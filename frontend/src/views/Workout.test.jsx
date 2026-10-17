@@ -171,6 +171,8 @@ async function mount(entries, cur = 0, overrides = {}) {
   mocks.S = workout(entries, cur, overrides)
   installDom()
   await act(async () => { root.render(React.createElement(Workout)) })
+  // This mock store has no subscription; show the occurrence-id migration's saved snapshot.
+  await act(async () => { root.render(React.createElement(Workout)) })
 }
 
 async function unmount() {
@@ -1270,14 +1272,9 @@ describe('effort cell (colour-coded RIR/RPE quick picker)', () => {
     target: { mode: 'reps', reps: 5, weight: 60, bodyweight: false },
     sets: rirs.map(rir => ({ w: 60, r: 5, done: false, ...(rir == null ? {} : { rir }) })),
   })
-  // A cell is one of two shapes: an empty `.effcell` button (label, opens picker) or, once a
-  // rating is logged, a `.effcell-stp` −/value/+ group. `.effcell-list` returns the outer
-  // element of each (carrying the colour on the logged one); `effCells` normalises them to the
-  // value-bearing, picker-opening element so the existing assertions read the same either way:
-  // for the empty button that is the button itself, for the stepper it is the `.val` button.
-  const effCellList = () => [...container.querySelectorAll('.effcell,.effcell-stp')]
-  const effCells = () => effCellList().map(el =>
-    el.classList.contains('effcell-stp') ? el.querySelector('.val') : el)
+  // Empty and logged ratings share a single, fully clickable button.
+  const effCellList = () => [...container.querySelectorAll('.setrow .effcell')]
+  const effCells = effCellList
 
   async function mountEffort(rirs, scale = 'rir') {
     mocks.S = workout([effExercise(rirs)])
@@ -1313,9 +1310,9 @@ describe('effort cell (colour-coded RIR/RPE quick picker)', () => {
     const cells = effCells()
     const outer = effCellList()
     expect(cells[0].textContent).toBe('0')
-    expect(outer[0].className).toContain('effcell-stp')   // logged: the stepper, not the label
+    expect(outer[0].tagName).toBe('BUTTON')
     // 0 RIR = to failure = purple; 2 RIR = yellow (the colours effortColor assigns) — the
-    // colour rides the outer stepper (border + tinted background), not the inner value button
+    // colour rides the whole button (border + tinted background)
     expect(outer[0].getAttribute('style')).toContain('--purple')
     expect(cells[1].textContent).toBe('2')
     expect(outer[1].getAttribute('style')).toContain('--yellow')
@@ -1354,35 +1351,25 @@ describe('effort cell (colour-coded RIR/RPE quick picker)', () => {
     expect('rir' in mocks.S.active.entries[0].sets[0]).toBe(false)
   })
 
-  // The mock store is a plain snapshot with no subscription, so a click updates mocks.S but
-  // does not re-render on its own; each step is checked from its own mount rather than chained.
-  const clickStep = async label => {
-    await act(async () => {
-      effCellList()[0].querySelector(`button[aria-label="${label}"]`)
-        .dispatchEvent(new dom.Event('click', { bubbles: true }))
-    })
-  }
-
-  it('steps a logged rating up 0.5 on the scale with the + button, not through the picker', async () => {
-    await mountEffort([2])
-    expect(effCellList()[0].querySelectorAll('button[aria-label="Increase"],button[aria-label="Decrease"]')).toHaveLength(2)
-    await clickStep('Increase')
-    expect(mocks.S.active.entries[0].sets[0].rir).toBe(2.5)
-    expect(mocks.effortPickerSheet).not.toHaveBeenCalled()
+  it('has no effort stepper buttons and preserves the weight/reps steppers', async () => {
+    await mountEffort([0, 2, 8.5])
+    expect(container.querySelectorAll('.setrow .effcell-stp')).toHaveLength(0)
+    for (const cell of effCells()) {
+      expect(cell.tagName).toBe('BUTTON')
+      expect(cell.querySelectorAll('button, .icn')).toHaveLength(0)
+    }
+    expect(container.querySelectorAll('.setrow .stp.w button')).toHaveLength(6)
+    expect(container.querySelectorAll('.setrow .stp.r button')).toHaveLength(6)
   })
 
-  it('steps a logged rating down 0.5 with the − button', async () => {
-    await mountEffort([2])
-    await clickStep('Decrease')
-    expect(mocks.S.active.entries[0].sets[0].rir).toBe(1.5)
-  })
-
-  it('clears the rating when stepped down off the floor', async () => {
-    // RIR 0 is the bottom of the scale — one more − is a mistap-undo, dropping the key rather
-    // than sticking at 0 (which reads as "went to failure")
+  it('reopens the picker on every tap, including a logged zero', async () => {
     await mountEffort([0])
-    await clickStep('Decrease')
-    expect('rir' in mocks.S.active.entries[0].sets[0]).toBe(false)
+    for (let i = 1; i <= 2; i++) {
+      await act(async () => { effCells()[0].dispatchEvent(new dom.Event('click', { bubbles: true })) })
+      expect(mocks.effortPickerSheet).toHaveBeenCalledTimes(i)
+      expect(mocks.effortPickerSheet).toHaveBeenLastCalledWith('rir', 0, expect.any(Function))
+      expect(mocks.S.active.entries[0].sets[0].rir).toBe(0)
+    }
   })
 })
 
@@ -1499,7 +1486,8 @@ describe('active workout whole-unit move controls', () => {
     expect(action('Move down')?.textContent.trim()).toBe('Move down')
     await act(async () => { action('Move up').dispatchEvent(new dom.Event('click', { bubbles: true })) })
 
-    expect(mocks.S.active.entries.map(entry => entry.occurrenceId || entry.id)).toEqual(['duplicate#1', 'duplicate#2', 'middle'])
+    expect(mocks.S.active.entries.map(entry => entry.id)).toEqual(['duplicate', 'duplicate', 'middle'])
+    expect(mocks.S.active.entries.slice(0, 2).map(entry => entry.occurrenceId)).toEqual(['duplicate#1', 'duplicate#2'])
     expect(mocks.S.active.entries[1]).toEqual(selected)
     expect(mocks.S.active.entries[1].target).toEqual({ mode: 'reps', reps: 7, weight: 82.5, notes: 'Keep this target' })
     expect(mocks.S.active.entries[1].sets).toEqual([{ w: 77.5, r: 6, done: true, rir: 2 }])
@@ -2926,7 +2914,7 @@ describe('workout controls: the more menu and the set menu', () => {
 describe('effort rating auto-ends the set', () => {
   // Open the effort picker for set `index` and return the onPick callback the cell handed it.
   async function openEffortPicker(index = 0) {
-    const cell = container.querySelectorAll('.setrow .effcell.is-empty, .setrow .effcell-stp .val')[index]
+    const cell = container.querySelectorAll('.setrow .effcell')[index]
     expect(cell).toBeTruthy()
     await act(async () => { cell.dispatchEvent(new dom.Event('click', { bubbles: true })) })
     const call = mocks.effortPickerSheet.mock.calls.at(-1)

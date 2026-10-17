@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canMoveActiveWorkoutUnit, moveActiveWorkoutUnit, canMoveActiveWorkoutEntry, moveActiveWorkoutEntry } from './active-workout-order.js'
+import { canMoveActiveWorkoutUnit, moveActiveWorkoutUnit, canMoveActiveWorkoutEntry, moveActiveWorkoutEntry, moveActiveWorkoutUnitTo, activeWorkoutEntryKey, ensureActiveWorkoutOccurrenceIds, needsActiveWorkoutOccurrenceIds } from './active-workout-order.js'
 import { supersetFlowStep } from './supersetFlow.js'
 import { supersetUnits } from './history.js'
 import { LANGS, DERIVED_LOCALES } from './i18n-core.js'
@@ -13,6 +13,47 @@ const entry = (id, extra = {}) => ({
 })
 
 describe('active workout whole-unit order', () => {
+  it('refuses slots that would join separate legacy superset runs', () => {
+    const active = { cur: 0, entries: [entry('a', { sg: 'same' }), entry('b', { sg: 'same' }), entry('separator'), entry('c', { sg: 'same' }), entry('d', { sg: 'same' })] }
+    ensureActiveWorkoutOccurrenceIds(active)
+    const before = structuredClone(active)
+    expect(moveActiveWorkoutUnitTo(active, active.entries[2].occurrenceId, 0)).toBeNull()
+    expect(active).toEqual(before)
+    expect(moveActiveWorkoutUnitTo(active, active.entries[0].occurrenceId, 2)).toBeNull()
+    expect(active).toEqual(before)
+  })
+  it('moves a stable occurrence to any unit slot without relabelling its data', () => {
+    const first = entry('same', { occurrenceId: 'same#1', sets: [{ w: 10, r: 5, done: true }] })
+    const grouped = entry('same', { occurrenceId: 'same#2', sg: 'pair', sets: [{ w: 20, r: 4, done: false }] })
+    const partner = entry('row', { occurrenceId: 'row#1', sg: 'pair', sets: [{ w: 30, r: 3, done: true }] })
+    const last = entry('last', { occurrenceId: 'last#1', sets: [{ w: 40, r: 2, done: false }] })
+    const active = { cur: 2, entries: [first, grouped, partner, last] }
+    const beforeRest = active.entries[active.cur]
+
+    expect(moveActiveWorkoutUnitTo(active, 'same#1', 1)?.targetSlot).toBe(1)
+    expect(active.entries.map(item => item.occurrenceId)).toEqual(['same#2', 'row#1', 'same#1', 'last#1'])
+    expect(active.entries[2]).toBe(first)
+    expect(active.entries[0]).toBe(grouped)
+    expect(active.entries[1]).toBe(partner)
+    expect(active.entries[active.cur]).toBe(beforeRest)
+  })
+
+  it('upgrades missing or duplicate occurrence ids once and never sorts by a legacy array index', () => {
+    const active = { cur: 0, entries: [entry('bench'), entry('bench', { occurrenceId: 'kept' }), entry('row', { occurrenceId: 'kept' })] }
+    expect(moveActiveWorkoutUnitTo(active, 'kept', 0)).toBeNull()
+    expect(needsActiveWorkoutOccurrenceIds(active)).toBe(true)
+    expect(ensureActiveWorkoutOccurrenceIds(active)).toBe(true)
+    expect(new Set(active.entries.map(activeWorkoutEntryKey)).size).toBe(3)
+    expect(active.entries[1].occurrenceId).toBe('kept')
+    const before = structuredClone(active)
+    expect(ensureActiveWorkoutOccurrenceIds(active)).toBe(false)
+    expect(active).toEqual(before)
+    const key = activeWorkoutEntryKey(active.entries[2])
+    expect(moveActiveWorkoutUnitTo(active, key, 0)).not.toBeNull()
+    expect(active.entries.map(item => item.id)).toEqual(['row', 'bench', 'bench'])
+    expect(active.entries.every(item => item.occurrenceId)).toBe(true)
+  })
+
   it('moves one standalone occurrence without conflating duplicate exercise ids', () => {
     const duplicateA = entry('duplicate', { occurrenceId: 'duplicate#1' })
     const selected = entry('duplicate', {

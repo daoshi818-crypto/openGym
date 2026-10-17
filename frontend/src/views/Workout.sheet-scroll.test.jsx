@@ -85,6 +85,71 @@ const runFrames = async () => {
   await act(async () => { queued.forEach(fn => fn()) })
 }
 
+const typeExact = async value => {
+  await act(async () => {
+    const input = document.querySelector('.effpick input')
+    Object.getOwnPropertyDescriptor(input.constructor.prototype, 'value').set.call(input, value)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}
+
+describe('single effort entry with the real picker and persisted store', () => {
+  it.each(['cards', 'list'].flatMap(view => ['rir', 'rpe'].flatMap(kind =>
+    [false, true].flatMap(side => [false, true].map(steppers => ({ view, kind, side, steppers }))))))
+   ('$view $kind side=$side steppers=$steppers reopens, updates and persists only a selected rating', async ({ view, kind, side, steppers }) => {
+      const initial = kind === 'rir' ? 0 : 8.5
+      const S = structuredClone(useStore.getState().S)
+      S.workoutView = view
+      S.effort = kind
+      S.wc = { ...S.wc, steppers }
+      S.active.entries[0].target.side = side
+      if (side) {
+        S.active.entries[0].sets[0].sides = { L: { w: 20, r: 5, done: true, [kind]: initial }, R: { w: 20, r: 5, done: false } }
+      } else {
+        S.active.entries[0].sets[0][kind] = initial
+        S.active.entries[0].sets[0].done = true
+      }
+      useStore.setState({ S })
+      const cell = () => host.querySelector('[data-exidx="0"] .setrow .effcell')
+      const rating = state => side ? state.active.entries[0].sets[0].sides.L[kind] : state.active.entries[0].sets[0][kind]
+      await mount()
+      expect(cell().tagName).toBe('BUTTON')
+      expect(cell().textContent).toBe(String(initial))
+      expect(host.querySelectorAll('.setrow .effcell-stp')).toHaveLength(0)
+      for (const close of ['escape', 'backdrop', 'swipe']) {
+        await click(cell())
+        expect(document.querySelector('.effpick')).toBeTruthy()
+        await typeExact('9')
+        if (close === 'escape') {
+          await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })) })
+        } else if (close === 'swipe') {
+          await act(async () => {
+            const sheet = document.querySelector('.sheet')
+            sheet.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, clientX: 100, clientY: 100 }))
+            sheet.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 100, clientY: 220 }))
+            sheet.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 100, clientY: 220 }))
+            vi.advanceTimersByTime(180)
+          })
+        } else await click(document.querySelector('.mback'))
+        expect(useUI.getState().sheets).toHaveLength(0)
+        expect(rating(useStore.getState().S)).toBe(initial)
+        expect(useUI.getState().timer).toBeNull()
+      }
+      await click(cell())
+      await typeExact('3.5')
+      await click([...document.querySelectorAll('.sheet button')].find(b => b.textContent.trim() === 'Done'))
+      expect(rating(useStore.getState().S)).toBe(3.5)
+      expect(rating(JSON.parse(localStorage.getItem('gym_state_v1')))).toBe(3.5)
+      expect(cell().textContent).toBe('3.5')
+      await click(cell())
+      expect(document.querySelector('.effpick input').value).toBe('3.5')
+      await click(document.querySelector('.effpick .item.menu-item'))
+      expect(rating(useStore.getState().S)).toBe(kind === 'rir' ? 0 : 10)
+      expect(rating(JSON.parse(localStorage.getItem('gym_state_v1')))).toBe(kind === 'rir' ? 0 : 10)
+      if (side) expect(useStore.getState().S.active.entries[0].sets[0].sides.R[kind]).toBeUndefined()
+    })
+})
+
 describe('rating a superset set closes a sheet and moves the marker in one tap', () => {
   it('scrolls to the partner row after the sheet has finished putting the page back', async () => {
     await mount()

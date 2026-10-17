@@ -4,6 +4,7 @@ export default {
   'Trends': 'Andamento',
   'Training days': 'Giorni di allenamento',
   'Muscle groups': 'Gruppi muscolari',
+  'Training topics': 'Temi di allenamento',
   'No workouts on this day.': 'Nessun allenamento in questo giorno.',
   'Confirm': 'Conferma',
   'Cancel': 'Annulla',

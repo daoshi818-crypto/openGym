@@ -8,6 +8,7 @@ export const PT_BR_OVERRIDES = {
   'Trends': 'Tendências',
   'Training days': 'Dias de treino',
   'Muscle groups': 'Grupos musculares',
+  'Training topics': 'Temas de treino',
   'No workouts on this day.': 'Nenhum treino neste dia.',
   '{0} set brings an {1} with it. Switch on Effort per set in Settings to see it.': '{0} série traz um {1} junto. Ative “Esforço por série” nas Configurações para ver.',
   'Add to this set': 'Adicionar a esta série',

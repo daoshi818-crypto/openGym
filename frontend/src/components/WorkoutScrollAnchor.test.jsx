@@ -61,29 +61,53 @@ it('keeps a partly visible next tile still when the topmost tile itself is colla
   expect(tileTop('1')).toBe(top)
 })
 
-it('reserves only enough space to avoid a page-end clamp, then reclaims it on expansion', async () => {
+it('clamps at the page end without padding and restores natural layout on expansion', async () => {
   await render('', [['0', 100, 700], ['1', 800, 400]], 1400)
   const top = tileTop('1')
   await render('0', [['0', 100, 100], ['1', 200, 400]], 700)
-  expect(tileTop('1')).toBe(top)
-  expect(container.firstChild.style.paddingBottom).toBe('100px')
+  expect(tileTop('1')).toBe(100)
+  expect(window.scrollY).toBe(100)
+  expect(container.firstChild.style.paddingBottom || '').toBe('')
   await render('', [['0', 100, 700], ['1', 800, 400]], 1400)
-  expect(tileTop('1')).toBe(top)
-  expect(container.firstChild.style.paddingBottom).toBe('')
+  expect(tileTop('1')).toBe(700)
+  expect(container.firstChild.style.paddingBottom || '').toBe('')
 })
 
-it('holds the next tile at the page start when shrinking would require a negative scroll offset', async () => {
+it('lets the next tile move up at the page start instead of reserving the collapsed height', async () => {
   scrollY = 400
   await render('', [['0', 100, 700], ['1', 800, 650]])
   const top = tileTop('1')
   await render('0', [['0', 100, 100], ['1', 200, 650]])
-  expect(tileTop('1')).toBe(top)
+  expect(tileTop('1')).toBe(200)
   expect(window.scrollY).toBe(0)
-  expect(container.querySelector('[data-unit-key="1"]').style.marginTop).toBe('200px')
+  expect(container.querySelector('[data-unit-key="1"]').style.marginTop || '').toBe('')
   const firstTop = tileTop('0')
   await render('', [['0', 100, 700], ['1', 800, 650]])
   expect(tileTop('0')).toBe(firstTop)
-  expect(container.querySelector('[data-unit-key="1"]').style.marginTop).toBe('')
+  expect(container.querySelector('[data-unit-key="1"]').style.marginTop || '').toBe('')
+})
+
+it('does not accumulate blank space after consecutive collapses and reopening', async () => {
+  scrollY = 0
+  await render('', [['0', 100, 700], ['1', 800, 650], ['2', 1450, 650]])
+  await render('0', [['0', 100, 100], ['1', 200, 650], ['2', 850, 650]])
+  expect(tileTop('1')).toBe(200)
+  await render('0,1', [['0', 100, 100], ['1', 200, 100], ['2', 300, 650]])
+  expect(tileTop('2')).toBe(300)
+  await render('1', [['0', 100, 700], ['1', 800, 100], ['2', 900, 650]])
+  expect(tileTop('0')).toBe(100)
+  for (const tile of container.querySelectorAll('.wl-unit')) expect(tile.style.marginTop || '').toBe('')
+  expect(container.firstChild.style.paddingBottom || '').toBe('')
+})
+
+it('clamps a locked sheet offset to the remaining content without inserting gaps', async () => {
+  document.body.style.position = 'fixed'; document.body.style.top = '-400px'
+  await render('', [['0', 100, 700], ['1', 800, 650]])
+  await render('0', [['0', 100, 100], ['1', 200, 650]])
+  expect(document.body.style.top).toBe('0px')
+  expect(tileTop('1')).toBe(200)
+  expect(container.querySelector('[data-unit-key="1"]').style.marginTop || '').toBe('')
+  expect(container.firstChild.style.paddingBottom || '').toBe('')
 })
 
 it('updates the locked body offset while the Layout sheet is open', async () => {

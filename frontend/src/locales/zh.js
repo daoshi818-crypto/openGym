@@ -4,6 +4,7 @@ export default {
   'Trends': '趋势统计',
   'Training days': '训练天数',
   'Muscle groups': '肌群数量',
+  'Training topics': '训练主题',
   'No workouts on this day.': '这一天没有训练记录。',
   'Confirm': '确认',
   'Cancel': '取消',

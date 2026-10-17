@@ -12,11 +12,16 @@ vi.mock('../sheets.jsx', () => ({
 const at = (day, hour) => new Date(`${day}T${hour}:00:00`).getTime()
 const workout = (id, day, hour, name, muscle) => ({
   id, d: day, start: at(day, hour), end: at(day, hour) + 3600000,
-  name, entries: [{ id, exercise: { primaries: [muscle] }, sets: [{ w: 20, r: 10, done: true }] }],
+  name, routineIds: [muscle === 'chest' ? 'chest-routine' : muscle === 'upper-back' ? 'back-routine' : `${muscle}-routine`],
+  entries: [{ id, exercise: { primaries: [muscle, 'shoulders', 'triceps'] }, sets: [{ w: 20, r: 10, done: true }] }],
 })
 const workouts = [
   workout('chest', '2026-10-08', '08', 'Morning chest', 'chest'),
   workout('back', '2026-10-08', '18', 'Evening back', 'upper-back'),
+]
+const routines = [
+  { id: 'chest-routine', name: 'Chest' },
+  { id: 'back-routine', name: 'Back' },
 ]
 let host, root
 
@@ -26,7 +31,7 @@ beforeEach(() => {
   host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host)
 })
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.useRealTimers() })
-const render = (S, onWorkout = vi.fn()) => { act(() => root.render(<TrainingCalendar S={S} onWorkout={onWorkout} />)); return onWorkout }
+const render = (S, onWorkout = vi.fn()) => { act(() => root.render(<TrainingCalendar S={{ routines, ...S }} onWorkout={onWorkout} />)); return onWorkout }
 const dayButton = day => host.querySelector(`button[aria-label^="${day}"]`)
 const press = label => act(() => host.querySelector(`button[aria-label="${label}"]`).click())
 
@@ -102,14 +107,22 @@ it('navigates December and January without losing or double-counting boundary wo
   expect(host.querySelector('h2').textContent).toContain('December')
 })
 
-it('translates muscle names in both compact cells and accessible labels', async () => {
-  const { setLang } = await import('../lib/i18n.js')
-  await setLang('zh')
-  try {
-    render({ workouts, unit: 'kg', weekStart: 1 })
-    const cell = dayButton('2026-10-08')
-    expect(cell.textContent).toContain('胸')
-    expect(cell.getAttribute('aria-label')).toContain('胸')
-    expect(cell.textContent).not.toContain('Chest')
-  } finally { await setLang('en') }
+it('shows the scheduled routine topic instead of exercise muscles', () => {
+  render({ workouts, unit: 'kg', weekStart: 1 })
+  const cell = dayButton('2026-10-08')
+  expect(cell.textContent).toContain('Chest')
+  expect(cell.getAttribute('aria-label')).toContain('Chest')
+  expect(cell.textContent).not.toContain('Shoulders')
+  expect(cell.textContent).not.toContain('Triceps')
+})
+
+it('keeps multiple routine topics compact in the cell and complete in details', () => {
+  const combined = { ...workouts[0], id: 'combined', name: 'Combined', routineIds: ['chest-routine', 'back-routine'] }
+  render({ workouts: [combined], unit: 'kg', weekStart: 1 })
+  const cell = dayButton('2026-10-08')
+  expect(cell.querySelector('.training-calendar-topics').textContent).toBe('Chest +1')
+  expect(cell.getAttribute('aria-label')).toContain('Chest, Back')
+  act(() => cell.click())
+  expect(host.querySelector('.training-calendar-chips').textContent).toContain('Chest')
+  expect(host.querySelector('.training-calendar-chips').textContent).toContain('Back')
 })

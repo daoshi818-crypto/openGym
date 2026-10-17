@@ -2054,31 +2054,21 @@ export const glyphPicker = (current, onPick) => {
 function EffortPicker({ kind, value, onPick, close }) {
   // Local mirror so the ticked preset and the exact field track typing live.
   const [v, setV] = useState(value ?? null)
-  // The exact field used to write through on every change, and onPick concludes the set (issue
-  // #64): it ticks the set, beeps and starts the rest. Since stepEffort(kind, null, 1) returns
-  // the band's minimum, one tap of + — or typing the `1` of `10` — was a committed rating, fired
-  // under the sheet you were still typing into, and on the last set of the last exercise it
-  // stacked workoutCompleteSheet on top of the picker. So typing moves the mirror only, and the
-  // rating is written once, when the sheet goes away: Done, the backdrop, a swipe or Escape all
-  // unmount this. A preset row still commits on the spot, which is what makes it one tap.
-  const typed = useRef(value ?? null)
-  const done = useRef(false)
-  const set = nv => { typed.current = nv; setV(nv) }
-  useEffect(() => () => {
-    if (done.current) return
-    if (typed.current !== (value ?? null)) onPick(typed.current)
-  }, [])
+  // Exact edits stay local until Done. Backdrop, swipe, Escape and unmount discard the draft;
+  // presets and Clear rating remain explicit one-tap commits. onPick can conclude the set,
+  // so dismissing a draft must never call it.
+  const set = setV
   // `v` is in the profile's own scale (whatever sits on the set: s.rir or s.rpe). Compare in
   // RIR so the tick lands on the right preset on either scale, and so a typed RPE colours the
   // same as the RIR it equals.
   const curRir = rirOf(kind === 'rpe' ? { rpe: v } : { rir: v })
   const curColor = effortColor(curRir)
-  const commit = nv => { done.current = true; close(); onPick(nv) }
+  const commit = nv => { close(); onPick(nv) }
   const pick = rir => commit(toScale(kind, rir))
   const hd = EFFORT[kind].hd
   // Same list the ⋯ menus use: a tinted square with the value where the icon goes, the sentence
   // as the row title, a tick on the current one. The exact field is the app's own stepper,
-  // tinted like the logged cell in the set row, so the sheet and the row read as one thing.
+  // tinted with the same effort colours as the single button in the workout row.
   return <>
     <h3 style={{ marginBottom: 2 }}>{t('How hard was that set?')}</h3>
     <div className="muted small" style={{ marginBottom: 10 }}>{t('Tap how many reps you had left, or type an exact {0}.', hd)}</div>

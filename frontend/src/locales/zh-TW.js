@@ -3,6 +3,7 @@ export default {
   'Trends': '趨勢統計',
   'Training days': '訓練天數',
   'Muscle groups': '肌群數量',
+  'Training topics': '訓練主題',
   'No workouts on this day.': '這一天沒有訓練紀錄。',
   'Confirm': '確認',
   'Cancel': '取消',

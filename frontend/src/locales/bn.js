@@ -4,6 +4,7 @@ export default {
   'Trends': 'প্রবণতা',
   'Training days': 'প্রশিক্ষণের দিন',
   'Muscle groups': 'পেশিগোষ্ঠী',
+  'Training topics': 'প্রশিক্ষণের বিষয়',
   'No workouts on this day.': 'এই দিনে কোনো ওয়ার্কআউট নেই।',
   'Confirm': 'নিশ্চিত করুন',
   'Cancel': 'বাতিল',

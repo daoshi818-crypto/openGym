@@ -4,6 +4,7 @@ export default {
   'Trends': '추세',
   'Training days': '운동한 날',
   'Muscle groups': '근육군',
+  'Training topics': '운동 주제',
   'No workouts on this day.': '이날에는 운동 기록이 없습니다.',
   'Confirm': '확인',
   'Cancel': '취소',

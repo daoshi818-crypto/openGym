@@ -9,7 +9,7 @@ import { pushPlanToWatch, bindWatchSync, pushRestToWatch, pushWeightToWatch, pus
 import { exOr, betterWeight } from '../lib/exercises.js'
 import { usesBar } from '../lib/bar.js'
 import { loadKindFor, baseWeightFor, inventoryFor, rowLoad, sameLoad, plateDelta, dropGrid } from '../lib/plates.js'
-import { effectiveRoutines, effectiveRoutineIds, lastEntryFor, bestWeightFor, bestWeightForEntry, buildSets, freestyleConfig, defaultConfig, setsDoneActive, setUnitsTotal, supersetUnits, unitOf, setLabel, modeOf, isBw, isPerSide, repStep, EFFORT, effortOf, stepEffort, capEffort, cascadeWeight, insertWarmupRow, barFloor, makeWarmupAt, canBeWarmup, makeWorkAt, removeRowAt, removeLastSet, setSpanAt, copyRowAt, copySpanAt, insertRowAt, pairAdjacent, unpairSuperset, cleanupSg, applyIntensifierPlan, pinnedNoteFor, exNoteFor, setsRepsOf } from '../lib/history.js'
+import { effectiveRoutines, effectiveRoutineIds, lastEntryFor, bestWeightFor, bestWeightForEntry, buildSets, freestyleConfig, defaultConfig, setsDoneActive, setUnitsTotal, supersetUnits, unitOf, setLabel, modeOf, isBw, isPerSide, repStep, EFFORT, effortOf, capEffort, cascadeWeight, insertWarmupRow, barFloor, makeWarmupAt, canBeWarmup, makeWorkAt, removeRowAt, removeLastSet, setSpanAt, copyRowAt, copySpanAt, insertRowAt, pairAdjacent, unpairSuperset, cleanupSg, applyIntensifierPlan, pinnedNoteFor, exNoteFor, setsRepsOf } from '../lib/history.js'
 import { fmtNum, fmtPlate, exerciseNameText, fmtDate, fmtDaysAgo, todayISO, exCount, DAYN } from '../lib/format.js'
 import { speedUnitOf, toSpeed, fromSpeed } from '../lib/speed.js'
 import { clampIncline, hasIncline, inclineFits, inclineFrom, INCLINE_STEP } from '../lib/incline.js'
@@ -42,7 +42,8 @@ import { glyphOf } from '../lib/glyphs.js'
 import { markAllSetsDone, sessionHistory } from '../lib/backfill.js'
 import { bestSetFor } from '../lib/exercise-history.js'
 import { isWarmupRow, isFailureSet, toggleFailure, isDropSet, isRestPauseSet, dropsOf, clustersOf, addDrop, addCluster, removeDropAt, removeClusterAt, setDropAt, setClusterAt, nextDropWeight, nextBurstReps, isSideSet, makeSideSet, setSideField, toggleSide, addSideDrop, removeSideDropAt, setSideDropAt, addSideCluster, removeSideClusterAt, setSideClusterAt, WEIGHT_ORIGIN_MANUAL } from '../lib/workout-model.js'
-import { canMoveActiveWorkoutUnit, moveActiveWorkoutUnit, canMoveActiveWorkoutEntry, moveActiveWorkoutEntry } from '../lib/active-workout-order.js'
+import { canMoveActiveWorkoutUnit, moveActiveWorkoutUnit, canMoveActiveWorkoutEntry, moveActiveWorkoutEntry, activeWorkoutEntryKey, moveActiveWorkoutUnitTo, needsActiveWorkoutOccurrenceIds, ensureActiveWorkoutOccurrenceIds } from '../lib/active-workout-order.js'
+import { useWorkoutReorder } from '../lib/use-workout-reorder.js'
 import { nextOpenSet, workoutKeyAction } from '../lib/workout-keys.js'
 import { MUSCLE_NAME } from '../lib/muscles.js'
 import FocusView from './FocusView.jsx'
@@ -290,7 +291,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
     view: v => toSpeed(v, speedUnit), store: v => fromSpeed(v, speedUnit) }
     : timed ? loadCol : repCol
   // Effort (RIR or RPE, whichever the profile logs) only makes sense for weighted rep sets,
-  // not cardio/timed holds, and is opt-in since it adds a third stepper to every row. `opt`
+  // not cardio/timed holds, and is opt-in since it adds a third control to every row. `opt`
   // because an unlogged effort is not the same as 0 — RIR 0 says the set went to failure.
   const kind = effortOf(S)
   const eff = EFFORT[kind]
@@ -302,8 +303,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
   const inclineCol = cardio && (inclineFits(ex) || entry.sets.some(hasIncline))
     ? { f: 'incline', step: INCLINE_STEP, dec: true, opt: true, hd: t('Incline (%)'), store: clampIncline } : null
   const col3 = cardio ? inclineCol : mode === 'reps' && eff ? { f: eff.f, eff: kind, hd: t(eff.hd) } : null
-  // The effort column walks its own scale — see stepEffort. Weight and reps step up from 0
-  // with no ceiling, as they always did.
+  // Weight and reps step up from 0 with no ceiling. Effort uses its own picker.
   const bump = (s, i, col, dir) => {
     // Read the current value directly from the store rather than from the render-time snapshot.
     // In a superset both ExerciseBlock instances share the same store subscription, so when one
@@ -465,8 +465,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
   // The effort cell is a single button, not a stepper: it shows the rating in the profile's
   // scale, tinted by how close to failure it was, and opens the picker on tap — to set a
   // rating or change one. rirOf-via-effortColor keeps the colour identical whether the value
-  // is logged as RIR or RPE. With the +/- buttons switched off (Workout controls) a logged
-  // rating is just the tinted value, which still opens the picker.
+  // is logged as RIR or RPE. The whole button opens the picker in either controls setting.
   const effortCell = (s, i, col) => {
     const v = s[col.f] ?? null
     const rir = col.eff === 'rpe' ? (v == null ? null : 10 - v) : v
@@ -483,17 +482,12 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
       if (fresh && !fresh.done) onToggle(i)
     }
     const open = () => effortPickerSheet(col.eff, v, pickEffort)
-    if (v == null) return (
-      <button className="effcell is-empty" aria-label={col.hd} onClick={open}>{col.hd}</button>
-    )
-    const step = dir => onField(i, col.f, stepEffort(col.eff, v, dir))
     return (
-      <div className={'stp effcell-stp' + (wc.steppers ? '' : ' plain')}
+      <button type="button" className={'effcell' + (v == null ? ' is-empty' : '')}
+        aria-label={col.hd} onClick={open}
         style={color ? { color, borderColor: color, background: `color-mix(in srgb, ${color} 20%, var(--surface-2))` } : undefined}>
-        {wc.steppers && <button aria-label={t('Decrease')} onClick={() => step(-1)}><Icon name="minus" /></button>}
-        <button className="val" aria-label={col.hd} onClick={open}>{fmtNum(v)}</button>
-        {wc.steppers && <button aria-label={t('Increase')} onClick={() => step(1)}><Icon name="plus" /></button>}
-      </div>
+        {v == null ? col.hd : fmtNum(v)}
+      </button>
     )
   }
   // Per-side versions of the weight/reps stepper and the effort picker. Same markup and stepping
@@ -526,15 +520,12 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
       const fresh = useStore.getState().S.active?.entries[entryIdx]?.sets[i]?.sides?.[side]
       if (nv != null && fresh && !fresh.done) onToggleSide(i, side)
     })
-    if (v == null) return <button className="effcell is-empty" aria-label={col.hd} onClick={open}>{col.hd}</button>
-    const step = dir => setSide(i, side, col.f, stepEffort(col.eff, v, dir))
     return (
-      <div className={'stp effcell-stp' + (wc.steppers ? '' : ' plain')}
+      <button type="button" className={'effcell' + (v == null ? ' is-empty' : '')}
+        aria-label={col.hd} onClick={open}
         style={color ? { color, borderColor: color, background: `color-mix(in srgb, ${color} 20%, var(--surface-2))` } : undefined}>
-        {wc.steppers && <button aria-label={t('Decrease')} onClick={() => step(-1)}><Icon name="minus" /></button>}
-        <button className="val" aria-label={col.hd} onClick={open}>{fmtNum(v)}</button>
-        {wc.steppers && <button aria-label={t('Increase')} onClick={() => step(1)}><Icon name="plus" /></button>}
-      </div>
+        {v == null ? col.hd : fmtNum(v)}
+      </button>
     )
   }
   // One side's row: the L or R badge, then the same weight/reps/effort controls as a straight
@@ -944,9 +935,16 @@ function ActiveWorkout() {
   // pre-existing profile (and a session started before this field) as it was.
   const requestedView = A.workoutView || S.workoutView
   const workoutView = ['list', 'compact', 'focus'].includes(requestedView) ? requestedView : 'cards'
-  const listMode = workoutView === 'list' || workoutView === 'compact'
+  const [reorderOverview, setReorderOverview] = useState(false)
+  const listMode = reorderOverview || workoutView === 'list' || workoutView === 'compact'
   const focusMode = workoutView === 'focus'
-  const dense = workoutView === 'compact'
+  const dense = reorderOverview || workoutView === 'compact'
+  const workoutUnitKey = u => activeWorkoutEntryKey(A.entries[u[0]]) || 'pending-' + u[0]
+  const idsReady = !needsActiveWorkoutOccurrenceIds(A)
+  useEffect(() => {
+    if (editing || idsReady) return
+    update(s => { if (s.active?.id === A.id) ensureActiveWorkoutOccurrenceIds(s.active) }, false)
+  }, [A.id, A.entries, editing, idsReady, update])
   // A superset's heading: its own name and rest between rounds when it has them (#292).
   const ssTitle = u => {
     const m = supersetMeta(A.entries, u, { onTarget: true })
@@ -961,12 +959,12 @@ function ActiveWorkout() {
   const collapseOn = listMode && !!(A.collapseCompleted ?? S.collapseCompleted)
   // A finished unit you tapped open again to look at or fix (Discord: "minimize completed exercises
   // so I view only what I have yet to do"). This screen's own memory: a reload folds it back.
-  // Keyed by index like the units, so a different number of exercises starts over.
+  // Stable occurrence keys keep expanded summaries with their exercises after a reorder.
   const [openedState, setOpenedState] = useState(() => ({ len: A.entries.length, keys: new Set() }))
   const opened = openedState.len === A.entries.length ? openedState.keys : new Set()
   const finished = u => u.every(idx => A.entries[idx].sets.length > 0 && A.entries[idx].sets.every(s => s.done))
   const collapsed = new Set(collapseOn ? units.filter(u =>
-    !u.includes(cur) && !opened.has(u.join('-')) && finished(u),
+    !u.includes(cur) && !opened.has(workoutUnitKey(u)) && finished(u),
   ).map(u => u.join('-')) : [])
   const setUnitOpen = (key, open) => setOpenedState(prev => {
     const keys = new Set(prev.len === A.entries.length ? prev.keys : [])
@@ -1215,6 +1213,38 @@ function ActiveWorkout() {
   }
 
   const moveCurrentUnit = direction => moveUnitAt(cur, direction)
+
+  const moveWorkoutUnitToSlot = (sourceKey, targetSlot) => {
+    const active = useStore.getState().S.active
+    if (!active || active.id !== A.id) return
+    if (!moveActiveWorkoutUnitTo({ ...active, entries: [...active.entries] }, sourceKey, targetSlot)) return
+    focusPointerEpoch.current++
+    update(s => {
+      const moved = moveActiveWorkoutUnitTo(s.active, sourceKey, targetSlot)
+      if (!moved) return
+      const remap = index => moved.indices.indexOf(index)
+      lastCur.current = s.active.cur
+      progressHighWater.current = moved.indices.map(index => progressHighWater.current[index])
+      lastCounts.current = moved.indices.map(index => lastCounts.current[index])
+      const ui = useUI.getState()
+      const patch = {}
+      if (ui.timer?.forIdx != null) patch.timer = { ...ui.timer, forIdx: remap(ui.timer.forIdx) }
+      if (ui.work?.owner) patch.work = { ...ui.work, owner: { ...ui.work.owner, idx: remap(ui.work.owner.idx) } }
+      if (ui.work && holdAt) {
+        holdAt.idx = remap(holdAt.idx)
+        holdAt.owner.idx = holdAt.idx
+      }
+      for (const key of ['swipeHint', 'setFlash']) {
+        if (ui[key]) patch[key] = { ...ui[key], idx: remap(ui[key].idx) }
+      }
+      useUI.setState(patch)
+    }, false)
+  }
+
+  const reorder = useWorkoutReorder(A.id, A.entries, moveWorkoutUnitToSlot, {
+    enabled: !editing && idsReady && units.length > 1,
+    onLift: () => { if (!listMode) setReorderOverview(true) },
+  })
 
   // "Don't count for progression" from an exercise's ⋯ menu (Discord, asierlama: an injury day).
   // It stamps the entry's `noProg`, the flag a deload routine freezes onto its entries: the saved
@@ -1887,7 +1917,7 @@ function ActiveWorkout() {
   const pickChip = chip => {
     if (listMode) {
       // A folded unit opens as you jump to it: you tapped it to see it.
-      if (collapsed.has(chip.key)) setUnitOpen(chip.key, true)
+      if (collapsed.has(chip.key)) setUnitOpen(workoutUnitKey(chip.unit), true)
       const go = () => scrollToUnit(listRef.current?.querySelector(`.wl-unit[data-unit-key="${chip.key}"]`), true)
       if (window.requestAnimationFrame) window.requestAnimationFrame(go)
       else window.setTimeout(go, 0)
@@ -2038,30 +2068,42 @@ function ActiveWorkout() {
     {editing && <p className="muted small">{t('Editing a saved workout. Date and duration stay unchanged.')}</p>}
     {A.backfill && <div className="muted small" style={{ marginBottom: 8 }}>{t('Logging a past workout, so no rest timers.')}</div>}
 
+    {reorderOverview && <div className="row between workout-reorder-toolbar">
+      <span className="small dim">{t('Long-press a card to reorder')}</span>
+      <Button size="sm" onClick={() => setReorderOverview(false)}>{t('Done')}</Button>
+    </div>}
+    <div className={'workout-reorder' + (!listMode ? ' card-reorder' : '') + (reorder.drag ? ' is-reordering' : '')}
+      ref={reorder.listRef} onClickCapture={reorder.onClickCapture}>
     {A.entries.length ? (listMode ? (
-      <div className="workout-list" data-testid="workout-list" ref={listRef}>
+      <div className={'workout-list' + (reorder.drag ? ' is-reordering' : '')} data-testid="workout-list"
+        ref={listRef}>
         {units.map((u, ui) => {
           const multi = u.length > 1
           const isCur = u.includes(cur)
-          const isCollapsed = collapsed.has(u.join('-'))
+          const unitKey = workoutUnitKey(u)
+          const layoutKey = u.join('-')
+          const isCollapsed = collapsed.has(layoutKey)
           // Finished and tapped open again: it says it can fold back, and does on a tap.
-          const reopened = collapseOn && !isCur && !isCollapsed && opened.has(u.join('-')) && finished(u)
-          return <section key={u.join('-')} className={'wl-unit' + (isCur ? ' cur' : '')} data-exidx={u[0]} data-unit-key={u.join('-')}>
+          const reopened = collapseOn && !isCur && !isCollapsed && opened.has(unitKey) && finished(u)
+          const dragging = reorder.drag?.first === unitKey
+          return <section key={unitKey} className={'wl-unit' + (isCur ? ' cur' : '') + (dragging ? ' is-dragging' : '')} data-exidx={u[0]} data-unit-key={u.join('-')}
+            data-workout-unit={unitKey}
+            style={dragging ? { transform: `translate3d(0, ${reorder.drag.deltaY}px, 0)` } : undefined}>
             <div className="wl-hd">
               <span className="muted small">{multi ? t('Superset {0} / {1}', ui + 1, units.length) : t('Exercise {0} / {1}', ui + 1, units.length)}</span>
               <span className="row" style={{ gap: 6 }}>
-                {reopened && <button className="chip" aria-expanded="true" aria-controls={'workout-unit-' + u.join('-')}
-                  onClick={() => setUnitOpen(u.join('-'), false)}>{t('Fold away')}</button>}
+                {reopened && <button className="chip" aria-expanded="true" aria-controls={'workout-unit-' + unitKey}
+                  onClick={() => setUnitOpen(unitKey, false)}>{t('Fold away')}</button>}
                 {isCur
                   ? <span className="tag acc">{t('Current')}</span>
                   : <button className="chip" onClick={() => focusUnit(u[0])}>{t('Set current')}</button>}
               </span>
             </div>
-            <div id={'workout-unit-' + u.join('-')}>
+            <div id={'workout-unit-' + unitKey}>
             {/* One line per exercise, and the line is the way back in: a tap opens the sets again
                 to fix a number, without making it the current exercise. */}
             {isCollapsed ? <button type="button" className="wl-summary" aria-expanded="false" title={t('Show the sets')}
-              onClick={() => setUnitOpen(u.join('-'), true)}>
+              onClick={() => setUnitOpen(unitKey, true)}>
               {u.map(idx => <span key={idx} className="row between" style={{ gap: 8 }}>
                 <span style={{ fontWeight: 600, textTransform: 'capitalize' }}>{exerciseNameFor(exOr(A.entries[idx].id))}</span>
                 <span className="tag acc nocap"><Icon name="check" />{t('{0} sets', A.entries[idx].sets.length)}</span>
@@ -2074,7 +2116,7 @@ function ActiveWorkout() {
                 </div>
                 {u.map((idx, k) => {
                   const entry = A.entries[idx]
-                  return <div key={idx} ref={el => bindExRef(entry, el)} className="ss-ex" data-exidx={idx}>
+                  return <div key={activeWorkoutEntryKey(entry) || idx} ref={el => bindExRef(entry, el)} className="ss-ex" data-exidx={idx}>
                     {k > 0 && <div className="ss-amp">+</div>}
                     <ExerciseBlock entryIdx={idx} compact dense={dense} onSetRowRef={(setIdx, el) => bindSetRef(entry, setIdx, el)}
                       {...blockProps(idx)} />
@@ -2095,7 +2137,7 @@ function ActiveWorkout() {
       {/* The chips stand in for "Exercise 2 / 5": the number is on the current chip, and the
           others say what is done and what is waiting (#323). */}
       {chipRow || <div className="muted small" style={{ marginBottom: 6 }}>{isSuperset ? t('Superset {0} / {1}', unitIdx + 1, units.length) : t('Exercise {0} / {1}', unitIdx + 1, units.length)}</div>}
-      <SwipeCards index={unitIdx} count={units.length} revision={A}
+      <SwipeCards index={unitIdx} count={units.length} revision={A} unitKey={workoutUnitKey(unit)}
         timerKey={timer && `${timer.endsAt}:${timer.forIdx ?? ''}`} workKey={work?.endsAt}
         onNavigate={navigateUnit} renderPreview={direction => {
           // The card slid in shows what the card itself will: in the editor, no hold to start
@@ -2148,6 +2190,9 @@ function ActiveWorkout() {
       </SwipeCards>
     </>) : <div className="empty"><div className="ico"><Icon name="shuffle" /></div>{t('Freestyle workout. Add your first exercise and off you go.')}</div>}
 
+    {reorder.drag && <div className="workout-drop-indicator" data-testid="workout-drop-indicator"
+      aria-hidden="true" style={{ top: `${reorder.drag.indicatorTop}px` }} />}
+    </div>
     <div style={{ height: 12 }} />
     {!listMode && <div className="row">
       <Button icon="chevronLeft" disabled={unitIdx <= 0} onClick={() => navigateUnit(-1)}>{t('Prev')}</Button>

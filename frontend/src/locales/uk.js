@@ -4,6 +4,7 @@ export default {
   'Trends': 'Тенденції',
   'Training days': 'Дні тренувань',
   'Muscle groups': 'Групи м’язів',
+  'Training topics': 'Теми тренувань',
   'No workouts on this day.': 'Цього дня тренувань немає.',
   'Confirm': 'Підтвердити',
   'Cancel': 'Скасувати',

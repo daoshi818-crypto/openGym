@@ -4,7 +4,6 @@ import { Component, createRef } from 'react'
 // brackets the collapse itself, including changes made while the Layout sheet locks the body.
 export default class WorkoutScrollAnchor extends Component {
   root = createRef()
-  leadingSpace = null
 
   getSnapshotBeforeUpdate(prev) {
     if (prev.collapsed === this.props.collapsed) return null
@@ -23,29 +22,19 @@ export default class WorkoutScrollAnchor extends Component {
 
   componentDidUpdate(prev, state, snapshot) {
     if (!snapshot) return
-    const root = this.root.current
-    if (this.leadingSpace) this.leadingSpace.style.marginTop = ''
-    this.leadingSpace = null
-    if (!snapshot.anchor.isConnected) { root.style.paddingBottom = ''; return }
+    if (!snapshot.anchor.isConnected) return
     const body = document.body
     const locked = body.style.position === 'fixed'
     const delta = snapshot.anchor.getBoundingClientRect().top - snapshot.top
     const y = locked ? -(parseFloat(body.style.top) || 0) : window.scrollY
-    const target = Math.max(0, y + delta)
-    // At the page start we cannot scroll to a negative offset. Keep the minimum gap
-    // before the surviving tile instead; a later expansion reclaims it.
-    if (y + delta < 0) {
-      snapshot.anchor.style.marginTop = `${-(y + delta)}px`
-      this.leadingSpace = snapshot.anchor
-    }
-    // Collapsing near the page end can clamp scrollY before we restore it. Keep only the
-    // trailing space needed to hold this viewport; a later expansion can reclaim it.
-    const oldSpace = parseFloat(root.style.paddingBottom) || 0
-    const height = Math.max(body.scrollHeight, document.documentElement.scrollHeight) - oldSpace
-    const space = Math.max(0, target + window.innerHeight - height)
-    root.style.paddingBottom = space ? `${space}px` : ''
+    // Anchor only within the remaining page's scroll range. At either boundary the next
+    // tile must move with the content: adding a margin or trailing padding to pin it would
+    // keep the collapsed height in the layout until another collapse/expansion.
+    const height = Math.max(body.scrollHeight, document.documentElement.scrollHeight)
+    const maxY = Math.max(0, height - window.innerHeight)
+    const target = Math.min(maxY, Math.max(0, y + delta))
     if (locked) body.style.top = `${-target}px`
-    else if (delta || oldSpace !== space) {
+    else if (target !== y) {
       // Cancel a sheet's delayed keyboard correction before it can undo this newer anchor.
       window.dispatchEvent(new Event('workout-scroll-anchor'))
       window.scrollTo({ top: target, left: window.scrollX, behavior: 'instant' })

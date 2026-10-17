@@ -4,6 +4,7 @@ export default {
   'Trends': 'Eğilimler',
   'Training days': 'Antrenman günleri',
   'Muscle groups': 'Kas grupları',
+  'Training topics': 'Antrenman konuları',
   'No workouts on this day.': 'Bu gün antrenman yok.',
   'Confirm': 'Onayla',
   'Cancel': 'İptal',

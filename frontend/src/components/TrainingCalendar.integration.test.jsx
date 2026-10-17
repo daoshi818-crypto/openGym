@@ -21,7 +21,7 @@ beforeEach(() => {
 })
 afterEach(() => { act(() => root.unmount()); host.remove(); useUI.setState({ sheets: [] }); vi.useRealTimers() })
 
-it('refreshes real WorkoutRows via the same store.update used by history edit/delete', () => {
+it('keeps the saved training topic while refreshing real WorkoutRows via store.update', () => {
   act(() => root.render(<CalendarFromStore />))
   clickDay('2026-10-08')
   expect(summary()).toEqual(['1', '2', '2'])
@@ -30,8 +30,8 @@ it('refreshes real WorkoutRows via the same store.update used by history edit/de
     s.workouts[0].entries[0].muscleWeights = { triceps: 1 }
     s.workouts[0].entries[0].sets[0].w = 40
   }, false))
-  expect(host.querySelector('.training-calendar-chips').textContent).toContain('Triceps')
-  expect(host.querySelector('.training-calendar-chips').textContent).not.toContain('Chest')
+  expect(host.querySelector('.training-calendar-chips').textContent).toContain('Morning')
+  expect(host.querySelector('.training-calendar-chips').textContent).not.toContain('Triceps')
   expect(host.querySelector('.training-calendar-details').textContent).toContain('600 kg')
   act(() => useStore.getState().update(s => { s.workouts = s.workouts.filter(w => w.id !== 'Morning') }, false))
   expect(summary()).toEqual(['1', '1', '1'])
@@ -47,7 +47,7 @@ it('renders a date-only legacy record using the real shared row', () => {
   clickDay('2026-10-08')
   expect(host.querySelector('.training-calendar-details').textContent).toContain('Imported legacy')
   expect(host.querySelector('.training-calendar-details').textContent).toContain('150 kg')
-  expect(summary()).toEqual(['1', '1', '0'])
+  expect(summary()).toEqual(['1', '1', '1'])
   act(() => host.querySelector('.training-calendar-details .item').click())
   const sheet = useUI.getState().sheets.at(-1)
   expect(sheet).toBeTruthy()

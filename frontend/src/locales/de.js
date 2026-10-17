@@ -4,6 +4,7 @@ export default {
   'Trends': 'Trends',
   'Training days': 'Trainingstage',
   'Muscle groups': 'Muskelgruppen',
+  'Training topics': 'Trainingsthemen',
   'No workouts on this day.': 'An diesem Tag gibt es keine Trainings.',
   // --- generic ---
   'Confirm': 'Bestätigen',

@@ -47,7 +47,7 @@ export function cardCommits(dx, dy, v = 0) {
 // (+1 next, -1 previous) and only the pixels are multiplied by this.
 const nextSide = () => (typeof document !== 'undefined' && document.documentElement.dir === 'rtl' ? -1 : 1)
 
-export default function SwipeCards({ children, renderPreview, onNavigate, index, count, revision, timerKey, workKey }) {
+export default function SwipeCards({ children, renderPreview, onNavigate, index, count, revision, timerKey, workKey, unitKey }) {
   const surface = useRef(null)
   const card = useRef(null)
   const preview = useRef(null)
@@ -219,6 +219,6 @@ export default function SwipeCards({ children, renderPreview, onNavigate, index,
       if (event.target === event.currentTarget && !pending.current && gesture.current?.id === event.pointerId) reset()
     }}>
     {direction != null && <div ref={preview} className="workout-swipe-preview" aria-hidden="true" inert>{renderPreview(direction)}</div>}
-    <div ref={card} className="workout-swipe-card">{children}</div>
+    <div ref={card} className="workout-swipe-card" data-workout-unit={unitKey}>{children}</div>
   </div>
 }

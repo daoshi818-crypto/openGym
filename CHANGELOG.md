@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.5.2 (2026-10-18)
+
+- **Stats training calendar** now shows the selected routine topics instead of muscles inferred from exercises.
+- **Calendar cells** use a compact, aligned row height and summarize multiple topics without expanding the month grid.
+
 ## v1.5.1 (2026-10-16)
 
 - **Rest overlay card** now matches openGym's app style with a neutral dark surface, accent status

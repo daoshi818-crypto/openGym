@@ -1,4 +1,82 @@
 import { supersetUnits } from './history.js'
+import { uid } from './format.js'
+
+// A routine can contain the same exercise more than once. `id` is the exercise definition id,
+// so it cannot identify one live slot after a reorder. Active sessions keep this opaque id on the
+// entry; it is persisted with the in-progress session and is deliberately omitted by
+// finish-workout.js when the session becomes history.
+export function activeWorkoutEntryKey(entry) {
+  return entry?.occurrenceId
+}
+
+export function needsActiveWorkoutOccurrenceIds(active) {
+  if (!Array.isArray(active?.entries)) return false
+  const seen = new Set()
+  return active.entries.some(entry => {
+    const id = entry?.occurrenceId
+    if (!id || seen.has(id)) return true
+    seen.add(id)
+    return false
+  })
+}
+
+/** Add stable ids to old or newly inserted live entries without changing exercise ids. */
+export function ensureActiveWorkoutOccurrenceIds(active) {
+  if (!Array.isArray(active?.entries)) return false
+  const used = new Set(active.entries.map(entry => entry?.occurrenceId).filter(Boolean))
+  const seen = new Set()
+  let changed = false
+  active.entries.forEach(entry => {
+    if (!entry) return
+    let id = entry.occurrenceId
+    if (!id || seen.has(id)) {
+      do { id = `occ-${uid()}` } while (used.has(id) || seen.has(id))
+      entry.occurrenceId = id
+      used.add(id)
+      changed = true
+    }
+    seen.add(id)
+  })
+  return changed
+}
+
+// Move one whole superset unit to a slot in the list after the source unit is removed. The source
+// is addressed by occurrence id, never by the transient array index used for rendering. This is
+// the drag counterpart to moveActiveWorkoutUnit's one-step arrow action.
+export function moveActiveWorkoutUnitTo(active, sourceKey, targetSlot) {
+  if (!active || !Array.isArray(active.entries) || !active.entries.length) return null
+  if (!sourceKey || needsActiveWorkoutOccurrenceIds(active)) return null
+  const sourceIndex = active.entries.findIndex(entry => entry.occurrenceId === sourceKey)
+  if (sourceIndex < 0) return null
+  const units = supersetUnits(active.entries)
+  const sourcePosition = units.findIndex(unit => unit.includes(sourceIndex))
+  if (sourcePosition < 0) return null
+  const remaining = units.filter((_, position) => position !== sourcePosition)
+  const slot = Math.max(0, Math.min(remaining.length,
+    Number.isFinite(targetSlot) ? Math.trunc(targetSlot) : sourcePosition))
+  if (slot === sourcePosition) return null
+
+  const currentEntry = active.entries[active.cur]
+  const source = units[sourcePosition]
+  const movedEntries = source.map(index => active.entries[index])
+  const reorderedUnits = [...remaining]
+  const insertAt = remaining.slice(0, slot).reduce((count, unit) => count + unit.length, 0)
+  const reorderedEntries = reorderedUnits.flatMap(unit => unit.map(index => active.entries[index]))
+  reorderedEntries.splice(insertAt, 0, ...movedEntries)
+  // Legacy sessions can contain separated runs with the same sg id. Never join those runs
+  // by moving their separator, or by putting one run beside the other. Those slots are illegal.
+  const expectedUnits = [...remaining]
+  expectedUnits.splice(slot, 0, source)
+  if (supersetUnits(reorderedEntries).some((unit, i) => unit.length !== expectedUnits[i]?.length)) return null
+  const before = [...active.entries]
+  active.entries.splice(0, active.entries.length, ...reorderedEntries)
+  active.cur = Math.max(0, active.entries.indexOf(currentEntry))
+  return {
+    indices: reorderedEntries.map(entry => before.indexOf(entry)),
+    sourcePosition,
+    targetSlot: slot,
+  }
+}
 
 function moveTarget(active, index, direction) {
   if (!active || !Array.isArray(active.entries) || (direction !== -1 && direction !== 1)) return null

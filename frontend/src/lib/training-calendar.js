@@ -52,24 +52,47 @@ export function musclesOfWorkout(workout) {
   return MUSCLES.filter(slug => muscles.has(slug))
 }
 
-function sessionOf(workout, index, day) {
+const routineIdsOf = workout => {
+  if (Array.isArray(workout?.routineIds)) return workout.routineIds
+  return workout?.routineId ? [workout.routineId] : []
+}
+
+// The calendar label is the routine the user selected for the session. Exercise muscles remain
+// available for analysis elsewhere, but they are not a training-day topic and must not be shown as
+// one (a chest routine can contain shoulder and triceps assistance work).
+export function trainingTopicsOf(workout, routines = []) {
+  const byId = routines instanceof Map ? routines : new Map((Array.isArray(routines) ? routines : []).map(r => [r.id, r]))
+  const topics = []
+  const add = value => {
+    const name = String(value || '').trim()
+    if (name && !topics.includes(name)) topics.push(name)
+  }
+  routineIdsOf(workout).forEach(id => add(byId.get(id)?.name))
+  if (!topics.length) add(workout?.name)
+  return topics
+}
+
+function sessionOf(workout, index, day, routines) {
   const volume = Array.isArray(workout?.entries) ? workoutVolume(workout) : Number(workout?.vol) || 0
   return {
     workout,
     index,
     day,
+    topics: trainingTopicsOf(workout, routines),
+    // Keep this field for callers that use the calendar data for analysis; the UI renders topics.
     muscles: musclesOfWorkout(workout),
     duration: workoutDuration(workout),
     volume: Math.max(0, volume),
   }
 }
 
-export function monthDataOf(workouts, year, month) {
+export function monthDataOf(workouts, year, month, routines = []) {
+  const routineMap = routines instanceof Map ? routines : new Map((Array.isArray(routines) ? routines : []).map(r => [r.id, r]))
   const prefix = `${year}-${String(month + 1).padStart(2, '0')}-`
   const sessions = (Array.isArray(workouts) ? workouts : [])
     .flatMap((workout, index) => {
       const day = workoutDay(workout)
-      return day?.startsWith(prefix) ? [sessionOf(workout, index, day)] : []
+      return day?.startsWith(prefix) ? [sessionOf(workout, index, day, routineMap)] : []
     })
   const byDay = new Map()
   for (const session of sessions) {
@@ -83,14 +106,23 @@ export function monthDataOf(workouts, year, month) {
   const dayData = new Map()
   for (const [day, list] of byDay) {
     const muscles = new Set(list.flatMap(session => session.muscles))
+    const topics = []
+    list.flatMap(session => session.topics).forEach(topic => {
+      if (!topics.includes(topic)) topics.push(topic)
+    })
     dayData.set(day, {
       iso: day,
       sessions: list,
+      topics,
+      // Keep muscle data in the model for existing analysis consumers; the calendar presentation
+      // deliberately uses topics above.
       muscles: MUSCLES.filter(slug => muscles.has(slug)),
       duration: list.reduce((sum, session) => sum + session.duration, 0),
       volume: list.reduce((sum, session) => sum + session.volume, 0),
     })
   }
+  const topics = []
+  for (const day of dayData.values()) day.topics.forEach(topic => { if (!topics.includes(topic)) topics.push(topic) })
   return {
     year,
     month,
@@ -98,6 +130,7 @@ export function monthDataOf(workouts, year, month) {
     sessions,
     trainingDays: dayData.size,
     trainingSessions: sessions.length,
+    topics,
     muscles: MUSCLES.filter(slug => [...dayData.values()].some(day => day.muscles.includes(slug))),
   }
 }

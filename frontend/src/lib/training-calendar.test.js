@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { monthCellsOf, monthDataOf, primaryMusclesOf } from './training-calendar.js'
+import { monthCellsOf, monthDataOf, primaryMusclesOf, trainingTopicsOf } from './training-calendar.js'
 
 const workout = (id, d, start, entry = {}) => ({
   id,
@@ -22,6 +22,18 @@ describe('monthCellsOf', () => {
     expect(cells[0].iso).toBe('2024-12-29')
     expect(cells.filter(cell => cell.inMonth)).toHaveLength(31)
   })
+})
+
+it('uses the selected routine topic and keeps supporting muscles out of the label', () => {
+  const routines = [{ id: 'chest-day', name: 'Chest' }]
+  const record = {
+    id: 'push', d: '2026-10-08', name: 'Chest session', routineIds: ['chest-day'],
+    entries: [{ id: '0025', exercise: { primaries: ['chest', 'delts', 'triceps'] }, sets: [{ done: true, w: 60, r: 8 }] }],
+  }
+  expect(trainingTopicsOf(record, routines)).toEqual(['Chest'])
+  const day = monthDataOf([record], 2026, 9, routines).days.get('2026-10-08')
+  expect(day.topics).toEqual(['Chest'])
+  expect(day.muscles).toEqual(['chest'])
 })
 
 describe('monthDataOf', () => {

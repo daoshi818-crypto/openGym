@@ -3,8 +3,8 @@
 // the set (issue #64): it ticks the set, beeps and starts the rest. So typing the `1` of `10`,
 // or one tap of `+` (stepEffort returns the band minimum from null), logged a rating under the
 // sheet you were still typing into — and on the last set of the last exercise, stacked the
-// workout-complete dialog on top of it. Every earlier test mocked the sheet away and called
-// onPick directly, so nothing rendered the real component. This does.
+// workout-complete dialog on top of it. Exercise the real picker and its explicit commits;
+// dismissing an exact draft must leave the original rating alone.
 import React, { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createRoot } from 'react-dom/client'
@@ -64,7 +64,7 @@ describe('the effort picker commits once', () => {
     expect(onPick).toHaveBeenCalledTimes(1)      // the unmount must not log a second time
   })
 
-  it('typing an exact value logs nothing until the sheet goes away', () => {
+  it('dismissing an exact draft never logs it', () => {
     const onPick = vi.fn()
     const p = openPicker('rpe', null, onPick)
     type(p.host, '1')
@@ -73,8 +73,7 @@ describe('the effort picker commits once', () => {
     expect(onPick).not.toHaveBeenCalled()
     expect(p.closed()).toBe(false)
     p.dismiss()
-    expect(onPick).toHaveBeenCalledTimes(1)
-    expect(onPick).toHaveBeenCalledWith(10)
+    expect(onPick).not.toHaveBeenCalled()
   })
 
   it('one tap of + logs nothing', () => {
@@ -122,6 +121,31 @@ describe('the effort picker commits once', () => {
     const p = openPicker('rir', null, onPick)
     type(p.host, '4')
     type(p.host, '')
+    p.dismiss()
+    expect(onPick).not.toHaveBeenCalled()
+  })
+
+  it.each(['rir', 'rpe'])('dismisses changes to an existing %s rating without saving', kind => {
+    const onPick = vi.fn()
+    const p = openPicker(kind, kind === 'rir' ? 2 : 8, onPick)
+    type(p.host, '9')
+    p.dismiss()
+    expect(onPick).not.toHaveBeenCalled()
+  })
+
+  it('clearing an existing exact draft and closing does not clear the rating', () => {
+    const onPick = vi.fn()
+    const p = openPicker('rir', 2, onPick)
+    type(p.host, '')
+    p.dismiss()
+    expect(onPick).not.toHaveBeenCalled()
+  })
+
+  it.each(['rir', 'rpe'])('an invalid %s draft cannot be saved as a rating', kind => {
+    const onPick = vi.fn()
+    const p = openPicker(kind, kind === 'rir' ? 2 : 8, onPick)
+    type(p.host, '.')
+    expect(buttonSaying(p.host, 'Done')).toBeUndefined()
     p.dismiss()
     expect(onPick).not.toHaveBeenCalled()
   })

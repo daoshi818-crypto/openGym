@@ -4,6 +4,7 @@ export default {
   'Trends': 'แนวโน้ม',
   'Training days': 'วันที่ออกกำลังกาย',
   'Muscle groups': 'กลุ่มกล้ามเนื้อ',
+  'Training topics': 'หัวข้อการฝึก',
   'No workouts on this day.': 'ไม่มีการออกกำลังกายในวันนี้',
   // --- generic ---
   'Confirm': 'ยืนยัน',

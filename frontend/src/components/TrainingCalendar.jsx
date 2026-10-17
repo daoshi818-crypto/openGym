@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { t, tn, dateLocale } from '../lib/i18n.js'
 import { DAYS, fmtDate, fmtDur, fmtVol, todayISO, weekStartOf } from '../lib/format.js'
-import { dayLabelOf, monthCellsOf, monthDataOf, monthLabelOf } from '../lib/training-calendar.js'
+import { monthCellsOf, monthDataOf, monthLabelOf } from '../lib/training-calendar.js'
 import { Button } from './ui.jsx'
 import Icon from './Icon.jsx'
 import { WorkoutRow, workoutDetailSheet } from '../sheets.jsx'
@@ -15,7 +15,7 @@ export default function TrainingCalendar({ S, onWorkout }) {
   const year = month.getFullYear()
   const monthIndex = month.getMonth()
   const weekStart = weekStartOf(S)
-  const data = useMemo(() => monthDataOf(S.workouts, year, monthIndex), [S.workouts, year, monthIndex])
+  const data = useMemo(() => monthDataOf(S.workouts, year, monthIndex, S.routines), [S.workouts, S.routines, year, monthIndex])
   const cells = useMemo(() => monthCellsOf(year, monthIndex, weekStart), [year, monthIndex, weekStart])
   const today = todayISO()
   const selectedDay = selected ? data.days.get(selected) : null
@@ -42,7 +42,7 @@ export default function TrainingCalendar({ S, onWorkout }) {
     <div className="training-calendar-summary" aria-label={t('This month')}>
       <div><strong>{data.trainingDays}</strong><span>{t('Training days')}</span></div>
       <div><strong>{data.trainingSessions}</strong><span>{t('Sessions')}</span></div>
-      <div><strong>{data.muscles.length}</strong><span>{t('Muscle groups')}</span></div>
+      <div><strong>{data.topics.length}</strong><span>{t('Training topics')}</span></div>
     </div>
 
     <div className="training-calendar-grid">
@@ -50,8 +50,8 @@ export default function TrainingCalendar({ S, onWorkout }) {
       {cells.map(cell => {
         const day = data.days.get(cell.iso)
         const active = selected === cell.iso
-        const label = day?.muscles.length
-          ? day.muscles.map(slug => t(dayLabelOf(slug))).join(', ')
+        const label = day?.topics.length
+          ? day.topics.join(', ')
           : day ? t('Workouts') : ''
         return <button key={cell.iso} className={'training-calendar-day' + (!cell.inMonth ? ' outside' : '') + (day ? ' trained' : '') + (active ? ' selected' : '') + (cell.iso === today ? ' today' : '')}
           disabled={!cell.inMonth}
@@ -60,7 +60,7 @@ export default function TrainingCalendar({ S, onWorkout }) {
           onClick={() => cell.inMonth && setSelected(cell.iso)}>
           <span className="training-calendar-number">{cell.day}</span>
           {day && <span className="training-calendar-mark" aria-hidden="true" />}
-          {day?.muscles.length ? <span className="training-calendar-muscles">{day.muscles.slice(0, 2).map(slug => t(dayLabelOf(slug))).join(' · ')}{day.muscles.length > 2 ? ' +' + (day.muscles.length - 2) : ''}</span> : day ? <span className="training-calendar-muscles">{t('Workouts')}</span> : null}
+          {day?.topics.length ? <span className="training-calendar-topics">{day.topics.slice(0, 1).join(' · ')}{day.topics.length > 1 ? ' +' + (day.topics.length - 1) : ''}</span> : day ? <span className="training-calendar-topics">{t('Workouts')}</span> : null}
         </button>
       })}
     </div>
@@ -70,7 +70,7 @@ export default function TrainingCalendar({ S, onWorkout }) {
         <div><h3>{fmtDate(selectedDay.iso, true, true)}</h3><div className="muted small">{tn('{0} session', '{0} sessions', selectedDay.sessions.length)} · {fmtDur(selectedDay.duration)} · {fmtVol(selectedDay.volume, S.unit)}</div></div>
         <Button size="sm" variant="ghost" icon="x" aria-label={t('Close')} onClick={() => setSelected(null)} />
       </div>
-      {selectedDay.muscles.length ? <div className="mchips training-calendar-chips">{selectedDay.muscles.map(slug => <span className="mchip" key={slug}>{t(dayLabelOf(slug))}</span>)}</div> : <div className="muted small" style={{ marginBottom: 8 }}>{t('Workouts')}</div>}
+      {selectedDay.topics.length ? <div className="mchips training-calendar-chips">{selectedDay.topics.map(topic => <span className="mchip" key={topic}>{topic}</span>)}</div> : <div className="muted small" style={{ marginBottom: 8 }}>{t('Workouts')}</div>}
       <div className="list">{selectedDay.sessions.map(session => {
         const workout = { ...session.workout, d: session.day, entries: session.workout.entries || [], vol: session.volume }
         return <WorkoutRow key={session.workout.id || `${session.day}-${session.index}`} w={workout} onClick={() => onWorkout ? onWorkout(session.workout) : workoutDetailSheet(workout)} />
