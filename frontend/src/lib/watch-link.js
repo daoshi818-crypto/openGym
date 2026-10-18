@@ -85,8 +85,15 @@ async function bindNative() {
   })
   p.WatchBle.addListener('deviceFound', (ev) => {
     if (!ev || !ev.address) return
-    const found = { address: ev.address, name: ev.name || 'Watch' }
+    const found = {
+      address: ev.address,
+      name: ev.name || 'BLE device',
+      connectable: ev.connectable !== false,
+      serviceMatch: !!ev.serviceMatch,
+      rssi: Number.isFinite(ev.rssi) ? ev.rssi : null,
+    }
     devices = [...devices.filter(d => d.address !== found.address), found]
+      .sort((a, b) => Number(b.serviceMatch) - Number(a.serviceMatch) || (b.rssi ?? -999) - (a.rssi ?? -999))
     notifyDevices()
   })
   p.WatchBle.addListener('scanFinished', () => {

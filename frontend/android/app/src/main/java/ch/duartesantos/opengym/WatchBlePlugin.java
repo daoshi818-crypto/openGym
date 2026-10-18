@@ -13,6 +13,7 @@ import android.bluetooth.BluetoothProfile;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanFilter;
+import android.bluetooth.le.ScanRecord;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
 import android.content.Context;
@@ -88,7 +89,6 @@ public class WatchBlePlugin extends Plugin {
     private BluetoothGattCharacteristic eventChar;
     private BluetoothGattCharacteristic statusChar;
     private BluetoothGattDescriptor notifyDescriptor;
-    private PluginCall pendingPermCall;
     private PluginCall pendingConnectCall;
     private boolean scanning;
     private boolean subscribed;
@@ -140,18 +140,15 @@ public class WatchBlePlugin extends Plugin {
         return true;
     }
 
-    private boolean granted(int[] results) {
-        return results != null && results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED;
-    }
-
     @PermissionCallback
-    private void onPermResult(PluginCall call, String alias, int[] results) {
+    private void onPermResult(PluginCall call) {
         if (call == null) return;
-        if (granted(results)) {
-            call.resolve(new JSObject().put("granted", true));
-        } else {
-            call.resolve(new JSObject().put("granted", false));
-        }
+        BluetoothAdapter a = adapter();
+        boolean bluetoothOn = a != null && a.isEnabled();
+        call.resolve(new JSObject()
+                .put("granted", bluetoothOn && hasPerms())
+                .put("bluetoothOn", bluetoothOn)
+                .put("permission", hasPerms()));
     }
 
     /** 蓝牙可用且权限齐全？granted=false 时 JS 引导用户去开蓝牙/授权。 */
@@ -178,23 +175,43 @@ public class WatchBlePlugin extends Plugin {
             call.resolve(new JSObject().put("granted", true));
             return;
         }
-        pendingPermCall = call;
         String alias = Build.VERSION.SDK_INT >= 31 ? "watchBle" : "watchBleLegacy";
         requestPermissionForAlias(alias, call, "onPermResult");
     }
 
-    // ---- 扫描：按服务 UUID 过滤 ----
+    // ---- 扫描：手动配对列出所有可连接的 BLE 广播 ----
 
     private final ScanCallback scanCb = new ScanCallback() {
         @Override
         public void onScanResult(int type, ScanResult r) {
             if (!scanning) return;
+            // Manual pairing deliberately scans without a Service UUID filter. Some watch
+            // firmware puts the UUID in a scan response or omits it from the first packet,
+            // which would otherwise make a real device invisible. Only expose connectable
+            // advertisements; the serviceMatch flag lets the UI put our watch first.
+            boolean connectable = Build.VERSION.SDK_INT < Build.VERSION_CODES.O || r.isConnectable();
+            if (!connectable) return;
             JSObject data = new JSObject();
+            ScanRecord record = r.getScanRecord();
             if (hasPerms()) {
-                data.put("name", safeName(r.getDevice()));
+                String name = safeName(r.getDevice());
+                if ((name == null || name.isEmpty()) && record != null) name = record.getDeviceName();
+                data.put("name", name);
                 data.put("address", safeAddress(r.getDevice()));
             }
+            boolean serviceMatch = false;
+            if (record != null && record.getServiceUuids() != null) {
+                for (ParcelUuid uuid : record.getServiceUuids()) {
+                    if (uuid != null && SVC.equals(uuid.getUuid())) {
+                        serviceMatch = true;
+                        break;
+                    }
+                }
+            }
             data.put("found", true);
+            data.put("connectable", true);
+            data.put("serviceMatch", serviceMatch);
+            data.put("rssi", r.getRssi());
             notifyListeners("deviceFound", data);
         }
 
@@ -240,8 +257,9 @@ public class WatchBlePlugin extends Plugin {
         if (scanning) { call.resolve(); return; }
         try {
             scanner = a.getBluetoothLeScanner();
-            List<ScanFilter> filters = Collections.singletonList(
-                    new ScanFilter.Builder().setServiceUuid(new ParcelUuid(SVC)).build());
+            // Manual pairing shows every connectable BLE advertisement. The user can select
+            // the watch even when its service UUID is only present after the scan response.
+            List<ScanFilter> filters = Collections.emptyList();
             ScanSettings settings = new ScanSettings.Builder()
                     .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build();
             scanning = true;

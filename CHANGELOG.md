@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.5.5 (2026-10-18)
+
+- **BLE device discovery**: manual watch scanning now lists nearby connectable BLE broadcasts, shows RSSI and whether the openGym service is present, and prioritizes matching devices.
+- **BLE permissions**: fix the Capacitor permission callback signature so scan results can be delivered reliably on Android.
+- **Watch selection**: show the device name, address, signal strength, and openGym service match in the phone app.
+
 ## v1.5.4 (2026-10-18)
 
 - **Watch pairing**: scan for nearby training watches, choose a device, remember its address, and reconnect automatically when a workout starts.

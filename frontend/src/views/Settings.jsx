@@ -132,8 +132,8 @@ function WatchPairSheet({ close }) {
     {devices.length > 0 && <div className="list" style={{ margin: '10px 0 14px' }}>
       {devices.map(device => <button key={device.address} type="button" className="item tap" disabled={busy}
         onClick={() => choose(device.address)}>
-        <span className="lrow-m"><span className="lrow-t">{device.name || 'Watch'}</span><span className="lrow-s">{device.address}</span></span>
-        <span className="lrow-v">{t('Connect')}</span>
+        <span className="lrow-m"><span className="lrow-t">{device.name || 'BLE device'}</span><span className="lrow-s">{device.address}{device.rssi != null ? ` · RSSI ${device.rssi}` : ''}</span></span>
+        <span className="lrow-v">{device.serviceMatch ? 'openGym' : 'BLE'}</span>
       </button>)}
     </div>}
     {error && <p className="small danger">{error}</p>}
