@@ -67,4 +67,13 @@ jobs:
           make_latest: true
 
       - name: Purge jsDelivr update metadata
-        run: curl -fsS "https://purge.jsdelivr.net/gh/daoshi818-crypto/openGym@main/update.json" || true
+        run: |
+          for i in 1 2 3 4 5 6; do
+            curl -fsS "https://purge.jsdelivr.net/gh/daoshi818-crypto/openGym@main/update.json" >/dev/null || true
+            sleep 10
+            body=$(curl -fsS "https://cdn.jsdelivr.net/gh/daoshi818-crypto/openGym@main/update.json?og=$(date +%s)")
+            if echo "$body" | grep -q "v${APP_VERSION}"; then
+              echo "update.json now points at v${APP_VERSION}"
+              break
+            fi
+          done
