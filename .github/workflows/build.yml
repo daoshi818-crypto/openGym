@@ -65,3 +65,6 @@ jobs:
             openGym.apk
             openGym.apk.sha256
           make_latest: true
+
+      - name: Purge jsDelivr update metadata
+        run: curl -fsS "https://purge.jsdelivr.net/gh/daoshi818-crypto/openGym@main/update.json" || true
