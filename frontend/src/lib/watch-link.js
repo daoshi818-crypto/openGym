@@ -5,7 +5,6 @@
 //
 // 不另开存储：收到手表的"完成一组"直接写进 useStore 的会话状态，和手动点完成同一条
 // 代码路径，同步、撤销、编辑历史全都白送（DESIGN.md 第 6 节）。
-import { t } from './i18n-core.js'
 import { MOBILE, isAndroid } from './mobile.js'
 
 let pluginP = null
@@ -23,12 +22,39 @@ const listeners = new Set()
 let pendingPlan = null
 let latestPlan = null
 let planPushInFlight = false
-let lastWatchAddress = ''
+const WATCH_ADDRESS_KEY = 'opengym.watch.address'
+const readWatchAddress = () => {
+  try { return localStorage.getItem(WATCH_ADDRESS_KEY) || '' } catch { return '' }
+}
+const saveWatchAddress = address => {
+  try {
+    if (address) localStorage.setItem(WATCH_ADDRESS_KEY, address)
+    else localStorage.removeItem(WATCH_ADDRESS_KEY)
+  } catch { /* 原生环境若没有 localStorage，内存地址仍可用 */ }
+}
+let lastWatchAddress = readWatchAddress()
+let devices = []
+let scanning = false
+const deviceListeners = new Set()
 
 export function watchState() { return state }
 export function onWatchState(cb) {
   listeners.add(cb)
   return () => listeners.delete(cb)
+}
+
+export function watchDevices() { return devices.slice() }
+export function watchScanning() { return scanning }
+export function onWatchDevices(cb) {
+  deviceListeners.add(cb)
+  try { cb(devices.slice(), scanning) } catch { /* 单个订阅者出错不影响别人 */ }
+  return () => deviceListeners.delete(cb)
+}
+
+function notifyDevices() {
+  for (const cb of deviceListeners) {
+    try { cb(devices.slice(), scanning) } catch { /* 单个订阅者出错不影响别人 */ }
+  }
 }
 
 function setState(s) {
@@ -47,12 +73,31 @@ async function bindNative() {
   bound = true
   p.WatchBle.addListener('watchState', (ev) => {
     const next = ev && ev.state ? ev.state : 'off'
-    if (ev && ev.address) lastWatchAddress = ev.address
-    setState(next)
+    if (ev && ev.address) {
+      lastWatchAddress = ev.address
+      saveWatchAddress(lastWatchAddress)
+    }
+    setState(next === 'disconnected' ? 'off' : next)
     if (next === 'ready') {
       if (!pendingPlan && latestPlan) pendingPlan = latestPlan
       Promise.resolve().then(flushPendingPlan)
     }
+  })
+  p.WatchBle.addListener('deviceFound', (ev) => {
+    if (!ev || !ev.address) return
+    const found = { address: ev.address, name: ev.name || 'Watch' }
+    devices = [...devices.filter(d => d.address !== found.address), found]
+    notifyDevices()
+  })
+  p.WatchBle.addListener('scanFinished', () => {
+    scanning = false
+    notifyDevices()
+  })
+  p.WatchBle.addListener('scanFailed', (ev) => {
+    scanning = false
+    notifyDevices()
+    setState('error')
+    if (ev && ev.code != null) console.log('watch scan failed', ev.code)
   })
   // 手表推来的事件：完成一组 / 结束训练 / 休息与重量调整
   p.WatchBle.addListener('watchEvent', (ev) => {
@@ -85,19 +130,53 @@ export async function requestWatchPermissions() {
   try { return !!(await p.WatchBle.requestPermissions()).granted } catch { return false }
 }
 
-/**
- * 连接手表：申请权限 → 按服务 UUID 扫描 → 连接。
- * 手表应用要在前台开着（开始页广播自己）。
- */
-export async function connectWatch() {
+/** 扫描当前正在广播训练服务的手表，供设置页展示并让用户选择。 */
+export async function scanWatches() {
   await bindNative()
   const p = await watchPlugin()
   if (!p) return false
   const ok = await requestWatchPermissions()
   if (!ok) { setState('error'); return false }
+  devices = []
+  scanning = true
+  notifyDevices()
+  try {
+    await p.WatchBle.startScan()
+    return true
+  } catch {
+    scanning = false
+    notifyDevices()
+    setState('error')
+    return false
+  }
+}
+
+export async function stopWatchScan() {
+  const p = await watchPlugin()
+  scanning = false
+  notifyDevices()
+  if (!p) return
+  try { await p.WatchBle.stopScan() } catch { /* 扫描已经结束 */ }
+}
+
+/**
+ * 连接手表：申请权限 → 按服务 UUID 扫描 → 连接。
+ * 手表应用要在前台开着（开始页广播自己）。
+ */
+export async function connectWatch(address = '') {
+  await bindNative()
+  const p = await watchPlugin()
+  if (!p) return false
+  const ok = await requestWatchPermissions()
+  if (!ok) { setState('error'); return false }
+  const target = address || lastWatchAddress
+  if (address) {
+    lastWatchAddress = address
+    saveWatchAddress(address)
+  }
   setState('connecting')
   try {
-    await p.WatchBle.connect(lastWatchAddress ? { address: lastWatchAddress } : {})
+    await p.WatchBle.connect(target ? { address: target } : {})
     // ready 由原生 watchState 事件带回来；这里不再轮询
     return true
   } catch (e) {
@@ -121,6 +200,9 @@ export async function pushPlanToWatch(workout, sid) {
   latestPlan = { workout, sid }
   pendingPlan = latestPlan
   await bindNative()
+  if (state !== 'ready' && state !== 'connected' && state !== 'connecting' && lastWatchAddress) {
+    await connectWatch(lastWatchAddress)
+  }
   return flushPendingPlan()
 }
 

@@ -43,7 +43,7 @@ describe('checkForUpdate', () => {
   it('asks GitHub for the latest published release (never a draft or a beta)', async () => {
     mockFetch({ tag_name: 'v' + __APP_VERSION__, assets: [] })
     await checkForUpdate()
-    expect(globalThis.fetch.mock.calls[0][0]).toBe('https://api.github.com/repos/daoshi818-crypto/openGym/releases/latest')
+    expect(globalThis.fetch.mock.calls[0][0]).toMatch(/^https:\/\/cdn\.jsdelivr\.net\/gh\/daoshi818-crypto\/openGym@main\/update\.json\?og=\d+$/)
   })
 
   it('reports no update when the latest release matches the current version', async () => {
@@ -74,6 +74,17 @@ describe('checkForUpdate', () => {
     const result = await checkForUpdate()
     expect(result.hasUpdate).toBe(true)
     expect(result.latestVersion).toBe('99.1.2')
+  })
+
+  it('reads APK and checksum URLs from the static update metadata shape', async () => {
+    mockFetch({
+      tag_name: 'v99.1.2',
+      apk_url: 'https://github.com/x/releases/download/v99.1.2/openGym.apk',
+      hash_url: 'https://github.com/x/releases/download/v99.1.2/openGym.apk.sha256',
+    })
+    const result = await checkForUpdate()
+    expect(result.apkUrl).toBe('https://github.com/x/releases/download/v99.1.2/openGym.apk')
+    expect(result.hashUrl).toBe('https://github.com/x/releases/download/v99.1.2/openGym.apk.sha256')
   })
 
   // What api.github.com returned for releases/latest on 2026-10-10 (v1.4.0, trimmed): the APK
@@ -119,7 +130,7 @@ describe('checkForUpdate', () => {
 
   it('throws when the API responds with an error status', async () => {
     mockFetch(null, 500)
-    await expect(checkForUpdate()).rejects.toThrow('GitHub API 500')
+    await expect(checkForUpdate()).rejects.toThrow('Update metadata 500')
   })
 
   it('throws on network failure', async () => {

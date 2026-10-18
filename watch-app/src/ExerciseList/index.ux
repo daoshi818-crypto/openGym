@@ -95,9 +95,9 @@ export default {
 </template>
 
 <style>
-.page { flex-direction: column; width: 450px; height: 390px; background-color: #000000; }
-.body { flex: 1; width: 450px; }
-.scroll { width: 450px; height: 300px; padding-top: 6px; }
+.page { flex-direction: column; width: 390px; height: 450px; background-color: #000000; }
+.body { flex: 1; width: 390px; }
+.scroll { width: 390px; height: 360px; padding-top: 8px; }
 .exrow { flex-direction: column; padding: 8px 18px; }
 .exname { font-size: 22px; color: #ffffff; }
 .cnt { font-size: 17px; color: #8e8e93; margin-top: 1px; }
@@ -107,7 +107,7 @@ export default {
 .rtxt { font-size: 20px; color: #ffffff; flex: 1; }
 .rtxt.done { color: #636366; }
 .chev { font-size: 22px; color: #48484a; }
-.foot { flex-direction: row; justify-content: center; padding: 8px 0 12px; }
-.fbtn { width: 150px; height: 48px; font-size: 21px; border-radius: 13px; background-color: #1c1c1e; color: #ffffff; margin: 0 8px; }
+.foot { flex-direction: row; justify-content: center; padding: 10px 0 18px; }
+.fbtn { width: 145px; height: 54px; font-size: 21px; border-radius: 13px; background-color: #1c1c1e; color: #ffffff; margin: 0 8px; }
 .save { background-color: #30d158; }
 </style>

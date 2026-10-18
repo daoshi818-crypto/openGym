@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.5.4 (2026-10-18)
+
+- **Watch pairing**: scan for nearby training watches, choose a device, remember its address, and reconnect automatically when a workout starts.
+- **Watch workout UI**: fit the current 390×450 watch screen, add a direct “complete set” action, and make horizontal swipes offer continue, exit, or finish actions.
+- **Update checks**: read release metadata from a small static file served through jsDelivr instead of calling the GitHub API directly.
+
 ## v1.5.3 (2026-10-18)
 
 - **Workout ordering**: card and focus layouts move the current exercise with the numbered-chip

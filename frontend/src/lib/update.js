@@ -1,9 +1,8 @@
-// Update check — compares the installed version (__APP_VERSION__) against
-// the latest release on GitHub and optionally downloads + installs the APK.
+// Update check — compares the installed version (__APP_VERSION__) against the latest release
+// metadata and optionally downloads + installs the APK.
 //
-// The GitHub releases API is public, so no token is needed (60 requests an hour per address,
-// and the check runs once per app session). GitHub is openGym's home since v1.4.0; the GitLab
-// mirror stopped getting releases, so a phone that asked it saw no update.
+// The release metadata is static so the phone does not need to reach the GitHub API. GitHub is
+// still the release and APK host; the metadata file contains the signed asset URLs.
 // On Android (Capacitor) the APK is downloaded natively into the cache directory (an APK with
 // the animations is ~300 MB: read into the WebView's memory it ran phones out of it, and
 // github.com's download redirect has no CORS headers for a WebView fetch anyway), checked
@@ -12,13 +11,13 @@
 import { MOBILE } from './mobile.js'
 
 const REPO = 'daoshi818-crypto/openGym'   // [fork] 指向自己的 fork：Actions 会把官方更新 rebase 本地定制后自动构建签名，发布到这里
-const LATEST_URL = `https://api.github.com/repos/${REPO}/releases/latest`
 export const RELEASES_PAGE = `https://github.com/${REPO}/releases/latest`
 
-// [fork] 国内直连 api.github.com 经常连不上（点"检查更新"会提示网络问题）。部署了 worker/
-// 之后把它的 /update 地址填在这里，检查更新就由 Cloudflare 代查——Cloudflare 能连 GitHub，
-// 手机只需要能连上这个地址。留空则直连 GitHub。
-const UPDATE_PROXY = ''   // 例：'https://gym-watch.你的账号.workers.dev/update?token=你的口令'
+// [fork] The release metadata is a tiny static file in this repository. jsDelivr serves it from
+// its edge without requiring a Worker or another server. The hourly query key keeps a phone from
+// holding on to the CDN's branch cache for days while still allowing ordinary edge caching.
+const UPDATE_PROXY = 'https://cdn.jsdelivr.net/gh/daoshi818-crypto/openGym@main/update.json'
+const updateUrl = () => `${UPDATE_PROXY}?og=${Math.floor(Date.now() / 3600000)}`
 
 /**
  * Compares two semver strings (e.g. "1.2.11" vs "1.3.0").
@@ -43,15 +42,15 @@ function compareSemver(a, b) {
 }
 
 /**
- * Checks GitHub for a newer version. `releases/latest` is the newest release that is neither a
- * draft nor a pre-release, so a beta never offers itself as an update.
+ * Checks the published release metadata for a newer version. The file is maintained alongside
+ * the release and contains the signed APK and checksum URLs.
  * Returns { hasUpdate, latestVersion, apkUrl, hashUrl } or throws on network failure.
  *   - hasUpdate: true if the latest release tag is newer than the running build
  *   - latestVersion: the semver string of the latest release (without "v" prefix)
  *   - apkUrl: direct download URL of the first .apk asset, or null
  *   - hashUrl: direct download URL of the .apk.sha256 hash file, or null
  */
-// One request per app session: Settings is opened often, GitHub does not need to hear
+// One request per app session: Settings is opened often, the CDN does not need to hear
 // about it every time. The promise is cached, a failure is not.
 let cached = null
 export function resetUpdateCheck() { cached = null }
@@ -63,31 +62,16 @@ export async function checkForUpdate() {
   return cached
 }
 async function fetchLatest() {
-  // [fork] 配了代理就走 Cloudflare（国内直连 GitHub 基本不通）
-  if (UPDATE_PROXY) {
-    const res = await fetch(UPDATE_PROXY)
-    if (!res.ok) throw new Error(`update proxy ${res.status}`)
-    const p = await res.json()
-    const latestVersion = String(p.tag_name || '').replace(/^v/, '')
-    if (!latestVersion) return { hasUpdate: false, latestVersion: __APP_VERSION__, apkUrl: null, hashUrl: null }
-    return {
-      hasUpdate: compareSemver(latestVersion, __APP_VERSION__) > 0,
-      latestVersion,
-      apkUrl: p.apk_url || null,
-      hashUrl: p.hash_url || null,
-    }
-  }
-  const res = await fetch(LATEST_URL, { headers: { Accept: 'application/vnd.github+json' } })
-  // 404: the repository has no published release yet
+  const res = await fetch(updateUrl(), { cache: 'no-store' })
   if (res.status === 404) return { hasUpdate: false, latestVersion: __APP_VERSION__, apkUrl: null, hashUrl: null }
-  if (!res.ok) throw new Error(`GitHub API ${res.status}`)
+  if (!res.ok) throw new Error(`Update metadata ${res.status}`)
   const latest = await res.json()
   const latestVersion = String(latest.tag_name || '').replace(/^v/, '')
   if (!latestVersion) return { hasUpdate: false, latestVersion: __APP_VERSION__, apkUrl: null, hashUrl: null }
   const hasUpdate = compareSemver(latestVersion, __APP_VERSION__) > 0
   const assets = latest.assets || []
-  const apk = assets.find(a => /\.apk$/i.test(a.name))
-  const hash = assets.find(a => /\.apk\.sha256$/i.test(a.name))
+  const apk = latest.apk_url ? { browser_download_url: latest.apk_url } : assets.find(a => /\.apk$/i.test(a.name))
+  const hash = latest.hash_url ? { browser_download_url: latest.hash_url } : assets.find(a => /\.apk\.sha256$/i.test(a.name))
   return { hasUpdate, latestVersion, apkUrl: apk?.browser_download_url || null, hashUrl: hash?.browser_download_url || null }
 }
 

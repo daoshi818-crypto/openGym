@@ -101,11 +101,11 @@ export default {
 </template>
 
 <style>
-.page { flex-direction: column; align-items: center; justify-content: flex-start; width: 450px; height: 390px; background-color: #000000; padding-top: 8px; }
-.label { font-size: 18px; color: #8e8e93; }
-.show { font-size: 38px; color: #30d158; margin: 2px 0 4px; }
+.page { flex-direction: column; align-items: center; justify-content: flex-start; width: 390px; height: 450px; background-color: #000000; padding-top: 12px; }
+.label { font-size: 19px; color: #8e8e93; }
+.show { font-size: 42px; color: #30d158; margin: 3px 0 8px; }
 .grid { flex-direction: row; flex-wrap: wrap; justify-content: center; width: 330px; }
-.k { width: 104px; height: 50px; font-size: 23px; border-radius: 11px; background-color: #1c1c1e; color: #ffffff; margin: 2px; }
+.k { width: 104px; height: 68px; font-size: 25px; border-radius: 12px; background-color: #1c1c1e; color: #ffffff; margin: 2px; }
 .c { color: #ff453a; }
-.ok { width: 330px; height: 48px; font-size: 22px; border-radius: 12px; background-color: #30d158; color: #ffffff; margin-top: 6px; }
+.ok { width: 330px; height: 58px; font-size: 23px; border-radius: 14px; background-color: #30d158; color: #ffffff; margin-top: 10px; }
 </style>

@@ -30,7 +30,7 @@ import { syncMedia, fetchToStore } from '../lib/media-sync.js'
 import { getMediaStatus, subscribeMediaStatus, pendingRefCount } from '../lib/media-owed.js'
 import { limitsFrom, fmtMB, MB } from '../lib/media-limits.js'
 import { setRestAccent, overlayStatus, requestOverlay, hideOverlay, setOverlayStyle } from '../lib/rest-alert.js'
-import { watchAvailable, watchState, onWatchState, connectWatch, disconnectWatch } from '../lib/watch-link.js'
+import { watchAvailable, watchState, onWatchState, watchDevices, watchScanning, onWatchDevices, scanWatches, stopWatchScan, connectWatch, disconnectWatch } from '../lib/watch-link.js'
 import { CUSTOM, accentKey, adjustedIn, applyAccent, cleanHex, inkOn, isGrey } from '../lib/accent.js'
 import { checkForUpdate, downloadAndInstall, fetchChecksum, RELEASES_PAGE } from '../lib/update.js'
 import { forgetCoach } from '../lib/coach-api.js'
@@ -77,6 +77,72 @@ const shortWeekday = day => {
 // Running as an installed app (home-screen web app or the phone app): no install tip then.
 const standalone = () => {
   try { return !!(window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone === true) } catch { return false }
+}
+
+function WatchPairSheet({ close }) {
+  const [devices, setDevices] = useState(() => watchDevices())
+  const [scanning, setScanning] = useState(() => watchScanning())
+  const [status, setStatus] = useState(() => watchState())
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    const offDevices = onWatchDevices((list, active) => { setDevices(list); setScanning(active) })
+    const offState = onWatchState(setStatus)
+    if (watchState() !== 'ready' && watchState() !== 'connected' && !watchScanning()) {
+      scanWatches().then(ok => { if (!ok) setError(t('Could not start the scanner')) }).catch(() => setError(t('Could not start the scanner')))
+    }
+    return () => {
+      offDevices?.()
+      offState?.()
+      stopWatchScan()
+    }
+  }, [])
+
+  const scan = async () => {
+    setError('')
+    setBusy(true)
+    try {
+      if (!(await scanWatches())) setError(t('Could not start the scanner'))
+    } finally { setBusy(false) }
+  }
+
+  const choose = async address => {
+    setError('')
+    setBusy(true)
+    await stopWatchScan()
+    const ok = await connectWatch(address)
+    if (!ok) setError(t('Could not connect'))
+    setBusy(false)
+  }
+
+  useEffect(() => {
+    if (status !== 'ready') return
+    const timer = setTimeout(close, 450)
+    return () => clearTimeout(timer)
+  }, [status, close])
+
+  const connected = status === 'ready' || status === 'connected'
+  return <>
+    <h3>{t('Connect watch')}</h3>
+    <p className="muted small">{t('Looking for the watch… Open the training app on the watch.')}</p>
+    {connected && <p className="small accent">{t('Connected. Start a workout and it lands on the watch.')}</p>}
+    {scanning && <p className="muted small">Scanning…</p>}
+    {!scanning && !devices.length && !connected && <p className="muted small">{t('Tap to pair. The watch shows your plan during a workout and records a set with one tap.')}</p>}
+    {devices.length > 0 && <div className="list" style={{ margin: '10px 0 14px' }}>
+      {devices.map(device => <button key={device.address} type="button" className="item tap" disabled={busy}
+        onClick={() => choose(device.address)}>
+        <span className="lrow-m"><span className="lrow-t">{device.name || 'Watch'}</span><span className="lrow-s">{device.address}</span></span>
+        <span className="lrow-v">{t('Connect')}</span>
+      </button>)}
+    </div>}
+    {error && <p className="small danger">{error}</p>}
+    <div className="row" style={{ gap: 8, marginTop: 12 }}>
+      {!connected && <Button variant="primary" disabled={busy || scanning} onClick={scan}>{scanning ? 'Scanning…' : t('Scan')}</Button>}
+      {connected && <Button variant="danger" disabled={busy} onClick={async () => { await disconnectWatch(); close() }}>{t('Disconnect')}</Button>}
+      <Button variant="ghost" onClick={close}>{t('Cancel')}</Button>
+    </div>
+  </>
 }
 
 export default function Settings({ page = null, find = null, via = null }) {
@@ -549,10 +615,7 @@ export default function Settings({ page = null, find = null, via = null }) {
               : t('Tap to pair. The watch shows your plan during a workout and records a set with one tap.')
             }
             accessory="chevron"
-            onClick={() => {
-              if (watchSt === 'ready' || watchSt === 'connected') disconnectWatch()
-              else connectWatch()
-            }} />
+            onClick={() => useUI.getState().openSheet(close => <WatchPairSheet close={close} />)} />
         )}
         {/* 'full'/'mini' is also what the tap-toggle on the workout animation writes; 'off' hides
             workout media entirely (library, detail sheet and picker thumbs are unaffected).

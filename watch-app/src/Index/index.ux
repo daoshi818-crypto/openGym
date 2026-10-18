@@ -1,8 +1,8 @@
 <script>
-// 开始页：手机通过 BLE 推送今天的训练计划，云端配置作为备选。
+// 开始页：先等待手机通过 BLE 配对并推送今天的训练计划。
 import router from '@blueos.app.appmanager.router'
 import { loadState, startSession } from '../lib/session.js'
-import { fetchConfig, flushPending } from '../lib/cloud.js'
+import { flushPending } from '../lib/cloud.js'
 import { startServer } from '../lib/ble.js'
 
 export default {
@@ -23,22 +23,18 @@ export default {
       this.workoutName = s.workout.name || '上次的训练'
       this.exerciseCount = s.workout.exercises.length
       this.status = '上次训练还没结束'
-    } else this.status = '等待手机推送训练安排…'
+    } else this.status = '请打开手机应用进行匹配'
 
     startServer({
       onPlan: (msg) => this.onPlanMsg(msg),
       onRest: () => {},
-      onState: (connected) => { this.bleLabel = connected ? '手机已连接' : '' },
+      onState: (connected) => {
+        this.bleLabel = connected ? '已匹配' : ''
+        if (!this.canResume && !this.plan) {
+          this.status = connected ? '已匹配，等待手机发送训练计划' : '请打开手机应用进行匹配'
+        }
+      },
     })
-
-    if (!this.canResume) {
-      fetchConfig().then((cfg) => {
-        const w = cfg && cfg.workout
-        if (!this.plan && w) this.applyPlan(w.name || '训练', w.exercises || [], '', (cfg && cfg.profile) || null)
-      }).catch((e) => {
-        if (!this.canResume && !this.plan) this.status = '等手机推送\n（云端：' + e.message + '）'
-      })
-    }
 
     flushPending().catch(() => {})
   },
@@ -53,16 +49,8 @@ export default {
     this.plan = { sid, name, exercises, profile }
     this.workoutName = name
     this.exerciseCount = exercises.length
-    this.status = '今天：' + name
+    this.status = '已匹配\n今天：' + name
     this.canStart = true
-  },
-
-  onDemo() {
-    this.applyPlan('示例 · 全身', [
-      { name: '俯卧撑', sets: 3, reps: '12', restSec: 10, weight: '' },
-      { name: '自重深蹲', sets: 3, reps: '15', restSec: 10, weight: '' },
-      { name: '平板支撑', sets: 2, reps: '45秒', restSec: 10, weight: '' },
-    ], 'demo', null)
   },
 
   onStart() {
@@ -85,17 +73,15 @@ export default {
 
     <input class="btn primary" type="button" value="继续训练" onclick="onResume" if="{{ canResume }}" />
     <input class="btn primary" type="button" value="开始训练" onclick="onStart" if="{{ canStart }}" />
-    <input class="btn demo" type="button" value="试试示例训练" onclick="onDemo" if="{{ !canResume && !canStart }}" />
   </div>
 </template>
 
 <style>
-.page { flex-direction: column; justify-content: center; align-items: center; width: 450px; height: 390px; background-color: #0c0e12; padding: 12px; }
+.page { flex-direction: column; justify-content: center; align-items: center; width: 390px; height: 450px; background-color: #0c0e12; padding: 16px; }
 .title { font-size: 30px; color: #a3e635; margin-bottom: 8px; }
-.status { font-size: 22px; color: #f5f5f7; text-align: center; max-width: 390px; lines: 2; margin-bottom: 5px; }
+.status { font-size: 22px; color: #f5f5f7; text-align: center; max-width: 350px; lines: 2; margin-bottom: 5px; }
 .sub { font-size: 18px; color: #9aa0a6; margin-bottom: 10px; }
 .ble { font-size: 17px; color: #4ade80; margin-bottom: 5px; }
 .btn { width: 220px; height: 54px; font-size: 22px; border-radius: 14px; margin-top: 8px; }
 .primary { background-color: #a3e635; color: #0c0e12; }
-.demo { background-color: #2a2d34; color: #f5f5f7; }
 </style>

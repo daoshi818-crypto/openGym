@@ -58,11 +58,11 @@ export default {
 </template>
 
 <style>
-.page { flex-direction: column; align-items: center; justify-content: center; width: 450px; height: 390px; background-color: #000000; }
+.page { flex-direction: column; align-items: center; justify-content: center; width: 390px; height: 450px; background-color: #000000; }
 .title { font-size: 30px; color: #30d158; margin-bottom: 12px; }
-.grid { flex-direction: row; flex-wrap: wrap; justify-content: center; width: 400px; }
-.cell { flex-direction: column; align-items: center; width: 195px; margin: 7px 0; }
+.grid { flex-direction: row; flex-wrap: wrap; justify-content: center; width: 360px; }
+.cell { flex-direction: column; align-items: center; width: 175px; margin: 7px 0; }
 .num { font-size: 38px; color: #ffffff; }
 .lbl { font-size: 17px; color: #8e8e93; margin-top: 1px; }
-.btn { width: 240px; height: 52px; font-size: 23px; border-radius: 14px; background-color: #30d158; color: #ffffff; margin-top: 12px; }
+.btn { width: 240px; height: 58px; font-size: 23px; border-radius: 14px; background-color: #30d158; color: #ffffff; margin-top: 16px; }
 </style>

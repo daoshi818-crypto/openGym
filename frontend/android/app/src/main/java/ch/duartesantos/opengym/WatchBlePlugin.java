@@ -189,16 +189,18 @@ public class WatchBlePlugin extends Plugin {
         @Override
         public void onScanResult(int type, ScanResult r) {
             if (!scanning) return;
-            stopScan();
             JSObject data = new JSObject();
-            if (hasPerms()) data.put("name", safeName(r.getDevice()));
+            if (hasPerms()) {
+                data.put("name", safeName(r.getDevice()));
+                data.put("address", safeAddress(r.getDevice()));
+            }
             data.put("found", true);
             notifyListeners("deviceFound", data);
         }
 
         @Override
         public void onScanFailed(int code) {
-            scanning = false;
+            stopScan();
             notifyListeners("scanFailed", new JSObject().put("code", code));
         }
     };
@@ -245,9 +247,16 @@ public class WatchBlePlugin extends Plugin {
             scanning = true;
             activeScanCallback = scanCb;
             scanner.startScan(filters, settings, scanCb);
+            scanTimeoutTask = () -> {
+                if (!scanning || activeScanCallback != scanCb) return;
+                stopScan();
+                notifyListeners("scanFinished", new JSObject().put("reason", "timeout"));
+            };
+            mainHandler.postDelayed(scanTimeoutTask, SCAN_TIMEOUT_MS);
             call.resolve();
         } catch (Exception e) {
             scanning = false;
+            activeScanCallback = null;
             call.reject("scan failed: " + e.getMessage());
         }
     }

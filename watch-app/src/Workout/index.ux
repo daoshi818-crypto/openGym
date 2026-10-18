@@ -23,6 +23,7 @@ export default {
     syncLabel: '',
     isRest: false,
     menuOn: false,
+    leaveChoice: false,
     allFinished: false,
   },
 
@@ -122,11 +123,20 @@ export default {
     this.touch = null
     if (Math.abs(dx) < 60 && Math.abs(dy) < 60) return
     if (dy < -60 && Math.abs(dx) < 60) this.menuOn = true
-    else if (dx < -60 && Math.abs(dy) < 60) router.push({ uri: '/ExerciseList' })
+    else if (Math.abs(dx) > 60 && Math.abs(dy) < 60) this.leaveChoice = true
     else if (dy > 60 && this.menuOn) this.menuOn = false
   },
 
   closeMenu() { this.menuOn = false },
+
+  continueTraining() { this.leaveChoice = false },
+
+  leaveTraining() {
+    this.leaveChoice = false
+    this.stopHrCapture()
+    save(this.state)
+    router.push({ uri: '/Index' })
+  },
 
   onMenuAddSet() {
     addSet(this.state, this.state.exIdx)
@@ -337,13 +347,15 @@ export default {
     return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0')
   },
 
-  onEnd() {
+  onEnd(reason) {
+    if (typeof reason !== 'string') reason = 'manual'
     const s = this.state
     this.stopHrCapture()
     const session = endSession(s, s.profile)
     sendEvent({
       t: 'end', sid: session.sid, minutes: session.minutes, avgHr: session.avgHr,
       maxHr: session.maxHr, calories: session.calories, sets: session.sets.length,
+      reason: reason || 'manual',
     })
     storageSetSummary(session)
     router.push({ uri: '/Summary' })
@@ -382,6 +394,7 @@ function storageSetSummary(session) {
         <input class="nav" type="button" value="‹ 上组" onclick="onPrevSet" />
         <input class="nav" type="button" value="下组 ›" onclick="onNextSet" />
       </div>
+      <input class="complete" type="button" value="完成一组" onclick="onComplete" if="{{ !allFinished }}" />
     </block>
 
     <block if="{{ isRest }}">
@@ -411,30 +424,46 @@ function storageSetSummary(session) {
     </div>
 
     <input class="finish" type="button" value="结束训练" onclick="onEnd" if="{{ allFinished && !isRest }}" />
+
+    <div class="leave-panel" if="{{ leaveChoice }}">
+      <text class="leave-title">训练操作</text>
+      <text class="leave-hint">左右滑动打开</text>
+      <input class="leave-btn continue" type="button" value="继续训练" onclick="continueTraining" />
+      <input class="leave-btn exit" type="button" value="退出训练" onclick="leaveTraining" />
+      <input class="leave-btn end" type="button" value="结束当前训练" onclick="onEnd" />
+    </div>
   </div>
 </template>
 
 <style>
-.page { flex-direction: column; align-items: center; justify-content: flex-start; width: 450px; height: 390px; background-color: #000000; padding-top: 12px; }
-.ex { font-size: 28px; color: #ffffff; lines: 1; max-width: 410px; text-align: center; }
-.group { font-size: 19px; color: #8e8e93; margin-top: 4px; }
-.inputs { flex-direction: row; justify-content: center; margin-top: 8px; }
-.field { flex-direction: column; align-items: center; justify-content: center; width: 190px; height: 92px; border-radius: 14px; background-color: #1c1c1e; margin: 0 4px; }
+.page { flex-direction: column; align-items: center; justify-content: flex-start; width: 390px; height: 450px; background-color: #000000; padding: 18px 8px 12px; }
+.ex { font-size: 29px; color: #ffffff; lines: 1; max-width: 370px; text-align: center; }
+.group { font-size: 19px; color: #8e8e93; margin-top: 6px; }
+.inputs { flex-direction: row; justify-content: center; margin-top: 18px; }
+.field { flex-direction: column; align-items: center; justify-content: center; width: 166px; height: 112px; border-radius: 14px; background-color: #1c1c1e; margin: 0 5px; }
 .fval { font-size: 30px; color: #ffffff; }
-.flbl { font-size: 17px; color: #8e8e93; margin-top: 2px; }
-.navrow { flex-direction: row; justify-content: center; margin-top: 8px; }
-.nav { width: 172px; height: 48px; font-size: 21px; border-radius: 13px; background-color: #1c1c1e; color: #ffffff; margin: 0 4px; }
-.rest { font-size: 60px; color: #30d158; margin-top: 8px; }
-.rrow { flex-direction: row; align-items: center; justify-content: center; margin-top: 6px; }
-.rbtn { width: 88px; height: 44px; font-size: 19px; border-radius: 12px; background-color: #1c1c1e; color: #ffffff; margin: 0 6px; }
-.rtotal { font-size: 20px; color: #8e8e93; margin: 0 4px; }
-.prog { font-size: 18px; color: #ffffff; margin-top: 8px; }
-.next { font-size: 17px; color: #8e8e93; margin-top: 4px; max-width: 400px; lines: 1; }
-.skip { width: 220px; height: 48px; font-size: 21px; border-radius: 13px; background-color: #30d158; color: #ffffff; margin-top: 8px; }
-.hr { font-size: 17px; color: #ff5a5f; margin-top: 8px; max-width: 420px; lines: 1; }
-.menu { position: absolute; top: 0; left: 0; width: 450px; height: 390px; flex-direction: column; align-items: center; justify-content: center; background-color: #000000e0; }
+.flbl { font-size: 17px; color: #8e8e93; margin-top: 3px; }
+.navrow { flex-direction: row; justify-content: center; margin-top: 16px; }
+.nav { width: 158px; height: 52px; font-size: 20px; border-radius: 13px; background-color: #1c1c1e; color: #ffffff; margin: 0 5px; }
+.complete { width: 326px; height: 66px; font-size: 24px; border-radius: 16px; background-color: #30d158; color: #ffffff; margin-top: 18px; }
+.rest { font-size: 66px; color: #30d158; margin-top: 22px; }
+.rrow { flex-direction: row; align-items: center; justify-content: center; margin-top: 14px; }
+.rbtn { width: 88px; height: 48px; font-size: 19px; border-radius: 12px; background-color: #1c1c1e; color: #ffffff; margin: 0 5px; }
+.rtotal { font-size: 20px; color: #8e8e93; margin: 0 5px; }
+.prog { font-size: 18px; color: #ffffff; margin-top: 16px; }
+.next { font-size: 17px; color: #8e8e93; margin-top: 7px; max-width: 370px; lines: 1; }
+.skip { width: 240px; height: 56px; font-size: 22px; border-radius: 14px; background-color: #30d158; color: #ffffff; margin-top: 18px; }
+.hr { font-size: 16px; color: #ff5a5f; margin-top: 16px; max-width: 370px; lines: 1; }
+.menu { position: absolute; top: 0; left: 0; width: 390px; height: 450px; flex-direction: column; align-items: center; justify-content: center; background-color: #000000e0; }
 .mrow { flex-direction: row; justify-content: center; }
-.m { width: 165px; height: 58px; font-size: 22px; border-radius: 14px; background-color: #1c1c1e; color: #ffffff; margin: 6px 8px; }
-.mclose { width: 180px; height: 42px; font-size: 18px; border-radius: 12px; background-color: transparent; color: #636366; margin-top: 4px; }
-.finish { width: 220px; height: 46px; font-size: 20px; border-radius: 13px; background-color: #30d158; color: #ffffff; margin-top: 8px; }
+.m { width: 145px; height: 58px; font-size: 21px; border-radius: 14px; background-color: #1c1c1e; color: #ffffff; margin: 7px 8px; }
+.mclose { width: 180px; height: 44px; font-size: 18px; border-radius: 12px; background-color: transparent; color: #636366; margin-top: 5px; }
+.finish { width: 250px; height: 56px; font-size: 22px; border-radius: 14px; background-color: #30d158; color: #ffffff; margin-top: 18px; }
+.leave-panel { position: absolute; top: 0; left: 0; width: 390px; height: 450px; flex-direction: column; align-items: center; justify-content: center; background-color: #000000f2; }
+.leave-title { font-size: 28px; color: #ffffff; margin-bottom: 4px; }
+.leave-hint { font-size: 16px; color: #8e8e93; margin-bottom: 14px; }
+.leave-btn { width: 270px; height: 54px; font-size: 21px; border-radius: 14px; margin-top: 7px; }
+.continue { background-color: #1c1c1e; color: #ffffff; }
+.exit { background-color: #3a3a3c; color: #ffffff; }
+.end { background-color: #ff453a; color: #ffffff; }
 </style>
