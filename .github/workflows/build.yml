@@ -1,6 +1,8 @@
 name: Build signed APK
 
 on:
+  push:
+    branches: [main]
   schedule:
     # Daily at 09:30 Beijing time (UTC 01:30)
     - cron: '30 1 * * *'
@@ -8,6 +10,10 @@ on:
 
 permissions:
   contents: write
+
+concurrency:
+  group: apk-build
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -18,6 +24,7 @@ jobs:
           fetch-depth: 0
 
       - name: Sync upstream and rebase fork commits
+        if: github.event_name != 'push'
         run: |
           git remote add upstream https://github.com/DuarteSantos8/openGym.git
           git fetch upstream main
@@ -42,6 +49,7 @@ jobs:
         run: bash .github/scripts/ci-build.sh
 
       - name: Push rebased main
+        if: github.event_name != 'push'
         run: git push origin main --force-with-lease
 
       - name: Publish release

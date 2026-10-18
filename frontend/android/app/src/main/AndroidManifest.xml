@@ -78,6 +78,10 @@
                 android:value="Shows how long is left in the rest between sets." />
         </service>
 
+        <!-- vivo 智能终端 SDK：设备发现/连接/鉴权由运动健康完成，手表应用通过包名+证书指纹接入。 -->
+        <meta-data android:name="health.device.manager.version" android:value="1" />
+        <meta-data android:name="appid" android:value="106163226" />
+
         <!-- Gym check-in scanner (@capacitor-mlkit/barcode-scanning): pre-fetch the ML Kit
              barcode model at install time so the first scan doesn't wait on a download. -->
         <meta-data android:name="com.google.mlkit.vision.DEPENDENCIES" android:value="barcode_ui" />
@@ -109,16 +113,6 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- Gym check-in: scanning a membership QR/barcode with the camera. -->
     <uses-permission android:name="android.permission.CAMERA" />
-    <!-- 手表连接（WatchBlePlugin）：BLE 中心设备，连手表的 GATT 服务端推计划/收完成事件。
-         Android 12+ 用运行时申请的 SCAN/CONNECT（SCAN 标记不推导管位置结果）；
-         Android 11 及以下走旧模型：蓝牙权限是 install-time，扫描需要位置权限。 -->
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
-        android:usesPermissionFlags="neverForLocation"
-        tools:targetApi="s" />
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
     <!-- Health Connect (#200): write-only, asked for only when the user turns it on in Settings.
          openGym writes finished workouts and weigh-ins and reads nothing back. -->
     <uses-permission android:name="android.permission.health.WRITE_EXERCISE" />
@@ -127,5 +121,6 @@
     <!-- Whether the Health Connect app is there, on Android 13 and lower. -->
     <queries>
         <package android:name="com.google.android.apps.healthdata" />
+        <package android:name="com.vivo.health" />
     </queries>
 </manifest>

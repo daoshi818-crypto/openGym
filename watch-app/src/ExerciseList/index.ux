@@ -3,8 +3,7 @@
 import router from '@blueos.app.appmanager.router'
 import { loadState, save } from '../lib/session.js'
 import { endSession } from '../lib/session.js'
-import { sendEvent } from '../lib/ble.js'
-import { pushSession } from '../lib/cloud.js'
+import { sendEvent, sendControl } from '../lib/rpc.js'
 import storage from '@blueos.storage.storage'
 
 export default {
@@ -43,9 +42,12 @@ export default {
   pickRow(e) {
     const d = e.target.attr
     const s = this.state
-    s.exIdx = Number(d.exIdx)
-    s.setIdx = Number(d.setIdx)
+    const ex = Number(d.exIdx)
+    const set = Number(d.setIdx)
+    s.exIdx = ex
+    s.setIdx = set
     save(s)
+    sendControl({ t: 'focus', sid: s.sid, ex, set: set + 1, at: Date.now() })
     router.back()
   },
 
@@ -56,12 +58,19 @@ export default {
     const session = endSession(s, s.profile)
     sendEvent({
       t: 'end', sid: session.sid, minutes: session.minutes, avgHr: session.avgHr,
-      maxHr: session.maxHr, calories: session.calories, sets: session.sets.length,
+      maxHr: session.maxHr, calories: session.calories, volume: session.volume || 0,
+      sets: session.sets.length,
     })
-    pushSession(session).catch(() => {})
     storage.set({
       key: 'summary_last',
-      value: { minutes: session.minutes, sets: session.sets.length, calories: session.calories, avgHr: session.avgHr },
+      value: {
+        minutes: session.minutes,
+        sets: session.sets.length,
+        calories: session.calories,
+        avgHr: session.avgHr,
+        maxHr: session.maxHr,
+        volume: session.volume || 0,
+      },
       fail: () => {},
     })
     router.replace({ uri: '/Summary' })

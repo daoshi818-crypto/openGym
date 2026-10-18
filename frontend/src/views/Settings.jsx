@@ -30,7 +30,7 @@ import { syncMedia, fetchToStore } from '../lib/media-sync.js'
 import { getMediaStatus, subscribeMediaStatus, pendingRefCount } from '../lib/media-owed.js'
 import { limitsFrom, fmtMB, MB } from '../lib/media-limits.js'
 import { setRestAccent, overlayStatus, requestOverlay, hideOverlay, setOverlayStyle } from '../lib/rest-alert.js'
-import { watchAvailable, watchState, onWatchState, watchDevices, watchScanning, onWatchDevices, scanWatches, stopWatchScan, connectWatch, disconnectWatch } from '../lib/watch-link.js'
+import { watchAvailable, watchState, onWatchState, connectWatch, disconnectWatch, getWatchDeviceInfo, watchDevice } from '../lib/watch-link.js'
 import { CUSTOM, accentKey, adjustedIn, applyAccent, cleanHex, inkOn, isGrey } from '../lib/accent.js'
 import { checkForUpdate, downloadAndInstall, fetchChecksum, RELEASES_PAGE } from '../lib/update.js'
 import { forgetCoach } from '../lib/coach-api.js'
@@ -80,65 +80,53 @@ const standalone = () => {
 }
 
 function WatchPairSheet({ close }) {
-  const [devices, setDevices] = useState(() => watchDevices())
-  const [scanning, setScanning] = useState(() => watchScanning())
   const [status, setStatus] = useState(() => watchState())
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [info, setInfo] = useState(() => watchDevice())
 
   useEffect(() => {
-    const offDevices = onWatchDevices((list, active) => { setDevices(list); setScanning(active) })
-    const offState = onWatchState(setStatus)
-    if (watchState() !== 'ready' && watchState() !== 'connected' && !watchScanning()) {
-      scanWatches().then(ok => { if (!ok) setError(t('Could not start the scanner')) }).catch(() => setError(t('Could not start the scanner')))
-    }
-    return () => {
-      offDevices?.()
-      offState?.()
-      stopWatchScan()
-    }
+    const off = onWatchState(setStatus)
+    return () => off?.()
   }, [])
 
-  const scan = async () => {
-    setError('')
-    setBusy(true)
-    try {
-      if (!(await scanWatches())) setError(t('Could not start the scanner'))
-    } finally { setBusy(false) }
-  }
+  useEffect(() => {
+    if (status !== 'ready' && status !== 'connected') return
+    getWatchDeviceInfo().then(d => { if (d) setInfo(d) }).catch(() => {})
+  }, [status])
 
-  const choose = async address => {
+  const connect = async () => {
     setError('')
     setBusy(true)
-    await stopWatchScan()
-    const ok = await connectWatch(address)
+    const ok = await connectWatch()
     if (!ok) setError(t('Could not connect'))
     setBusy(false)
   }
 
-  useEffect(() => {
-    if (status !== 'ready') return
-    const timer = setTimeout(close, 450)
-    return () => clearTimeout(timer)
-  }, [status, close])
-
   const connected = status === 'ready' || status === 'connected'
+  const dev = info && (info.device || info)
   return <>
     <h3>{t('Connect watch')}</h3>
-    <p className="muted small">{t('Looking for the watch… Open the training app on the watch.')}</p>
-    {connected && <p className="small accent">{t('Connected. Start a workout and it lands on the watch.')}</p>}
-    {scanning && <p className="muted small">Scanning…</p>}
-    {!scanning && !devices.length && !connected && <p className="muted small">{t('Tap to pair. The watch shows your plan during a workout and records a set with one tap.')}</p>}
-    {devices.length > 0 && <div className="list" style={{ margin: '10px 0 14px' }}>
-      {devices.map(device => <button key={device.address} type="button" className="item tap" disabled={busy}
-        onClick={() => choose(device.address)}>
-        <span className="lrow-m"><span className="lrow-t">{device.name || 'BLE device'}</span><span className="lrow-s">{device.address}{device.rssi != null ? ` · RSSI ${device.rssi}` : ''}</span></span>
-        <span className="lrow-v">{device.serviceMatch ? 'openGym' : 'BLE'}</span>
-      </button>)}
+    <p className="muted small">
+      {connected
+        ? t('Connected. Start a workout and it lands on the watch.')
+        : t('Make sure vivo Health is connected to your watch, then open the training app on the watch.')}
+    </p>
+    {dev && connected && <div className="list" style={{ margin: '10px 0 14px' }}>
+      <div className="item">
+        <span className="lrow-m">
+          <span className="lrow-t">{dev.deviceName || dev.name || 'vivo WATCH'}</span>
+          <span className="lrow-s">
+            {dev.battery != null ? `${dev.battery}%` : ''}
+            {dev.totalStorage != null && dev.freeStorage != null ? ` · ${Math.round(dev.freeStorage / 1048576)} / ${Math.round(dev.totalStorage / 1048576)} MB` : ''}
+          </span>
+        </span>
+      </div>
     </div>}
+    {status === 'connecting' && <p className="muted small">{t('Connecting…')}</p>}
     {error && <p className="small danger">{error}</p>}
     <div className="row" style={{ gap: 8, marginTop: 12 }}>
-      {!connected && <Button variant="primary" disabled={busy || scanning} onClick={scan}>{scanning ? 'Scanning…' : t('Scan')}</Button>}
+      {!connected && <Button variant="primary" disabled={busy || status === 'connecting'} onClick={connect}>{busy ? t('Connecting…') : t('Connect')}</Button>}
       {connected && <Button variant="danger" disabled={busy} onClick={async () => { await disconnectWatch(); close() }}>{t('Disconnect')}</Button>}
       <Button variant="ghost" onClick={close}>{t('Cancel')}</Button>
     </div>
@@ -603,16 +591,16 @@ export default function Settings({ page = null, find = null, via = null }) {
               onChange={v => update(s => { s.overlayStyle = v; setOverlayStyle(v) })} />
           </Row>
         )}
-        {/* 连接手表（BLE）：手表要开着训练助手（开始页在广播）。连接后训练开始会自动把
-            计划推到手表，手表上点"完成一组"实时回传进会话。 */}
+        {/* 连接手表（vivo 智能终端 SDK）：设备发现/连接由运动健康完成。
+            手机开始训练后计划自动推到手表，手表上的完成/调整实时回传。 */}
         {android && (
           <Row icon="dumbbell" iconTint="var(--green)" title={t('Connect watch')}
             subtitle={
               watchSt === 'ready' || watchSt === 'connected' ? t('Connected. Start a workout and it lands on the watch.')
-              : watchSt === 'connecting' ? t('Looking for the watch… Open the training app on the watch.')
-              : watchWhy === 'bluetoothOff' ? t('Bluetooth is off. Turn it on and try again.')
-              : watchWhy === 'permission' ? t('Bluetooth permission is needed.')
-              : t('Tap to pair. The watch shows your plan during a workout and records a set with one tap.')
+              : watchSt === 'connecting' ? t('Connecting… Make sure vivo Health is connected to the watch.')
+              : watchWhy === 'notVivo' ? t('Watch support needs a vivo phone.')
+              : watchWhy === 'healthMissing' ? t('vivo Health is not installed.')
+              : t('Open the training app on the watch. The plan follows when a workout starts.')
             }
             accessory="chevron"
             onClick={() => useUI.getState().openSheet(close => <WatchPairSheet close={close} />)} />

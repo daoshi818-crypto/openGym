@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
 import { workoutControls } from '../lib/workout-controls.js'
 import { useUI } from '../store/useUI.js'
-import { pushPlanToWatch, clearWatchPlan, bindWatchSync, bindWatchEvents, pushRestToWatch, pushWeightToWatch, pushUnsetToWatch } from '../lib/watch-link.js'
+import { pushPlanToWatch, clearWatchPlan, bindWatchSync, bindWatchEvents, pushRestToWatch, pushWeightToWatch, pushRepsToWatch, pushUnsetToWatch, pushAddSetToWatch, pushRemoveSetToWatch, pushFocusToWatch, pushAckToWatch, pushSyncToWatch } from '../lib/watch-link.js'
 import { exOr, betterWeight } from '../lib/exercises.js'
 import { usesBar } from '../lib/bar.js'
 import { loadKindFor, baseWeightFor, inventoryFor, rowLoad, sameLoad, plateDelta, dropGrid } from '../lib/plates.js'
@@ -1321,8 +1321,18 @@ function ActiveWorkout() {
     onToggleSide: (i, side, onFocusProgress) => toggle(idx, i, side, { onFocusProgress }),
     onField: (i, f, v) => watchField(idx, i, f, v),
     onMutateSet: (i, fn) => mutEntry(idx, entry => { entry.sets[i] = fn(entry.sets[i]) }),
-    onAddSet: () => addSet(idx),
-    onRemoveSet: () => removeSet(idx),
+    onAddSet: () => {
+      addSet(idx)
+      const a = useStore.getState().S.active
+      const id = a && a.start ? String(a.start) : ''
+      if (id) pushAddSetToWatch(id, idx)
+    },
+    onRemoveSet: () => {
+      removeSet(idx)
+      const a = useStore.getState().S.active
+      const id = a && a.start ? String(a.start) : ''
+      if (id) pushRemoveSetToWatch(id, idx)
+    },
     onAddWarmup: () => addWarmup(idx),
     onRemoveSetAt: i => removeSetAt(idx, i),
     onCopySetAt: i => copyActiveSet(idx, i),
@@ -1332,7 +1342,12 @@ function ActiveWorkout() {
     onNoProg: routineKeepsOut(A.entries[idx]) ? null : on => setNoProg(idx, on),
     routineUpdate: routineUpdateFor(idx),
   })
-  const selectFocusEntry = idx => update(s => { if (s.active) s.active.cur = idx })
+  const selectFocusEntry = idx => {
+    update(s => { if (s.active) s.active.cur = idx })
+    const a = useStore.getState().S.active
+    const id = a && a.start ? String(a.start) : ''
+    if (id) pushFocusToWatch(id, idx)
+  }
   const advanceFocusUnit = () => update(s => {
     if (!s.active) return
     const next = nextUnfinishedUnit(s.active.entries, supersetUnits(s.active.entries), s.active.cur)
@@ -1794,12 +1809,14 @@ function ActiveWorkout() {
   useEffect(() => () => clearWatchPlan(sid), [sid])
   useEffect(() => {
     if (editing) return
+    const bw = S.bodyweight?.length ? S.bodyweight[S.bodyweight.length - 1].w : null
+    const weightKg = bw ? (S.unit === 'lb' ? bw * 0.45359237 : bw) : 70
     pushPlanToWatch({ name: A.name, exercises: A.entries.map(e => ({
       name: e.name, sets: e.sets.filter(x => !isWarmupRow(x)).length,
-      reps: e.sets.find(x => !isWarmupRow(x))?.reps ?? '',
+      reps: e.sets.find(x => !isWarmupRow(x))?.r ?? e.sets.find(x => !isWarmupRow(x))?.reps ?? '',
       restSec: e.target?.restSec > 0 ? e.target.restSec : S.restSec || 60,
       weight: e.sets.find(x => !isWarmupRow(x))?.w ?? '',
-    })) }, sid)
+    })) }, sid, { weight: Math.round(weightKg * 10) / 10 })
   }, [editing, sid, A.name, A.entries.length])
 
   // 休息调整 → 手表。timer 变化驱动；本地应用远端消息时 remoteRestSeq 挡住回环。
@@ -1841,6 +1858,80 @@ function ActiveWorkout() {
           const r2 = e2 && e2.sets[entry.sets.indexOf(row)]
           if (r2) r2.w = w > 0 ? w : undefined
         })
+        if (ev.at != null) pushAckToWatch(ev.at)
+        return
+      }
+      if (ev.t === 'reps') {
+        const entry = A2.entries[ev.ex]
+        if (!entry) return
+        const row = entry.sets.filter(x => !isWarmupRow(x))[ev.set - 1]
+        if (!row) return
+        const reps = ev.reps != null ? String(ev.reps) : ''
+        update(s => {
+          const e2 = s.active?.entries[ev.ex]
+          const r2 = e2 && e2.sets[entry.sets.indexOf(row)]
+          if (r2) { r2.r = reps; r2.reps = reps }
+        })
+        if (ev.at != null) pushAckToWatch(ev.at)
+        return
+      }
+      if (ev.t === 'add_set') {
+        const entry = A2.entries[ev.ex]
+        if (!entry) return
+        addSet(ev.ex)
+        update(s => {
+          const e2 = s.active?.entries[ev.ex]
+          const r2 = e2 && e2.sets[e2.sets.length - 1]
+          if (!r2) return
+          const w = ev.weight != null && ev.weight !== '' ? parseFloat(ev.weight) : NaN
+          if (Number.isFinite(w)) r2.w = w
+          if (ev.reps != null && ev.reps !== '') { r2.r = String(ev.reps); r2.reps = String(ev.reps) }
+        })
+        if (ev.at != null) pushAckToWatch(ev.at)
+        return
+      }
+      if (ev.t === 'remove_set') {
+        const entry = A2.entries[ev.ex]
+        if (!entry) return
+        removeSet(ev.ex)
+        if (ev.at != null) pushAckToWatch(ev.at)
+        return
+      }
+      if (ev.t === 'focus') {
+        update(s => { if (s.active) s.active.cur = ev.ex })
+        if (ev.at != null) pushAckToWatch(ev.at)
+        return
+      }
+      if (ev.t === 'hello') {
+        const restLeft = useUI.getState().timer && !useUI.getState().timer.ready
+          ? Math.max(0, Math.round((useUI.getState().timer.endsAt - Date.now()) / 1000))
+          : 0
+        const curEx = A2.cur || 0
+        const curRows = A2.entries[curEx]?.sets?.filter(x => !isWarmupRow(x)) || []
+        const firstUndone = curRows.findIndex(r => !r.done)
+        const bw = S.bodyweight?.length ? S.bodyweight[S.bodyweight.length - 1].w : null
+        const weightKg = bw ? (S.unit === 'lb' ? bw * 0.45359237 : bw) : 70
+        const snapshot = {
+          sid,
+          rev: Date.now(),
+          startedAt: A2.start || Date.now(),
+          workout: A2.name,
+          profile: { weight: Math.round(weightKg * 10) / 10 },
+          exercises: A2.entries.map(e => ({
+            name: e.name,
+            sets: e.sets.filter(x => !isWarmupRow(x)).length,
+            reps: e.sets.find(x => !isWarmupRow(x))?.r ?? e.sets.find(x => !isWarmupRow(x))?.reps ?? '',
+            restSec: e.target?.restSec > 0 ? e.target.restSec : S.restSec || 60,
+            weight: e.sets.find(x => !isWarmupRow(x))?.w ?? '',
+          })),
+          rows: A2.entries.map(e => e.sets.filter(x => !isWarmupRow(x)).map(r => ({
+            w: r.w ?? '', r: r.reps ?? r.r ?? '', done: !!r.done, at: r.at || 0,
+          }))),
+          exIdx: curEx,
+          setIdx: firstUndone >= 0 ? firstUndone : 0,
+          restUntil: restLeft > 0 ? Date.now() + restLeft * 1000 : 0,
+        }
+        pushSyncToWatch(snapshot)
         return
       }
       // 完成/撤销一组（手表点"完成"或"撤销重做"）：写活动会话的组重量/次数（手表上
@@ -1860,9 +1951,10 @@ function ActiveWorkout() {
           const r2 = e2 && e2.sets[entry.sets.indexOf(row)]
           if (!r2) return
           if (Number.isFinite(w) && w > 0) r2.w = w
-          if (reps != null && r2.reps == null) r2.reps = reps
+          if (reps != null) { r2.r = reps; r2.reps = reps }
         })
         toggle(entry.sets.indexOf(row), ev.set - 1, undefined, {})
+        if (ev.at != null) pushAckToWatch(ev.at)
         return
       }
       if (ev.t === 'unset') {
@@ -1872,6 +1964,7 @@ function ActiveWorkout() {
         const row = entry.sets.filter(x => !isWarmupRow(x))[ev.set - 1]
         if (!row || !row.done) return
         toggle(entry.sets.indexOf(row), ev.set - 1, undefined, {})
+        if (ev.at != null) pushAckToWatch(ev.at)
         return
       }
       if (ev.t === 'end') {
@@ -1889,7 +1982,10 @@ function ActiveWorkout() {
   // 重量编辑 → 手表：setField 走这里（onField），只对活动会话的组行下发。
   const watchField = (idx, i, f, v) => {
     setField(idx, i, f, v)
-    if (f === 'w' && sid) pushWeightToWatch(sid, idx, workSetOrdinal(A.entries[idx], i), v)
+    if (!sid) return
+    const set = workSetOrdinal(A.entries[idx], i)
+    if (f === 'w') pushWeightToWatch(sid, idx, set, v)
+    else if (f === 'r' || f === 'reps') pushRepsToWatch(sid, idx, set, v)
   }
   // 组号（1 起）：该行在"非热身行"里的序号——与手表计划的 set 编号同一套。
   const workSetOrdinal = (entry, i) => {

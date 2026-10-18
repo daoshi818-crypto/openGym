@@ -1,10 +1,10 @@
 <script>
-// 结束页：显示本次训练摘要。
+// 结束页：本次训练摘要。手机是数据源，这里只展示手表本地结算的紧凑结果。
 import storage from '@blueos.storage.storage'
 import router from '@blueos.app.appmanager.router'
 
 export default {
-  data: { minutes: '', sets: '', kcal: '', hr: '' },
+  data: { minutes: '', sets: '', kcal: '', hr: '', volume: '' },
 
   onInit() {
     try {
@@ -12,8 +12,9 @@ export default {
       if (s && typeof s === 'object') {
         this.minutes = this.fmtDur(s.minutes)
         this.sets = String(s.sets || 0)
-        this.kcal = String(s.calories || 0)
+        this.kcal = String(Math.round(s.calories || 0))
         this.hr = s.avgHr ? String(s.avgHr) : '--'
+        this.volume = s.volume ? String(Math.round(s.volume)) : ''
       }
     } catch (e) {}
   },
@@ -34,24 +35,24 @@ export default {
   <div class="page">
     <text class="title">训练完成</text>
 
-    <div class="grid">
+    <text class="kcal">{{ kcal }}</text>
+    <text class="kcal-lbl">千卡</text>
+
+    <div class="row">
       <div class="cell">
         <text class="num">{{ minutes }}</text>
-        <text class="lbl">训练时长</text>
+        <text class="lbl">时长</text>
       </div>
       <div class="cell">
         <text class="num">{{ sets }}</text>
-        <text class="lbl">完成组数</text>
-      </div>
-      <div class="cell">
-        <text class="num">{{ kcal }}</text>
-        <text class="lbl">千卡</text>
+        <text class="lbl">组数</text>
       </div>
       <div class="cell">
         <text class="num">{{ hr }}</text>
         <text class="lbl">平均心率</text>
       </div>
     </div>
+    <text class="volume" if="{{ volume }}">训练量 {{ volume }} kg</text>
 
     <input class="btn" type="button" value="完成" onclick="onBack" />
   </div>
@@ -59,10 +60,13 @@ export default {
 
 <style>
 .page { flex-direction: column; align-items: center; justify-content: center; width: 390px; height: 450px; background-color: #000000; }
-.title { font-size: 30px; color: #30d158; margin-bottom: 12px; }
-.grid { flex-direction: row; flex-wrap: wrap; justify-content: center; width: 360px; }
-.cell { flex-direction: column; align-items: center; width: 175px; margin: 7px 0; }
-.num { font-size: 38px; color: #ffffff; }
-.lbl { font-size: 17px; color: #8e8e93; margin-top: 1px; }
-.btn { width: 240px; height: 58px; font-size: 23px; border-radius: 14px; background-color: #30d158; color: #ffffff; margin-top: 16px; }
+.title { font-size: 26px; color: #30d158; margin-bottom: 6px; }
+.kcal { font-size: 64px; color: #ffffff; margin-top: 4px; }
+.kcal-lbl { font-size: 18px; color: #8e8e93; margin-bottom: 8px; }
+.row { flex-direction: row; justify-content: center; width: 360px; margin-top: 2px; }
+.cell { flex-direction: column; align-items: center; width: 120px; }
+.num { font-size: 26px; color: #ffffff; }
+.lbl { font-size: 15px; color: #8e8e93; margin-top: 1px; }
+.volume { font-size: 16px; color: #8e8e93; margin-top: 8px; }
+.btn { width: 240px; height: 54px; font-size: 22px; border-radius: 14px; background-color: #30d158; color: #ffffff; margin-top: 14px; }
 </style>

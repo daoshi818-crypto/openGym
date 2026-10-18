@@ -9,11 +9,9 @@
 //
 // 存储结构：
 //   session_state    当前会话的紧凑状态（含 rows、休息截止的绝对时间戳、心率累计）
-//   pending_sessions 已结束但还没上传成功的会话，下次启动重试
 import storage from '@blueos.storage.storage'
 
 const K_STATE = 'session_state'
-const K_PENDING = 'pending_sessions'
 
 const now = () => Date.now()
 
@@ -28,6 +26,7 @@ export function blankState() {
     setIdx: 0,          // 当前动作内的组下标（游标，可自由切）
     restUntil: 0,       // 绝对时间戳；0 表示不在休息
     hr: { sum: 0, count: 0, max: 0 },
+    rev: 0,             // 本地修订号；手机 sync 用它判断谁更新
   }
 }
 
@@ -36,6 +35,7 @@ export function loadState() {
   try {
     const s = storage.getSync({ key: K_STATE })
     if (s && typeof s === 'object' && s.workout) {
+      if (s.rev == null) s.rev = 0
       ensureRows(s)
       return s
     }
@@ -63,12 +63,17 @@ function initWeight(ex) { return ex.weight === '' || ex.weight == null ? '' : ex
 function initReps(ex) { return ex.reps == null ? '' : ex.reps }
 
 // 每次改动立即落盘。storage.set 是异步的，失败回调必须给（文档要求）。
-export function save(state) {
+function persist(state) {
   storage.set({
     key: K_STATE,
     value: state,
     fail: (data, code) => console.log('save state failed', code),
   })
+}
+
+export function save(state) {
+  state.rev = (state.rev || 0) + 1
+  persist(state)
 }
 
 export function startSession(workout, profile) {
@@ -108,7 +113,41 @@ export function replacePlan(state, workout) {
   return state
 }
 
-// 找下一个没完成的组（动作顺序），没有则 null（全部做完）
+// 手机重连后的权威快照：手机是唯一数据源，手表整体接受。
+export function applySync(state, snapshot) {
+  if (!snapshot || !Array.isArray(snapshot.exercises)) return state
+  if (snapshot.sid && state.sid && snapshot.sid !== state.sid) {
+    // 手机已经换了一场训练：手表不该把旧会话续上去。
+    state.sid = snapshot.sid
+    state.startedAt = snapshot.startedAt || state.startedAt
+  } else if (snapshot.sid) {
+    state.sid = snapshot.sid
+  }
+  state.active = true
+  state.workout = {
+    name: snapshot.workout || snapshot.name || (state.workout && state.workout.name) || '',
+    exercises: snapshot.exercises,
+  }
+  const srcRows = Array.isArray(snapshot.rows) ? snapshot.rows : []
+  state.workout.rows = state.workout.exercises.map((ex, i) => {
+    const src = Array.isArray(srcRows[i]) ? srcRows[i] : []
+    return Array.from({ length: ex.sets || 1 }, (_, k) => {
+      const cell = src[k]
+      return cell && typeof cell === 'object'
+        ? { w: cell.w != null ? cell.w : initWeight(ex), r: cell.r != null ? cell.r : initReps(ex), done: !!cell.done, at: cell.at || 0 }
+        : { w: initWeight(ex), r: initReps(ex), done: false, at: 0 }
+    })
+  })
+  const maxEx = Math.max(0, state.workout.exercises.length - 1)
+  state.exIdx = Math.max(0, Math.min(Number(snapshot.exIdx) || 0, maxEx))
+  const curRows = state.workout.rows[state.exIdx] || []
+  state.setIdx = Math.max(0, Math.min(Number(snapshot.setIdx) || 0, Math.max(0, curRows.length - 1)))
+  state.restUntil = snapshot.restUntil || 0
+  if (snapshot.profile) state.profile = snapshot.profile
+  state.rev = Math.max(state.rev || 0, snapshot.rev || 0)
+  persist(state)
+  return state
+}
 export function nextUndone(s) {
   for (let i = 0; i < s.workout.rows.length; i++) {
     const startJ = i === s.exIdx ? s.setIdx + 1 : 0
@@ -194,11 +233,12 @@ export function addHr(state, bpm) {
 
 export function flushHr(state) { save(state) }
 
-// 热量估算：Keytel 公式（按心率/体重/年龄/时长），够"大概数据"用
+// 热量估算：有心率走 Keytel；没有心率用 MET 5.0（力量训练）兜底。
 export function calories(state, profile, minutes) {
-  const hr = state.hr.count ? Math.round(state.hr.sum / state.hr.count) : 0
-  if (!hr || !minutes) return 0
   const w = (profile && profile.weight) || 70
+  if (!minutes) return 0
+  const hr = state.hr.count ? Math.round(state.hr.sum / state.hr.count) : 0
+  if (!hr) return Math.max(0, Math.round(5.0 * w * (minutes / 60)))
   const a = (profile && profile.age) || 30
   const male = !profile || profile.sex !== 'female'
   const kcalPerMin = male
@@ -224,27 +264,14 @@ export function endSession(state, profile) {
     avgHr: state.hr.count ? Math.round(state.hr.sum / state.hr.count) : 0,
     maxHr: state.hr.max,
     calories: calories(state, profile, minutes),
+    volume: flat.reduce((sum, s) => {
+      const w = parseFloat(s.weight)
+      const r = parseFloat(s.reps)
+      return sum + (Number.isFinite(w) && Number.isFinite(r) ? w * r : 0)
+    }, 0),
     sets: flat,
   }
-  queuePending(session)
   const s = blankState()
   save(s)
   return session
-}
-
-export function queuePending(session) {
-  const list = listPending()
-  list.push(session)
-  storage.set({ key: K_PENDING, value: list, fail: (d, c) => console.log('queue failed', c) })
-}
-
-export function listPending() {
-  try {
-    const l = storage.getSync({ key: K_PENDING })
-    return Array.isArray(l) ? l : []
-  } catch (e) { return [] }
-}
-
-export function clearPending() {
-  storage.set({ key: K_PENDING, value: [], fail: () => {} })
 }

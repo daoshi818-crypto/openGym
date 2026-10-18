@@ -2,7 +2,7 @@
 // 计算器输入页：改重量/次数。路由参数直接使用 exIdx、setIdx、field。
 import router from '@blueos.app.appmanager.router'
 import { loadState, setRowValue } from '../lib/session.js'
-import { sendControl } from '../lib/ble.js'
+import { sendControl } from '../lib/rpc.js'
 
 export default {
   data: {
@@ -70,7 +70,11 @@ export default {
     const v = this.buffer === '' ? '' : String(parseFloat(this.buffer) || 0)
     const s = this.state
     setRowValue(s, this.exIdx, this.setIdx, this.field, v)
-    if (this.field === 'w') sendControl({ t: 'weight', sid: s.sid, ex: this.exIdx, set: this.setIdx + 1, weight: v })
+    if (this.field === 'w') {
+      sendControl({ t: 'weight', sid: s.sid, ex: this.exIdx, set: this.setIdx + 1, weight: v, at: Date.now() })
+    } else {
+      sendControl({ t: 'reps', sid: s.sid, ex: this.exIdx, set: this.setIdx + 1, reps: v, at: Date.now() })
+    }
     router.back()
   },
 }

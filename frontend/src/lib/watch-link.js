@@ -1,10 +1,8 @@
-// 手表连接（BLE）：设置页的「连接手表」与训练页的自动推计划都走这里。
+// 手表连接（vivo 智能终端 SDK）：设置页的「连接手表」与训练页的自动推计划都走这里。
 //
-// 手机 = BLE 中心设备（原生 WatchBlePlugin），手表 = GATT 服务端（watch-app/）。
-// 协议见 watch-app/DESIGN.md 第 4 节：plan（手机→手表）、set/end（手表→手机）、ack。
-//
-// 不另开存储：收到手表的"完成一组"直接写进 useStore 的会话状态，和手动点完成同一条
-// 代码路径，同步、撤销、编辑历史全都白送（DESIGN.md 第 6 节）。
+// 手机侧不再扫描/选择设备。DeviceRpcManager 绑定 vivo 运动健康后，
+// 手表应用用手机包名 + 证书指纹创建 interconnect 实例，连接由 SDK 完成。
+// 协议仍是 plan / set / end / rest / weight / unset / ack，只是底层从 GATT 换成 RPC。
 import { MOBILE, isAndroid } from './mobile.js'
 
 let pluginP = null
@@ -12,204 +10,142 @@ const watchPlugin = () => pluginP || (pluginP = (async () => {
   if (!(await isAndroid())) return null
   try {
     const { registerPlugin } = await import('@capacitor/core')
-    return { WatchBle: registerPlugin('WatchBle') }
+    return { WatchRpc: registerPlugin('WatchRpc') }
   } catch { return null }
 })().catch(() => null))
 
 // ---- 状态广播：设置页与训练页都订阅这一个 ----
 let state = 'off' // off | connecting | connected | ready | error
+let lastError = ''
+let device = null
 const listeners = new Set()
 let pendingPlan = null
 let latestPlan = null
 let planPushInFlight = false
-const WATCH_ADDRESS_KEY = 'opengym.watch.address'
-const readWatchAddress = () => {
-  try { return localStorage.getItem(WATCH_ADDRESS_KEY) || '' } catch { return '' }
-}
-const saveWatchAddress = address => {
-  try {
-    if (address) localStorage.setItem(WATCH_ADDRESS_KEY, address)
-    else localStorage.removeItem(WATCH_ADDRESS_KEY)
-  } catch { /* 原生环境若没有 localStorage，内存地址仍可用 */ }
-}
-let lastWatchAddress = readWatchAddress()
-let devices = []
-let scanning = false
-const deviceListeners = new Set()
+let bound = false
 
 export function watchState() { return state }
 export function onWatchState(cb) {
   listeners.add(cb)
+  try { cb(state) } catch { /* 单个订阅者出错不影响别人 */ }
   return () => listeners.delete(cb)
 }
 
-export function watchDevices() { return devices.slice() }
-export function watchScanning() { return scanning }
-export function onWatchDevices(cb) {
-  deviceListeners.add(cb)
-  try { cb(devices.slice(), scanning) } catch { /* 单个订阅者出错不影响别人 */ }
-  return () => deviceListeners.delete(cb)
-}
-
-function notifyDevices() {
-  for (const cb of deviceListeners) {
-    try { cb(devices.slice(), scanning) } catch { /* 单个订阅者出错不影响别人 */ }
-  }
-}
-
-function setState(s) {
+function setState(s, error = '') {
   state = s
+  if (error) lastError = error
   for (const cb of listeners) {
-    try { cb(s) } catch { /* 单个订阅者出错不影响别人 */ }
+    try { cb(state) } catch { /* 单个订阅者出错不影响别人 */ }
   }
 }
 
-// 原生侧的连接状态事件（连接/断开/就绪/出错）
-let bound = false
+// 原生侧的连接/事件回调
 async function bindNative() {
   if (bound || !MOBILE) return
   const p = await watchPlugin()
   if (!p) return
   bound = true
-  p.WatchBle.addListener('watchState', (ev) => {
+
+  p.WatchRpc.addListener('watchState', (ev) => {
     const next = ev && ev.state ? ev.state : 'off'
-    if (ev && ev.address) {
-      lastWatchAddress = ev.address
-      saveWatchAddress(lastWatchAddress)
-    }
-    setState(next === 'disconnected' ? 'off' : next)
-    if (next === 'ready') {
+    if (ev && ev.connected) device = { ...(device || {}), connected: true }
+    setState(next === 'disconnected' ? 'off' : next, ev && ev.reason ? ev.reason : '')
+    if (next === 'ready' || next === 'connected') {
       if (!pendingPlan && latestPlan) pendingPlan = latestPlan
       Promise.resolve().then(flushPendingPlan)
     }
   })
-  p.WatchBle.addListener('deviceFound', (ev) => {
-    if (!ev || !ev.address) return
-    const found = {
-      address: ev.address,
-      name: ev.name || 'BLE device',
-      connectable: ev.connectable !== false,
-      serviceMatch: !!ev.serviceMatch,
-      rssi: Number.isFinite(ev.rssi) ? ev.rssi : null,
-    }
-    devices = [...devices.filter(d => d.address !== found.address), found]
-      .sort((a, b) => Number(b.serviceMatch) - Number(a.serviceMatch) || (b.rssi ?? -999) - (a.rssi ?? -999))
-    notifyDevices()
-  })
-  p.WatchBle.addListener('scanFinished', () => {
-    scanning = false
-    notifyDevices()
-  })
-  p.WatchBle.addListener('scanFailed', (ev) => {
-    scanning = false
-    notifyDevices()
-    setState('error')
-    if (ev && ev.code != null) console.log('watch scan failed', ev.code)
-  })
-  // 手表推来的事件：完成一组 / 结束训练 / 休息与重量调整
-  p.WatchBle.addListener('watchEvent', (ev) => {
+
+  p.WatchRpc.addListener('watchEvent', (ev) => {
     try {
-      if (ev && (ev.t === 'rest' || ev.t === 'weight')) onWatchSync(ev)
-      else onWatchEvent(ev)
+      if (!ev) return
+      if (ev.t === 'device') {
+        device = { ...(device || {}), ...ev }
+        return
+      }
+      // 手表刚打开：如果计划之前没送到，借这次握手立刻补推。
+      if (ev.t === 'hello' && latestPlan) {
+        pendingPlan = latestPlan
+        Promise.resolve().then(flushPendingPlan)
+      }
+      // 这些是“状态/结构调整”，训练页通过 bindWatchSync 落库；其余是完成/结束事件。
+      if (ev.t === 'rest' || ev.t === 'weight' || ev.t === 'reps' ||
+          ev.t === 'add_set' || ev.t === 'remove_set' || ev.t === 'focus' ||
+          ev.t === 'hello' || ev.t === 'sync') {
+        onWatchSync(ev)
+      } else {
+        onWatchEvent(ev)
+      }
     } catch (e) { console.log('watch event failed', e) }
   })
 }
 
 // ---- 设置页 API ----
 
-/** 手表功能在这台设备上是否可用（Android app 且蓝牙/权限就绪）。 */
+/** vivo 手机 + 运动健康就绪时可用；连接由 SDK 完成，不需要蓝牙权限。 */
 export async function watchAvailable() {
   if (!MOBILE) return { available: false, reason: 'web' }
   const p = await watchPlugin()
   if (!p) return { available: false, reason: 'web' }
   try {
-    const r = await p.WatchBle.isSupported()
-    if (!r.bluetoothOn) return { available: false, reason: 'bluetoothOff' }
-    if (!r.permission) return { available: false, reason: 'permission' }
+    const r = await p.WatchRpc.isSupported()
+    if (r && r.connected) device = { ...(device || {}), connected: true }
+    if (!r || !r.available) return { available: false, reason: (r && r.reason) || 'notVivo' }
     return { available: true }
   } catch { return { available: false, reason: 'web' } }
 }
 
-/** 申请蓝牙权限（Android 12+ 的运行时对话框）。 */
-export async function requestWatchPermissions() {
-  const p = await watchPlugin()
-  if (!p) return false
-  try { return !!(await p.WatchBle.requestPermissions()).granted } catch { return false }
-}
-
-/** 扫描当前正在广播训练服务的手表，供设置页展示并让用户选择。 */
-export async function scanWatches() {
+/** 初始化 SDK 并绑定运动健康。手表端打开应用后即可收发。 */
+export async function connectWatch() {
   await bindNative()
   const p = await watchPlugin()
-  if (!p) return false
-  const ok = await requestWatchPermissions()
-  if (!ok) { setState('error'); return false }
-  devices = []
-  scanning = true
-  notifyDevices()
-  try {
-    await p.WatchBle.startScan()
-    return true
-  } catch {
-    scanning = false
-    notifyDevices()
-    setState('error')
-    return false
-  }
-}
-
-export async function stopWatchScan() {
-  const p = await watchPlugin()
-  scanning = false
-  notifyDevices()
-  if (!p) return
-  try { await p.WatchBle.stopScan() } catch { /* 扫描已经结束 */ }
-}
-
-/**
- * 连接手表：申请权限 → 按服务 UUID 扫描 → 连接。
- * 手表应用要在前台开着（开始页广播自己）。
- */
-export async function connectWatch(address = '') {
-  await bindNative()
-  const p = await watchPlugin()
-  if (!p) return false
-  const ok = await requestWatchPermissions()
-  if (!ok) { setState('error'); return false }
-  const target = address || lastWatchAddress
-  if (address) {
-    lastWatchAddress = address
-    saveWatchAddress(address)
-  }
+  if (!p) { setState('error', 'web'); return false }
   setState('connecting')
   try {
-    await p.WatchBle.connect(target ? { address: target } : {})
-    // ready 由原生 watchState 事件带回来；这里不再轮询
+    const r = await p.WatchRpc.connect()
+    setState(r && r.connected ? 'connected' : 'ready')
     return true
   } catch (e) {
-    setState('error')
+    setState('error', e && e.message ? e.message : 'connect failed')
     return false
   }
 }
 
 export async function disconnectWatch() {
   const p = await watchPlugin()
-  if (!p) return
-  try { await p.WatchBle.disconnect() } catch { /* 已经断开 */ }
+  if (p) {
+    try { await p.WatchRpc.disconnect() } catch { /* 已经断开 */ }
+  }
   setState('off')
 }
+
+/** 读设备信息（名称、电量、存储、连接状态）。 */
+export async function getWatchDeviceInfo() {
+  const p = await watchPlugin()
+  if (!p) return null
+  try {
+    const r = await p.WatchRpc.getDeviceInfo()
+    if (!r || !r.ok || !r.data) return null
+    try {
+      const parsed = JSON.parse(r.data)
+      device = { ...(device || {}), ...parsed }
+      return parsed
+    } catch { return { raw: r.data } }
+  } catch { return null }
+}
+
+export function watchDevice() { return device ? { ...device } : null }
+export function watchLastError() { return lastError }
 
 // ---- 训练页 API：把今天的训练推给手表 ----
 
 /** 训练开始时调用一次；训练中途计划变了（加/删动作）再调一次，手表整包热替换。 */
-export async function pushPlanToWatch(workout, sid) {
+export async function pushPlanToWatch(workout, sid, profile = null) {
   if (!MOBILE || !workout) return
-  latestPlan = { workout, sid }
+  latestPlan = { workout, sid, profile }
   pendingPlan = latestPlan
   await bindNative()
-  if (state !== 'ready' && state !== 'connected' && state !== 'connecting' && lastWatchAddress) {
-    await connectWatch(lastWatchAddress)
-  }
+  if (state === 'off' || state === 'error') await connectWatch()
   return flushPendingPlan()
 }
 
@@ -220,23 +156,20 @@ export function clearWatchPlan(sid) {
 }
 
 async function flushPendingPlan() {
-  if (planPushInFlight || !pendingPlan || state !== 'ready') return
+  if (planPushInFlight || !pendingPlan) return
+  if (state !== 'ready' && state !== 'connected') return
   const p = await watchPlugin()
   if (!p) return
   const next = pendingPlan
   pendingPlan = null
   planPushInFlight = true
   try {
-    const r = await p.WatchBle.isConnected()
-    if (!r || !r.connected) {
-      pendingPlan = next
-      return
-    }
     const msg = {
       t: 'plan',
-      v: 1,
+      v: 2,
       sid: next.sid || '',
       workout: next.workout.name || '',
+      profile: next.profile || null,
       exercises: (next.workout.exercises || []).map(e => ({
         name: e.name || '',
         sets: e.sets || 1,
@@ -245,70 +178,111 @@ async function flushPendingPlan() {
         weight: e.weight != null ? String(e.weight) : '',
       })),
     }
-    await p.WatchBle.sendPlan({ json: JSON.stringify(msg) })
-  } catch {
+    const r = await p.WatchRpc.sendPlan({ json: JSON.stringify(msg) })
+    if (!r || !r.ok) {
+      // 手表可能还没打开；保留待发计划，下一次 ready 或训练开始时再推。
+      pendingPlan = next
+      lastError = (r && r.data) || 'send plan failed'
+    }
+  } catch (e) {
     pendingPlan = next
+    lastError = e && e.message ? e.message : 'send plan failed'
   } finally {
     planPushInFlight = false
-    if (pendingPlan && state === 'ready') Promise.resolve().then(flushPendingPlan)
   }
 }
 
-// ---- 实时同步（双向，都走"完成"特征值，尽力而为、不排队） ----
+async function sendWatchEvent(obj) {
+  if (!MOBILE || !obj) return false
+  await bindNative()
+  const p = await watchPlugin()
+  if (!p) return false
+  try {
+    const r = await p.WatchRpc.sendEvent({ json: JSON.stringify(obj) })
+    if (r && !r.ok) lastError = r.data || 'send event failed'
+    return !!(r && r.ok)
+  } catch (e) {
+    lastError = e && e.message ? e.message : 'send event failed'
+    return false
+  }
+}
+
+// ---- 实时同步：手机 → 手表 ----
 
 let restSeq = 0
 const lastSentRest = { leftSec: -1, at: 0 }
 
-/** 手机调整了休息（±15s、暂停续跑、跳过）：立即推给手表。delta==null 表示"按剩余秒对齐"。 */
+/** 手机调整了休息（±15s、暂停续跑、跳过）：立即推给手表。 */
 export async function pushRestToWatch(sid, leftSec) {
   if (!MOBILE || !sid) return
-  const p = await watchPlugin()
-  if (!p) return
-  try {
-    const now = Date.now()
-    // 同一秒内相同剩余秒数不重发（暂停/续跑会连着来两次）
-    if (leftSec === lastSentRest.leftSec && now - lastSentRest.at < 1000) return
-    lastSentRest.leftSec = leftSec
-    lastSentRest.at = now
-    restSeq += 1
-    await p.WatchBle.sendEvent({ json: JSON.stringify({ t: 'rest', sid, leftSec, totalSec: leftSec, seq: restSeq }) })
-  } catch { /* 手表不在线就算了 */ }
+  const now = Date.now()
+  if (leftSec === lastSentRest.leftSec && now - lastSentRest.at < 1000) return
+  lastSentRest.leftSec = leftSec
+  lastSentRest.at = now
+  restSeq += 1
+  await sendWatchEvent({ t: 'rest', sid, leftSec, totalSec: leftSec, seq: restSeq })
 }
 
-/** 手机改了某组的重量：立即推给手表（ex=动作下标，set=第几组，1 起）。 */
+/** 手机改了某组的重量（ex=动作下标，set=第几组，1 起）。 */
 export async function pushWeightToWatch(sid, ex, set, weight) {
   if (!MOBILE || !sid) return
-  const p = await watchPlugin()
-  if (!p) return
-  try {
-    await p.WatchBle.sendEvent({ json: JSON.stringify({ t: 'weight', sid, ex, set, weight: String(weight ?? '') }) })
-  } catch { /* 手表不在线就算了 */ }
+  await sendWatchEvent({ t: 'weight', sid, ex, set, weight: String(weight ?? '') })
 }
 
-/** 手机上取消勾选了某组：手表端把那组的完成态抹掉（撤销重做对齐）。 */
+/** 手机改了某组的次数。 */
+export async function pushRepsToWatch(sid, ex, set, reps) {
+  if (!MOBILE || !sid) return
+  await sendWatchEvent({ t: 'reps', sid, ex, set, reps: String(reps ?? '') })
+}
+
+/** 手机上取消勾选了某组：手表端把那组的完成态抹掉。 */
 export async function pushUnsetToWatch(sid, ex, set) {
   if (!MOBILE || !sid) return
-  const p = await watchPlugin()
-  if (!p) return
-  try {
-    await p.WatchBle.sendEvent({ json: JSON.stringify({ t: 'unset', sid, ex, set }) })
-  } catch { /* 手表不在线就算了 */ }
+  await sendWatchEvent({ t: 'unset', sid, ex, set })
 }
 
-// 收到手表的同步消息（rest/weight）后转给注册方（Workout 页落库）
-let onWatchSync = () => {}
+/** 手机加组：手表端同步追加一组。 */
+export async function pushAddSetToWatch(sid, ex) {
+  if (!MOBILE || !sid) return
+  await sendWatchEvent({ t: 'add_set', sid, ex, at: Date.now() })
+}
 
-/** 训练页注册：收到手表 rest/weight 调整时怎么应用到会话。 */
+/** 手机减组：手表端同步删除最后一组。 */
+export async function pushRemoveSetToWatch(sid, ex) {
+  if (!MOBILE || !sid) return
+  await sendWatchEvent({ t: 'remove_set', sid, ex, at: Date.now() })
+}
+
+/** 手机切换当前动作：手表跟着换焦点。 */
+export async function pushFocusToWatch(sid, ex, set) {
+  if (!MOBILE || !sid) return
+  await sendWatchEvent({ t: 'focus', sid, ex, set })
+}
+
+/** 确认收到手表事件；手表用 upto 清理 outbox。 */
+export async function pushAckToWatch(upto) {
+  if (!MOBILE || upto == null) return
+  await sendWatchEvent({ t: 'ack', upto })
+}
+
+/** 重连后的权威快照。snapshot 由训练页从活动会话生成。 */
+export async function pushSyncToWatch(snapshot) {
+  if (!MOBILE || !snapshot) return false
+  return sendWatchEvent({ ...snapshot, t: 'sync' })
+}
+
+// ---- 手表事件 → 训练页 ----
+
+let onWatchSync = () => {}
+/** 训练页注册：收到手表 rest/weight/reps/加组/减组/切换动作/hello 时怎么应用。 */
 export function bindWatchSync(cb) {
   const fn = cb || (() => {})
   onWatchSync = fn
   return () => { if (onWatchSync === fn) onWatchSync = () => {} }
 }
 
-// ---- 手表事件 → openGym 会话状态 ----
-
 let onWatchEvent = () => {}
-/** 训练页注册：收到手表"完成一组/结束训练"时怎么写进会话（useStore 的 action）。 */
+/** 训练页注册：收到手表“完成一组/撤销/结束”时怎么写进会话。 */
 export function bindWatchEvents(cb) {
   const fn = cb || (() => {})
   onWatchEvent = fn

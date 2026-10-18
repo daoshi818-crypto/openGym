@@ -2,11 +2,11 @@
 // 主训练页（单屏 + 手势）：重量/次数保持可见，休息态只保留必要操作。
 import router from '@blueos.app.appmanager.router'
 import {
-  loadState, save, replacePlan, toggleSet, nextUndone,
-  addHr, flushHr, endSession, addSet, removeSet, addRestTime,
+  loadState, save, replacePlan, applySync, toggleSet, nextUndone,
+  addHr, flushHr, endSession, addSet, removeSet, addRestTime, setRowValue,
 } from '../lib/session.js'
 import { startHr, stopHr, tick, restOver } from '../lib/sensors.js'
-import { startServer, sendEvent, sendControl, pendingCount, isConnected } from '../lib/ble.js'
+import { startServer, sendEvent, sendControl, pendingCount, isConnected } from '../lib/rpc.js'
 
 export default {
   data: {
@@ -43,8 +43,16 @@ export default {
 
     startServer({
       onPlan: (msg) => this.onPlanUpdate(msg),
+      onSync: (msg) => this.onSyncUpdate(msg),
       onRest: (msg) => this.onRemoteRest(msg),
       onUnset: (msg) => this.onRemoteUnset(msg),
+      onWeight: (msg) => this.onRemoteValue(msg, 'w'),
+      onReps: (msg) => this.onRemoteValue(msg, 'r'),
+      onAddSet: (msg) => this.onRemoteAddSet(msg),
+      onRemoveSet: (msg) => this.onRemoteRemoveSet(msg),
+      onFocus: (msg) => this.onRemoteFocus(msg),
+      onEnded: () => this.onRemoteEnded(),
+      onError: () => { this.syncLabel = '连接异常' },
     })
 
     const next = nextUndone(s)
@@ -122,9 +130,20 @@ export default {
     const dy = t.clientY - this.touch.y
     this.touch = null
     if (Math.abs(dx) < 60 && Math.abs(dy) < 60) return
-    if (dy < -60 && Math.abs(dx) < 60) this.menuOn = true
-    else if (Math.abs(dx) > 60 && Math.abs(dy) < 60) this.leaveChoice = true
-    else if (dy > 60 && this.menuOn) this.menuOn = false
+    if (this.leaveChoice) return
+    if (this.menuOn) {
+      if (dy > 60) this.menuOn = false
+      return
+    }
+    if (Math.abs(dx) > Math.abs(dy)) {
+      // 右滑：训练操作面板；左滑：组菜单。
+      if (dx > 60) this.leaveChoice = true
+      else if (dx < -60) this.menuOn = true
+    } else {
+      // 上滑：上一个动作；下滑：下一个动作。
+      if (dy < -60) this.stepExercise(-1)
+      else if (dy > 60) this.stepExercise(1)
+    }
   },
 
   closeMenu() { this.menuOn = false },
@@ -139,15 +158,26 @@ export default {
   },
 
   onMenuAddSet() {
-    addSet(this.state, this.state.exIdx)
-    this.state.setIdx = this.state.workout.rows[this.state.exIdx].length - 1
+    const s = this.state
+    const ex = s.exIdx
+    addSet(s, ex)
+    const rows = s.workout.rows[ex]
+    if (!rows) return
+    s.setIdx = rows.length - 1
     this.menuOn = false
+    sendEvent({ t: 'add_set', sid: s.sid, ex, set: s.setIdx + 1, weight: rows[s.setIdx].w, reps: rows[s.setIdx].r, at: Date.now() })
     this.refresh()
   },
 
   onMenuRemoveSet() {
-    removeSet(this.state, this.state.exIdx)
+    const s = this.state
+    const ex = s.exIdx
+    const rows = s.workout.rows[ex]
+    if (!rows || rows.length <= 1 || rows[rows.length - 1].done) { this.menuOn = false; return }
+    const removed = rows.length
+    removeSet(s, ex)
     this.menuOn = false
+    sendEvent({ t: 'remove_set', sid: s.sid, ex, set: removed, at: Date.now() })
     this.refresh()
   },
 
@@ -158,6 +188,7 @@ export default {
     const s = this.state
     const rows = s.workout.rows[s.exIdx]
     if (!rows) return
+    const prevEx = s.exIdx
     let ni = s.setIdx + dir
     let nx = s.exIdx
     if (ni < 0) {
@@ -169,6 +200,21 @@ export default {
     }
     s.exIdx = nx; s.setIdx = ni
     save(s)
+    if (nx !== prevEx) sendControl({ t: 'focus', sid: s.sid, ex: nx, set: ni + 1, at: Date.now() })
+    this.refresh()
+  },
+
+  stepExercise(dir) {
+    const s = this.state
+    if (!s.workout || !s.workout.exercises.length) return
+    const nx = Math.max(0, Math.min(s.exIdx + dir, s.workout.exercises.length - 1))
+    if (nx === s.exIdx) return
+    const rows = s.workout.rows[nx] || []
+    const first = rows.findIndex(r => !r.done)
+    s.exIdx = nx
+    s.setIdx = first >= 0 ? first : 0
+    save(s)
+    sendControl({ t: 'focus', sid: s.sid, ex: nx, set: s.setIdx + 1, at: Date.now() })
     this.refresh()
   },
 
@@ -219,6 +265,67 @@ export default {
     this.refresh()
   },
 
+  onRemoteValue(msg, field) {
+    const s = this.state
+    if (!msg || msg.sid !== s.sid) return
+    const value = field === 'w' ? msg.weight : msg.reps
+    setRowValue(s, msg.ex, msg.set - 1, field, value)
+    this.refresh()
+  },
+
+  onRemoteAddSet(msg) {
+    const s = this.state
+    if (!msg || msg.sid !== s.sid) return
+    const ex = Number(msg.ex)
+    addSet(s, ex)
+    const rows = s.workout.rows[ex]
+    if (!rows) return
+    const i = rows.length - 1
+    if (msg.weight != null && msg.weight !== '') rows[i].w = msg.weight
+    if (msg.reps != null && msg.reps !== '') rows[i].r = msg.reps
+    s.exIdx = ex
+    s.setIdx = i
+    save(s)
+    this.refresh()
+  },
+
+  onRemoteRemoveSet(msg) {
+    const s = this.state
+    if (!msg || msg.sid !== s.sid) return
+    const ex = Number(msg.ex)
+    const rows = s.workout.rows[ex]
+    if (!rows || rows.length <= 1) return
+    rows.pop()
+    s.workout.exercises[ex].sets = rows.length
+    if (s.exIdx === ex && s.setIdx >= rows.length) s.setIdx = rows.length - 1
+    save(s)
+    this.refresh()
+  },
+
+  onRemoteFocus(msg) {
+    const s = this.state
+    if (!msg || msg.sid !== s.sid) return
+    const ex = Math.max(0, Math.min(Number(msg.ex) || 0, s.workout.exercises.length - 1))
+    const rows = s.workout.rows[ex] || []
+    s.exIdx = ex
+    s.setIdx = Math.max(0, Math.min(Number(msg.set) - 1 || 0, Math.max(0, rows.length - 1)))
+    save(s)
+    this.refresh()
+  },
+
+  onSyncUpdate(msg) {
+    if (!msg) return
+    applySync(this.state, msg)
+    this.profile = this.state.profile || this.profile
+    this.allFinished = (this.state.workout.rows || []).every(rows => rows.every(r => r.done))
+    this.refresh()
+  },
+
+  onRemoteEnded() {
+    if (!this.state || !this.state.active) return
+    this.onEnd('phone', false)
+  },
+
   onSkipRest() {
     const s = this.state
     if (s.restUntil && this.restStartAt) addRestTime(s, (Date.now() - this.restStartAt) / 1000)
@@ -253,6 +360,7 @@ export default {
   onPlanUpdate(msg) {
     const s = this.state
     if (msg && msg.sid && s.sid && msg.sid !== s.sid) return
+    if (msg && msg.profile) s.profile = msg.profile
     replacePlan(s, { name: msg.workout, exercises: msg.exercises })
     const next = nextUndone(s)
     if (next) { s.exIdx = next.exIdx; s.setIdx = next.setIdx; this.allFinished = false }
@@ -347,15 +455,15 @@ export default {
     return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0')
   },
 
-  onEnd(reason) {
+  onEnd(reason, notifyPhone = true) {
     if (typeof reason !== 'string') reason = 'manual'
     const s = this.state
     this.stopHrCapture()
     const session = endSession(s, s.profile)
-    sendEvent({
+    if (notifyPhone) sendEvent({
       t: 'end', sid: session.sid, minutes: session.minutes, avgHr: session.avgHr,
-      maxHr: session.maxHr, calories: session.calories, sets: session.sets.length,
-      reason: reason || 'manual',
+      maxHr: session.maxHr, calories: session.calories, volume: session.volume || 0,
+      sets: session.sets.length, reason: reason || 'manual',
     })
     storageSetSummary(session)
     router.push({ uri: '/Summary' })
@@ -363,14 +471,19 @@ export default {
 }
 
 import storage from '@blueos.storage.storage'
-import { pushSession } from '../lib/cloud.js'
 function storageSetSummary(session) {
   storage.set({
     key: 'summary_last',
-    value: { minutes: session.minutes, sets: session.sets.length, calories: session.calories, avgHr: session.avgHr },
+    value: {
+      minutes: session.minutes,
+      sets: session.sets.length,
+      calories: session.calories,
+      avgHr: session.avgHr,
+      maxHr: session.maxHr,
+      volume: session.volume || 0,
+    },
     fail: () => {},
   })
-  pushSession(session).catch(() => {})
 }
 </script>
 
@@ -454,12 +567,12 @@ function storageSetSummary(session) {
 .next { font-size: 17px; color: #8e8e93; margin-top: 7px; max-width: 370px; lines: 1; }
 .skip { width: 240px; height: 56px; font-size: 22px; border-radius: 14px; background-color: #30d158; color: #ffffff; margin-top: 18px; }
 .hr { font-size: 16px; color: #ff5a5f; margin-top: 16px; max-width: 370px; lines: 1; }
-.menu { position: absolute; top: 0; left: 0; width: 390px; height: 450px; flex-direction: column; align-items: center; justify-content: center; background-color: #000000e0; }
+.menu { position: absolute; top: 0; left: 0; width: 390px; height: 450px; flex-direction: column; align-items: center; justify-content: center; background-color: #000000; }
 .mrow { flex-direction: row; justify-content: center; }
 .m { width: 145px; height: 58px; font-size: 21px; border-radius: 14px; background-color: #1c1c1e; color: #ffffff; margin: 7px 8px; }
 .mclose { width: 180px; height: 44px; font-size: 18px; border-radius: 12px; background-color: transparent; color: #636366; margin-top: 5px; }
 .finish { width: 250px; height: 56px; font-size: 22px; border-radius: 14px; background-color: #30d158; color: #ffffff; margin-top: 18px; }
-.leave-panel { position: absolute; top: 0; left: 0; width: 390px; height: 450px; flex-direction: column; align-items: center; justify-content: center; background-color: #000000f2; }
+.leave-panel { position: absolute; top: 0; left: 0; width: 390px; height: 450px; flex-direction: column; align-items: center; justify-content: center; background-color: #000000; }
 .leave-title { font-size: 28px; color: #ffffff; margin-bottom: 4px; }
 .leave-hint { font-size: 16px; color: #8e8e93; margin-bottom: 14px; }
 .leave-btn { width: 270px; height: 54px; font-size: 21px; border-radius: 14px; margin-top: 7px; }

@@ -2,26 +2,25 @@
   "package": "com.zcode.gymtimer",
   "name": "训练助手",
   "icon": "/assets/images/logo.png",
-  "versionName": "0.3.3",
-  "versionCode": 6,
+  "versionName": "0.4.0",
+  "versionCode": 7,
   "appCategory": ["health"],
   "deviceTypeList": ["watch"],
   "config": {
     "designWidth": 390
   },
   "display": {
-    "backgroundColor": "#0c0e12"
+    "backgroundColor": "#000000"
   },
   "features": [
     { "name": "blueos.storage.storage" },
     { "name": "blueos.network.fetch" },
     { "name": "blueos.hardware.vibrator.vibrator" },
     { "name": "blueos.health.health" },
-    { "name": "blueos.bluetooth.ble" }
+    { "name": "blueos.bluexlink.connectionManager" }
   ],
   "permissions": [
-    { "name": "watch.permission.READ_HEALTH_DATA" },
-    { "name": "blueos.permission.BLUETOOTH" }
+    { "name": "watch.permission.READ_HEALTH_DATA" }
   ],
   "router": {
     "entry": "Index",
