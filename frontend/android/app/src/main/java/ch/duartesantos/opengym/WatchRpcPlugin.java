@@ -1,6 +1,10 @@
 package ch.duartesantos.opengym;
 
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.Signature;
+import android.os.Bundle;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -20,6 +24,7 @@ import com.vivo.health.deviceRpcSdk.util.Util;
 
 import org.json.JSONObject;
 
+import java.security.MessageDigest;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -127,6 +132,8 @@ public class WatchRpcPlugin extends Plugin {
         initInFlight = true;
         lastError = null;
         log("init start: vivo=" + safeIsVivo() + ", healthInstalled=" + healthInstalled());
+        log("app signature sha256=" + appSignatureSha256());
+        logMeta();
         notifyState("connecting", null);
         try {
             // 4 参 init 的第一个 String 是健康应用包名，第二个是 SDK 密钥。
@@ -171,11 +178,67 @@ public class WatchRpcPlugin extends Plugin {
         lastError = message == null ? "unknown" : message;
         log("init failed: " + lastError);
         notifyState("error", lastError);
+        probeRegistration();
         call.reject(lastError);
     }
 
     private boolean safeIsVivo() {
         try { return Util.isVivoPhone(); } catch (Exception e) { return false; }
+    }
+
+    private String appSignatureSha256() {
+        try {
+            PackageInfo pi = getContext().getPackageManager()
+                    .getPackageInfo(getContext().getPackageName(), PackageManager.GET_SIGNATURES);
+            if (pi.signatures == null || pi.signatures.length == 0) return "none";
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] digest = md.digest(pi.signatures[0].toByteArray());
+            StringBuilder sb = new StringBuilder();
+            for (byte b : digest) sb.append(String.format(Locale.US, "%02X", b));
+            return sb.toString();
+        } catch (Exception e) {
+            return "err:" + e.getMessage();
+        }
+    }
+
+    private void logMeta() {
+        try {
+            ApplicationInfo ai = getContext().getPackageManager()
+                    .getApplicationInfo(getContext().getPackageName(), PackageManager.GET_META_DATA);
+            Bundle b = ai.metaData;
+            Object a1 = b == null ? null : b.get("vivo.health.rpc.appid");
+            Object a2 = b == null ? null : b.get("appid");
+            log("meta vivo.health.rpc.appid=" + a1 + " (" + (a1 == null ? "null" : a1.getClass().getSimpleName()) + ")"
+                    + ", appid=" + a2 + " (" + (a2 == null ? "null" : a2.getClass().getSimpleName()) + ")");
+        } catch (Exception e) {
+            log("meta read failed: " + e.getMessage());
+        }
+    }
+
+    private void probeRegistration() {
+        try {
+            JSONObject json = new JSONObject();
+            json.put("appid", APP_ID);
+            json.put("appname", getContext().getPackageName());
+            json.put("encryVersion", 1);
+            json.put("encryStr", SDK_KEY);
+            Request req = new Request.Builder()
+                    .action(Constant.Action.ACTION_THIRD_REGIST)
+                    .pkgName(TARGET_PACKAGE)
+                    .data(json.toString())
+                    .timeout(Constant.DEFAULT_TIMEOUT)
+                    .build();
+            log("REGISTER probe send");
+            RpcClient.getInstance().callAsync(req, response -> {
+                if (response == null) {
+                    log("REGISTER probe response null");
+                    return;
+                }
+                log("REGISTER probe code=" + response.getCode() + " data=" + response.getData());
+            });
+        } catch (Exception e) {
+            log("REGISTER probe failed: " + e.getMessage());
+        }
     }
 
     private void send(PluginCall call, boolean plan) {
@@ -309,6 +372,21 @@ public class WatchRpcPlugin extends Plugin {
         ret.put("vivo", safeIsVivo());
         ret.put("healthInstalled", healthInstalled());
         ret.put("initialized", initialized);
+        ret.put("appSignature", appSignatureSha256());
+        try {
+            ret.put("permissionStatus", DeviceRpcManager.getInstance().getPermissionStatus());
+            ret.put("startBind", DeviceRpcManager.getInstance().isStartBind());
+            ret.put("originPkg", DeviceRpcManager.getInstance().getOriginPkgName());
+        } catch (Exception e) {
+            ret.put("permissionStatus", false);
+            ret.put("startBind", false);
+            ret.put("originPkg", "");
+        }
+        try {
+            ret.put("healthPkg", DeviceRpcManager.getHealthPackageName());
+        } catch (Exception e) {
+            ret.put("healthPkg", "");
+        }
         try {
             ret.put("healthDeviceVersion", DeviceRpcManager.getInstance().getHealthDeviceVersion());
         } catch (Exception e) {
