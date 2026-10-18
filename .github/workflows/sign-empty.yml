@@ -1,0 +1,70 @@
+name: Sign vivo empty APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'scripts/vivo-empty/vivo_unsign.apk'
+      - '.github/workflows/sign-empty.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vivo-empty-sign
+  cancel-in-progress: false
+
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Sign with the app keystore
+        env:
+          OPENGYM_KS: ${{ secrets.OPENGYM_KS }}
+        run: |
+          set -euo pipefail
+          KS_B64="${OPENGYM_KS%%::*}"
+          KS_PASS="${OPENGYM_KS##*::}"
+          printf '%s' "$KS_B64" | base64 -d > /tmp/opengym.keystore
+
+          echo "== keystore =="
+          keytool -list -keystore /tmp/opengym.keystore -storepass "$KS_PASS" -v | grep -E "Alias name|SHA256:" || true
+
+          echo "== jarsigner =="
+          jarsigner -verbose \
+            -keystore /tmp/opengym.keystore \
+            -storepass "$KS_PASS" \
+            -keypass "$KS_PASS" \
+            -signedjar vivo_empty_signed.apk \
+            scripts/vivo-empty/vivo_unsign.apk \
+            opengym
+
+          echo "== verify =="
+          keytool -printcert -jarfile vivo_empty_signed.apk | grep -E "Owner:|SHA256:" || true
+          jarsigner -verify -verbose -certs vivo_empty_signed.apk | tail -20
+
+      - name: Publish signed empty APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vivo-empty-signed
+          name: vivo empty APK (signed)
+          body: |
+            Empty APK provided by vivo, signed with the openGym release keystore
+            (alias opengym). Upload this file to the vivo "empty APK" channel.
+          files: vivo_empty_signed.apk
+          prerelease: true
+          make_latest: false
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vivo-empty-signed
+          path: vivo_empty_signed.apk
+          retention-days: 30
