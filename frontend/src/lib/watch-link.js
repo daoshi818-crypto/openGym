@@ -137,6 +137,28 @@ export async function getWatchDeviceInfo() {
 export function watchDevice() { return device ? { ...device } : null }
 export function watchLastError() { return lastError }
 
+/** 原生 SDK 日志（最近 300 行），用于设置页排查连接问题。 */
+export async function getWatchLogs() {
+  const p = await watchPlugin()
+  if (!p) return { logs: '', lastError: 'web', initialized: false }
+  try {
+    return await p.WatchRpc.getLogs()
+  } catch (e) {
+    return { logs: '', lastError: e && e.message ? e.message : String(e), initialized: false }
+  }
+}
+
+/** 版本/环境诊断：vivo、健康应用、SDK 初始化、设备版本。 */
+export async function getWatchDiagnostics() {
+  const p = await watchPlugin()
+  if (!p) return null
+  try {
+    return await p.WatchRpc.getVersion()
+  } catch (e) {
+    return { lastError: e && e.message ? e.message : String(e) }
+  }
+}
+
 // ---- 训练页 API：把今天的训练推给手表 ----
 
 /** 训练开始时调用一次；训练中途计划变了（加/删动作）再调一次，手表整包热替换。 */

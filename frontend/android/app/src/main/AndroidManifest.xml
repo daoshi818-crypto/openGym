@@ -80,6 +80,7 @@
 
         <!-- vivo 智能终端 SDK：设备发现/连接/鉴权由运动健康完成，手表应用通过包名+证书指纹接入。 -->
         <meta-data android:name="health.device.manager.version" android:value="1" />
+        <meta-data android:name="vivo.health.rpc.appid" android:value="106163226" />
         <meta-data android:name="appid" android:value="106163226" />
 
         <!-- Gym check-in scanner (@capacitor-mlkit/barcode-scanning): pre-fetch the ML Kit

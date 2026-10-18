@@ -2,8 +2,8 @@
   "package": "com.zcode.gymtimer",
   "name": "训练助手",
   "icon": "/assets/images/logo.png",
-  "versionName": "0.4.0",
-  "versionCode": 7,
+  "versionName": "0.4.1",
+  "versionCode": 8,
   "appCategory": ["health"],
   "deviceTypeList": ["watch"],
   "config": {

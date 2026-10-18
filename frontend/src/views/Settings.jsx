@@ -30,7 +30,7 @@ import { syncMedia, fetchToStore } from '../lib/media-sync.js'
 import { getMediaStatus, subscribeMediaStatus, pendingRefCount } from '../lib/media-owed.js'
 import { limitsFrom, fmtMB, MB } from '../lib/media-limits.js'
 import { setRestAccent, overlayStatus, requestOverlay, hideOverlay, setOverlayStyle } from '../lib/rest-alert.js'
-import { watchAvailable, watchState, onWatchState, connectWatch, disconnectWatch, getWatchDeviceInfo, watchDevice } from '../lib/watch-link.js'
+import { watchAvailable, watchState, onWatchState, connectWatch, disconnectWatch, getWatchDeviceInfo, watchDevice, watchLastError, getWatchLogs, getWatchDiagnostics } from '../lib/watch-link.js'
 import { CUSTOM, accentKey, adjustedIn, applyAccent, cleanHex, inkOn, isGrey } from '../lib/accent.js'
 import { checkForUpdate, downloadAndInstall, fetchChecksum, RELEASES_PAGE } from '../lib/update.js'
 import { forgetCoach } from '../lib/coach-api.js'
@@ -84,6 +84,9 @@ function WatchPairSheet({ close }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [info, setInfo] = useState(() => watchDevice())
+  const [showLogs, setShowLogs] = useState(false)
+  const [logs, setLogs] = useState('')
+  const [diag, setDiag] = useState(null)
 
   useEffect(() => {
     const off = onWatchState(setStatus)
@@ -99,8 +102,19 @@ function WatchPairSheet({ close }) {
     setError('')
     setBusy(true)
     const ok = await connectWatch()
-    if (!ok) setError(t('Could not connect'))
+    if (!ok) setError(watchLastError() || t('Could not connect'))
     setBusy(false)
+  }
+
+  const openLogs = async () => {
+    setShowLogs(true)
+    try {
+      const [l, d] = await Promise.all([getWatchLogs(), getWatchDiagnostics()])
+      setLogs((l && l.logs) || '')
+      setDiag(d || null)
+    } catch (e) {
+      setLogs(String(e))
+    }
   }
 
   const connected = status === 'ready' || status === 'connected'
@@ -125,9 +139,18 @@ function WatchPairSheet({ close }) {
     </div>}
     {status === 'connecting' && <p className="muted small">{t('Connecting…')}</p>}
     {error && <p className="small danger">{error}</p>}
-    <div className="row" style={{ gap: 8, marginTop: 12 }}>
+    {showLogs && <>
+      {diag && <p className="muted small" style={{ marginTop: 8 }}>
+        vivo: {String(diag.vivo)} · health: {String(diag.healthInstalled)} · init: {String(diag.initialized)} · device: {String(diag.deviceVersion)}
+      </p>}
+      <pre className="small" style={{ maxHeight: 220, overflow: 'auto', whiteSpace: 'pre-wrap', background: 'var(--surface-2)', padding: 8, borderRadius: 8 }}>
+        {logs || t('No logs yet. Press Connect first.')}
+      </pre>
+    </>}
+    <div className="row" style={{ gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
       {!connected && <Button variant="primary" disabled={busy || status === 'connecting'} onClick={connect}>{busy ? t('Connecting…') : t('Connect')}</Button>}
       {connected && <Button variant="danger" disabled={busy} onClick={async () => { await disconnectWatch(); close() }}>{t('Disconnect')}</Button>}
+      <Button variant="ghost" onClick={openLogs}>{t('Diagnostics')}</Button>
       <Button variant="ghost" onClick={close}>{t('Cancel')}</Button>
     </div>
   </>
