@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.5.17 / Watch v0.5.2 (2026-10-19)
+
+- Completed watch sets show a disabled completed state; undo is an explicit group-menu action. Repeated taps during rest cannot complete the next set.
+- Crown rest adjustment updates the countdown immediately and saves/synchronizes once rotation settles, including a zero-duration stop. The limit matches the phone's fifteen minutes.
+- Rest uses an absolute deadline with faster visible refresh and wake-up reconciliation. Keep-screen-on is requested during visible rests and released on skip, expiration, hiding or session end.
+- Exercise animation playback is not included in this release. Rest screen power behavior and crown responsiveness still require device verification.
+
 ## v1.5.5 (2026-10-18)
 
 - **BLE device discovery**: manual watch scanning now lists nearby connectable BLE broadcasts, shows RSSI and whether the openGym service is present, and prioritizes matching devices.

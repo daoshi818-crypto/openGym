@@ -2,8 +2,8 @@
   "package": "com.zcode.gymtimer",
   "name": "训练助手",
   "icon": "/assets/images/logo.png",
-  "versionName": "0.5.1",
-  "versionCode": 13,
+  "versionName": "0.5.2",
+  "versionCode": 14,
   "appCategory": ["health"],
   "deviceTypeList": ["watch"],
   "config": {
@@ -16,6 +16,7 @@
     { "name": "blueos.storage.storage" },
     { "name": "blueos.network.fetch" },
     { "name": "blueos.hardware.vibrator.vibrator" },
+    { "name": "blueos.hardware.display.brightness" },
     { "name": "blueos.health.health" },
     { "name": "blueos.bluexlink.connectionManager" }
   ],

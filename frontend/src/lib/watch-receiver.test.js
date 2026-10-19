@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // Execute the shipped watch JS and page scripts with only the device APIs replaced.
 const source = path => readFileSync(new URL('../../../watch-app/src/' + path, import.meta.url), 'utf8')
@@ -32,7 +32,7 @@ function session() {
     set: ({ key, value }) => values.set(key, JSON.parse(JSON.stringify(value))),
   }, console }
   runInNewContext(source('lib/session.js').replace(imports, '').replace(/export function /g, 'function ')
-    + '\nthis.api = { loadState, startSession, save, replacePlan, applySync, nextUndone, setRowValue, toggleSet, addSet, removeSet, calories, endSession, storage }', context)
+    + '\nthis.api = { loadState, startSession, save, replacePlan, applySync, nextUndone, setRowValue, toggleSet, addSet, removeSet, addRestTime, calories, endSession, storage }', context)
   return context.api
 }
 const plan = { t: 'plan', sid: 'today', planId: 'p1', workout: 'Leg day',
@@ -40,6 +40,7 @@ const plan = { t: 'plan', sid: 'today', planId: 'p1', workout: 'Leg day',
 function training(sessions, rpc, extra = {}) {
   return page('Workout/index.ux', { ...sessions, ...rpc, router: { push: vi.fn() },
     startHr() {}, stopHr() {}, restOver() {}, tick() {},
+    setTimeout: () => 2, clearTimeout() {},
     setInterval: () => 1, clearInterval() {}, pendingCount: () => 0, isConnected: () => true, ...extra })
 }
 // Compatibility cases, not a claim that any particular one is the device's format.
@@ -55,6 +56,168 @@ const envelopes = [
   ['double JSON', msg => ({ data: JSON.stringify(JSON.stringify(msg)) })],
   ['BOM JSON', msg => ({ data: '\uFEFF' + JSON.stringify(msg) })],
 ]
+
+describe('watch completed sets and rest clock', () => {
+  afterEach(() => vi.useRealTimers())
+
+  function resting() {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-19T12:00:00Z'))
+    const sessions = session(), sendControl = vi.fn(), sendEvent = vi.fn()
+    const state = sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+    state.restUntil = Date.now() + 60000
+    sessions.save(state)
+    const brightness = { setKeepScreenOn: vi.fn() }, restOver = vi.fn()
+    const workout = training(sessions, { startServer() {}, sendControl, sendEvent }, {
+      Date, setTimeout, clearTimeout, setInterval, clearInterval, brightness, restOver,
+      router: { push: vi.fn(), replace: vi.fn() },
+    })
+    workout.onInit()
+    workout.onReady()
+    const writes = vi.spyOn(sessions.storage, 'set')
+    return { sessions, workout, sendControl, sendEvent, brightness, restOver, writes }
+  }
+
+  it('never completes or implicitly undoes an already completed set', () => {
+    const { workout, sendEvent } = resting()
+    workout.onSkipRest()
+    workout.state.workout.rows[0] = [workout.state.workout.rows[0][0]]
+    workout.state.workout.exercises[0].sets = 1
+    workout.onCurrentSetAction()
+    workout.onCurrentSetAction()
+    workout.onComplete()
+    expect(workout.rowDone).toBe(true)
+    expect(sendEvent.mock.calls.filter(([m]) => m.t === 'set')).toHaveLength(1)
+    expect(sendEvent.mock.calls.filter(([m]) => m.t === 'unset')).toHaveLength(0)
+    expect(source('Workout/index.ux')).toContain('disabled="{{ rowDone }}"')
+    workout.onMenuUndo()
+    expect(workout.rowDone).toBe(false)
+    expect(sendEvent.mock.calls.filter(([m]) => m.t === 'unset')).toHaveLength(1)
+  })
+
+  it('updates a crown burst immediately and saves/sends only after rotation settles', () => {
+    const { workout, writes, sendControl } = resting()
+    const initial = workout.state.restUntil
+    for (let i = 0; i < 80; i++) workout.onRotation({ delta: 1, state: 2 })
+    expect(workout.state.restUntil).toBe(initial + 400000)
+    expect(workout.restLabel).toBe('7:40')
+    expect(writes).not.toHaveBeenCalled()
+    expect(sendControl).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(300)
+    expect(writes).toHaveBeenCalledOnce()
+    expect(sendControl).toHaveBeenCalledOnce()
+    expect(sendControl.mock.calls[0][0]).toMatchObject({ t: 'rest', leftSec: 460 })
+  })
+
+  it('does not complete the next set when a second click arrives during rest', () => {
+    const { workout, sendEvent } = resting()
+    workout.onSkipRest()
+    workout.onCurrentSetAction()
+    expect(workout.state.setIdx).toBe(1)
+    workout.onCurrentSetAction()
+    expect(workout.state.workout.rows[0].filter(row => row.done)).toHaveLength(1)
+    expect(sendEvent.mock.calls.filter(([m]) => m.t === 'set')).toHaveLength(1)
+  })
+
+  it('keeps an in-progress crown edit across a phone snapshot and rest echo', () => {
+    const { workout, sessions, sendControl } = resting()
+    workout.onRotation({ delta: 1, state: 2 })
+    workout.onSyncUpdate({ ...plan, restUntil: Date.now() + 60000 })
+    workout.onRemoteRest({ sid: plan.sid, leftSec: 60, seq: 1 })
+    expect(workout.restLabel).toBe('1:05')
+    vi.advanceTimersByTime(300)
+    expect(sessions.loadState().restUntil).toBe(workout.state.restUntil)
+    expect(sendControl.mock.calls[0][0].leftSec).toBe(65)
+  })
+
+  it('sends zero when crown adjustment ends the rest and does not resurrect it', () => {
+    const { workout, sendControl, brightness } = resting()
+    for (let i = 0; i < 12; i++) workout.onRotation({ delta: -1, state: 2 })
+    expect(workout.state.restUntil).toBe(0)
+    vi.advanceTimersByTime(300)
+    expect(sendControl).toHaveBeenCalledOnce()
+    expect(sendControl.mock.calls[0][0]).toMatchObject({ t: 'rest', leftSec: 0 })
+    expect(brightness.setKeepScreenOn).toHaveBeenLastCalledWith(expect.objectContaining({ keepScreenOn: false }))
+  })
+
+  it('clamps long crown rotations to the phone maximum of fifteen minutes', () => {
+    const { workout, sendControl } = resting()
+    for (let i = 0; i < 500; i++) workout.onRotation({ delta: 1, state: 2 })
+    expect(workout.restLabel).toBe('15:00')
+    vi.advanceTimersByTime(300)
+    expect(sendControl.mock.calls[0][0].leftSec).toBe(900)
+  })
+
+  it('waits until the display API is ready before acquiring the screen lock', () => {
+    const sessions = session(), brightness = { setKeepScreenOn: vi.fn() }
+    const state = sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+    state.restUntil = Date.now() + 10000
+    sessions.save(state)
+    const workout = training(sessions, { startServer() {} }, { brightness })
+    workout.onInit()
+    expect(brightness.setKeepScreenOn).not.toHaveBeenCalled()
+    workout.onReady()
+    expect(brightness.setKeepScreenOn).toHaveBeenCalledWith(expect.objectContaining({ keepScreenOn: true }))
+  })
+
+  it('cancels a queued crown change when skipping and starting a different rest', () => {
+    const { workout, sendControl } = resting()
+    workout.onRotation({ delta: 1, state: 2 })
+    workout.onSkipRest()
+    workout.onRemoteRest({ sid: plan.sid, leftSec: 20, seq: 1 })
+    vi.advanceTimersByTime(1000)
+    expect(sendControl.mock.calls.map(([m]) => m.leftSec)).toEqual([0])
+    expect(workout.restLabel).toBe('0:19')
+  })
+
+  it('reconciles elapsed sleep by deadline and releases the screen on natural expiration', () => {
+    const { workout, brightness, restOver } = resting()
+    vi.setSystemTime(Date.now() + 17250)
+    workout.onShow()
+    expect(workout.restLabel).toBe('0:43')
+    vi.setSystemTime(Date.now() + 50000)
+    workout.onShow()
+    expect(workout.state.restUntil).toBe(0)
+    expect(workout.isRest).toBe(false)
+    expect(restOver).toHaveBeenCalledOnce()
+    expect(brightness.setKeepScreenOn).toHaveBeenLastCalledWith(expect.objectContaining({ keepScreenOn: false }))
+    workout.tickClock()
+    expect(restOver).toHaveBeenCalledOnce()
+  })
+
+  it('flushes crown edits on hide and restores the rest screen lock on show', () => {
+    const { workout, sendControl, brightness } = resting()
+    workout.onRotation({ delta: 1, state: 2 })
+    workout.onHide()
+    expect(sendControl).toHaveBeenCalledOnce()
+    expect(brightness.setKeepScreenOn).toHaveBeenLastCalledWith(expect.objectContaining({ keepScreenOn: false }))
+    workout.onShow()
+    expect(workout.restLabel).toBe('1:05')
+    expect(brightness.setKeepScreenOn).toHaveBeenLastCalledWith(expect.objectContaining({ keepScreenOn: true }))
+    vi.advanceTimersByTime(300)
+    expect(sendControl).toHaveBeenCalledOnce()
+  })
+
+  it('acquires/relinquishes the screen lock for authoritative rest snapshots', () => {
+    const { workout, brightness } = resting()
+    workout.onSkipRest()
+    workout.onSyncUpdate({ ...plan, restUntil: Date.now() + 10000 })
+    expect(brightness.setKeepScreenOn).toHaveBeenLastCalledWith(expect.objectContaining({ keepScreenOn: true }))
+    vi.advanceTimersByTime(10000)
+    expect(workout.state.restUntil).toBe(0)
+    expect(brightness.setKeepScreenOn).toHaveBeenLastCalledWith(expect.objectContaining({ keepScreenOn: false }))
+  })
+
+  it('drops delayed crown work when a session ends', () => {
+    const { workout, sendControl, sessions, brightness } = resting()
+    workout.onRotation({ delta: 1, state: 2 })
+    workout.onEnd()
+    vi.advanceTimersByTime(1000)
+    expect(sendControl).not.toHaveBeenCalled()
+    expect(sessions.loadState().active).toBe(false)
+    expect(brightness.setKeepScreenOn).toHaveBeenLastCalledWith(expect.objectContaining({ keepScreenOn: false }))
+  })
+})
 
 describe('watch business message boundary', () => {
   it('selects an explicit action-list row using the documented bound item parameter', () => {

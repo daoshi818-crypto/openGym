@@ -1,6 +1,7 @@
 <script>
 // 主训练页（单屏 + 手势）：重量/次数保持可见，休息态只保留必要操作。
 import router from '@blueos.app.appmanager.router'
+import brightness from '@blueos.hardware.display.brightness'
 import {
   loadState, save, replacePlan, applySync, toggleSet, nextUndone,
   addHr, flushHr, endSession, addSet, removeSet, addRestTime, setRowValue, calories,
@@ -42,6 +43,9 @@ export default {
     this.hrActive = false
     this.clockPeriod = 0
     this.touch = null
+    this.restCrownTimer = null
+    this.restCrownDirty = false
+    this.visible = true
 
     this.bindRpc()
 
@@ -53,6 +57,7 @@ export default {
       save(s)
       restOver()
     }
+    this.setRestScreenLock(!!s.restUntil)
 
     this.hrFlush = setInterval(() => {
       if (this.hrDirty) {
@@ -66,6 +71,7 @@ export default {
   },
 
   onShow() {
+    this.visible = true
     // Keypad/动作列表独立读取并保存会话，返回训练页时重新读取，确保重量立即回显。
     const latest = loadState()
     if (!latest.active || !latest.workout) { this.stopHrCapture(); router.replace({ uri: '/Summary' }); return }
@@ -74,6 +80,8 @@ export default {
       this.profile = latest.profile || null
     }
     if (this.state) this.bindRpc()
+    // 熄屏时系统可能暂停 JS 定时器，回到页面先按绝对截止时间校准。
+    this.reconcileRestClock()
     // 与输入页通过持久化状态交接，使用当前连接的可靠事件队列发送。
     const edits = this.state && this.state.pendingEdits || []
     for (const edit of edits) sendEvent(edit)
@@ -82,7 +90,11 @@ export default {
     this.focusCrown()
   },
 
-  onReady() { this.focusCrown() },
+  onReady() {
+    this.displayReady = true
+    this.setRestScreenLock(this.visible !== false && !!(this.state && this.state.restUntil))
+    this.focusCrown()
+  },
   focusCrown() {
     try { this.$element('training').requestFocus(true) } catch (e) {}
   },
@@ -90,7 +102,7 @@ export default {
     if (!ev || ev.state === 3 || this.menuOn || this.leaveChoice) return
     const delta = Number(ev.delta) || (ev.direction === true ? 1 : ev.direction === false ? -1 : 0)
     if (!delta) return
-    if (this.isRest) this.nudgeRest(delta > 0 ? 5 : -5)
+    if (this.isRest || this.restCrownDirty) this.queueRestNudge(delta > 0 ? 5 : -5)
     else this.stepSet(delta > 0 ? 1 : -1)
   },
   onBackPress() {
@@ -106,7 +118,10 @@ export default {
     const handle = (method, ...args) => {
       // 隐藏的训练页仍会收到 RPC；保留输入页刚保存的编辑和其他页面的更新。
       const latest = loadState()
-      if (latest.active && latest.sid === this.state.sid) this.state = latest
+      if (latest.active && latest.sid === this.state.sid) {
+        if (this.restCrownDirty) latest.restUntil = this.state.restUntil
+        this.state = latest
+      }
       return this[method](...args)
     }
     startServer({
@@ -126,13 +141,33 @@ export default {
   },
 
   onHide() {
+    this.visible = false
+    this.flushRestNudge()
+    this.setRestScreenLock(false)
+    if (this.timer) clearInterval(this.timer)
+    this.timer = null
     this.stopHrCapture()
   },
 
   onDestroy() {
     if (this.timer) clearInterval(this.timer)
+    this.flushRestNudge()
     if (this.hrFlush) clearInterval(this.hrFlush)
     this.stopHrCapture()
+    this.setRestScreenLock(false)
+  },
+
+  setRestScreenLock(keepOn) {
+    if (!this.displayReady) return
+    keepOn = !!keepOn
+    if (this.screenLocked === keepOn) return
+    this.screenLocked = keepOn
+    try {
+      brightness.setKeepScreenOn({ keepScreenOn: keepOn, success() {}, fail: (data, code) => {
+        this.screenLocked = null
+        console.log('rest screen lock failed', code)
+      } })
+    } catch (e) { this.screenLocked = null }
   },
 
   startHrCapture() {
@@ -282,10 +317,20 @@ export default {
   },
 
   onComplete() {
+    if (this.isRest) return
     const s = this.state
     const exIdx = s.exIdx, setIdx = s.setIdx
+    const current = s.workout.rows[exIdx] && s.workout.rows[exIdx][setIdx]
+    // 防止页面重绘滞后或重复点击，让已完成组再次进入完成流程。
+    if (!current || current.done) {
+      this.rowDone = !!(current && current.done)
+      this.refresh()
+      return
+    }
     const row = toggleSet(s, true)
     if (!row) return
+    this.restStartAt = Date.now()
+    this.setRestScreenLock(!!s.restUntil)
     sendEvent({ t: 'set', sid: s.sid, ex: exIdx, set: setIdx + 1, reps: row.r != null ? String(row.r) : '', weight: row.w != null ? String(row.w) : '', at: row.at })
     tick()
     const next = nextUndone(s)
@@ -300,10 +345,18 @@ export default {
     const row = s.workout.rows[exIdx] && s.workout.rows[exIdx][setIdx]
     if (!row || !row.done) return
     toggleSet(s, false)
+    this.cancelRestNudge()
+    this.restStartAt = 0
     this.allFinished = false
     sendEvent({ t: 'unset', sid: s.sid, ex: exIdx, set: setIdx + 1, at: Date.now() })
     this.refresh()
   },
+
+  onCurrentSetAction() {
+    this.onComplete()
+  },
+
+  onMenuUndo() { this.menuOn = false; this.onUndo() },
 
   onRemoteSet(msg) {
     const s = this.state
@@ -395,7 +448,11 @@ export default {
     if (!msg || !Array.isArray(msg.exercises) || !msg.exercises.length) {
       return { status: 'rejected', page: 'Workout', reason: 'empty_exercises' }
     }
+    const localRest = this.restCrownDirty && (!msg.sid || msg.sid === this.state.sid)
+    const restUntil = this.state.restUntil
+    if (!localRest) this.cancelRestNudge()
     applySync(this.state, msg)
+    if (localRest) this.state.restUntil = restUntil
     this.profile = this.state.profile || this.profile
     this.allFinished = (this.state.workout.rows || []).every(rows => rows.every(r => r.done))
     this.refresh()
@@ -403,6 +460,8 @@ export default {
   },
 
   onRemoteEnded() {
+    this.cancelRestNudge()
+    this.setRestScreenLock(false)
     this.hrDirty = false
     this.state = loadState()
     this.stopHrCapture()
@@ -412,10 +471,12 @@ export default {
   },
 
   onSkipRest() {
+    this.cancelRestNudge()
     const s = this.state
     if (s.restUntil && this.restStartAt) addRestTime(s, (Date.now() - this.restStartAt) / 1000)
     s.restUntil = 0
     this.restStartAt = 0
+    this.setRestScreenLock(false)
     this.restSeq += 1
     sendControl({ t: 'rest', sid: s.sid, leftSec: 0, totalSec: 0, seq: this.restSeq })
     save(s)
@@ -423,24 +484,70 @@ export default {
   },
 
   nudgeRest(deltaSec) {
+    this.applyRestNudge(deltaSec)
+    this.flushRestNudge()
+  },
+
+  queueRestNudge(deltaSec) {
+    if (!this.state || !this.state.restUntil || !deltaSec) return
+    this.applyRestNudge(deltaSec)
+    if (this.restCrownTimer) clearTimeout(this.restCrownTimer)
+    // 旋转回调只改截止时间和数字，停转后才写存储/发 RPC，避免堵塞手表线程。
+    this.restCrownTimer = setTimeout(() => {
+      this.flushRestNudge()
+    }, 300)
+  },
+
+  cancelRestNudge() {
+    if (this.restCrownTimer) clearTimeout(this.restCrownTimer)
+    this.restCrownTimer = null
+    this.restCrownDirty = false
+  },
+
+  flushRestNudge() {
+    const dirty = this.restCrownDirty
+    this.cancelRestNudge()
     const s = this.state
-    if (!s.restUntil) return
-    const left = Math.max(0, Math.round((s.restUntil - Date.now()) / 1000) + deltaSec)
-    if (left <= 0) {
+    if (!dirty || !s || !s.active) return
+    const left = Math.max(0, Math.ceil((s.restUntil - Date.now()) / 1000))
+    this.restSeq += 1
+    save(s)
+    sendControl({ t: 'rest', sid: s.sid, leftSec: left, totalSec: left, seq: this.restSeq })
+  },
+
+  applyRestNudge(deltaSec) {
+    const s = this.state
+    if (!s || !s.active || !s.restUntil || !Number.isFinite(deltaSec)) return
+    const now = Date.now()
+    const target = Math.min(now + 900000, s.restUntil + deltaSec * 1000)
+    this.restCrownDirty = true
+    if (target <= now) {
       if (this.restStartAt) addRestTime(s, (Date.now() - this.restStartAt) / 1000)
       s.restUntil = 0
       this.restStartAt = 0
+      this.setRestScreenLock(false)
+      this.isRest = false
+      this.syncClockTimer()
     } else {
-      s.restUntil = Date.now() + left * 1000
-      this.restSeq += 1
-      sendControl({ t: 'rest', sid: s.sid, leftSec: left, totalSec: left, seq: this.restSeq })
+      s.restUntil = target
     }
-    save(s)
-    this.refresh()
+    this.restLabel = this.mmss(Math.max(0, Math.ceil((s.restUntil - now) / 1000)))
   },
 
   onRestMinus() { this.nudgeRest(-15) },
   onRestPlus() { this.nudgeRest(15) },
+
+  reconcileRestClock() {
+    const s = this.state
+    if (!s || !s.restUntil || s.restUntil > Date.now()) return
+    if (this.restStartAt) addRestTime(s, (s.restUntil - this.restStartAt) / 1000)
+    this.cancelRestNudge()
+    s.restUntil = 0
+    this.restStartAt = 0
+    this.setRestScreenLock(false)
+    save(s)
+    restOver()
+  },
 
   onPlanUpdate(msg) {
     const s = this.state
@@ -463,6 +570,7 @@ export default {
     if (!msg || msg.sid !== s.sid) return
     if (typeof msg.seq === 'number' && msg.seq <= this.remoteRestSeq) return
     if (typeof msg.seq === 'number') this.remoteRestSeq = msg.seq
+    if (this.restCrownDirty) return
     if (msg.leftSec > 0 && !s.restUntil) this.restStartAt = Date.now()
     s.restUntil = msg.leftSec > 0 ? Date.now() + msg.leftSec * 1000 : 0
     if (!s.restUntil) this.restStartAt = 0
@@ -480,6 +588,8 @@ export default {
   refresh() {
     const s = this.state
     if (!s || !s.workout) return
+    this.reconcileRestClock()
+    this.setRestScreenLock(this.visible !== false && !!s.restUntil)
     this.rowDone = this.isDoneRowCur()
     const ex = s.workout.exercises[s.exIdx]
     const row = s.workout.rows[s.exIdx] && s.workout.rows[s.exIdx][s.setIdx]
@@ -487,7 +597,7 @@ export default {
     this.groupLabel = ex ? '第 ' + (s.setIdx + 1) + ' / ' + (ex.sets || 1) + ' 组' : ''
     this.weightVal = row && row.w !== '' && row.w != null ? row.w + ' kg' : '—'
     this.repsVal = row && row.r !== '' && row.r != null ? row.r + (this.isTimed(ex) ? ' 秒' : ' 次') : '—'
-    this.isRest = !!(row && !row.done && s.restUntil)
+    this.isRest = !!s.restUntil
 
     const next = nextUndone(s)
     const totalSets = s.workout.rows.reduce((n, r) => n + r.length, 0)
@@ -509,7 +619,8 @@ export default {
   isTimed(ex) { return ex && String(ex.reps || '').indexOf('秒') >= 0 },
 
   syncClockTimer() {
-    const period = this.state && this.state.restUntil ? 1000 : 5000
+    if (this.visible === false) return
+    const period = this.state && this.state.restUntil ? 250 : 1000
     if (this.timer && this.clockPeriod === period) return
     if (this.timer) clearInterval(this.timer)
     this.clockPeriod = period
@@ -525,15 +636,13 @@ export default {
 
     const left = s.restUntil ? Math.ceil((s.restUntil - Date.now()) / 1000) : 0
     if (s.restUntil && left <= 0) {
-      if (this.restStartAt) addRestTime(s, (Date.now() - this.restStartAt) / 1000)
-      this.restStartAt = 0
-      s.restUntil = 0
-      save(s)
-      restOver()
+      this.reconcileRestClock()
       this.refresh()
       return
     }
     this.restLabel = this.mmss(left)
+    if (this.metricSecond === Math.floor(Date.now() / 1000)) return
+    this.metricSecond = Math.floor(Date.now() / 1000)
     this.restTotalLabel = this.mmss(Math.round(s.restTotalSec || 0))
     this.hrLabel = this.hrLast ? '♥ ' + this.hrLast : '♥ --'
     this.kcalLabel = String(calories(s, s.profile, Math.max(0, (Date.now() - (s.segmentStartedAt || s.startedAt)) / 60000)))
@@ -550,6 +659,8 @@ export default {
     if (typeof reason !== 'string') reason = 'manual'
     const s = this.state
     if (!s || !s.active) return
+    this.cancelRestNudge()
+    this.setRestScreenLock(false)
     this.stopHrCapture()
     const session = endSession(s, s.profile)
     if (notifyPhone) sendEvent({
@@ -588,8 +699,7 @@ export default {
         <input class="nav" type="button" value="‹ 上组" onclick="onPrevSet" />
         <input class="nav" type="button" value="下组 ›" onclick="onNextSet" />
       </div>
-      <input class="complete" type="button" value="完成本组" onclick="onComplete" if="{{ !rowDone }}" />
-      <input class="complete secondary" type="button" value="撤销本组" onclick="onUndo" if="{{ rowDone }}" />
+      <input class="complete {{ rowDone ? 'secondary' : '' }}" type="button" value="{{ rowDone ? '已完成' : '完成本组' }}" disabled="{{ rowDone }}" onclick="onCurrentSetAction" />
     </block>
 
     <block if="{{ isRest }}">
@@ -620,6 +730,7 @@ export default {
         <input class="m" type="button" value="上组" onclick="onMenuPrev" />
         <input class="m" type="button" value="下组" onclick="onMenuNext" />
       </div>
+      <input class="mclose undo" type="button" value="撤销本组完成" disabled="{{ !rowDone }}" onclick="onMenuUndo" />
       <input class="mclose" type="button" value="收起" onclick="closeMenu" />
     </div>
 
@@ -662,6 +773,7 @@ export default {
 .m { width: 145px; height: 58px; font-size: 21px; border-radius: 8px; background-color: #191d1f; color: #ffffff; margin: 7px 8px; }
 .panel-title { font-size: 26px; color: #ffffff; margin-bottom: 16px; }
 .mclose { width: 180px; height: 44px; font-size: 18px; border-radius: 12px; background-color: transparent; color: #636366; margin-top: 5px; }
+.undo { width: 250px; color: #e0c775; }
 .finish { width: 250px; height: 56px; font-size: 22px; border-radius: 14px; background-color: #30d158; color: #ffffff; margin-top: 18px; }
 .leave-panel { position: absolute; top: 0; left: 0; width: 390px; height: 450px; flex-direction: column; align-items: center; justify-content: center; background-color: #000000; }
 .leave-title { font-size: 28px; color: #ffffff; margin-bottom: 4px; }
