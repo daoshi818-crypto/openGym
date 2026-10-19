@@ -4,7 +4,7 @@
 // 连接可用时按顺序发送，收到手机 ack 后清除。闪退重开后继续补发。
 import interconnect from '@blueos.bluexlink.connectionManager'
 import storage from '@blueos.storage.storage'
-import { loadState, endSession } from './session.js'
+import { loadState, endSession, closeSession, save } from './session.js'
 import { WATCH_VERSION } from './version.js'
 
 const PHONE_PACKAGE = 'ch.duartesantos.opengym'
@@ -16,6 +16,8 @@ let handlers = {}
 let connected = false
 let outbox = []
 let sending = false
+let retryTimer = null
+let lastEventAt = 0
 
 function persist() {
   storage.set({ key: K_OUTBOX, value: outbox, fail: (d, c) => console.log('rpc outbox save failed', c) })
@@ -24,7 +26,7 @@ function persist() {
 function loadOutbox() {
   try {
     const list = storage.getSync({ key: K_OUTBOX })
-    return Array.isArray(list) ? list.map(e => ({ ...e, sent: false })) : []
+    return Array.isArray(list) ? list : []
   } catch (e) { return [] }
 }
 
@@ -75,19 +77,21 @@ function sendHello() {
     rev: s.rev || 0,
     pending: outbox.length,
     active: !!s.active,
+    pendingStart: !!s.pendingStart,
   })
 }
 
 function flush() {
   if (!connected || !connect || sending) return
-  const next = outbox.find(e => !e.sent)
+  outbox = loadOutbox()
+  const next = outbox.find(e => !e.sent || Date.now() - (e.sentAt || 0) > 4000)
   if (!next) return
   sending = true
   try {
     connect.send({
       data: next.msg,
       success: () => {
-        next.sent = true
+        outbox = loadOutbox().map(e => e.msg.eventId === next.msg.eventId ? { ...e, sent: true, sentAt: Date.now() } : e)
         sending = false
         persist()
         flush()
@@ -103,15 +107,17 @@ function flush() {
   }
 }
 
-function ackUpto(upto) {
-  if (upto == null) return
+function ackUpto(upto, eventId) {
+  if (upto == null && !eventId) return
+  outbox = loadOutbox()
   const before = outbox.length
-  outbox = outbox.filter(e => e.at > upto)
+  outbox = outbox.filter(e => eventId ? e.msg.eventId !== eventId : e.at > upto)
   if (outbox.length !== before) persist()
 }
 
 export function startServer(h) {
   if (h) handlers = h
+  if (!retryTimer) retryTimer = setInterval(flush, 4000)
   if (!connect) {
     outbox = loadOutbox()
     try {
@@ -126,7 +132,9 @@ export function startServer(h) {
   // 页面包可能各有一份模块，但复用同一个 SDK 实例。每次显示都重新接管回调。
   connect.onOpen = () => {
     connected = true
+    outbox = loadOutbox()
     outbox.forEach(e => { e.sent = false })
+    persist()
     if (handlers.onState) handlers.onState(true)
     flush()
     sendHello()
@@ -149,18 +157,51 @@ export function startServer(h) {
         reason: decoded.reason, decodePath: decoded.decodePath, layers: decoded.layers })
       return
     }
-    if (msg.t === 'ack') { ackUpto(msg.upto); return }
+    if (msg.t === 'ack') { ackUpto(msg.upto, msg.eventId); return }
+    if (msg.t === 'plan_catalog') {
+      storage.set({ key: 'plan_catalog', value: msg, fail() {} })
+      if (handlers.onCatalog) handlers.onCatalog(msg)
+      sendControl({ t: 'plan_catalog_ack', at: msg.at })
+      return
+    }
+    if (msg.t === 'watch_start_ack') {
+      const s = loadState()
+      if (s.sid === msg.sid && msg.status === 'started') { s.pendingStart = false; save(s) }
+      if (msg.status === 'started') ackUpto(msg.at, msg.eventId)
+      if (handlers.onStartAck) handlers.onStartAck(msg)
+      return
+    }
+    if (msg.t === 'session_close') {
+      const s = loadState()
+      if (s.sid === msg.sid && s.active) {
+        if (msg.disposition === 'saved') endSession(s, s.profile, msg.closedAt)
+        else closeSession(msg.sid)
+        if (handlers.onEnded) handlers.onEnded(msg)
+      } else {
+        const closed = storage.getSync({ key: 'closed_sessions' }) || []
+        storage.set({ key: 'closed_sessions', value: [...closed.filter(id => id !== msg.sid), msg.sid].slice(-500), fail() {} })
+      }
+      sendControl({ t: 'session_close_ack', sid: msg.sid, eventId: msg.eventId })
+      return
+    }
     if (msg.t === 'ended') {
       const s = loadState()
       if (s.active && s.sid === msg.sid) {
-        const summary = endSession(s, s.profile, msg.endedAt)
-        sendEvent({ ...summary, t: 'summary', sets: summary.sets.length, at: Date.now() })
+        if (msg.reason === 'finished') {
+          const summary = endSession(s, s.profile, msg.endedAt)
+          sendEvent({ ...summary, t: 'summary', sets: summary.sets.length, at: Date.now() })
+        } else closeSession(s.sid)
         if (handlers.onEnded) handlers.onEnded(msg)
       }
       sendControl({ t: 'ended_ack', sid: msg.sid, watchVersion: WATCH_VERSION })
       return
     }
     if (msg.t === 'plan' || msg.t === 'sync') {
+      const active = loadState()
+      if (active.active && active.sid !== msg.sid) {
+        sendControl({ t: msg.t + '_ack', sid: msg.sid, status: 'conflict', activeSid: active.sid })
+        return
+      }
       const closed = storage.getSync({ key: 'closed_sessions' }) || []
       if (closed.indexOf(msg.sid) >= 0) {
         sendControl({ t: msg.t + '_ack', sid: msg.sid, planId: msg.planId || '', status: 'closed', watchVersion: WATCH_VERSION })
@@ -180,6 +221,7 @@ export function startServer(h) {
       return
     }
     if (msg.t === 'rest' && handlers.onRest) { handlers.onRest(msg); return }
+    if (msg.t === 'pause' && handlers.onPause) { handlers.onPause(msg); return }
     if (msg.t === 'set' && handlers.onSet) { handlers.onSet(msg); return }
     if (msg.t === 'unset' && handlers.onUnset) { handlers.onUnset(msg); return }
     if (msg.t === 'weight' && handlers.onWeight) { handlers.onWeight(msg); return }
@@ -210,6 +252,8 @@ export function startServer(h) {
 }
 
 export function stopServer() {
+  if (retryTimer) clearInterval(retryTimer)
+  retryTimer = null
   try { if (connect) connect.close({ success() {}, fail() {} }) } catch (e) { /* 已关闭 */ }
   connect = null
   connected = false
@@ -219,8 +263,21 @@ export function stopServer() {
 /** 事件类：进 outbox，保证闪退/断线不丢。 */
 export function sendEvent(obj) {
   if (!obj) return
+  outbox = loadOutbox()
   if (obj.at == null) obj.at = Date.now()
-  if (outbox.some(e => e.msg.sid === obj.sid && e.msg.t === obj.t && e.msg.ex === obj.ex &&
+  if (!obj.eventId) {
+    lastEventAt = Math.max(Date.now(), lastEventAt + 1, Number(storage.getSync({ key: 'event_clock' })) + 1 || 0)
+    storage.set({ key: 'event_clock', value: lastEventAt, fail() {} })
+    if (obj.seq == null) obj.seq = lastEventAt
+    obj.source = 'watch'
+    obj.eventId = 'watch:' + obj.sid + ':' + lastEventAt
+  }
+  const s = loadState()
+  if (s.active && s.sid === obj.sid && ['set', 'unset', 'weight', 'reps', 'add_set', 'remove_set'].includes(obj.t)) {
+    s.pendingEdits = (s.pendingEdits || []).filter(e => !(e.t === obj.t && e.ex === obj.ex && e.set === obj.set && e.at === obj.at))
+    s.pendingEdits.push(obj); save(s)
+  }
+  if (outbox.some(e => e.msg.eventId === obj.eventId || e.msg.sid === obj.sid && e.msg.t === obj.t && e.msg.ex === obj.ex &&
       e.msg.set === obj.set && e.at === obj.at)) return
   outbox.push({ at: obj.at, msg: obj, sent: false })
   persist()
@@ -235,5 +292,5 @@ export function sendControl(obj) {
   } catch (e) { /* 下次再同步 */ }
 }
 
-export function pendingCount() { return outbox.length }
+export function pendingCount() { return loadOutbox().length }
 export function isConnected() { return connected }

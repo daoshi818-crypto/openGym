@@ -4,10 +4,11 @@ import router from '@blueos.app.appmanager.router'
 import brightness from '@blueos.hardware.display.brightness'
 import {
   loadState, save, replacePlan, applySync, toggleSet, nextUndone,
-  addHr, flushHr, endSession, addSet, removeSet, addRestTime, setRowValue, calories,
+  addHr, flushHr, endSession, closeSession, addSet, removeSet, addRestTime, setRowValue, calories,
 } from '../lib/session.js'
 import { startHr, stopHr, tick, restOver } from '../lib/sensors.js'
 import { startServer, sendEvent, sendControl, pendingCount, isConnected } from '../lib/rpc.js'
+import { applyFocus, applyRest, restOf } from '../lib/protocol.js'
 
 export default {
   data: {
@@ -28,6 +29,10 @@ export default {
     allFinished: false,
     rowDone: false,
     kcalLabel: '0',
+    pageIndex: 0,
+    closeMode: '',
+    paused: false,
+    pauseLabel: '暂停训练',
   },
 
   onInit() {
@@ -74,7 +79,7 @@ export default {
     this.visible = true
     // Keypad/动作列表独立读取并保存会话，返回训练页时重新读取，确保重量立即回显。
     const latest = loadState()
-    if (!latest.active || !latest.workout) { this.stopHrCapture(); router.replace({ uri: '/Summary' }); return }
+    if (!latest.active || !latest.workout) { this.stopHrCapture(); router.replace({ uri: '/Index' }); return }
     if (latest.active && latest.workout) {
       this.state = latest
       this.profile = latest.profile || null
@@ -84,7 +89,7 @@ export default {
     this.reconcileRestClock()
     // 与输入页通过持久化状态交接，使用当前连接的可靠事件队列发送。
     const edits = this.state && this.state.pendingEdits || []
-    for (const edit of edits) sendEvent(edit)
+    for (const edit of edits) this.emitEvent(edit)
     this.startHrCapture()
     this.refresh()
     this.focusCrown()
@@ -99,7 +104,7 @@ export default {
     try { this.$element('training').requestFocus(true) } catch (e) {}
   },
   onRotation(ev) {
-    if (!ev || ev.state === 3 || this.menuOn || this.leaveChoice) return
+    if (!ev || ev.state === 3 || this.menuOn || this.closeMode || this.pageIndex || this.paused) return
     const delta = Number(ev.delta) || (ev.direction === true ? 1 : ev.direction === false ? -1 : 0)
     if (!delta) return
     if (this.isRest || this.restCrownDirty) this.queueRestNudge(delta > 0 ? 5 : -5)
@@ -107,11 +112,13 @@ export default {
   },
   onBackPress() {
     if (this.menuOn) this.menuOn = false
-    else this.leaveChoice = true
+    else if (this.closeMode) this.closeMode = ''
+    else if (this.pageIndex) this.pageIndex = 0
+    else this.openExercises()
     return true
   },
   openMenu() { this.menuOn = true; this.leaveChoice = false },
-  openActions() { this.leaveChoice = true; this.menuOn = false },
+  openActions() { this.pageIndex = 1; this.menuOn = false },
   openExercises() { router.push({ uri: '/ExerciseList' }) },
 
   bindRpc() {
@@ -119,7 +126,11 @@ export default {
       // 隐藏的训练页仍会收到 RPC；保留输入页刚保存的编辑和其他页面的更新。
       const latest = loadState()
       if (latest.active && latest.sid === this.state.sid) {
-        if (this.restCrownDirty) latest.restUntil = this.state.restUntil
+        if (this.restCrownDirty) {
+          latest.restUntil = this.state.restUntil; latest.restTargetSec = this.state.restTargetSec
+          latest.restVersion = this.state.restVersion; latest.restId = this.state.restId
+          latest.restStartedAt = this.state.restStartedAt
+        }
         this.state = latest
       }
       return this[method](...args)
@@ -128,6 +139,10 @@ export default {
       onPlan: (msg) => handle('onPlanUpdate', msg),
       onSync: (msg) => handle('onSyncUpdate', msg),
       onRest: (msg) => handle('onRemoteRest', msg),
+      onPause: (msg) => handle('onRemotePause', msg),
+      onStartAck: msg => {
+        if (msg.status === 'conflict') { this.syncLabel = '手机已有训练'; router.replace({ uri: '/Index', params: { conflict: JSON.stringify(msg.snapshot) } }) }
+      },
       onSet: (msg) => handle('onRemoteSet', msg),
       onUnset: (msg) => handle('onRemoteUnset', msg),
       onWeight: (msg) => handle('onRemoteValue', msg, 'w'),
@@ -171,7 +186,7 @@ export default {
   },
 
   startHrCapture() {
-    if (this.hrActive || !this.state || !this.state.active) return
+    if (this.hrActive || !this.state || !this.state.active || this.state.pausedAt) return
     this.hrActive = true
     startHr((bpm) => {
       addHr(this.state, bpm)
@@ -213,19 +228,19 @@ export default {
     const dx = end.x - start.x
     const dy = end.y - start.y
     if (Math.abs(dx) < 60 && Math.abs(dy) < 60) return
-    if (this.leaveChoice) return
+    if (this.closeMode) return
     if (this.menuOn) {
       if (dy > 60) this.menuOn = false
       return
     }
     if (Math.abs(dx) > Math.abs(dy)) {
-      // 右滑：训练操作面板；左滑：组菜单。
-      if (dx > 60) this.leaveChoice = true
-      else if (dx < -60) this.menuOn = true
+      // 右滑打开动作列表，左滑切换训练与操作页。
+      if (dx > 60) this.openExercises()
+      else if (dx < -60) this.pageIndex = this.pageIndex ? 0 : 1
     } else {
-      // 上滑：上一个动作；下滑：下一个动作。
-      if (dy < -60) this.stepExercise(-1)
-      else if (dy > 60) this.stepExercise(1)
+      // 上下滑动切换两页。
+      if (dy < -60) this.pageIndex = 1
+      else if (dy > 60) this.pageIndex = 0
     }
   },
 
@@ -250,7 +265,7 @@ export default {
     if (!rows) return
     s.setIdx = rows.length - 1
     this.menuOn = false
-    sendEvent({ t: 'add_set', sid: s.sid, ex, set: s.setIdx + 1, weight: rows[s.setIdx].w, reps: rows[s.setIdx].r, at: Date.now() })
+    this.emitEvent({ t: 'add_set', sid: s.sid, ex, set: s.setIdx + 1, sets: rows.length, weight: rows[s.setIdx].w, reps: rows[s.setIdx].r, at: Date.now() })
     this.refresh()
   },
 
@@ -262,7 +277,7 @@ export default {
     const removed = rows.length
     removeSet(s, ex)
     this.menuOn = false
-    sendEvent({ t: 'remove_set', sid: s.sid, ex, set: removed, at: Date.now() })
+    this.emitEvent({ t: 'remove_set', sid: s.sid, ex, set: removed, sets: rows.length, at: Date.now() })
     this.refresh()
   },
 
@@ -273,19 +288,13 @@ export default {
     const s = this.state
     const rows = s.workout.rows[s.exIdx]
     if (!rows) return
-    const prevEx = s.exIdx
-    let ni = s.setIdx + dir
-    let nx = s.exIdx
-    if (ni < 0) {
-      if (nx <= 0) return
-      nx -= 1; ni = s.workout.rows[nx].length - 1
-    } else if (ni >= rows.length) {
-      if (nx >= s.workout.rows.length - 1) return
-      nx += 1; ni = 0
-    }
+    const ni = s.setIdx + dir
+    const nx = s.exIdx
+    if (ni < 0 || ni >= rows.length) return
     s.exIdx = nx; s.setIdx = ni
     save(s)
-    if (nx !== prevEx) sendControl({ t: 'focus', sid: s.sid, ex: nx, set: ni + 1, at: Date.now() })
+    s.focusAt = Date.now(); save(s)
+    sendControl({ t: 'focus', sid: s.sid, ex: nx, set: ni + 1, at: s.focusAt, source: 'watch' })
     this.refresh()
   },
 
@@ -307,17 +316,17 @@ export default {
   onNextSet() { this.stepSet(1) },
 
   editWeight() {
-    if (this.isRest || this.isDoneRowCur()) return
+    if (this.isRest || this.paused || this.isDoneRowCur()) return
     router.push({ uri: '/Keypad', params: { exIdx: this.state.exIdx, setIdx: this.state.setIdx, field: 'w' } })
   },
 
   editReps() {
-    if (this.isRest || this.isDoneRowCur()) return
+    if (this.isRest || this.paused || this.isDoneRowCur()) return
     router.push({ uri: '/Keypad', params: { exIdx: this.state.exIdx, setIdx: this.state.setIdx, field: 'r' } })
   },
 
   onComplete() {
-    if (this.isRest) return
+    if (this.isRest || this.paused) return
     const s = this.state
     const exIdx = s.exIdx, setIdx = s.setIdx
     const current = s.workout.rows[exIdx] && s.workout.rows[exIdx][setIdx]
@@ -331,7 +340,7 @@ export default {
     if (!row) return
     this.restStartAt = Date.now()
     this.setRestScreenLock(!!s.restUntil)
-    sendEvent({ t: 'set', sid: s.sid, ex: exIdx, set: setIdx + 1, reps: row.r != null ? String(row.r) : '', weight: row.w != null ? String(row.w) : '', at: row.at })
+    this.emitEvent({ t: 'set', sid: s.sid, ex: exIdx, set: setIdx + 1, reps: row.r != null ? String(row.r) : '', weight: row.w != null ? String(row.w) : '', at: row.at, rest: restOf(s) })
     tick()
     const next = nextUndone(s)
     if (next) { s.exIdx = next.exIdx; s.setIdx = next.setIdx; save(s) }
@@ -348,7 +357,7 @@ export default {
     this.cancelRestNudge()
     this.restStartAt = 0
     this.allFinished = false
-    sendEvent({ t: 'unset', sid: s.sid, ex: exIdx, set: setIdx + 1, at: Date.now() })
+    this.emitEvent({ t: 'unset', sid: s.sid, ex: exIdx, set: setIdx + 1, at: Date.now() })
     this.refresh()
   },
 
@@ -365,10 +374,6 @@ export default {
     if (!row || row.done) return
     row.done = true
     row.at = Date.now()
-    if (s.exIdx === msg.ex && s.setIdx === msg.set - 1) {
-      const next = nextUndone(s)
-      if (next) { s.exIdx = next.exIdx; s.setIdx = next.setIdx }
-    }
     this.allFinished = s.workout.rows.every(rows => rows.every(r => r.done))
     save(s)
     this.refresh()
@@ -412,8 +417,6 @@ export default {
     const i = rows.length - 1
     if (msg.weight != null && msg.weight !== '') rows[i].w = msg.weight
     if (msg.reps != null && msg.reps !== '') rows[i].r = msg.reps
-    s.exIdx = ex
-    s.setIdx = i
     save(s)
     this.refresh()
   },
@@ -426,6 +429,7 @@ export default {
     if (!rows || rows.length <= 1) return
     const target = Number.isInteger(msg.sets) ? msg.sets : rows.length - 1
     if (target < 1 || target >= rows.length) return
+    if (rows.slice(target).some(r => r.done)) return
     rows.splice(target)
     s.workout.exercises[ex].sets = rows.length
     if (s.exIdx === ex && s.setIdx >= rows.length) s.setIdx = rows.length - 1
@@ -435,11 +439,7 @@ export default {
 
   onRemoteFocus(msg) {
     const s = this.state
-    if (!msg || msg.sid !== s.sid) return
-    const ex = Math.max(0, Math.min(Number(msg.ex) || 0, s.workout.exercises.length - 1))
-    const rows = s.workout.rows[ex] || []
-    s.exIdx = ex
-    s.setIdx = Math.max(0, Math.min(Number(msg.set) - 1 || 0, Math.max(0, rows.length - 1)))
+    if (!applyFocus(s, msg)) return
     save(s)
     this.refresh()
   },
@@ -449,11 +449,14 @@ export default {
       return { status: 'rejected', page: 'Workout', reason: 'empty_exercises' }
     }
     const localRest = this.restCrownDirty && (!msg.sid || msg.sid === this.state.sid)
-    const restUntil = this.state.restUntil
+    const localRound = localRest ? { restUntil: this.state.restUntil, restTargetSec: this.state.restTargetSec,
+      restVersion: this.state.restVersion, restId: this.state.restId, restStartedAt: this.state.restStartedAt } : null
     if (!localRest) this.cancelRestNudge()
     applySync(this.state, msg)
-    if (localRest) this.state.restUntil = restUntil
+    if (localRound) Object.assign(this.state, localRound)
     this.profile = this.state.profile || this.profile
+    if (this.state.pausedAt) this.stopHrCapture()
+    else this.startHrCapture()
     this.allFinished = (this.state.workout.rows || []).every(rows => rows.every(r => r.done))
     this.refresh()
     return { status: 'applied', page: 'Workout', exercises: this.state.workout.exercises.length }
@@ -467,7 +470,7 @@ export default {
     this.stopHrCapture()
     if (this.timer) clearInterval(this.timer)
     if (this.hrFlush) clearInterval(this.hrFlush)
-    router.replace({ uri: '/Summary' })
+    router.replace({ uri: '/Index' })
   },
 
   onSkipRest() {
@@ -478,7 +481,8 @@ export default {
     this.restStartAt = 0
     this.setRestScreenLock(false)
     this.restSeq += 1
-    sendControl({ t: 'rest', sid: s.sid, leftSec: 0, totalSec: 0, seq: this.restSeq })
+    s.restVersion = Math.max(Date.now(), (s.restVersion || 0) + 1); s.restTargetSec = 0; s.restLeftSec = 0
+    this.emitEvent({ t: 'rest', sid: s.sid, ...restOf(s) })
     save(s)
     this.refresh()
   },
@@ -510,9 +514,9 @@ export default {
     const s = this.state
     if (!dirty || !s || !s.active) return
     const left = Math.max(0, Math.ceil((s.restUntil - Date.now()) / 1000))
-    this.restSeq += 1
+    s.restVersion = Math.max(Date.now(), (s.restVersion || 0) + 1)
     save(s)
-    sendControl({ t: 'rest', sid: s.sid, leftSec: left, totalSec: left, seq: this.restSeq })
+    this.emitEvent({ t: 'rest', sid: s.sid, ...restOf(s) })
   },
 
   applyRestNudge(deltaSec) {
@@ -520,6 +524,8 @@ export default {
     if (!s || !s.active || !s.restUntil || !Number.isFinite(deltaSec)) return
     const now = Date.now()
     const target = Math.min(now + 900000, s.restUntil + deltaSec * 1000)
+    s.restTargetSec = Math.max(0, Math.min(900, (s.restTargetSec || 0) + (target - s.restUntil) / 1000))
+    s.restVersion = Math.max(now, (s.restVersion || 0) + 1)
     this.restCrownDirty = true
     if (target <= now) {
       if (this.restStartAt) addRestTime(s, (Date.now() - this.restStartAt) / 1000)
@@ -532,6 +538,7 @@ export default {
       s.restUntil = target
     }
     this.restLabel = this.mmss(Math.max(0, Math.ceil((s.restUntil - now) / 1000)))
+    this.restTotalLabel = this.mmss(s.restTargetSec)
   },
 
   onRestMinus() { this.nudgeRest(-15) },
@@ -568,12 +575,8 @@ export default {
   onRemoteRest(msg) {
     const s = this.state
     if (!msg || msg.sid !== s.sid) return
-    if (typeof msg.seq === 'number' && msg.seq <= this.remoteRestSeq) return
-    if (typeof msg.seq === 'number') this.remoteRestSeq = msg.seq
     if (this.restCrownDirty) return
-    if (msg.leftSec > 0 && !s.restUntil) this.restStartAt = Date.now()
-    s.restUntil = msg.leftSec > 0 ? Date.now() + msg.leftSec * 1000 : 0
-    if (!s.restUntil) this.restStartAt = 0
+    if (!applyRest(s, msg)) return
     save(s)
     this.refresh()
   },
@@ -598,6 +601,8 @@ export default {
     this.weightVal = row && row.w !== '' && row.w != null ? row.w + ' kg' : '—'
     this.repsVal = row && row.r !== '' && row.r != null ? row.r + (this.isTimed(ex) ? ' 秒' : ' 次') : '—'
     this.isRest = !!s.restUntil
+    this.paused = !!s.pausedAt
+    this.pauseLabel = this.paused ? '继续训练' : '暂停训练'
 
     const next = nextUndone(s)
     const totalSets = s.workout.rows.reduce((n, r) => n + r.length, 0)
@@ -630,8 +635,10 @@ export default {
   tickClock() {
     const s = this.state
     if (!s || !s.workout) return
-    const mins = Math.floor((Date.now() - s.startedAt) / 60000)
-    const secs = Math.floor(((Date.now() - s.startedAt) % 60000) / 1000)
+    if (Date.now() - (s.segmentStartedAt || s.startedAt) >= 21600000) { loadState(); this.onRemoteEnded(); return }
+    const elapsed = Math.max(0, (s.pausedAt || Date.now()) - s.startedAt - (s.pausedMs || 0))
+    const mins = Math.floor(elapsed / 60000)
+    const secs = Math.floor((elapsed % 60000) / 1000)
     this.elapsedLabel = mins + ':' + String(secs).padStart(2, '0')
 
     const left = s.restUntil ? Math.ceil((s.restUntil - Date.now()) / 1000) : 0
@@ -643,11 +650,11 @@ export default {
     this.restLabel = this.mmss(left)
     if (this.metricSecond === Math.floor(Date.now() / 1000)) return
     this.metricSecond = Math.floor(Date.now() / 1000)
-    this.restTotalLabel = this.mmss(Math.round(s.restTotalSec || 0))
+    this.restTotalLabel = this.mmss(Math.round(s.restTargetSec || 0))
     this.hrLabel = this.hrLast ? '♥ ' + this.hrLast : '♥ --'
-    this.kcalLabel = String(calories(s, s.profile, Math.max(0, (Date.now() - (s.segmentStartedAt || s.startedAt)) / 60000)))
+    this.kcalLabel = String((s.baseCalories || 0) + calories(s, s.profile, Math.max(0, ((s.pausedAt || Date.now()) - (s.segmentStartedAt || s.startedAt) - (s.pausedMs || 0)) / 60000)))
     const n = pendingCount()
-    this.syncLabel = isConnected() ? '已同步' : (n > 0 ? '未同步 ' + n + ' 条' : '')
+    this.syncLabel = n > 0 ? '待上传 ' + n + ' 条' : isConnected() ? '已连接' : '离线记录'
   },
 
   mmss(sec) {
@@ -655,6 +662,37 @@ export default {
     return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0')
   },
 
+  emitEvent(ev) {
+    sendEvent(ev)
+    const latest = loadState()
+    if (latest.sid === this.state.sid) this.state.pendingEdits = latest.pendingEdits || []
+  },
+  onPause() { this.setPaused(!this.state.pausedAt, Date.now(), true) },
+  onRemotePause(msg) {
+    if (msg.sid !== this.state.sid || msg.seq <= (this.state.pauseVersion || 0)) return
+    this.setPaused(!!msg.paused, msg.at || Date.now(), false)
+  },
+  setPaused(paused, at, notify) {
+    const s = this.state
+    this.flushRestNudge()
+    if (paused && !s.pausedAt) {
+      s.restLeftSec = restOf(s).leftSec; s.restUntil = 0; s.pausedAt = at
+      this.stopHrCapture()
+    } else if (!paused && s.pausedAt) {
+      s.pausedMs = (s.pausedMs || 0) + Math.max(0, at - s.pausedAt); s.pausedAt = 0
+      s.restUntil = s.restLeftSec ? Date.now() + s.restLeftSec * 1000 : 0
+      this.startHrCapture()
+    }
+    s.pauseVersion = at; s.restVersion = at; save(s)
+    if (notify) { this.emitEvent({ t: 'pause', sid: s.sid, paused, seq: at, at }); this.emitEvent({ t: 'rest', sid: s.sid, ...restOf(s) }) }
+    this.refresh()
+  },
+  askEnd() { this.closeMode = 'end' },
+  askAbandon() { this.closeMode = 'abandon' },
+  cancelClose() { this.closeMode = '' },
+  saveEnd() { this.onEnd('saved') },
+  discardEnd() { this.onEnd('discarded') },
+  abandonEnd() { this.onEnd('abandoned') },
   onEnd(reason, notifyPhone = true) {
     if (typeof reason !== 'string') reason = 'manual'
     const s = this.state
@@ -662,17 +700,15 @@ export default {
     this.cancelRestNudge()
     this.setRestScreenLock(false)
     this.stopHrCapture()
-    const session = endSession(s, s.profile)
-    if (notifyPhone) sendEvent({
-      t: 'end', sid: session.sid, minutes: session.minutes, avgHr: session.avgHr,
-      maxHr: session.maxHr, calories: session.calories, volume: session.volume || 0,
-      sets: session.sets.length, reason: reason || 'manual',
-      endedAt: session.endedAt, completedSets: session.sets,
-    })
+    const closedAt = Date.now()
+    const session = reason === 'saved' ? endSession(s, s.profile) : null
+    if (!session) closeSession(s.sid)
+    if (notifyPhone) sendEvent({ t: 'session_close', sid: s.sid, disposition: reason, closedAt, at: closedAt,
+      ...(session ? { workout: s.workout, startedAt: s.startedAt, summary: { minutes: session.minutes, avgHr: session.avgHr, maxHr: session.maxHr, calories: session.calories, volume: session.volume }, completedSets: session.sets } : {}) })
     this.state = loadState()
     if (this.timer) clearInterval(this.timer)
     if (this.hrFlush) clearInterval(this.hrFlush)
-    router.replace({ uri: '/Summary' })
+    router.replace({ uri: reason === 'saved' ? '/Summary' : '/Index' })
   },
 }
 
@@ -680,6 +716,7 @@ export default {
 
 <template>
   <div class="page" id="training" touch-focusable="true" onrotation="onRotation" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
+    <div class="screen" if="{{ pageIndex === 0 }}">
     <div class="topline"><text class="status">{{ syncLabel }}</text><text class="clock">{{ elapsedLabel }}</text></div>
     <text class="ex">{{ exName }}</text>
 
@@ -699,26 +736,36 @@ export default {
         <input class="nav" type="button" value="‹ 上组" onclick="onPrevSet" />
         <input class="nav" type="button" value="下组 ›" onclick="onNextSet" />
       </div>
-      <input class="complete {{ rowDone ? 'secondary' : '' }}" type="button" value="{{ rowDone ? '已完成' : '完成本组' }}" disabled="{{ rowDone }}" onclick="onCurrentSetAction" />
+      <input class="complete {{ rowDone || paused ? 'secondary' : '' }}" type="button" value="{{ paused ? '已暂停' : rowDone ? '已完成' : '完成本组' }}" disabled="{{ rowDone || paused }}" onclick="onCurrentSetAction" />
     </block>
 
     <block if="{{ isRest }}">
+      <text class="group">剩余</text>
       <text class="rest">{{ restLabel }}</text>
+      <text class="group">本次休息 {{ restTotalLabel }}</text>
       <div class="rrow">
         <input class="rbtn" type="button" value="−15s" onclick="onRestMinus" />
-        <text class="rtotal">{{ restTotalLabel }}</text>
         <input class="rbtn" type="button" value="+15s" onclick="onRestPlus" />
       </div>
       <text class="prog">{{ restProgLabel }}</text>
       <input class="skip" type="button" value="跳过" onclick="onSkipRest" />
     </block>
-
-    <div class="metrics"><text class="hr">{{ hrLabel }}</text><text class="energy">{{ kcalLabel }} 千卡 · 估算</text></div>
-    <div class="footer">
-      <input class="tool" type="button" value="动作" onclick="openExercises" />
-      <input class="tool" type="button" value="组数" onclick="openMenu" />
-      <input class="tool" type="button" value="更多" onclick="openActions" />
+    <div class="primary-footer"><text class="hr">{{ hrLabel }}</text><input class="action-link" type="button" value="训练动作" onclick="openExercises" /></div>
     </div>
+    <div class="screen" if="{{ pageIndex === 1 }}">
+    <text class="panel-title">训练操作</text>
+    <text class="group">{{ restProgLabel }} · {{ elapsedLabel }}</text>
+    <div class="metrics"><text class="hr">{{ hrLabel }}</text><text class="energy">{{ kcalLabel }} 千卡 · 估算</text></div>
+    <text class="group">{{ syncLabel }}</text>
+    <div class="mrow">
+      <input class="m" type="button" value="训练动作" onclick="openExercises" />
+      <input class="m" type="button" value="调整组数" onclick="openMenu" />
+    </div>
+    <input class="operation" type="button" value="{{ pauseLabel }}" onclick="onPause" />
+    <input class="operation finish" type="button" value="结束训练" onclick="askEnd" />
+    <input class="action-link danger" type="button" value="放弃训练" onclick="askAbandon" />
+    </div>
+    <div class="dots"><div class="dot {{ pageIndex === 0 ? 'selected' : '' }}"></div><div class="dot {{ pageIndex === 1 ? 'selected' : '' }}"></div></div>
 
     <div class="menu" if="{{ menuOn }}">
       <text class="panel-title">调整组数</text>
@@ -734,51 +781,62 @@ export default {
       <input class="mclose" type="button" value="收起" onclick="closeMenu" />
     </div>
 
-    <div class="leave-panel" if="{{ leaveChoice }}">
-      <text class="leave-title">训练操作</text>
-      <input class="leave-btn continue" type="button" value="继续训练" onclick="continueTraining" />
-      <input class="leave-btn end" type="button" value="结束当前训练" onclick="onEnd" />
+    <div class="leave-panel" if="{{ closeMode }}">
+      <text class="leave-title">{{ closeMode === 'end' ? '结束训练' : '放弃本次训练？' }}</text>
+      <text class="leave-hint" if="{{ closeMode === 'abandon' }}">丢弃本次未保存记录</text>
+      <input class="leave-btn finish" type="button" value="保存并结束" onclick="saveEnd" if="{{ closeMode === 'end' }}" />
+      <input class="leave-btn end" type="button" value="结束但不保存" onclick="discardEnd" if="{{ closeMode === 'end' }}" />
+      <input class="leave-btn end" type="button" value="确认放弃" onclick="abandonEnd" if="{{ closeMode === 'abandon' }}" />
+      <input class="leave-btn continue" type="button" value="继续训练" onclick="cancelClose" />
     </div>
   </div>
 </template>
 
 <style>
-.page { flex-direction: column; align-items: center; width: 390px; height: 450px; background-color: #000000; padding: 12px 20px; }
-.topline { width: 350px; height: 24px; justify-content: space-between; }
+.page { flex-direction: column; align-items: center; width: 390px; height: 450px; background-color: #000000; padding: 38px 44px; }
+.screen { width: 290px; height: 374px; flex-direction: column; align-items: center; }
+.primary-footer { width: 240px; height: 40px; align-items: center; justify-content: space-between; }
+.dots { position: absolute; right: 24px; top: 210px; width: 8px; height: 30px; flex-direction: column; justify-content: space-between; }
+.dot { width: 7px; height: 7px; border-radius: 4px; background-color: #48484a; }
+.selected { background-color: #63dfb1; }
+.action-link { width: 160px; height: 40px; font-size: 18px; color: #aeb9bd; background-color: transparent; margin-top: 4px; }
+.danger { color: #ff7d93; }
+.operation { width: 290px; height: 48px; margin-top: 8px; border-radius: 8px; font-size: 21px; background-color: #191d1f; color: #ffffff; }
+.topline { width: 220px; height: 22px; justify-content: space-between; }
 .status { font-size: 16px; color: #63dfb1; }
 .clock { font-size: 17px; color: #bfc6c9; }
-.ex { width: 350px; height: 50px; font-size: 25px; color: #ffffff; lines: 2; text-align: center; }
-.group { height: 26px; font-size: 18px; color: #bfc6c9; text-align: center; }
-.inputs { flex-direction: row; justify-content: space-between; width: 350px; height: 92px; margin-top: 6px; }
-.field { flex-direction: column; align-items: center; justify-content: center; width: 170px; height: 86px; border-radius: 8px; background-color: #191d1f; }
-.fval { font-size: 27px; color: #ffffff; width: 164px; text-align: center; lines: 1; }
-.flbl { font-size: 16px; color: #aeb9bd; }
-.navrow { flex-direction: row; justify-content: space-between; width: 350px; height: 48px; }
-.nav { width: 170px; height: 44px; font-size: 19px; border-radius: 8px; background-color: #191d1f; color: #ffffff; }
-.complete { width: 350px; height: 56px; font-size: 23px; border-radius: 8px; background-color: #63dfb1; color: #001b12; margin-top: 6px; }
+.ex { width: 290px; height: 50px; font-size: 23px; color: #ffffff; lines: 2; text-align: center; }
+.group { width: 290px; height: 24px; font-size: 17px; color: #bfc6c9; text-align: center; lines: 1; }
+.inputs { flex-direction: row; justify-content: space-between; width: 290px; height: 68px; margin-top: 4px; }
+.field { flex-direction: column; align-items: center; justify-content: center; width: 140px; height: 62px; border-radius: 8px; background-color: #191d1f; }
+.fval { font-size: 25px; color: #ffffff; width: 134px; text-align: center; lines: 1; }
+.flbl { font-size: 14px; color: #aeb9bd; }
+.navrow { flex-direction: row; justify-content: space-between; width: 290px; height: 44px; }
+.nav { width: 140px; height: 40px; font-size: 18px; border-radius: 8px; background-color: #191d1f; color: #ffffff; }
+.complete { width: 290px; height: 48px; font-size: 22px; border-radius: 8px; background-color: #63dfb1; color: #001b12; margin-top: 4px; }
 .secondary { background-color: #283236; color: #ffffff; }
-.rest { width: 350px; height: 112px; font-size: 70px; color: #63dfb1; text-align: center; }
-.rrow { flex-direction: row; align-items: center; justify-content: space-between; width: 350px; height: 48px; }
+.rest { width: 290px; height: 84px; font-size: 64px; color: #63dfb1; text-align: center; }
+.rrow { flex-direction: row; align-items: center; justify-content: space-between; width: 290px; height: 48px; }
 .rbtn { width: 100px; height: 44px; font-size: 20px; border-radius: 8px; background-color: #191d1f; color: #ffffff; }
 .rtotal { font-size: 18px; color: #aeb9bd; }
-.prog { width: 350px; height: 26px; font-size: 17px; color: #bfc6c9; text-align: center; }
-.skip { width: 350px; height: 56px; font-size: 23px; border-radius: 8px; background-color: #63dfb1; color: #001b12; margin-top: 12px; }
-.metrics { width: 350px; height: 38px; align-items: center; justify-content: space-between; }
+.prog { width: 290px; height: 24px; font-size: 17px; color: #bfc6c9; text-align: center; }
+.skip { width: 290px; height: 48px; font-size: 22px; border-radius: 8px; background-color: #63dfb1; color: #001b12; margin-top: 6px; }
+.metrics { width: 290px; height: 38px; align-items: center; justify-content: space-between; }
 .hr { font-size: 17px; color: #ff7d93; }
 .energy { font-size: 17px; color: #e0c775; }
 .footer { width: 350px; height: 48px; justify-content: space-between; }
 .tool { width: 110px; height: 44px; border-radius: 8px; background-color: #191d1f; color: #ffffff; font-size: 18px; }
 .menu { position: absolute; top: 0; left: 0; width: 390px; height: 450px; flex-direction: column; align-items: center; justify-content: center; background-color: #000000; }
 .mrow { flex-direction: row; justify-content: center; }
-.m { width: 145px; height: 58px; font-size: 21px; border-radius: 8px; background-color: #191d1f; color: #ffffff; margin: 7px 8px; }
+.m { width: 137px; height: 48px; font-size: 19px; border-radius: 8px; background-color: #191d1f; color: #ffffff; margin: 6px 4px; }
 .panel-title { font-size: 26px; color: #ffffff; margin-bottom: 16px; }
 .mclose { width: 180px; height: 44px; font-size: 18px; border-radius: 12px; background-color: transparent; color: #636366; margin-top: 5px; }
 .undo { width: 250px; color: #e0c775; }
-.finish { width: 250px; height: 56px; font-size: 22px; border-radius: 14px; background-color: #30d158; color: #ffffff; margin-top: 18px; }
+.finish { background-color: #63dfb1; color: #001b12; }
 .leave-panel { position: absolute; top: 0; left: 0; width: 390px; height: 450px; flex-direction: column; align-items: center; justify-content: center; background-color: #000000; }
 .leave-title { font-size: 28px; color: #ffffff; margin-bottom: 4px; }
 .leave-hint { font-size: 16px; color: #8e8e93; margin-bottom: 14px; }
-.leave-btn { width: 310px; height: 60px; font-size: 21px; border-radius: 8px; margin-top: 14px; }
+.leave-btn { width: 280px; height: 54px; font-size: 21px; border-radius: 8px; margin-top: 12px; }
 .continue { background-color: #1c1c1e; color: #ffffff; }
 .exit { background-color: #3a3a3c; color: #ffffff; }
 .end { background-color: #ff453a; color: #ffffff; }

@@ -3,7 +3,7 @@
 // （见 pages/Workout 的 onInit —— 闪退后重进会自动接上）。
 export default {
   onCreate() {
-    console.log('训练助手启动')
+    console.log('opengym 启动')
   },
 }
 </script>

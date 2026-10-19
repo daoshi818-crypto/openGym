@@ -270,15 +270,23 @@ describe('rest readiness and optional timed-set overtime', () => {
 describe('addRest adjustments', () => {
   beforeEach(() => { vi.useFakeTimers(); useUI.setState({ timer: null }) })
   afterEach(() => { useUI.getState().stopRest(); vi.useRealTimers() })
+  it('shows remaining 1:15 and target 1:45 after adding 15 seconds thirty seconds into a 90-second rest', () => {
+    useUI.getState().startRest(90)
+    vi.advanceTimersByTime(30000)
+    useUI.getState().addRest(15)
+    expect(useUI.getState().timer).toMatchObject({ left: 75, total: 105 })
+    useUI.getState().addRest(-15)
+    expect(useUI.getState().timer).toMatchObject({ left: 60, total: 90 })
+  })
 
-  it('reduces left without shrinking total so progress bar reflects the decrement', () => {
+  it('reduces remaining and the current round target together', () => {
     useUI.getState().startRest(60)
     expect(useUI.getState().timer.left).toBe(60)
     expect(useUI.getState().timer.total).toBe(60)
 
     useUI.getState().addRest(-15)
     expect(useUI.getState().timer.left).toBe(45)
-    expect(useUI.getState().timer.total).toBe(60)
+    expect(useUI.getState().timer.total).toBe(45)
   })
 
   it('stops timer if subtraction reaches zero or below', () => {
@@ -287,12 +295,12 @@ describe('addRest adjustments', () => {
     expect(useUI.getState().timer).toBe(null)
   })
 
-  it('increases left and keeps total if still within initial total', () => {
+  it('tracks the target across subtraction and addition', () => {
     useUI.getState().startRest(60)
     useUI.getState().addRest(-15) // left: 45, total: 60
     useUI.getState().addRest(10)  // left: 55, total: 60
     expect(useUI.getState().timer.left).toBe(55)
-    expect(useUI.getState().timer.total).toBe(60)
+    expect(useUI.getState().timer.total).toBe(55)
   })
 
   it('expands total if time added exceeds the initial total', () => {

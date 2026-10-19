@@ -49,6 +49,16 @@ jobs:
           OPENGYM_KS: ${{ secrets.OPENGYM_KS }}
         run: bash .github/scripts/ci-build.sh
 
+      - name: Verify companion watch package
+        run: |
+          set -euo pipefail
+          WATCH_VERSION=$(node -p "require('./watch-app/src/manifest.json').versionName")
+          export WATCH_RPK="watch-app/releases/opengym-watch-${WATCH_VERSION}.rpk"
+          test -f "$WATCH_RPK"
+          test "$(sha256sum "$WATCH_RPK" | cut -d' ' -f1)" = "$(tr -d '\r\n' < "$WATCH_RPK.sha256")"
+          node -e 'const cp=require("node:child_process");const source=require("./watch-app/src/manifest.json");const packed=JSON.parse(cp.execFileSync("unzip",["-p",process.env.WATCH_RPK,"manifest.json"],{encoding:"utf8"}));for(const key of ["package","name","versionName","versionCode"])if(source[key]!==packed[key])throw Error("Watch manifest mismatch: "+key)'
+          echo "WATCH_VERSION=$WATCH_VERSION" >> "$GITHUB_ENV"
+
       - name: Push rebased main
         if: github.event_name != 'push'
         run: git push origin main --force-with-lease
@@ -59,12 +69,16 @@ jobs:
           tag_name: v${{ env.APP_VERSION }}
           name: openGym custom v${{ env.APP_VERSION }}
           body: |
-            Auto-built from upstream main plus local customisations (Simplified Chinese by default,
-            domestic exercise names). Signed with a personal key: do not install the official
-            release over this build.
+            手机 APK：openGym.apk；手表 BlueOS 安装包：opengym-watch-${{ env.WATCH_VERSION }}.rpk。
+            手表改名 opengym，圆形图标；训练/操作上下翻页，右滑选择动作，训练页保留心率。
+            新增缓存计划与手表开始训练、暂停、保存/放弃、离线补传及手机端冲突确认。
+            手机 APK 沿用本仓库签名。RPK 使用 BlueOS Studio 官方 watch-round 编译器构建。
+            真机传感器、息屏和后台恢复仍需在具体 vivo 设备上验证。
           files: |
             openGym.apk
             openGym.apk.sha256
+            watch-app/releases/*.rpk
+            watch-app/releases/*.rpk.sha256
           make_latest: true
 
       - name: Publish update metadata with the release

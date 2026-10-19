@@ -37,6 +37,8 @@ import { forgetCoach } from '../lib/coach-api.js'
 import { REST_MAX, REST_PAUSE_MIN, REST_PAUSE_MAX, fmtRest, fmtDuration } from '../lib/duration.js'
 import { starterPlanSheet, confirmSheet, importFromApp, importFromHevy, equipmentProfileSheet, plateInventorySheet, dumbbellInventorySheet, menuSheet } from '../sheets.jsx'
 import Icon from '../components/Icon.jsx'
+import { sendToWatch } from '../lib/watch-link.js'
+import { watchCatalogOf } from '../lib/watch-workout.js'
 import { durationSheet } from '../components/DurationWheel.jsx'
 import { showsConnection, showsLocalLine } from '../components/SyncBanner.jsx'
 import BackupFolderRow, { useBackupFolder, autoBackupSubtitle } from '../components/BackupFolderRow.jsx'
@@ -643,6 +645,12 @@ export default function Settings({ page = null, find = null, via = null }) {
             accessory="chevron"
             onClick={() => useUI.getState().openSheet(close => <WatchPairSheet close={close} />)} />
         )}
+          {android && <SelectRow icon="watch" title="发送到手表的计划" value={S.watchPlanIds?.[0] || ''}
+            options={[{ value: '', label: '仅今日计划' }, ...S.routines.map(r => ({ value: r.id, label: r.name }))]}
+            onChange={id => {
+            update(s => { s.watchPlanIds = id ? [id] : [] })
+            sendToWatch(watchCatalogOf(useStore.getState().S))
+            }} />}
         {/* 'full'/'mini' is also what the tap-toggle on the workout animation writes; 'off' hides
             workout media entirely (library, detail sheet and picker thumbs are unaffected).
             Legacy/unknown values read as 'full'. */}

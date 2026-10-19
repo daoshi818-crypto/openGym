@@ -161,8 +161,9 @@ public class RestTimerService extends Service {
         // endsAt may already be in the past when +15 lands on the last second.
         // Adding the delta to that old deadline would leave the clock stuck.
         long left = paused ? pausedLeft : Math.max(0, endsAt - now);
-        left += deltaMs;
-        if (left > totalMs) totalMs = left;
+        long adjusted = Math.min(900_000L, left + deltaMs);
+        totalMs = Math.max(adjusted, Math.min(900_000L, totalMs + adjusted - left));
+        left = adjusted;
         if (left <= 0) {
             finishSkip();
             return;

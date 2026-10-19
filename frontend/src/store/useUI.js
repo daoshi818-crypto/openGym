@@ -11,6 +11,9 @@ import { useStore } from './useStore.js'
 import { REST_MAX } from '../lib/duration.js'
 import { accentValue } from '../lib/accent.js'
 
+let restClock = 0
+const restVersion = previous => (restClock = Math.max(Date.now(), restClock + 1, (previous?.seq || 0) + 1))
+
 // Fire-and-forget: lets the server push a "rest over" alert if this tab gets suspended
 // before the local timer completes. No-ops for guests / offline. The device id keeps the
 // timer this browser's own: a desktop tab finishing its rest on screen used to cancel the
@@ -292,7 +295,7 @@ export const useUI = create((set, get) => ({
     // with no beep, no vibration and no flash. Each timer starts from where the page is now.
     pageHiddenAt = document.hidden ? Date.now() : null
     const endsAt = Date.now() + sec * 1000
-    set({ timer: { left: sec, total: sec, endsAt, forIdx, ...(forSet != null ? { forSet } : {}), ...(kind === 'switch' ? { kind } : {}) } })
+    set({ timer: { left: sec, total: sec, endsAt, startedAt: Date.now(), restId: String(Date.now()), seq: restVersion(), source: 'phone', forIdx, ...(forSet != null ? { forSet } : {}), ...(kind === 'switch' ? { kind } : {}) } })
     bookRestEnd(endsAt, sec, kind)
     runRest(set, get)
   },
@@ -308,7 +311,7 @@ export const useUI = create((set, get) => ({
     cancelPushRestTimer()
     const left = Math.max(1, Math.round((tm.endsAt - Date.now()) / 1000))
     holdRestAlert(left, tm.total)
-    set({ timer: { ...tm, left, paused: true } })
+    set({ timer: { ...tm, left, paused: true, seq: restVersion(tm), source: 'phone' } })
   },
   // Carrying on from where the pause held it: the end moves out by however long the pause was,
   // and the push that announces it is booked again for the new time.
@@ -320,7 +323,7 @@ export const useUI = create((set, get) => ({
     // catch-up of a countdown that was not running.
     pageHiddenAt = document.hidden ? Date.now() : null
     const endsAt = Date.now() + tm.left * 1000
-    set({ timer: { ...rest, endsAt } })
+    set({ timer: { ...rest, endsAt, seq: restVersion(tm), source: 'phone' } })
     bookRestEnd(endsAt, tm.total, tm.kind)
     runRest(set, get)
   },
@@ -335,12 +338,12 @@ export const useUI = create((set, get) => ({
     // taking off more than is left means "I'm ready now" — same as skipping, and it keeps a
     // negative duration out of both the progress bar and the server-side push schedule
     if (left <= 0) { get().stopRest(); return }
-    const total = Math.max(tm.total || left, left)
+    const total = Math.max(left, Math.min(REST_MAX, (tm.total || tm.left) + sec))
     // Paused, there is no end to move and nothing booked on the server: the time is simply held,
     // and the notification holds the new figure.
-    if (tm.paused) { set({ timer: { ...tm, left, total } }); holdRestAlert(left, total); return }
+    if (tm.paused) { set({ timer: { ...tm, left, total, seq: restVersion(tm), source: 'phone' } }); holdRestAlert(left, total); return }
     const endsAt = tm.endsAt + sec * 1000
-    set({ timer: { ...tm, left, total, endsAt } })
+    set({ timer: { ...tm, left, total, endsAt, seq: restVersion(tm), source: 'phone' } })
     bookRestEnd(endsAt, total, tm.kind)
   },
   // The active list changed shape (an exercise removed or inserted at `at`): keep the rest
@@ -356,19 +359,30 @@ export const useUI = create((set, get) => ({
   // already called Ready opens it again. Nothing is sent back: the notification already shows it.
   followNativeRest({ endsAt, left, total, paused }) {
     const tm = get().timer
+    const { paused: previousPause, ready: previousReady, ...currentRound } = tm || {}
     const forIdx = tm?.forIdx
     const kind = { ...(tm?.kind === 'switch' ? { kind: 'switch' } : {}), ...(tm?.forSet != null ? { forSet: tm.forSet } : {}) }
     if (paused) {
       stopRestTicking()
-      set({ timer: { left, total, endsAt, forIdx, ...kind, paused: true } })
+      set({ timer: { ...currentRound, left, total, endsAt, forIdx, ...kind, paused: true, seq: restVersion(tm), source: 'phone' } })
       return
     }
     const ticking = !!timerInt && !!tm && !tm.paused && !tm.ready
-    set({ timer: { left, total, endsAt, forIdx, ...kind } })
+    set({ timer: { ...currentRound, left, total, endsAt, forIdx, ...kind, seq: restVersion(tm), source: 'phone' } })
     if (ticking) return
     // As in resumeRest: a hide from while it was held or over is no catch-up of this countdown.
     pageHiddenAt = document.hidden ? Date.now() : null
     runRest(set, get)
+  },
+  followWatchRest(ev) {
+    const left = ev.paused ? Math.max(0, Number(ev.leftSec) || 0) : ev.endsAt ? Math.max(0, Math.ceil((ev.endsAt - Date.now()) / 1000)) : Math.max(0, Number(ev.leftSec) || 0)
+    if (!left) { get().stopRest(); return }
+    const total = Math.max(left, Number(ev.totalSec) || left)
+    get().startRest(left, get().timer?.forIdx)
+    set({ timer: { ...get().timer, total, restId: ev.restId, startedAt: ev.startedAt,
+      endsAt: ev.endsAt || Date.now() + left * 1000, seq: ev.seq, source: 'watch', paused: !!ev.paused } })
+    if (ev.paused) { stopRestTicking(); holdRestAlert(left, total) }
+    else bookRestEnd(get().timer.endsAt, total)
   },
   stopRest() {
     stopRestTicking()
@@ -463,7 +477,7 @@ const saveRest = tm => {
   if (!ss) return
   try {
     if (!tm || tm.ready) ss.removeItem(REST_KEY)
-    else ss.setItem(REST_KEY, JSON.stringify({ endsAt: tm.endsAt, total: tm.total, forIdx: tm.forIdx ?? null, forSet: tm.forSet ?? null, kind: tm.kind || null, paused: !!tm.paused, left: tm.left }))
+    else ss.setItem(REST_KEY, JSON.stringify({ endsAt: tm.endsAt, total: tm.total, restId: tm.restId, startedAt: tm.startedAt, seq: tm.seq, forIdx: tm.forIdx ?? null, forSet: tm.forSet ?? null, kind: tm.kind || null, paused: !!tm.paused, left: tm.left }))
   } catch { /* the rest just does not outlive a reload */ }
 }
 export function restoreRest(now = Date.now()) {
@@ -474,7 +488,7 @@ export function restoreRest(now = Date.now()) {
   const total = Math.round(Number(saved.total))
   const ok = useStore.getState().S?.active && total > 0 && (saved.paused ? saved.left > 0 : saved.endsAt > now)
   if (!ok) { try { ss.removeItem(REST_KEY) } catch { /* nothing to drop */ } return false }
-  const base = { total, forIdx: saved.forIdx ?? undefined, ...(saved.forSet != null ? { forSet: saved.forSet } : {}), ...(saved.kind === 'switch' ? { kind: 'switch' } : {}) }
+  const base = { total, restId: saved.restId, startedAt: saved.startedAt, seq: saved.seq, forIdx: saved.forIdx ?? undefined, ...(saved.forSet != null ? { forSet: saved.forSet } : {}), ...(saved.kind === 'switch' ? { kind: 'switch' } : {}) }
   if (saved.paused) {
     useUI.setState({ timer: { ...base, left: Math.round(saved.left), endsAt: saved.endsAt, paused: true } })
     if (MOBILE) holdRestAlert(Math.round(saved.left), total)

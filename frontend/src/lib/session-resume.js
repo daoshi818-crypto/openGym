@@ -3,8 +3,8 @@ import { legacySyncKey } from './workout-date.js'
 export const watchSidOf = active => active?.watchSid || (active?.start ? String(active.start) : '')
 export const elapsedMsOf = (active, now = Date.now()) => Math.max(0,
   active?.segmentStartedAt != null
-    ? (active.elapsedBeforeMs || 0) + Math.max(0, now - active.segmentStartedAt)
-    : now - (active?.start || now))
+    ? (active.elapsedBeforeMs || 0) + Math.max(0, (active.pausedAt || now) - active.segmentStartedAt - (active.pausedMs || 0))
+    : (active?.pausedAt || now) - (active?.start || now) - (active?.pausedMs || 0))
 
 export function resumeCompletedSession(state, ref, now = Date.now()) {
   if (state.active) throw new Error('Finish the current workout first.')
@@ -16,6 +16,8 @@ export function resumeCompletedSession(state, ref, now = Date.now()) {
   active.resumeWorkoutId = active.id
   active.elapsedBeforeMs = original.durationMs ?? Math.max(0, original.end - original.start)
   active.segmentStartedAt = now
+  active.pausedAt = 0
+  active.pausedMs = 0
   active.watchSid = String(active.id) + ':' + now
   active.cur = Math.max(0, active.entries.findIndex(e => e.sets.some(r => !r.done)))
   for (const k of ['end', 'vol', 'prs', '_ts', 'durationMs']) delete active[k]

@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import { api, setRemoteAuth } from '../lib/api.js'
 import { localTZ } from '../lib/format.js'
+import { rememberClose } from '../lib/watch-events.js'
+import { watchSidOf } from '../lib/session-resume.js'
 import { t } from '../lib/i18n.js'
 import { registerCustom, healCustomEx } from '../lib/exercises.js'
 import { DEMO, DEMO_SEEDED } from '../lib/demo.js'
@@ -1324,6 +1326,13 @@ export const useStore = create((set, get) => {
       const prev = get().S
       const S = clone(prev)
       mut(S)
+      if (prev.active && !prev.active.editingWorkoutId && watchSidOf(prev.active) !== watchSidOf(S.active)) {
+        const sid = watchSidOf(prev.active)
+        if (sid && !S.watchClosed?.[sid]) {
+          const saved = S.workouts.find(w => w.watchSid === sid || String(w.start) === sid || w.watchSids?.includes(sid))
+          rememberClose(S, { sid, disposition: saved ? 'saved' : 'discarded', closedAt: saved?.finishedAt || Date.now(), entries: prev.active.entries })
+        }
+      }
       // What the change removed, and which routines, workouts, settings and plan days it touched,
       // each with one time that comes after every stamp the copy already carries: a conflict then
       // keeps a removal and the edit made last, even from a device whose clock runs behind

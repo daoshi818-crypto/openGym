@@ -1,8 +1,11 @@
 import { Fragment, useEffect, useId, useRef, useState } from 'react'
 import SwipeCards from '../components/SwipeCards.jsx'
+import WatchWorkoutButton from '../components/WatchWorkoutButton.jsx'
+import { MOBILE } from '../lib/mobile.js'
 import SwipeRow from '../components/SwipeRow.jsx'
 import { useNavigate } from 'react-router-dom'
 import { watchSidOf } from '../lib/session-resume.js'
+import { sendToWatch } from '../lib/watch-link.js'
 import { useStore } from '../store/useStore.js'
 import { workoutControls } from '../lib/workout-controls.js'
 import { useUI } from '../store/useUI.js'
@@ -1491,6 +1494,17 @@ function ActiveWorkout() {
         !editing && { icon: 'clipboard', label: t('Add routine'), sub: t('Bring another routine into this session'), onClick: addRoutineToSessionSheet },
       ] },
       { title: t('This workout'), items: [
+        !editing && !A.backfill && { icon: A.pausedAt ? 'play' : 'pause', label: t(A.pausedAt ? 'Resume' : 'Pause'), onClick: () => {
+          const at = Date.now(), paused = !A.pausedAt
+          update(s => {
+            const a = s.active
+            if (paused) a.pausedAt = at
+            else { a.pausedMs = (a.pausedMs || 0) + at - a.pausedAt; a.pausedAt = 0 }
+            a.pauseVersion = at
+          })
+          useUI.getState()[paused ? 'pauseRest' : 'resumeRest']()
+          sendToWatch({ t: 'pause', sid: watchSidOf(A), paused, at, seq: at, source: 'phone' })
+        } },
         A.backfill && A.entries.length > 0 && { icon: 'checkCircle', label: t('Mark all sets done'), onClick: markAllDone },
         { icon: 'pencil', label: t('Rename workout'), onClick: renameWorkoutSheet },
         { icon: 'layout', label: t('Layout'), sub: LAYOUT_LABEL[workoutView] || LAYOUT_LABEL.cards, onClick: openLayoutMenu },
@@ -1816,8 +1830,8 @@ function ActiveWorkout() {
   // 休息调整 → 手表。timer 变化驱动；本地应用远端消息时 remoteRestSeq 挡住回环。
   const watchRestSeq = useRef(0)
   useEffect(() => {
-    if (editing || !timer || timer.paused || timer.ready) return
-    pushRestToWatch(sid, Math.max(0, Math.round((timer.endsAt - Date.now()) / 1000)))
+    // Rest synchronization is owned by Shell, including outside this route.
+    return
   }, [editing, sid, timer?.endsAt])
 
   // 手表的 rest/weight 调整 → 手机。rest 用 useUI 的 addRest/stopRest（通知/闹钟一条不落）；
@@ -1984,6 +1998,12 @@ function ActiveWorkout() {
     if (!sid) return
     const set = workSetOrdinal(A.entries[idx], i)
     if (!set) return
+    const at = Date.now()
+    update(s => {
+      if (!s.active || !['w', 'r', 'reps'].includes(f)) return
+      s.active.watchVersions ||= {}
+      s.active.watchVersions[[idx, set, f === 'w' ? 'weight' : 'reps'].join(':')] = at
+    })
     if (f === 'w') pushWeightToWatch(sid, idx, set, v)
     else if (f === 'r' || f === 'reps') pushRepsToWatch(sid, idx, set, v)
   }
@@ -2173,8 +2193,9 @@ function ActiveWorkout() {
       {editing
         ? <button className="iconbtn" aria-label={t('Close editor')} title={t('Close editor')} onClick={() => exitWorkoutEdit()}><Icon name="xmark" /></button>
         : <button className="iconbtn" aria-label={t('Minimize')} title={t('Minimize')} onClick={() => nav('/home')}><Icon name="chevronDown" /></button>}
-      <div className="whdr-mid"><div className="whdr-name">{A.name}</div><div className="sub">{(A.backfill || editing) ? fmtDate(A.d, true) : <Elapsed start={A.segmentStartedAt != null ? A.segmentStartedAt - (A.elapsedBeforeMs || 0) : A.start} />} · {t('{0} sets', done + '/' + total)}</div></div>
+      <div className="whdr-mid"><div className="whdr-name">{A.name}</div><div className="sub">{(A.backfill || editing) ? fmtDate(A.d, true) : <Elapsed start={A.segmentStartedAt != null ? A.segmentStartedAt - (A.elapsedBeforeMs || 0) : A.start} pausedAt={A.pausedAt} pausedMs={A.pausedMs} />} · {t('{0} sets', done + '/' + total)}</div></div>
       <button className="iconbtn" aria-label={t('Workout options')} title={t('Workout options')} onClick={openViewMenu}><Icon name="more" /></button>
+      {!editing && MOBILE && <WatchWorkoutButton />}
       <button className="btn primary pill whdr-finish" aria-label={editing ? t('Save changes') : undefined}
         onClick={() => (editing ? finishWorkout() : finishWorkoutSheet({ onDiscard: discardWorkout }))}>{editing ? t('Save') : t('Finish')}</button>
     </div>

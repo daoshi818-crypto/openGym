@@ -1,6 +1,7 @@
 <script>
 // 计算器输入页：改重量/次数。路由参数直接使用 exIdx、setIdx、field。
 import router from '@blueos.app.appmanager.router'
+import storage from '@blueos.storage.storage'
 import { loadState, setRowValue } from '../lib/session.js'
 
 export default {
@@ -74,7 +75,7 @@ export default {
     if (!ev || ev.state === 3) return
     const delta = Number(ev.delta) || (ev.direction === true ? 1 : ev.direction === false ? -1 : 0)
     if (!delta) return
-    const step = this.field === 'w' ? 0.5 : 1
+    const step = this.field === 'w' ? storage.getSync({ key: 'weight_step' }) || 0.5 : 1
     const value = Math.max(0, Math.min(99999, (parseFloat(this.show) || 0) + (delta > 0 ? step : -step)))
     this.buffer = String(Math.round(value * 10) / 10)
     this.show = this.buffer; this.changed = true
@@ -117,13 +118,13 @@ export default {
 </template>
 
 <style>
-.page { flex-direction: column; align-items: center; justify-content: flex-start; width: 390px; height: 450px; background-color: #000000; padding-top: 12px; }
+.page { flex-direction: column; align-items: center; justify-content: flex-start; width: 390px; height: 450px; background-color: #000000; padding-top: 38px; }
 .label { font-size: 19px; color: #8e8e93; }
 .show { font-size: 42px; color: #30d158; margin: 3px 0 8px; }
-.grid { flex-direction: row; flex-wrap: wrap; justify-content: center; width: 330px; }
-.k { width: 104px; height: 58px; font-size: 25px; border-radius: 8px; background-color: #191d1f; color: #ffffff; margin: 2px; }
+.grid { flex-direction: row; flex-wrap: wrap; justify-content: center; width: 290px; }
+.k { width: 92px; height: 54px; font-size: 24px; border-radius: 8px; background-color: #191d1f; color: #ffffff; margin: 2px; }
 .c { color: #ff453a; }
-.actions { width: 330px; height: 58px; justify-content: space-between; margin-top: 10px; }
-.ok { width: 214px; height: 54px; font-size: 22px; border-radius: 8px; background-color: #63dfb1; color: #001b12; }
-.cancel { width: 108px; height: 54px; font-size: 20px; border-radius: 8px; background-color: #191d1f; color: #ffffff; }
+.actions { width: 280px; height: 50px; justify-content: space-between; margin-top: 8px; }
+.ok { width: 182px; height: 48px; font-size: 21px; border-radius: 8px; background-color: #63dfb1; color: #001b12; }
+.cancel { width: 90px; height: 48px; font-size: 19px; border-radius: 8px; background-color: #191d1f; color: #ffffff; }
 </style>

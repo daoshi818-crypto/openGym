@@ -33,6 +33,7 @@ docs/superpowers/plans/
 
 # BlueOS Studio build output & local IDE state
 watch-app/build/
+watch-app/dist/
 watch-app/.preview.json
 watch-app/.ide/
 

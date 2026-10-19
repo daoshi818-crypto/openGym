@@ -1,99 +1,46 @@
-# 训练助手（BlueOS 手表应用）
+# opengym for BlueOS
 
-vivo 手表上的极简训练伴侣：**抬腕点一下记一组，组间倒计时结束震动提醒，全程记录心率并估算热量**。
-不做计划编辑、不做好看的东西——手表只干这三件事，训练数据通过**蓝牙直连手机**实时回传进 openGym。
+BlueOS watch companion for openGym. Display name: `opengym`; package identity:
+`com.zcode.gymtimer`. The circular launcher icon is in `src/assets/images/logo.png`.
 
-```
-手表（本项目）                    手机（openGym App，BluetoothGatt 中心设备）
-  收到计划 → 立即落盘               写"计划"特征值（今天的训练 JSON）
-  完成一组 → 落盘 + BLE 回传  ───►  notify "完成"特征值 → 手机立即记入 openGym
-  组间倒计时（绝对时间戳）+ 震动
-  心率订阅 → 均值/最大/热量
-  结束 → 回传汇总；失败留本地，重连自动补发
-```
+## Training
 
-方案与协议细节见 [DESIGN.md](../DESIGN.md)（第 4 节是 BLE 协议，第 7 节是踩坑清单）。
-云端 Worker（`../worker`）保留为备选路径：手机不在身边时训练，会话仍会尝试上传 Worker 转 CSV。
+- Swipe up/down between training and operations. Two dots at the right show the page.
+- Swipe right or tap Training Exercises to select any exercise/set. Previous/next buttons
+  and the crown move within the current exercise; the crown adjusts rest in 5-second steps.
+- Heart rate stays on the training screen, including rest. Calories are estimates.
+- Operations includes set count, undo completion, pause/resume, save/end and abandon.
+- Plans sent from the phone are cached for offline starts. The phone must confirm conflicts
+  before an offline watch save changes an already closed phone record.
+- Unsaved watch sessions expire after six hours from the current training segment's start.
+  Previously saved history is retained. The close event is queued for reconnection.
 
-## 为什么闪退不怕
+## Transport and Persistence
 
-手表应用闪退是常态，所以这里**不做内存里的状态**：
+The active transport is vivo DeviceRpc via vivo Health and BlueOS interconnect, implemented
+in `src/lib/rpc.js`. The old BLE/Worker design is historical and is not the active protocol.
+Events carry persistent IDs; the outbox retries until business acknowledgement. Snapshots
+confirm applied edits, and closed-session tombstones reject stale plans. Data and navigation
+are independent. Rest uses an absolute deadline, current-round target, ID and version.
 
-| 事件 | 落盘时机 |
-|---|---|
-| 完成一组 | `completeSet()` 里立即写 `session_state`（含训练位置）|
-| 休息开始 | 写的是**绝对时间戳** `restUntil`，不是"还剩几秒" |
-| 心率 | 累计值随每 10 秒的 flush 写入 |
-| BLE 回传 | 每条事件先进 `ble_outbox` 待发队列，收到手机 ack 才清除 |
+The phone responds while its process and RPC service remain available. If the OS kills it,
+the watch continues with cached data and uploads after the phone is available again. Sensor
+sampling and background delivery depend on the watch firmware and require device testing.
 
-重新打开应用时（`src/Workout` 的 `onInit`）读回状态：
+## Build
 
-- 训练位置、已完成组数、心率累计 → 原样恢复
-- 休息**还在进行** → 倒计时接着走（因为存的是时间戳，不是剩余秒数）
-- 休息**在应用没运行时已经结束** → 补一次震动提醒，然后清掉
-- BLE 没发出去的事件（手表离开手机范围、应用闪退）→ 留在待发队列，重连后自动补发；
-  手机按 `sid+ex+set` 幂等去重，不会出现重复记录
+Use BlueOS Studio's **blueos-pack** compiler, not the generic hap-toolkit. The latter produces
+a different package format. With Studio installed:
 
-## 目录
-
-```
-package.json / jsconfig.json   工程声明（Studio 识别工程用）
-manifest.json → src/manifest.json   应用声明：路由、features、蓝牙/心率权限
-src/assets/images/logo.png     应用图标（114×114）
-src/app.ux                     入口
-src/Index/               开始页（等手机推送计划 / 继续训练）
-src/Workout/             训练页（完成一组、倒计时、心率热量、同步状态）
-src/lib/ble.js                 ★ GATT 服务端：广播、收计划、回传事件、分片重组、待发队列
-src/lib/session.js             会话状态机 + 落盘（防闪退核心）
-src/lib/cloud.js               云端备选：拉配置、推会话、失败重试
-src/lib/sensors.js             心率订阅 + 震动
+```powershell
+$env:BLUEOS_PACK = 'path/to/blueos-debugger/node_modules/blueos-pack/bin/index.js'
+./scripts/build-release.ps1
 ```
 
-## 用 BlueOS Studio 构建、装到手表
+The script targets `watch-round`, verifies the VRU payload and writes the RPK/checksum into
+`releases/`. The matching phone GitHub release includes these files. Development keys and
+Studio output are ignored. Current validation uses blueos-pack `1.0.12-beta.13`.
 
-工程是标准 BlueOS 应用结构（`package.json` + `jsconfig.json` 在根目录，`manifest.json` 在 `src/` 下），
-在 Studio 里「打开工程」选 `watch-app` 这个根目录即可。
-
-1. 装 [BlueOS Studio](https://studio.blueos.com.cn/install)（官方 IDE，Windows 可用），同时装 Node.js
-2. Studio → 打开工程 → 选这个 `watch-app` 目录 → 安装依赖 → 重新启动编译
-3. 右侧模拟器直接能跑：开始页有**「试试示例训练」**按钮（模拟器没有 BLE 和网络，
-   点它就能走完"完成一组 → 倒计时 → 心率热量 → 结束"全流程，落盘恢复逻辑也能测）
-4. 打包 rpk：顶部工具栏「**打包**」→ 包类型选 **debug**（个人使用）→ 打包成功后在
-   `watch-app/dist/` 生成 `*.rpk`，点「打开 rpk 所在位置」拿到文件
-5. 装到手表：手表开启**开发者模式**（设置 → 关于 → 连点版本号）后，用 USB 或
-   Studio 的真机调试把 debug rpk 装上；正式分发才需要在 vivo 开放平台签名 release 包
-6. 手表型号要求：跑**蓝河系统**的手表（WATCH 3 / WATCH GT 这类），手环不支持第三方应用
-
-> 如果 Studio 仍提示"未打开蓝河应用项目"：用 Studio 的「新建工程」随便建一个空工程，
-> 然后把本目录的 `src/` 整个覆盖过去（生成工程的 `package.json` 带有官方工具链依赖，
-> 以它为准），再「安装依赖」。
-
-## 手机端配套
-
-手表只做 GATT 服务端（蓝河的中心设备 API 没有完整文档），**连接、写计划、收通知都在手机侧的
-openGym 插件里**——见 DESIGN.md 第 6 节，协议 UUID / 消息格式全部定死在那里，两端照着实现即可：
-
-| 项 | 值 |
-|---|---|
-| 服务 UUID | `0000a100-0000-1000-8000-00805f9b34fb` |
-| 计划（手机→手表，write） | `0000a101-…`，JSON 以 `\n` 结尾 |
-| 完成（手表→手机，notify） | `0000a102-…`，分片发送、`\n` 收尾，手机按字节流重组 |
-| 状态（双向，read/write） | `0000a103-…`，`hello` 握手 / `ack {upto}` 确认 |
-
-## 云端备选（可选）
-
-不部署 Worker 就用不了备选路径，主路径（蓝牙）不受影响。要启用的话：
-
-`src/lib/cloud.js` 顶部：
-
-```js
-export const WORKER_URL = 'https://你的worker.workers.dev'
-export const TOKEN = '你设置的口令'
-```
-
-## 已知限制（都实测过原因）
-
-- **没有屏幕常亮 API**：训练中屏幕会按系统超时熄灭，倒计时看不见；靠"结束震动"和抬腕点亮解决
-- **息屏时心率可能停采**：心率传感器不在蓝河的后台接口清单里，所以均值/最大是"亮屏期间采样"的结果；热量按这个均值估算，够"大概数据"用
-- **BLE 广播参数**：`txPower` 文档范围是 -127~1 dBm，DESIGN 草稿里的 60 超范围，实现里没传（用默认值）
-- **手表连不上手机时不影响训练**：数据先落本地，重连后自动补发；没配 Worker 时云端备选静默失败
+Install the RPK through BlueOS Studio's watch debugging/install flow. Validate 390x450 layout,
+gesture/crown behavior, sensor permissions, sleep/resume, offline uploads and phone conflicts
+on a physical vivo watch. HTML layout previews are approximate, not a device runtime test.

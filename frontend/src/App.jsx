@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useMemo } from 'react'
 import { HashRouter, Routes, Route, Navigate, useNavigate, useLocation, useNavigationType } from 'react-router-dom'
 import { useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
@@ -17,11 +17,15 @@ import { installViewportGuard } from './lib/viewport-guard.js'
 import { installChipDrag } from './lib/hchips.js'
 import { syncPushSubscription } from './lib/push.js'
 import { MOBILE } from './lib/mobile.js'
-import { pushPlanToWatch, clearWatchPlan, bindWatchLifecycle, pushEndedToWatch, pushSyncToWatch, pushAckToWatch } from './lib/watch-link.js'
-import { watchPlanOf } from './lib/watch-workout.js'
+import { pushPlanToWatch, clearWatchPlan, bindWatchLifecycle, pushEndedToWatch, pushSyncToWatch, pushAckToWatch, watchAvailable, connectWatch } from './lib/watch-link.js'
+import { watchPlanOf, watchCatalogOf } from './lib/watch-workout.js'
+import { sendToWatch, pushRestToWatch } from './lib/watch-link.js'
+import { watchSidOf } from './lib/session-resume.js'
+import { rememberClose } from './lib/watch-events.js'
 import { createWatchLifecycle } from './lib/watch-session.js'
 import { exitWorkoutEdit, startFlow, finishWorkoutFromWatch } from './sheets.jsx'
 import Icon from './components/Icon.jsx'
+import WatchSaveReview from './components/WatchSaveReview.jsx'
 import TabBar from './components/TabBar.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import Modals from './components/Modals.jsx'
@@ -77,12 +81,17 @@ function Shell() {
   const watchPlan = MOBILE ? JSON.stringify(watchPlanOf(S)) : 'null'
   useEffect(() => {
     if (!MOBILE) return
-    return bindWatchLifecycle(createWatchLifecycle({
+    const unbind = bindWatchLifecycle(createWatchLifecycle({
       getState: () => useStore.getState().S,
       update: fn => useStore.getState().update(fn), getTimer: () => useUI.getState().timer,
       sendEnded: pushEndedToWatch, sendSync: pushSyncToWatch, sendAck: pushAckToWatch,
       finish: finishWorkoutFromWatch,
+      send: sendToWatch, rest: ev => useUI.getState().followWatchRest(ev),
+      pause: paused => useUI.getState()[paused ? 'pauseRest' : 'resumeRest'](),
+      stop: () => { useUI.getState().stopRest(); useUI.getState().stopWork() },
     }))
+    watchAvailable().then(result => { if (result.available) connectWatch() })
+    return unbind
   }, [])
   // 会话级生命周期：在设置页拉起手表时仍保留计划，结束/丢弃后才清除。
   useEffect(() => {
@@ -91,6 +100,33 @@ function Shell() {
     if (plan) pushPlanToWatch(plan.workout, plan.sid, plan.profile)
     else clearWatchPlan(undefined, S.active?.editingWorkoutId ? 'history_editor' : 'no_active_session')
   }, [watchPlan])
+  const watchCatalog = useMemo(() => MOBILE ? JSON.stringify({ ...watchCatalogOf(S), at: 0 }) : 'null', [S.routines, S.week, S.dayPlan, S.watchPlanIds, S.workouts])
+  const restTimer = useUI(s => s.timer)
+  useEffect(() => {
+    if (MOBILE) sendToWatch({ ...JSON.parse(watchCatalog), at: Date.now() })
+  }, [watchCatalog])
+  useEffect(() => {
+    if (!MOBILE || !S.active?.start || restTimer?.source === 'watch') return
+    const version = restTimer?.seq || Date.now()
+    useStore.getState().update(s => { if (s.active) s.active.restVersion = version })
+    pushRestToWatch(watchSidOf(S.active), restTimer && !restTimer.ready ? restTimer.paused ? restTimer.left : Math.max(0, Math.ceil((restTimer.endsAt - Date.now()) / 1000)) : 0, restTimer)
+  }, [S.active?.start, restTimer?.endsAt, restTimer?.paused, restTimer?.ready, restTimer?.total])
+  const priorWatchSession = useRef(null)
+  useEffect(() => {
+    if (!MOBILE) return
+    const old = priorWatchSession.current
+    const sid = watchSidOf(S.active)
+    priorWatchSession.current = S.active
+    if (old && watchSidOf(old) !== sid && !old.editingWorkoutId) {
+      const oldSid = watchSidOf(old)
+      const saved = S.workouts?.find(w => w.watchSid === oldSid || w.watchSids?.includes(oldSid) || String(w.start) === oldSid)
+      const close = S.watchClosed?.[oldSid] || { sid: oldSid, disposition: saved ? 'saved' : 'discarded', closedAt: saved?.finishedAt || Date.now() }
+      if (!S.watchClosed?.[oldSid]) {
+        useStore.getState().update(s => rememberClose(s, close))
+      }
+      sendToWatch({ ...close, t: 'session_close' })
+    }
+  }, [S.active, S.workouts])
   // iOS: whether timer sounds get past the ring/silent switch (Settings → Sounds). Page-level,
   // so it is applied here on load and on change rather than at each beep.
   useEffect(() => { setPlayOnSilent(!!S.soundOnSilent) }, [S.soundOnSilent])
@@ -221,6 +257,7 @@ function Shell() {
       {/* keyed on the route: a view that throws is contained, and switching tabs
           re-mounts the boundary, so the tab bar is always a way out */}
       <div id="app" className="vfade" key={loc.pathname}>
+        <WatchSaveReview />
         <ErrorBoundary>
           {!authed ? <Login /> : needsMobileOnboarding ? <MobileOnboarding /> : (
             <Routes>

@@ -1,134 +1,146 @@
 <script>
-// 开始页：手表是手机训练的辅助端，不独立开始训练。
-// 手机开始训练后推送 plan；手表打开时如果已有活跃会话，直接接着显示。
 import router from '@blueos.app.appmanager.router'
-import { loadState, startSession, applySync } from '../lib/session.js'
-import { startServer } from '../lib/rpc.js'
-import { WATCH_VERSION } from '../lib/version.js'
 import storage from '@blueos.storage.storage'
+import { loadState, startSession, applySync, replacePlan, closeSession, save } from '../lib/session.js'
+import { startServer, sendEvent, pendingCount, isConnected } from '../lib/rpc.js'
+import { WATCH_VERSION } from '../lib/version.js'
 
 export default {
-  data: {
-    version: WATCH_VERSION,
-    status: '正在连接手机…',
-    workoutName: '',
-    exerciseCount: 0,
-    canStart: false,
-    canResume: false,
-    linkLabel: '',
-    plan: null,
-    resumeSid: '',
-  },
-
-  onInit() {
-    const s = loadState()
-    if (s.active && s.workout) {
-      this.canResume = true
-      this.resumeSid = s.sid || ''
-      this.workoutName = s.workout.name || '上次的训练'
-      this.exerciseCount = s.workout.exercises.length
-      this.status = '手机训练进行中'
-    } else {
-      this.status = '请在手机上开始训练'
-    }
-
+  data: { version: WATCH_VERSION, status: '正在连接手机', plans: [], selected: null, workoutName: '',
+    exerciseCount: 0, canResume: false, conflict: null, hasSummary: false, settingsOn: false, restSetting: 90, weightStep: 0.5 },
+  onInit(params) {
+    if (params && params.conflict) { try { this.conflict = JSON.parse(params.conflict) } catch (e) {} }
+    this.readLocal()
     this.bindRpc()
   },
-
-  onShow() {
+  onShow() { this.readLocal(); this.bindRpc() },
+  readLocal() {
     const s = loadState()
-    const closed = storage.getSync({ key: 'closed_sessions' }) || []
-    if (!s.active && (closed.indexOf(this.resumeSid) >= 0 || this.plan && closed.indexOf(this.plan.sid) >= 0)) {
-      this.canResume = false; this.canStart = false; this.resumeSid = ''; this.plan = null
-      this.workoutName = ''; this.exerciseCount = 0; this.status = '请在手机上开始训练'
-    }
-    this.bindRpc()
+    this.canResume = !!s.active
+    this.hasSummary = !!storage.getSync({ key: 'summary_last' })
+    this.restSetting = storage.getSync({ key: 'default_rest_sec' }) || 90
+    this.weightStep = storage.getSync({ key: 'weight_step' }) || 0.5
+    const catalog = storage.getSync({ key: 'plan_catalog' })
+    if (catalog) this.onCatalog(catalog)
+    if (s.active) {
+      this.workoutName = s.workout.name; this.exerciseCount = s.workout.exercises.length
+      this.status = s.pendingStart ? '离线训练 · 待同步' : '训练进行中'
+    } else this.status = storage.getSync({ key: 'last_notice' }) || (this.plans.length ? '缓存计划 · 待同步' : '今日暂无计划')
   },
-
   bindRpc() {
     startServer({
-      onPlan: (msg) => this.onPlanMsg(msg),
-      onSync: (msg) => this.onSyncMsg(msg),
-      onEnded: () => {
-        this.plan = null; this.canStart = false; this.canResume = false
-        this.resumeSid = ''; this.exerciseCount = 0; this.workoutName = ''
-        router.replace({ uri: '/Summary' })
-      },
-      onState: (connected) => {
-        this.linkLabel = connected ? '已连接手机' : ''
-        if (!this.canResume && !this.plan && !connected) this.status = '请在手机上开始训练'
-      },
-      onError: () => {
-        this.linkLabel = ''
-        this.status = '连接失败，请检查运动健康'
-      },
+      onCatalog: msg => { this.onCatalog(msg); if (!this.canResume) this.status = this.plans.length ? '选择训练计划' : '今日暂无计划' },
+      onPlan: msg => this.onPlan(msg), onSync: msg => this.onSync(msg),
+      onStartAck: msg => { if (msg.status === 'conflict') this.conflict = msg.snapshot },
+      onEnded: () => { this.canResume = false; this.readLocal() },
+      onState: connected => { if (!this.canResume) this.status = connected ? this.plans.length ? '选择训练计划' : '今日暂无计划' : '缓存计划 · 待同步' },
     })
   },
-
-  onPlanMsg(msg) {
-    if (this.canResume && (!msg.sid || msg.sid === this.resumeSid)) {
-      return { status: 'retained', page: 'Index', exercises: this.exerciseCount }
-    }
-    return this.applyPlan(msg.workout, msg.exercises || [], msg.sid || '', msg.profile || null)
+  onCatalog(msg) {
+    this.plans = (msg.plans || []).filter(p => p.available !== false)
+    if (!this.selected || !this.plans.some(p => p.id === this.selected.id)) this.selected = this.plans[0] || null
+    if (!this.canResume && this.selected) { this.workoutName = this.selected.name; this.exerciseCount = this.selected.exercises.length }
   },
-
-  onSyncMsg(msg) {
-    this.snapshot = msg
-    // 手机重连后推来的权威快照：如果本地没有活跃会话，按快照进入训练。
-    if (this.canResume && (!msg.sid || msg.sid === this.resumeSid)) {
-      applySync(loadState(), msg)
-      return { status: 'retained', page: 'Index', exercises: this.exerciseCount }
-    }
-    return this.applyPlan(msg.workout || msg.name, msg.exercises || [], msg.sid || '', msg.profile || null)
+  onPlan(msg) {
+    if (!msg || !Array.isArray(msg.exercises) || !msg.exercises.length) return { status: 'rejected', reason: 'empty_exercises', page: 'Index' }
+    const s = loadState()
+    if (s.active) { replacePlan(s, { name: msg.workout, exercises: msg.exercises }); return { status: 'retained', page: 'Index' } }
+    this.remotePlan = msg; this.workoutName = msg.workout; this.exerciseCount = msg.exercises.length
+    this.canResume = true; this.status = '手机训练进行中'
+    return { status: 'applied', page: 'Index', exercises: msg.exercises.length }
   },
-
-  applyPlan(name, exercises, sid, profile) {
-    if (!Array.isArray(exercises) || !exercises.length) {
-      return { status: 'rejected', page: 'Index', reason: 'empty_exercises', exercises: 0 }
-    }
-    this.canResume = false
-    this.plan = { sid, name, exercises, profile }
-    this.workoutName = name
-    this.exerciseCount = exercises.length
-    this.status = '手机训练中\n今天：' + name
-    this.canStart = true
-    return { status: 'applied', page: 'Index', exercises: exercises.length }
+  onSync(msg) {
+    let s = loadState()
+    if (!s.active) s = startSession({ name: msg.workout, sid: msg.sid, exercises: msg.exercises }, msg.profile)
+    applySync(s, msg); this.canResume = true; this.readLocal()
+    return { status: 'applied', page: 'Index' }
   },
-
+  choose(p) { this.selected = p; this.workoutName = p.name; this.exerciseCount = p.exercises.length },
   onStart() {
-    const p = this.plan
-    if (!p) return
-    const s = startSession({ name: p.name, sid: p.sid, exercises: p.exercises }, p.profile)
-    if (this.snapshot && this.snapshot.sid === p.sid) applySync(s, this.snapshot)
+    if (loadState().active) { this.onResume(); return }
+    if (this.remotePlan) {
+      const p = this.remotePlan
+      startSession({ name: p.workout, sid: p.sid, exercises: p.exercises }, p.profile)
+    } else {
+      const p = this.selected
+      if (!p || !p.exercises.length) return
+      const s = startSession({ name: p.name, exercises: p.exercises, rows: p.rows }, p.profile)
+      s.pendingStart = true; s.planId = p.id; save(s)
+      sendEvent({ t: 'watch_start', sid: s.sid, startedAt: s.startedAt, planId: p.id, plan: p })
+    }
     router.push({ uri: '/Workout' })
   },
-
-  onResume() { router.push({ uri: '/Workout' }) },
+  onResume() {
+    if (!loadState().active && this.remotePlan) { this.onStart(); return }
+    router.push({ uri: '/Workout' })
+  },
+  acceptConflict() {
+    const s = loadState()
+    if (s.active) {
+      sendEvent({ t: 'session_close', sid: s.sid, disposition: 'abandoned', closedAt: Date.now() })
+      closeSession(s.sid)
+    }
+    const msg = this.conflict
+    this.conflict = null
+    if (msg) this.onSync(msg)
+    this.onResume()
+  },
+  keepConflict() { this.conflict = null },
+  showSummary() { router.push({ uri: '/Summary' }) },
+  openSettings() { this.settingsOn = true },
+  closeSettings() { this.settingsOn = false },
+  lessRest() { this.restSetting = Math.max(15, this.restSetting - 15); this.saveSettings() },
+  moreRest() { this.restSetting = Math.min(900, this.restSetting + 15); this.saveSettings() },
+  changeStep() { this.weightStep = this.weightStep === 0.5 ? 1 : this.weightStep === 1 ? 2.5 : 0.5; this.saveSettings() },
+  saveSettings() {
+    storage.set({ key: 'default_rest_sec', value: this.restSetting, fail() {} })
+    storage.set({ key: 'weight_step', value: this.weightStep, fail() {} })
+  },
 }
 </script>
-
 <template>
   <div class="page">
     <image class="logo" src="/assets/images/logo.png" />
-    <text class="title">训练助手</text>
-    <text class="version">v{{ version }}</text>
+    <text class="title">opengym</text>
     <text class="status">{{ status }}</text>
-    <text class="sub" if="{{ exerciseCount }}">{{ exerciseCount }} 个动作</text>
-    <text class="link" if="{{ linkLabel }}">{{ linkLabel }}</text>
-
-    <input class="btn primary" type="button" value="继续训练" onclick="onResume" if="{{ canResume }}" />
-    <input class="btn primary" type="button" value="进入辅助" onclick="onStart" if="{{ canStart }}" />
+    <text class="name" if="{{ canResume }}">{{ workoutName }}</text>
+    <list class="plans" if="{{ !canResume && plans.length }}">
+      <list-item class="plan" type="plan" for="{{ p in plans }}" tid="id" onclick="choose(p)">
+        <text class="plan-name {{ selected && selected.id === p.id ? 'selected' : '' }}">{{ p.today ? '今日 · ' : '' }}{{ p.name }}</text>
+        <text class="count">{{ p.exercises.length }} 个动作</text>
+      </list-item>
+    </list>
+    <input class="btn" type="button" value="继续当前训练" onclick="onResume" if="{{ canResume }}" />
+    <input class="btn" type="button" value="开始训练" onclick="onStart" if="{{ !canResume && selected }}" />
+    <div class="links"><input class="link" type="button" value="最近结果" onclick="showSummary" if="{{ hasSummary }}" /><input class="link" type="button" value="设置" onclick="openSettings" /></div>
+    <div class="overlay" if="{{ conflict }}">
+      <text class="name">手机已有活动训练</text>
+      <text class="status">继续手机训练将丢弃本地未保存训练</text>
+      <input class="btn" type="button" value="继续手机训练" onclick="acceptConflict" />
+      <input class="link" type="button" value="返回" onclick="keepConflict" />
+    </div>
+    <div class="overlay" if="{{ settingsOn }}">
+      <text class="title">训练设置</text>
+      <text class="name">默认休息 {{ restSetting }} 秒</text>
+      <div class="links"><input class="link" type="button" value="−15秒" onclick="lessRest" /><input class="link" type="button" value="+15秒" onclick="moreRest" /></div>
+      <input class="btn" type="button" value="重量步长 {{ weightStep }} kg" onclick="changeStep" />
+      <input class="link" type="button" value="返回" onclick="closeSettings" />
+    </div>
   </div>
 </template>
-
 <style>
-.page { flex-direction: column; justify-content: center; align-items: center; width: 390px; height: 450px; background-color: #000000; padding: 16px; }
-.logo { width: 54px; height: 54px; margin-bottom: 10px; }
-.title { font-size: 28px; color: #ffffff; margin-bottom: 6px; }
-.version { font-size: 15px; color: #aeb9bd; margin-bottom: 22px; }
-.status { font-size: 22px; color: #f5f5f7; text-align: center; max-width: 350px; lines: 2; margin-bottom: 5px; }
-.sub { font-size: 18px; color: #9aa0a6; margin-bottom: 10px; }
-.link { font-size: 17px; color: #4ade80; margin-bottom: 5px; }
-.btn { width: 310px; height: 56px; font-size: 22px; border-radius: 8px; margin-top: 16px; }
-.primary { background-color: #63dfb1; color: #001b12; }
+.page { width: 390px; height: 450px; padding: 38px 44px; flex-direction: column; align-items: center; background-color: #000000; }
+.logo { width: 42px; height: 42px; }
+.title { width: 280px; height: 36px; font-size: 27px; color: #ffffff; text-align: center; }
+.status { width: 280px; height: 40px; font-size: 17px; color: #aeb9bd; text-align: center; lines: 2; }
+.name { width: 280px; height: 58px; font-size: 23px; color: #ffffff; text-align: center; lines: 2; }
+.plans { width: 290px; height: 132px; }
+.plan { width: 290px; height: 64px; flex-direction: column; padding: 5px 8px; }
+.plan-name { width: 274px; height: 30px; font-size: 21px; color: #ffffff; lines: 1; }
+.selected { color: #63dfb1; }
+.count { font-size: 16px; color: #aeb9bd; }
+.btn { width: 280px; height: 48px; font-size: 21px; border-radius: 8px; margin-top: 8px; background-color: #63dfb1; color: #001b12; }
+.links { width: 280px; height: 40px; justify-content: center; }
+.link { width: 135px; height: 40px; font-size: 17px; background-color: transparent; color: #aeb9bd; }
+.overlay { position: absolute; left: 0; top: 0; width: 390px; height: 450px; padding: 44px; flex-direction: column; align-items: center; justify-content: center; background-color: #000000; }
 </style>

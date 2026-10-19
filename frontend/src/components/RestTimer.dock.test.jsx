@@ -49,7 +49,7 @@ describe('the docked rest bar', () => {
     mount()
     const bar = host.querySelector('#timer.rest')
     expect(bar.querySelector('button.tclock .t').textContent).toBe('1:30')
-    expect(bar.querySelector('.tclock .lbl').textContent).toBe('Rest')
+    expect(bar.querySelector('.tclock .lbl').textContent).toBe('Time left')
     expect([...bar.querySelectorAll('.acts > button')].map(b => b.getAttribute('aria-label') || (b.querySelector('.on') || b).textContent.trim()))
       .toEqual(['15s', '15s', 'Pause', 'Skip'])
     expect(bar.querySelector('.tclock').getAttribute('aria-label')).toBe('1:30. Change the time left')

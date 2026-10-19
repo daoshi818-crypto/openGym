@@ -118,7 +118,8 @@ export default function RestTimer() {
       <button type="button" className="tclock" onClick={adjustRestSheet}
         aria-label={(timer.ready ? t('Ready') : clock(timer.left)) + '. ' + t('Change the time left')}>
         <span className="t" role={timer.ready ? 'status' : undefined} data-alt={timer.ready ? '0:00' : t('Ready')}>{timer.ready ? t('Ready') : clock(timer.left)}</span>
-        <span className="lbl">{label}<Icon name="chevronDown" /></span>
+        <span className="lbl">{timer.ready || timer.paused || timer.kind === 'switch' ? label : t('Time left')}<Icon name="chevronDown" /></span>
+        <span className="lbl" aria-label={t('Time left') + ' ' + clock(timer.left)}>{t('Rest')} {clock(timer.total)}</span>
       </button>
       <div className="acts" ref={actsRef}>
         <Button size="sm" className="adj" icon="minus" onClick={() => addRest(-15)}>15s</Button>

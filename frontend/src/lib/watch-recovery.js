@@ -1,0 +1,45 @@
+import { applyWatchSummary } from './watch-session.js'
+import { applyWatchEvent } from './watch-events.js'
+import { buildCompletedWorkout } from './finish-workout.js'
+import { hasCompletedWork, isWarmupRow } from './workout-model.js'
+import { isoOf } from './format.js'
+
+export function resolveWatchSave(S, key, accept) {
+  const ev = S.watchPendingSaves?.[key]
+  if (!ev) return
+  if (accept) {
+    const index = S.workouts.findIndex(w => w.watchSid === ev.sid || String(w.start) === ev.sid || w.watchSids?.includes(ev.sid))
+    const record = JSON.parse(JSON.stringify(index >= 0 ? S.workouts[index] : {
+      id: ev.sid, watchSid: ev.sid, start: ev.startedAt || ev.closedAt, d: isoOf(new Date(ev.startedAt || ev.closedAt)),
+      name: ev.workout?.name || '手表训练', entries: [],
+    }))
+    const original = S.watchClosed?.[ev.sid]?.entries
+    const source = original || (ev.workout?.exercises?.map((ex, i) => ({ id: ex.id,
+      sets: (ev.workout.rows[i] || []).map(r => ({ w: r.w, ...(String(ex.reps).includes('秒') ? { sec: Number(r.r) || 0 } : { r: String(r.r) }), done: false })) })) || record.entries)
+    if (!source.length || source.some(e => !e.id)) throw new Error('缺少原动作信息，已保留手表待确认记录')
+    const used = new Set()
+    const entries = source.map(entry => {
+      if (original && !entry.sets.some(hasCompletedWork)) return JSON.parse(JSON.stringify(entry))
+      const match = record.entries.findIndex((e, i) => !used.has(i) && e.id === entry.id)
+      if (match < 0) return JSON.parse(JSON.stringify(entry))
+      used.add(match)
+      return JSON.parse(JSON.stringify(record.entries[match]))
+    })
+    const draft = { ...S, active: { ...record, entries, watchSid: ev.sid, watchEvents: [], watchVersions: {} } }
+    for (const set of ev.completedSets || []) {
+      const entry = entries[set.ex]
+      if (!entry) continue
+      const rows = entry.sets.filter(r => !isWarmupRow(r))
+      while (rows.length < set.set && rows.length < 100) { const row = { ...(rows.at(-1) || {}), done: false }; entry.sets.push(row); rows.push(row) }
+    }
+    for (const set of ev.completedSets || []) applyWatchEvent(draft, { ...set, t: 'set', sid: ev.sid,
+      eventId: key + ':' + set.ex + ':' + set.set, seq: ev.closedAt })
+    applyWatchSummary(draft, { ...ev, ...ev.summary, at: ev.closedAt })
+    const completed = buildCompletedWorkout(draft.active, { end: Math.max(record.end || 0, ev.closedAt || 0) })
+    const result = { ...record, ...completed, id: record.id }
+    if (index >= 0) S.workouts[index] = result
+    else S.workouts.push(result)
+  }
+  S.watchSaveDecisions = { ...S.watchSaveDecisions, [key]: accept ? 'merged' : 'kept_phone' }
+  delete S.watchPendingSaves[key]
+}

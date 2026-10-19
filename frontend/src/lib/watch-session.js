@@ -1,6 +1,7 @@
 import { watchSidOf } from './session-resume.js'
-import { watchSnapshotOf } from './watch-workout.js'
+import { watchSnapshotOf, watchCatalogOf } from './watch-workout.js'
 import { isWarmupRow } from './workout-model.js'
+import { applyWatchEvent, startFromWatch, rememberClose } from './watch-events.js'
 
 export function endedWatchSession(S, sid) {
   const saved = S.workouts?.find(w => w.watchSid === sid || String(w.start) === sid || w.watchSids?.includes(sid) || w.watchSegments?.[sid])
@@ -27,13 +28,82 @@ export function applyWatchSummary(S, ev) {
   return true
 }
 
-export function createWatchLifecycle({ getState, update, getTimer, sendEnded, sendSync, sendAck, finish }) {
+export function createWatchLifecycle({ getState, update, getTimer, sendEnded, sendSync, sendAck, finish, send = () => {}, rest = () => {}, pause = () => {}, stop = () => {} }) {
   return ev => {
     const current = getState()
+    const ack = () => sendAck(ev.at, ev.eventId)
+    const sync = () => { const snap = watchSnapshotOf(getState(), getTimer()); if (snap) sendSync(snap) }
+    if (ev.t === 'watch_start') {
+      let status
+      update(s => { status = startFromWatch(s, ev) })
+      send({ t: 'watch_start_ack', status, sid: ev.sid, eventId: ev.eventId, at: ev.at,
+        snapshot: status === 'conflict' ? watchSnapshotOf(getState(), getTimer()) : null })
+      if (status === 'started') { ack(); sync() }
+      else if (status === 'closed') { ack(); send({ t: 'session_close', ...getState().watchClosed?.[ev.sid], sid: ev.sid, disposition: getState().watchClosed?.[ev.sid]?.disposition || 'saved' }) }
+      return true
+    }
     if (ev.t === 'hello') {
+      send(watchCatalogOf(current))
+      for (const close of Object.values(current.watchClosed || {})) send({ ...close, t: 'session_close' })
       const snapshot = watchSnapshotOf(current, getTimer())
-      if (ev.sid && (!snapshot || snapshot.sid !== ev.sid)) sendEnded(endedWatchSession(current, ev.sid))
+      if (ev.sid && !ev.pendingStart && (!snapshot || snapshot.sid !== ev.sid)) sendEnded(endedWatchSession(current, ev.sid))
       if (snapshot) sendSync(snapshot)
+      return true
+    }
+    if (ev.t === 'session_close_ack') return true
+    if (ev.t === 'session_close') {
+      const prior = current.watchClosed?.[ev.sid]
+      if (prior && prior.eventId === ev.eventId && ev.eventId) { ack(); return true }
+      const same = watchSidOf(current.active) === ev.sid && !current.active?.editingWorkoutId
+      if (ev.disposition === 'saved' && (!same || prior)) {
+        update(s => {
+          s.watchPendingSaves ||= {}
+          const key = ev.eventId || ev.sid + ':' + ev.closedAt
+          if (!s.watchSaveDecisions?.[key]) s.watchPendingSaves[key] = ev
+          if (!s.watchClosed?.[ev.sid]) rememberClose(s, ev)
+        })
+        ack(); return true
+      }
+      if (prior) { ack(); return true }
+      if (ev.disposition === 'saved') {
+        update(s => {
+          applyWatchSummary(s, { ...ev, ...(ev.summary || {}), at: ev.closedAt || ev.at })
+          if (same) for (const set of ev.completedSets || []) applyWatchEvent(s, { ...set, sid: ev.sid, t: 'set', eventId: ev.eventId + ':' + set.ex + ':' + set.set })
+        })
+        if (same) finish(ev.closedAt)
+      } else if (same) update(s => { s.active = null })
+      update(s => rememberClose(s, ev))
+      if (same) stop()
+      ack()
+      return true
+    }
+    if (ev.t === 'pause') {
+      if (watchSidOf(current.active) === ev.sid && (ev.seq || 0) > (current.active.pauseVersion || 0)) {
+        update(s => {
+          const a = s.active
+          a.pauseVersion = ev.seq
+          if (ev.paused && !a.pausedAt) a.pausedAt = ev.at || Date.now()
+          else if (!ev.paused && a.pausedAt) { a.pausedMs = (a.pausedMs || 0) + Math.max(0, (ev.at || Date.now()) - a.pausedAt); a.pausedAt = 0 }
+        })
+        pause(ev.paused)
+      }
+      ack(); sync(); return true
+    }
+    if (ev.t === 'rest') {
+      if (watchSidOf(current.active) === ev.sid && (ev.seq || 0) >= Math.max(current.active.restVersion || 0, getTimer()?.seq || 0)) {
+        update(s => { s.active.restVersion = ev.seq || Date.now() })
+        rest(ev)
+      }
+      ack(); sync(); return true
+    }
+    if (['weight', 'reps', 'set', 'unset', 'add_set', 'remove_set', 'focus'].includes(ev.t)) {
+      let accepted = false
+      const wasDone = current.active?.entries?.[ev.ex]?.sets.filter(r => !isWarmupRow(r))[ev.set - 1]?.done
+      update(s => { accepted = applyWatchEvent(s, ev) })
+      if (accepted) {
+        if (ev.t === 'set' && !wasDone && ev.rest) rest(ev.rest)
+        ack(); sync()
+      } else if (current.watchClosed?.[ev.sid]) ack()
       return true
     }
     if (ev.t !== 'end' && ev.t !== 'summary') return false

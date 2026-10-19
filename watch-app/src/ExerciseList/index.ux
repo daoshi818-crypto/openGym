@@ -45,8 +45,9 @@ export default {
     const set = Number(d.setIdx)
     s.exIdx = ex
     s.setIdx = set
+    s.focusAt = Date.now()
     save(s)
-    sendControl({ t: 'focus', sid: s.sid, ex, set: set + 1, at: Date.now() })
+    sendControl({ t: 'focus', sid: s.sid, ex, set: set + 1, at: s.focusAt, source: 'watch' })
     router.back()
   },
 
@@ -83,13 +84,13 @@ export default {
 </template>
 
 <style>
-.page { flex-direction: column; width: 390px; height: 450px; background-color: #000000; }
-.title { height: 42px; width: 390px; font-size: 25px; color: #ffffff; text-align: center; }
-.body { width: 390px; height: 320px; }
-.scroll { width: 390px; height: 320px; padding-top: 4px; }
-.exrow { flex-direction: column; width: 390px; padding: 8px 20px; }
+.page { flex-direction: column; align-items: center; width: 390px; height: 450px; background-color: #000000; padding: 38px 44px; }
+.title { height: 38px; width: 290px; font-size: 24px; color: #ffffff; text-align: center; }
+.body { width: 290px; height: 270px; }
+.scroll { width: 290px; height: 270px; padding-top: 4px; }
+.exrow { flex-direction: column; width: 290px; padding: 8px 4px; }
 .exhead { flex-direction: column; min-height: 48px; }
-.exname { width: 350px; font-size: 22px; color: #ffffff; lines: 2; }
+.exname { width: 282px; font-size: 21px; color: #ffffff; lines: 2; }
 .cnt { font-size: 17px; color: #8e8e93; margin-top: 1px; }
 .rows { flex-direction: column; margin-top: 4px; }
 .rrow { flex-direction: row; align-items: center; min-height: 48px; padding: 6px 0; }
@@ -98,6 +99,6 @@ export default {
 .rtxt.done { color: #636366; }
 .chev { font-size: 22px; color: #48484a; }
 .foot { flex-direction: row; justify-content: center; padding: 10px 0 18px; }
-.fbtn { width: 310px; height: 54px; font-size: 21px; border-radius: 8px; background-color: #191d1f; color: #ffffff; margin: 0 8px; }
+.fbtn { width: 240px; height: 48px; font-size: 20px; border-radius: 8px; background-color: #191d1f; color: #ffffff; }
 .save { background-color: #30d158; }
 </style>

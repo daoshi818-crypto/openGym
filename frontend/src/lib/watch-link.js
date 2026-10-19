@@ -37,6 +37,8 @@ export function bindWatchLifecycle(cb) {
   return () => { if (onWatchLifecycle === cb) onWatchLifecycle = () => false }
 }
 export const pushEndedToWatch = msg => sendWatchEvent({ ...msg, t: 'ended' })
+export const sendToWatch = msg => sendWatchEvent(msg)
+const receiptListeners = new Set()
 
 export function watchState() { return state }
 export function onWatchState(cb) {
@@ -73,6 +75,7 @@ async function bindNative() {
   p.WatchRpc.addListener('watchEvent', (ev) => {
     try {
       if (!ev) return
+      for (const cb of receiptListeners) { try { cb(ev) } catch { /* Status subscribers must not interrupt delivery. */ } }
       if (ev.t === 'device') {
         device = { ...(device || {}), ...ev }
         return
@@ -256,6 +259,7 @@ async function flushPendingPlan() {
         workout: next.workout.name || '',
         profile: next.profile || null,
         exercises: (next.workout.exercises || []).map(e => ({
+          ...(e.id ? { id: e.id } : {}),
           name: e.name || '',
           sets: e.sets || 1,
           reps: e.reps != null ? String(e.reps) : '',
@@ -307,14 +311,16 @@ let restSeq = 0
 const lastSentRest = { leftSec: -1, at: 0 }
 
 /** 手机调整了休息（±15s、暂停续跑、跳过）：立即推给手表。 */
-export async function pushRestToWatch(sid, leftSec) {
+export async function pushRestToWatch(sid, leftSec, timer = null) {
   if (!MOBILE || !sid) return
   const now = Date.now()
-  if (leftSec === lastSentRest.leftSec && now - lastSentRest.at < 1000) return
   lastSentRest.leftSec = leftSec
   lastSentRest.at = now
   restSeq += 1
-  await sendWatchEvent({ t: 'rest', sid, leftSec, totalSec: leftSec, seq: restSeq })
+  await sendWatchEvent({ t: 'rest', sid, leftSec, totalSec: timer?.total || 0,
+    restId: timer?.restId || '', startedAt: timer?.startedAt || 0,
+    endsAt: timer && !timer.paused && !timer.ready ? timer.endsAt : 0,
+    paused: !!timer?.paused, seq: timer?.seq || now, source: 'phone' })
 }
 
 /** 手机改了某组的重量（ex=动作下标，set=第几组，1 起）。 */
@@ -356,13 +362,38 @@ export async function pushRemoveSetToWatch(sid, ex, sets) {
 /** 手机切换当前动作：手表跟着换焦点。 */
 export async function pushFocusToWatch(sid, ex, set) {
   if (!MOBILE || !sid) return
-  await sendWatchEvent({ t: 'focus', sid, ex, set })
+  await sendWatchEvent({ t: 'focus', sid, ex, set, at: Date.now(), source: 'phone' })
 }
 
 /** 确认收到手表事件；手表用 upto 清理 outbox。 */
-export async function pushAckToWatch(upto) {
+export async function pushAckToWatch(upto, eventId) {
   if (!MOBILE || upto == null) return
-  await sendWatchEvent({ t: 'ack', upto })
+  await sendWatchEvent({ t: 'ack', upto, eventId })
+}
+
+export async function continueOnWatch(snapshot, onStatus) {
+  const available = await watchAvailable()
+  if (!available.available) { onStatus('手表不可用：' + available.reason); return false }
+  onStatus('正在连接手表')
+  let timer
+  const confirmation = new Promise(resolve => {
+    const listener = ev => {
+      if (['plan_ack', 'sync_ack'].includes(ev.t) && ev.sid === snapshot.sid && ['applied', 'retained'].includes(ev.status)) {
+        clearTimeout(timer); receiptListeners.delete(listener); resolve(true)
+      }
+    }
+    receiptListeners.add(listener)
+    timer = setTimeout(() => { receiptListeners.delete(listener); resolve(false) }, 10000)
+  })
+  const result = await openWatchApp()
+  if (result.ok) {
+    onStatus('请求已发，等待手表确认')
+    await pushPlanToWatch({ name: snapshot.workout, exercises: snapshot.exercises }, snapshot.sid, snapshot.profile)
+    await pushSyncToWatch(snapshot)
+  }
+  const confirmed = await confirmation
+  onStatus(confirmed ? '手表已确认，可继续训练' : result.ok ? '手表未确认，请检查连接' : '手表未连接：' + (result.data || result.code))
+  return confirmed
 }
 
 /** 重连后的权威快照。snapshot 由训练页从活动会话生成。 */

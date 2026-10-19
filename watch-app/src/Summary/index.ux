@@ -2,27 +2,34 @@
 // 结束页：本次训练摘要。手机是数据源，这里只展示手表本地结算的紧凑结果。
 import storage from '@blueos.storage.storage'
 import router from '@blueos.app.appmanager.router'
-import { startServer } from '../lib/rpc.js'
+import { startServer, pendingCount, isConnected } from '../lib/rpc.js'
 import { startSession, applySync } from '../lib/session.js'
 
 export default {
-  data: { minutes: '', sets: '', kcal: '', hr: '', volume: '' },
+  data: { minutes: '', sets: '', kcal: '', hr: '', volume: '', syncLabel: '' },
 
   onInit() {
     this.bindRpc()
     try {
       const s = storage.getSync({ key: 'summary_last' })
       if (s && typeof s === 'object') {
-        this.minutes = this.fmtDur(s.minutes)
+        this.minutes = this.fmtDur(s.totalMinutes != null ? s.totalMinutes : s.minutes)
         this.sets = String(s.sets || 0)
-        this.kcal = String(Math.round(s.calories || 0))
+        this.kcal = String(Math.round(s.totalCalories != null ? s.totalCalories : s.calories || 0))
         this.hr = s.avgHr ? String(s.avgHr) : '--'
         this.volume = s.volume ? String(Math.round(s.volume)) : ''
       }
     } catch (e) {}
   },
 
-  onShow() { this.bindRpc() },
+  onShow() {
+    this.bindRpc()
+    this.updateSync()
+    if (!this.timer) this.timer = setInterval(() => this.updateSync(), 1000)
+  },
+  updateSync() { const n = pendingCount(); this.syncLabel = n ? '待上传 ' + n + ' 条' : isConnected() ? '已上传' : '离线保存' },
+  onHide() { if (this.timer) clearInterval(this.timer); this.timer = null },
+  onDestroy() { this.onHide() },
   bindRpc() {
     const next = msg => {
       const s = startSession({ name: msg.workout, sid: msg.sid, exercises: msg.exercises }, msg.profile)
@@ -39,7 +46,6 @@ export default {
   },
 
   onBack() {
-    try { storage.delete({ key: 'summary_last' }) } catch (e) {}
     router.replace({ uri: '/Index' })
   },
 }
@@ -67,6 +73,7 @@ export default {
       </div>
     </div>
     <text class="volume" if="{{ volume }}">训练量 {{ volume }} kg</text>
+    <text class="volume">{{ syncLabel }}</text>
 
     <input class="btn" type="button" value="完成" onclick="onBack" />
   </div>
@@ -77,10 +84,10 @@ export default {
 .title { font-size: 26px; color: #30d158; margin-bottom: 6px; }
 .kcal { font-size: 64px; color: #ffffff; margin-top: 4px; }
 .kcal-lbl { font-size: 18px; color: #8e8e93; margin-bottom: 8px; }
-.row { flex-direction: row; justify-content: center; width: 360px; margin-top: 2px; }
-.cell { flex-direction: column; align-items: center; width: 120px; }
+.row { flex-direction: row; justify-content: center; width: 290px; margin-top: 2px; }
+.cell { flex-direction: column; align-items: center; width: 96px; }
 .num { font-size: 26px; color: #ffffff; }
 .lbl { font-size: 15px; color: #8e8e93; margin-top: 1px; }
 .volume { font-size: 16px; color: #8e8e93; margin-top: 8px; }
-.btn { width: 310px; height: 54px; font-size: 22px; border-radius: 8px; background-color: #63dfb1; color: #001b12; margin-top: 14px; }
+.btn { width: 260px; height: 48px; font-size: 21px; border-radius: 8px; background-color: #63dfb1; color: #001b12; margin-top: 12px; }
 </style>

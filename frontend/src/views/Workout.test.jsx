@@ -2397,7 +2397,7 @@ describe('workout view header menu', () => {
     const menu = await openMenu()
     expect(menu.sections.map(g => g.title)).toEqual([undefined, 'Add', 'This workout', undefined])
     expect(menuItemsOf(menu).map(it => it.label)).toEqual([
-      'Workout settings', 'Add exercise', 'Add routine', 'Rename workout', 'Layout', 'Add session note', 'Don’t count for progression', 'Discard workout',
+      'Workout settings', 'Add exercise', 'Add routine', 'Pause', 'Rename workout', 'Layout', 'Add session note', 'Don’t count for progression', 'Discard workout',
     ])
     expect(item(menu, 'Workout settings').sub).toBe('1:30 rest · Silent')
     expect(item(menu, 'Discard workout').danger).toBe(true)

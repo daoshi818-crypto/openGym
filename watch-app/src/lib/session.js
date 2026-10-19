@@ -10,6 +10,7 @@
 // 存储结构：
 //   session_state    当前会话的紧凑状态（含 rows、休息截止的绝对时间戳、心率累计）
 import storage from '@blueos.storage.storage'
+import { applyEdit, applyRest } from './protocol.js'
 
 const K_STATE = 'session_state'
 
@@ -35,6 +36,16 @@ export function loadState() {
   try {
     const s = storage.getSync({ key: K_STATE })
     if (s && typeof s === 'object' && s.workout) {
+      if (s.active && now() - (s.segmentStartedAt || s.startedAt) >= 21600000) {
+        const at = now()
+        const msg = { t: 'session_close', sid: s.sid, disposition: 'abandoned', reason: 'expired', closedAt: at, at,
+          eventId: 'expired:' + s.sid, source: 'watch' }
+        const outbox = storage.getSync({ key: 'rpc_outbox' }) || []
+        if (!outbox.some(e => e.msg.eventId === msg.eventId)) storage.set({ key: 'rpc_outbox', value: [...outbox, { at, msg, sent: false }], fail() {} })
+        closeSession(s.sid)
+        storage.set({ key: 'last_notice', value: '训练超过6小时，未保存记录已丢弃', fail() {} })
+        return blankState()
+      }
       if (s.rev == null) s.rev = 0
       ensureRows(s)
       return s
@@ -82,7 +93,7 @@ export function startSession(workout, profile) {
   s.startedAt = now()
   s.sid = workout.sid || 'w' + s.startedAt
   s.profile = profile || null
-  s.workout = { name: workout.name, exercises: workout.exercises || [] }
+  s.workout = { name: workout.name, exercises: workout.exercises || [], rows: workout.rows || [] }
   ensureRows(s)
   save(s)
   return s
@@ -91,7 +102,9 @@ export function startSession(workout, profile) {
 // 训练中途手机重推计划：替换动作清单，rows 对齐补齐（同名的动作保留已录数据）
 export function replacePlan(state, workout) {
   if (!workout || !Array.isArray(workout.exercises) || !workout.exercises.length) return state
+  if ((state.pendingEdits || []).length) return state
   const old = state.workout
+  const focused = old && old.exercises[state.exIdx]
   const oldRows = (old && old.rows) || []
   state.workout = { name: workout.name || (old && old.name) || '', exercises: workout.exercises }
   state.workout.rows = state.workout.exercises.map((ex, i) => {
@@ -107,6 +120,8 @@ export function replacePlan(state, workout) {
   })
   // 游标兜底：动作被删了落在前一个，组越界了归到最后一个
   state.exIdx = Math.max(0, Math.min(state.exIdx, state.workout.exercises.length - 1))
+  const focusedIndex = focused ? state.workout.exercises.findIndex(ex => focused.id ? ex.id === focused.id : ex.name === focused.name) : -1
+  if (focusedIndex >= 0) state.exIdx = focusedIndex
   const ex = state.workout.exercises[state.exIdx]
   state.setIdx = Math.max(0, Math.min(state.setIdx, (ex.sets || 1) - 1))
   save(state)
@@ -116,7 +131,11 @@ export function replacePlan(state, workout) {
 // 手机重连后的权威快照：手机是唯一数据源，手表整体接受。
 export function applySync(state, snapshot) {
   if (!snapshot || !Array.isArray(snapshot.exercises)) return state
+  if (snapshot.sid && state.sid && snapshot.sid !== state.sid) return state
+  if (snapshot.rev && snapshot.rev < (state.snapshotRev || 0)) return state
+  state.snapshotRev = snapshot.rev || state.snapshotRev || 0
   const edits = snapshot.sid && snapshot.sid !== state.sid ? [] : state.pendingEdits || []
+  const focused = state.workout && state.workout.exercises[state.exIdx]
   if (snapshot.sid && state.sid && snapshot.sid !== state.sid) {
     // 手机已经换了一场训练：手表不该把旧会话续上去。
     state.sid = snapshot.sid
@@ -144,15 +163,22 @@ export function applySync(state, snapshot) {
   })
   // 手机尚未回传对应确认值的本地编辑，不能被在途旧快照覆盖。
   state.pendingEdits = edits
-  for (const edit of edits) {
-    const row = state.workout.rows[edit.ex] && state.workout.rows[edit.ex][edit.set - 1]
-    if (row) row[edit.t === 'weight' ? 'w' : 'r'] = edit.t === 'weight' ? edit.weight : edit.reps
-  }
+  state.pendingEdits = edits.filter(e => !(snapshot.ackedEvents || []).includes(e.eventId))
+  for (const edit of state.pendingEdits) applyEdit(state, edit)
   const maxEx = Math.max(0, state.workout.exercises.length - 1)
-  state.exIdx = Math.max(0, Math.min(Number(snapshot.exIdx) || 0, maxEx))
+  state.exIdx = Math.max(0, Math.min(Number(state.exIdx) || 0, maxEx))
+  const focusedIndex = focused ? state.workout.exercises.findIndex(ex => focused.id ? ex.id === focused.id : ex.name === focused.name) : -1
+  if (focusedIndex >= 0) state.exIdx = focusedIndex
   const curRows = state.workout.rows[state.exIdx] || []
-  state.setIdx = Math.max(0, Math.min(Number(snapshot.setIdx) || 0, Math.max(0, curRows.length - 1)))
-  state.restUntil = snapshot.restUntil || 0
+  state.setIdx = Math.max(0, Math.min(Number(state.setIdx) || 0, Math.max(0, curRows.length - 1)))
+  if (snapshot.pauseVersion >= (state.pauseVersion || 0)) {
+    state.pausedAt = snapshot.pausedAt || 0
+    state.pausedMs = snapshot.pausedMs || 0
+    state.pauseVersion = snapshot.pauseVersion || 0
+  }
+  if (snapshot.rest) applyRest(state, snapshot.rest)
+  else if (!state.restVersion) state.restUntil = snapshot.restUntil || 0
+  if (snapshot.baseCalories != null) state.baseCalories = snapshot.baseCalories
   if (snapshot.profile) state.profile = snapshot.profile
   state.rev = Math.max(state.rev || 0, snapshot.rev || 0)
   persist(state)
@@ -187,7 +213,11 @@ export function toggleSet(state, done) {
   row.at = done ? now() : 0
   if (done) {
     const ex = state.workout.exercises[state.exIdx]
-    state.restUntil = now() + (ex.restSec || 60) * 1000
+    state.restStartedAt = now()
+    state.restId = state.sid + ':' + state.restStartedAt
+    state.restTargetSec = ex.restSec || storage.getSync({ key: 'default_rest_sec' }) || 90
+    state.restVersion = now()
+    state.restUntil = now() + state.restTargetSec * 1000
   } else {
     state.restUntil = 0
   }
@@ -268,7 +298,7 @@ export function calories(state, profile, minutes) {
 // 结束会话：结算（含每组实际录的 w/r、总时长、卡路里）→ 待上传队列 → 清空当前状态
 export function endSession(state, profile, endedAt = now()) {
   const end = Math.min(now(), Math.max(state.segmentStartedAt || state.startedAt, Number(endedAt) || now()))
-  const minutes = Math.max(0, (end - (state.segmentStartedAt || state.startedAt)) / 60000)
+  const minutes = Math.max(0, ((state.pausedAt || end) - (state.segmentStartedAt || state.startedAt) - (state.pausedMs || 0)) / 60000)
   const flat = []
   ;(state.workout.rows || []).forEach((rows, ex) => rows.forEach((row, set) => {
     if (row.done) flat.push({ ex, set: set + 1, reps: row.r != null ? String(row.r) : '', weight: row.w != null ? String(row.w) : '', at: row.at || now() })
@@ -290,10 +320,13 @@ export function endSession(state, profile, endedAt = now()) {
     }, 0),
     sets: flat,
   }
-  const s = blankState()
-  const closed = storage.getSync({ key: 'closed_sessions' }) || []
-  storage.set({ key: 'closed_sessions', value: [...closed.filter(id => id !== session.sid), session.sid].slice(-100), fail() {} })
-  storage.set({ key: 'summary_last', value: { ...session, sets: session.sets.length }, fail() {} })
-  save(s)
+  closeSession(state.sid)
+  storage.set({ key: 'summary_last', value: { ...session, totalMinutes: Math.max(0, ((state.pausedAt || end) - state.startedAt - (state.pausedMs || 0)) / 60000), totalCalories: (state.baseCalories || 0) + session.calories, sets: session.sets.length }, fail() {} })
   return session
+}
+
+export function closeSession(sid) {
+  const closed = storage.getSync({ key: 'closed_sessions' }) || []
+  storage.set({ key: 'closed_sessions', value: [...closed.filter(id => id !== sid), sid].slice(-500), fail() {} })
+  save(blankState())
 }

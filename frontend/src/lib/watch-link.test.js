@@ -27,6 +27,20 @@ beforeEach(async () => {
 describe('watch app and plan delivery', () => {
   const workout = name => ({ name, exercises: [{ name: 'Squat', sets: 3, reps: 8 }] })
   const drain = async () => { for (let i = 0; i < 15; i++) await Promise.resolve() }
+  it('confirms the training shortcut only after a same-session business receipt', async () => {
+    native.isSupported.mockResolvedValue({ available: true })
+    native.sendEvent.mockResolvedValue({ ok: true })
+    await link.connectWatch()
+    const status = vi.fn()
+    const pending = link.continueOnWatch({ sid: 'today', workout: 'Today', exercises: workout('Today').exercises }, status)
+    await drain()
+    native.events.watchEvent({ t: 'hello', sid: 'other' })
+    native.events.watchEvent({ t: 'sync_ack', sid: 'other', status: 'applied' })
+    expect(status).not.toHaveBeenCalledWith('手表已确认，可继续训练')
+    native.events.watchEvent({ t: 'sync_ack', sid: 'today', status: 'applied' })
+    expect(await pending).toBe(true)
+    expect(status).toHaveBeenLastCalledWith('手表已确认，可继续训练')
+  })
   it('sends ended on phone completion and lets the global lifecycle reconcile hello before plan replay', async () => {
     native.sendEvent.mockResolvedValue({ ok: true })
     await link.pushPlanToWatch(workout('Today'), 'today')

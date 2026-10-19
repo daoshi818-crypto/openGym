@@ -119,8 +119,8 @@ export function buildCompletedWorkout(active, { end = Date.now(), prs = [], snap
     d: active.d,
     start: active.start,
     // Existing readers use end-start as duration; retain wall-clock completion separately.
-    end: active.segmentStartedAt != null ? active.start + elapsedMsOf(active, end) : end,
-    ...(active.segmentStartedAt != null ? {
+    end: active.segmentStartedAt != null || active.pausedAt || active.pausedMs ? active.start + elapsedMsOf(active, end) : end,
+    ...(active.segmentStartedAt != null || active.pausedAt || active.pausedMs ? {
       durationMs: elapsedMsOf(active, end), finishedAt: end,
     } : {}),
     ...(active.watchSid ? { watchSid: active.watchSid,
