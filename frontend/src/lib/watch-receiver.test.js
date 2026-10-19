@@ -11,7 +11,7 @@ function transport(connection, extra = {}) {
     storage: { getSync: () => [], set() {} }, loadState: () => ({}),
     WATCH_VERSION: 'test-watch', console, setTimeout, ...extra }
   runInNewContext(source('lib/rpc.js').replace(imports, '').replace(/export function /g, 'function ')
-    + '\nthis.api = { startServer, sendControl }', context)
+    + '\nthis.api = { startServer, sendControl, sendEvent }', context)
   return context.api
 }
 function connection() {
@@ -32,11 +32,16 @@ function session() {
     set: ({ key, value }) => values.set(key, JSON.parse(JSON.stringify(value))),
   }, console }
   runInNewContext(source('lib/session.js').replace(imports, '').replace(/export function /g, 'function ')
-    + '\nthis.api = { loadState, startSession, save, replacePlan, applySync, nextUndone }', context)
+    + '\nthis.api = { loadState, startSession, save, replacePlan, applySync, nextUndone, setRowValue, toggleSet, addSet, removeSet }', context)
   return context.api
 }
 const plan = { t: 'plan', sid: 'today', planId: 'p1', workout: 'Leg day',
   exercises: [{ name: 'Squat', sets: 3, reps: '8', weight: '60' }] }
+function training(sessions, rpc, extra = {}) {
+  return page('Workout/index.ux', { ...sessions, ...rpc, router: { push: vi.fn() },
+    startHr() {}, stopHr() {}, restOver() {}, tick() {},
+    setInterval: () => 1, clearInterval() {}, pendingCount: () => 0, isConnected: () => true, ...extra })
+}
 // Compatibility cases, not a claim that any particular one is the device's format.
 const envelopes = [
   ['object', msg => msg],
@@ -52,6 +57,146 @@ const envelopes = [
 ]
 
 describe('watch business message boundary', () => {
+  it.each([[-100, 'menuOn'], [100, 'leaveChoice']])(
+    'opens the horizontal panel for a BlueOS touches-only gesture (%s)', (dx, panel) => {
+      const sessions = session(), rpc = transport(connection())
+      sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+      const workout = training(sessions, rpc)
+      workout.onInit()
+      workout.touchStart({ touches: [{ clientX: 180, clientY: 160 }] })
+      workout.touchMove?.({ touches: [{ clientX: 180 + dx, clientY: 165 }] })
+      workout.touchEnd({ touches: [] })
+      expect(workout[panel]).toBe(true)
+      workout.refresh()
+      expect(workout[panel]).toBe(true)
+      expect(source('Workout/index.ux')).toContain('ontouchmove="touchMove"')
+      expect(source('Workout/index.ux')).toContain('ontouchcancel="touchCancel"')
+    })
+
+  it('ignores taps and canceled gestures and keeps changedTouches compatibility', () => {
+    const sessions = session(), rpc = transport(connection())
+    sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+    const workout = training(sessions, rpc)
+    workout.onInit()
+    workout.touchStart({ touches: [{ clientX: 180, clientY: 160 }] })
+    workout.touchEnd({ touches: [] })
+    expect(workout.menuOn).toBe(false)
+    expect(workout.leaveChoice).toBe(false)
+    workout.touchStart({ touches: [{ clientX: 180, clientY: 160 }] })
+    workout.touchMove?.({ touches: [{ clientX: 60, clientY: 160 }] })
+    workout.touchCancel?.()
+    workout.touchEnd({ touches: [] })
+    expect(workout.menuOn).toBe(false)
+    workout.touchStart({ touches: [{ clientX: 180, clientY: 160 }] })
+    workout.touchEnd({ changedTouches: [{ clientX: 60, clientY: 160 }] })
+    expect(workout.menuOn).toBe(true)
+  })
+
+  it('opens on the first set and preserves the cursor across repeated plan deliveries', () => {
+    const sessions = session(), c = connection(), rpc = transport(c)
+    sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+    const workout = training(sessions, rpc)
+    workout.onInit()
+    expect(workout.groupLabel).toBe('第 1 / 3 组')
+    c.onMessage({ data: plan })
+    c.onMessage({ data: plan })
+    expect(workout.groupLabel).toBe('第 1 / 3 组')
+    workout.onComplete()
+    expect(workout.groupLabel).toBe('第 2 / 3 组')
+    c.onMessage({ data: plan })
+    expect(workout.groupLabel).toBe('第 2 / 3 组')
+  })
+
+  it.each([['w', 'weight', '72.5'], ['r', 'reps', '12']])(
+    'hands a Keypad %s edit back to the connected Workout transport and preserves other updates', (field, type, value) => {
+      const sessions = session(), c = connection()
+      sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+      const rpc = transport(c, { loadState: sessions.loadState })
+      const workout = training(sessions, rpc)
+      workout.onInit()
+      // Page bundles may have independent rpc modules; Keypad has no initialized connection.
+      const keypad = page('Keypad/index.ux', { ...sessions, ...transport(c), router: { back: vi.fn() } })
+      keypad.onInit({ exIdx: 0, setIdx: 0, field })
+      const changed = sessions.loadState()
+      sessions.setRowValue(changed, 0, 1, 'w', '90')
+      for (const key of value) keypad.onKey(key)
+      keypad.commit()
+      workout.onShow()
+      expect(sessions.loadState().workout.rows[0][1].w).toBe('90')
+      expect(c.sent.find(m => m.t === type)).toMatchObject({ sid: plan.sid, ex: 0, set: 1, [type]: value })
+      expect(field === 'w' ? workout.weightVal : workout.repsVal).toBe(value + (field === 'w' ? ' kg' : ' 次'))
+    })
+
+  it('keeps the shown value when Keypad is confirmed without typing', () => {
+    const sessions = session()
+    sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+    const keypad = page('Keypad/index.ux', { ...sessions, sendControl() {}, router: { back() {} } })
+    keypad.onInit({ exIdx: 0, setIdx: 0, field: 'w' })
+    keypad.commit()
+    expect(sessions.loadState().workout.rows[0][0].w).toBe('60')
+  })
+
+  it('keeps a saved Keypad edit across a phone snapshot arriving before the page returns', () => {
+    const sessions = session(), c = connection(), rpc = transport(c)
+    sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+    const workout = training(sessions, rpc)
+    workout.onInit()
+    const keypad = page('Keypad/index.ux', { ...sessions, router: { back() {} } })
+    keypad.onInit({ exIdx: 0, setIdx: 0, field: 'w' })
+    keypad.onKey('8'); keypad.onKey('0'); keypad.commit()
+    c.onMessage({ data: { ...plan, t: 'sync', rows: [[{ w: '60', r: '8', done: false }]] } })
+    workout.onShow()
+    expect(workout.weightVal).toBe('80 kg')
+    expect(c.sent.find(m => m.t === 'weight')).toMatchObject({ weight: '80', set: 1 })
+    // Native hello responses can arrive after onShow has moved the edit into the outbox.
+    c.onMessage({ data: { ...plan, t: 'sync', rows: [[{ w: '60', r: '8', done: false }]] } })
+    expect(workout.weightVal).toBe('80 kg')
+    const edit = c.sent.find(m => m.t === 'weight')
+    workout.onShow()
+    expect(c.sent.filter(m => m.t === 'weight')).toHaveLength(1)
+    c.onMessage({ data: { ...edit, editAt: edit.at } })
+    expect(sessions.loadState().pendingEdits).toHaveLength(0)
+    c.onMessage({ data: { t: 'weight', sid: plan.sid, ex: 0, set: 1, weight: '85' } })
+    expect(workout.weightVal).toBe('85 kg')
+  })
+
+  it('retries unacknowledged edits after reconnecting instead of leaving them permanently sent', () => {
+    const c = connection(), rpc = transport(c)
+    rpc.startServer({})
+    rpc.sendEvent({ t: 'weight', sid: plan.sid, ex: 0, set: 1, weight: '80', at: 100 })
+    c.onClose(); c.onOpen()
+    expect(c.sent.filter(m => m.t === 'weight')).toHaveLength(2)
+    c.onMessage({ data: { t: 'ack', upto: 100 } })
+    c.onClose(); c.onOpen()
+    expect(c.sent.filter(m => m.t === 'weight')).toHaveLength(2)
+  })
+
+  it('converges to the phone set count when a refreshed plan precedes a repeated group change', () => {
+    const sessions = session(), c = connection(), rpc = transport(c)
+    sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+    const workout = training(sessions, rpc)
+    workout.onInit()
+    c.onMessage({ data: { ...plan, exercises: [{ ...plan.exercises[0], sets: 4 }] } })
+    c.onMessage({ data: { t: 'add_set', sid: plan.sid, ex: 0, sets: 4 } })
+    c.onMessage({ data: { t: 'add_set', sid: plan.sid, ex: 0, sets: 4 } })
+    expect(sessions.loadState().workout.rows[0]).toHaveLength(4)
+    c.onMessage({ data: { t: 'remove_set', sid: plan.sid, ex: 0, sets: 3 } })
+    c.onMessage({ data: { t: 'remove_set', sid: plan.sid, ex: 0, sets: 3 } })
+    expect(sessions.loadState().workout.rows[0]).toHaveLength(3)
+  })
+
+  it('applies phone completion once and advances the matching current set', () => {
+    const sessions = session(), c = connection(), rpc = transport(c)
+    sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+    const workout = training(sessions, rpc)
+    workout.onInit()
+    c.onMessage({ data: { t: 'set', sid: plan.sid, ex: 0, set: 1 } })
+    expect(sessions.loadState().workout.rows[0][0].done).toBe(true)
+    expect(workout.groupLabel).toBe('第 2 / 3 组')
+    c.onMessage({ data: { t: 'set', sid: plan.sid, ex: 0, set: 1 } })
+    expect(workout.groupLabel).toBe('第 2 / 3 组')
+  })
+
   it.each(envelopes)(
     'delivers %s to the Index page and confirms the visible offer', (_name, envelope) => {
       const c = connection()

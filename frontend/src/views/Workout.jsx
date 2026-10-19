@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
 import { workoutControls } from '../lib/workout-controls.js'
 import { useUI } from '../store/useUI.js'
-import { bindWatchSync, bindWatchEvents, pushRestToWatch, pushWeightToWatch, pushRepsToWatch, pushUnsetToWatch, pushAddSetToWatch, pushRemoveSetToWatch, pushFocusToWatch, pushAckToWatch, pushSyncToWatch } from '../lib/watch-link.js'
+import { bindWatchSync, bindWatchEvents, pushRestToWatch, pushWeightToWatch, pushRepsToWatch, pushSetToWatch, pushUnsetToWatch, pushAddSetToWatch, pushRemoveSetToWatch, pushFocusToWatch, pushAckToWatch, pushSyncToWatch } from '../lib/watch-link.js'
 import { exOr, betterWeight } from '../lib/exercises.js'
 import { watchExercisesOf } from '../lib/watch-workout.js'
 import { usesBar } from '../lib/bar.js'
@@ -1326,13 +1326,13 @@ function ActiveWorkout() {
       addSet(idx)
       const a = useStore.getState().S.active
       const id = a && a.start ? String(a.start) : ''
-      if (id) pushAddSetToWatch(id, idx)
+      if (id) pushAddSetToWatch(id, idx, a.entries[idx].sets.filter(r => !isWarmupRow(r)).length)
     },
     onRemoveSet: () => {
       removeSet(idx)
       const a = useStore.getState().S.active
       const id = a && a.start ? String(a.start) : ''
-      if (id) pushRemoveSetToWatch(id, idx)
+      if (id) pushRemoveSetToWatch(id, idx, a.entries[idx].sets.filter(r => !isWarmupRow(r)).length)
     },
     onAddWarmup: () => addWarmup(idx),
     onRemoveSetAt: i => removeSetAt(idx, i),
@@ -1675,12 +1675,15 @@ function ActiveWorkout() {
   // (store/useUI.js). The tick's own beep would sound over the chime's first note and clip it,
   // and its short buzz would cut the pattern off: a new vibrate call replaces the running one.
   const toggle = (idx, i, side, { quiet = false, onFocusProgress } = {}) => {
+    const S = useStore.getState().S
+    const A = S.active
+    if (!A?.entries[idx]?.sets[i]) return
     // Ticking a set ends the typing in that row: drop the keyboard before the rest timer, the
     // effort sheet or the next exercise moves in. WebKit keeps the input focused across the
     // button tap, and a focused input with its keyboard gone is what leaves the tab bar
     // mid-screen on iOS (lib/viewport-guard.js).
     if (typeof document !== 'undefined') { const a = document.activeElement; if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) a.blur?.() }
-    const m = modeAt(idx)
+    const m = modeOf({ ...(A.entries[idx].target || {}), id: A.entries[idx].id })
     const cardioEntry = m === 'cardio'
     let exJustDone = false, workoutDone = false, checked = false
     update(s => {
@@ -1711,11 +1714,10 @@ function ActiveWorkout() {
       }
     }, true)
     if (editing) return
-    // 手机上勾/取消 → 同步给手表：勾了不必发（手表自己的事件带去重），取消了要发 unset
-    // 让手表把那组的完成态抹掉。side set 不发（手表端没有左右概念）。
+    // 双向完成态都幂等下发；热身和 side set 不映射到手表的工作组。
     if (!side && sid) {
       const ordinal = workSetOrdinal(A.entries[idx], i)
-      if (ordinal > 0 && !checked) pushUnsetToWatch(sid, idx, ordinal)
+      if (ordinal > 0) (checked ? pushSetToWatch : pushUnsetToWatch)(sid, idx, ordinal)
     }
     if (workoutDone) workoutCompleteSheet()
     else if (exJustDone && cardioEntry) useUI.getState().toast(t('Cardio logged'))
@@ -1802,10 +1804,12 @@ function ActiveWorkout() {
 
   // 手表联动：训练开始把计划推到手表；手表上点"完成一组"实时打钩、开休息——
   // 与在手机上点同一条 toggle 路径，休息、进度、完成判定全部一致（DESIGN.md 第 6 节）。
-  // 事件带 sid 幂等：手机按 sid+动作下标+组号去重，重连重发不会记两次。
+  // 同一个事件重发要确认但不重复应用；同一组撤销后可用新的时间戳重做。
   // 双向实时同步：手机±休息/改重量 → 推给手表；手表±休息/改重量 → 落到手机会话。
   // 计划发布在 App Shell，离开训练页仍能响应 hello 补推。
-  const seenWatchSets = useRef(new Set())
+  const seenWatchEvents = useRef(new Set())
+  const watchActions = useRef(null)
+  watchActions.current = { toggle, addSet, removeSet }
   const sid = A.start ? String(A.start) : ''
 
   // 休息调整 → 手表。timer 变化驱动；本地应用远端消息时 remoteRestSeq 挡住回环。
@@ -1824,6 +1828,16 @@ function ActiveWorkout() {
       if (!ev || (ev.t !== 'hello' && ev.sid !== sid)) return
       const A2 = useStore.getState().S.active
       if (!A2) return
+      const deduped = ['set', 'unset', 'add_set', 'remove_set'].includes(ev.t) && ev.at != null
+      const eventKey = [ev.sid, ev.t, ev.ex, ev.set, ev.at].join(':')
+      if (deduped && seenWatchEvents.current.has(eventKey)) {
+        pushAckToWatch(ev.at)
+        return
+      }
+      const acknowledge = () => {
+        if (deduped) seenWatchEvents.current.add(eventKey)
+        if (ev.at != null) pushAckToWatch(ev.at)
+      }
       if (ev.t === 'rest') {
         if (typeof ev.seq === 'number') {
           if (ev.seq <= watchRestSeq.current) return
@@ -1848,6 +1862,7 @@ function ActiveWorkout() {
           const r2 = e2 && e2.sets[entry.sets.indexOf(row)]
           if (r2) r2.w = w > 0 ? w : undefined
         })
+        pushWeightToWatch(sid, ev.ex, ev.set, w > 0 ? w : '', ev.at)
         if (ev.at != null) pushAckToWatch(ev.at)
         return
       }
@@ -1862,13 +1877,14 @@ function ActiveWorkout() {
           const r2 = e2 && e2.sets[entry.sets.indexOf(row)]
           if (r2) { r2.r = reps; r2.reps = reps }
         })
+        pushRepsToWatch(sid, ev.ex, ev.set, reps, ev.at)
         if (ev.at != null) pushAckToWatch(ev.at)
         return
       }
       if (ev.t === 'add_set') {
         const entry = A2.entries[ev.ex]
         if (!entry) return
-        addSet(ev.ex)
+        watchActions.current.addSet(ev.ex)
         update(s => {
           const e2 = s.active?.entries[ev.ex]
           const r2 = e2 && e2.sets[e2.sets.length - 1]
@@ -1877,14 +1893,14 @@ function ActiveWorkout() {
           if (Number.isFinite(w)) r2.w = w
           if (ev.reps != null && ev.reps !== '') { r2.r = String(ev.reps); r2.reps = String(ev.reps) }
         })
-        if (ev.at != null) pushAckToWatch(ev.at)
+        acknowledge()
         return
       }
       if (ev.t === 'remove_set') {
         const entry = A2.entries[ev.ex]
         if (!entry) return
-        removeSet(ev.ex)
-        if (ev.at != null) pushAckToWatch(ev.at)
+        watchActions.current.removeSet(ev.ex)
+        acknowledge()
         return
       }
       if (ev.t === 'focus') {
@@ -1921,13 +1937,11 @@ function ActiveWorkout() {
       // 完成/撤销一组（手表点"完成"或"撤销重做"）：写活动会话的组重量/次数（手表上
       // 录的为准），再走与手点完全相同的 toggle 路径（休息、进度、完成判定全一致）。
       if (ev.t === 'set') {
-        const key = ev.sid + ':' + ev.ex + ':' + ev.set
-        if (seenWatchSets.current.has(key)) return
         const entry = A2.entries[ev.ex]
         if (!entry) return
         const row = entry.sets.filter(x => !isWarmupRow(x))[ev.set - 1]
-        if (!row || row.done) return
-        seenWatchSets.current.add(key)
+        if (!row) return
+        if (row.done) { acknowledge(); return }
         const w = ev.weight != null && ev.weight !== '' ? parseFloat(ev.weight) : NaN
         const reps = ev.reps != null && ev.reps !== '' ? ev.reps : null
         update(s => {
@@ -1937,8 +1951,8 @@ function ActiveWorkout() {
           if (Number.isFinite(w) && w > 0) r2.w = w
           if (reps != null) { r2.r = reps; r2.reps = reps }
         })
-        toggle(entry.sets.indexOf(row), ev.set - 1, undefined, {})
-        if (ev.at != null) pushAckToWatch(ev.at)
+        watchActions.current.toggle(ev.ex, entry.sets.indexOf(row), undefined, {})
+        acknowledge()
         return
       }
       if (ev.t === 'unset') {
@@ -1946,9 +1960,9 @@ function ActiveWorkout() {
         const entry = A2.entries[ev.ex]
         if (!entry) return
         const row = entry.sets.filter(x => !isWarmupRow(x))[ev.set - 1]
-        if (!row || !row.done) return
-        toggle(entry.sets.indexOf(row), ev.set - 1, undefined, {})
-        if (ev.at != null) pushAckToWatch(ev.at)
+        if (!row) return
+        if (row.done) watchActions.current.toggle(ev.ex, entry.sets.indexOf(row), undefined, {})
+        acknowledge()
         return
       }
       if (ev.t === 'end') {
@@ -1968,11 +1982,13 @@ function ActiveWorkout() {
     setField(idx, i, f, v)
     if (!sid) return
     const set = workSetOrdinal(A.entries[idx], i)
+    if (!set) return
     if (f === 'w') pushWeightToWatch(sid, idx, set, v)
     else if (f === 'r' || f === 'reps') pushRepsToWatch(sid, idx, set, v)
   }
   // 组号（1 起）：该行在"非热身行"里的序号——与手表计划的 set 编号同一套。
   const workSetOrdinal = (entry, i) => {
+    if (!entry?.sets?.[i] || isWarmupRow(entry.sets[i])) return 0
     let n = 0
     for (let k = 0; k <= i && entry?.sets?.[k]; k++) if (!isWarmupRow(entry.sets[k])) n++
     return n

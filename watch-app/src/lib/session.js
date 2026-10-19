@@ -116,6 +116,7 @@ export function replacePlan(state, workout) {
 // 手机重连后的权威快照：手机是唯一数据源，手表整体接受。
 export function applySync(state, snapshot) {
   if (!snapshot || !Array.isArray(snapshot.exercises)) return state
+  const edits = snapshot.sid && snapshot.sid !== state.sid ? [] : state.pendingEdits || []
   if (snapshot.sid && state.sid && snapshot.sid !== state.sid) {
     // 手机已经换了一场训练：手表不该把旧会话续上去。
     state.sid = snapshot.sid
@@ -138,6 +139,12 @@ export function applySync(state, snapshot) {
         : { w: initWeight(ex), r: initReps(ex), done: false, at: 0 }
     })
   })
+  // 手机尚未回传对应确认值的本地编辑，不能被在途旧快照覆盖。
+  state.pendingEdits = edits
+  for (const edit of edits) {
+    const row = state.workout.rows[edit.ex] && state.workout.rows[edit.ex][edit.set - 1]
+    if (row) row[edit.t === 'weight' ? 'w' : 'r'] = edit.t === 'weight' ? edit.weight : edit.reps
+  }
   const maxEx = Math.max(0, state.workout.exercises.length - 1)
   state.exIdx = Math.max(0, Math.min(Number(snapshot.exIdx) || 0, maxEx))
   const curRows = state.workout.rows[state.exIdx] || []
@@ -186,11 +193,19 @@ export function toggleSet(state, done) {
 }
 
 // 改某组的重量/次数（手表本地编辑 or 手机 weight 同步），立即落盘
-export function setRowValue(state, exIdx, setIdx, field, value) {
+export function setRowValue(state, exIdx, setIdx, field, value, notifyPhone = false) {
   const row = state.workout.rows[exIdx] && state.workout.rows[exIdx][setIdx]
   if (!row) return
   if (field === 'w') row.w = value === '' || value == null ? '' : value
   else if (field === 'r') row.r = value === '' || value == null ? '' : value
+  if (notifyPhone) {
+    // 输入页没有训练页的 RPC 实例。先与行数据一起落盘，返回后交给训练页的 outbox。
+    const edits = state.pendingEdits || []
+    const at = Math.max(now(), edits.length ? edits[edits.length - 1].at + 1 : 0)
+    edits.push({ t: field === 'w' ? 'weight' : 'reps', sid: state.sid, ex: exIdx, set: setIdx + 1,
+      [field === 'w' ? 'weight' : 'reps']: row[field], at })
+    state.pendingEdits = edits
+  }
   save(state)
 }
 

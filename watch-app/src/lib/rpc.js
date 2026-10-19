@@ -24,7 +24,7 @@ function persist() {
 function loadOutbox() {
   try {
     const list = storage.getSync({ key: K_OUTBOX })
-    return Array.isArray(list) ? list.map(e => ({ ...e, sent: !!e.sent })) : []
+    return Array.isArray(list) ? list.map(e => ({ ...e, sent: false })) : []
   } catch (e) { return [] }
 }
 
@@ -126,9 +126,10 @@ export function startServer(h) {
   // 页面包可能各有一份模块，但复用同一个 SDK 实例。每次显示都重新接管回调。
   connect.onOpen = () => {
     connected = true
+    outbox.forEach(e => { e.sent = false })
     if (handlers.onState) handlers.onState(true)
-    sendHello()
     flush()
+    sendHello()
   }
   connect.onClose = () => {
     connected = false
@@ -164,6 +165,7 @@ export function startServer(h) {
       return
     }
     if (msg.t === 'rest' && handlers.onRest) { handlers.onRest(msg); return }
+    if (msg.t === 'set' && handlers.onSet) { handlers.onSet(msg); return }
     if (msg.t === 'unset' && handlers.onUnset) { handlers.onUnset(msg); return }
     if (msg.t === 'weight' && handlers.onWeight) { handlers.onWeight(msg); return }
     if (msg.t === 'reps' && handlers.onReps) { handlers.onReps(msg); return }
@@ -203,6 +205,8 @@ export function stopServer() {
 export function sendEvent(obj) {
   if (!obj) return
   if (obj.at == null) obj.at = Date.now()
+  if (outbox.some(e => e.msg.sid === obj.sid && e.msg.t === obj.t && e.msg.ex === obj.ex &&
+      e.msg.set === obj.set && e.at === obj.at)) return
   outbox.push({ at: obj.at, msg: obj, sent: false })
   persist()
   flush()

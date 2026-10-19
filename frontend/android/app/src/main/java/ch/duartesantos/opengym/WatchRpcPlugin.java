@@ -294,7 +294,7 @@ public class WatchRpcPlugin extends Plugin {
 
     private JSObject environmentDiagnostics() {
         JSObject ret = new JSObject();
-        ret.put("bridgeVersion", "2026-10-19.5");
+        ret.put("bridgeVersion", "2026-10-19.6");
         ret.put("watchPackage", WATCH_PACKAGE);
         ret.put("watchRouter", WATCH_ROUTER);
         ret.put("lastRxType", lastRxType);

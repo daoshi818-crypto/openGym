@@ -2,7 +2,6 @@
 // 计算器输入页：改重量/次数。路由参数直接使用 exIdx、setIdx、field。
 import router from '@blueos.app.appmanager.router'
 import { loadState, setRowValue } from '../lib/session.js'
-import { sendControl } from '../lib/rpc.js'
 
 export default {
   data: {
@@ -26,6 +25,7 @@ export default {
     if (!row) { router.back(); return }
 
     this.buffer = ''
+    this.changed = false
     const cur = this.field === 'w' ? row.w : row.r
     this.initVal = cur === '' || cur == null ? '' : String(cur)
     this.show = this.initVal || '0'
@@ -39,7 +39,7 @@ export default {
   },
 
   onKey(k) {
-    if (k === 'C') { this.buffer = ''; this.show = '0'; return }
+    if (k === 'C') { this.changed = true; this.buffer = ''; this.show = '0'; return }
     if (k === 'ok') { this.commit(); return }
     if (k === '.') {
       if (this.field !== 'w' || this.buffer.indexOf('.') >= 0) return
@@ -49,7 +49,8 @@ export default {
       if (this.buffer.replace('.', '').length >= 5) return
       this.buffer += k
     }
-    this.show = this.buffer === '.' ? '0.' : String(parseFloat(this.buffer))
+    this.changed = true
+    this.show = this.buffer.endsWith('.') ? this.buffer : String(parseFloat(this.buffer))
   },
 
   onKey1() { this.onKey('1') },
@@ -67,14 +68,12 @@ export default {
   onKeyOk() { this.onKey('ok') },
 
   commit() {
+    if (!this.changed) { router.back(); return }
     const v = this.buffer === '' ? '' : String(parseFloat(this.buffer) || 0)
-    const s = this.state
-    setRowValue(s, this.exIdx, this.setIdx, this.field, v)
-    if (this.field === 'w') {
-      sendControl({ t: 'weight', sid: s.sid, ex: this.exIdx, set: this.setIdx + 1, weight: v, at: Date.now() })
-    } else {
-      sendControl({ t: 'reps', sid: s.sid, ex: this.exIdx, set: this.setIdx + 1, reps: v, at: Date.now() })
-    }
+    // 编辑期间手机仍可能更新其他行，提交时只改最新会话里的目标字段。
+    const s = loadState()
+    if (!s.active || s.sid !== this.state.sid) { router.back(); return }
+    setRowValue(s, this.exIdx, this.setIdx, this.field, v, true)
     router.back()
   },
 }

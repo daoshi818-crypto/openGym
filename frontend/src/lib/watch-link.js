@@ -310,15 +310,21 @@ export async function pushRestToWatch(sid, leftSec) {
 }
 
 /** 手机改了某组的重量（ex=动作下标，set=第几组，1 起）。 */
-export async function pushWeightToWatch(sid, ex, set, weight) {
+export async function pushWeightToWatch(sid, ex, set, weight, editAt) {
   if (!MOBILE || !sid) return
-  await sendWatchEvent({ t: 'weight', sid, ex, set, weight: String(weight ?? '') })
+  await sendWatchEvent({ t: 'weight', sid, ex, set, weight: String(weight ?? ''), editAt })
 }
 
 /** 手机改了某组的次数。 */
-export async function pushRepsToWatch(sid, ex, set, reps) {
+export async function pushRepsToWatch(sid, ex, set, reps, editAt) {
   if (!MOBILE || !sid) return
-  await sendWatchEvent({ t: 'reps', sid, ex, set, reps: String(reps ?? '') })
+  await sendWatchEvent({ t: 'reps', sid, ex, set, reps: String(reps ?? ''), editAt })
+}
+
+/** 手机上完成某组：手表端同步完成态。 */
+export async function pushSetToWatch(sid, ex, set) {
+  if (!MOBILE || !sid) return
+  await sendWatchEvent({ t: 'set', sid, ex, set })
 }
 
 /** 手机上取消勾选了某组：手表端把那组的完成态抹掉。 */
@@ -328,15 +334,15 @@ export async function pushUnsetToWatch(sid, ex, set) {
 }
 
 /** 手机加组：手表端同步追加一组。 */
-export async function pushAddSetToWatch(sid, ex) {
+export async function pushAddSetToWatch(sid, ex, sets) {
   if (!MOBILE || !sid) return
-  await sendWatchEvent({ t: 'add_set', sid, ex, at: Date.now() })
+  await sendWatchEvent({ t: 'add_set', sid, ex, sets, at: Date.now() })
 }
 
 /** 手机减组：手表端同步删除最后一组。 */
-export async function pushRemoveSetToWatch(sid, ex) {
+export async function pushRemoveSetToWatch(sid, ex, sets) {
   if (!MOBILE || !sid) return
-  await sendWatchEvent({ t: 'remove_set', sid, ex, at: Date.now() })
+  await sendWatchEvent({ t: 'remove_set', sid, ex, sets, at: Date.now() })
 }
 
 /** 手机切换当前动作：手表跟着换焦点。 */

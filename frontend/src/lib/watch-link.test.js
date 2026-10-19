@@ -28,6 +28,14 @@ describe('watch app and plan delivery', () => {
   const workout = name => ({ name, exercises: [{ name: 'Squat', sets: 3, reps: 8 }] })
   const drain = async () => { for (let i = 0; i < 15; i++) await Promise.resolve() }
 
+  it('includes the resulting work-set count in phone group changes', async () => {
+    native.sendEvent.mockResolvedValue({ ok: true })
+    await link.pushAddSetToWatch('today', 0, 4)
+    await link.pushRemoveSetToWatch('today', 0, 3)
+    expect(native.sendEvent.mock.calls.map(([m]) => JSON.parse(m.json)))
+      .toMatchObject([{ t: 'add_set', sets: 4 }, { t: 'remove_set', sets: 3 }])
+  })
+
   it('opens the watch app after connecting and returns the SDK result', async () => {
     native.openWatchApp.mockResolvedValue({ ok: false, code: 4, data: 'offline' })
     expect(await link.openWatchApp()).toMatchObject({ ok: false, code: 4 })

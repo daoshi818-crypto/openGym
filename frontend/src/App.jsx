@@ -73,13 +73,14 @@ function Shell() {
   const loc = useLocation()
   const navType = useNavigationType()
   const { S, user, ready } = useStore()
+  const watchPlan = MOBILE ? JSON.stringify(watchPlanOf(S)) : 'null'
   // 会话级生命周期：在设置页拉起手表时仍保留计划，结束/丢弃后才清除。
   useEffect(() => {
     if (!MOBILE) return
-    const plan = watchPlanOf(useStore.getState().S)
+    const plan = JSON.parse(watchPlan)
     if (plan) pushPlanToWatch(plan.workout, plan.sid, plan.profile)
     else clearWatchPlan(undefined, S.active?.editingWorkoutId ? 'history_editor' : 'no_active_session')
-  }, [S.active?.start, S.active?.name, S.active?.entries?.length, S.active?.editingWorkoutId])
+  }, [watchPlan])
   // iOS: whether timer sounds get past the ring/silent switch (Settings → Sounds). Page-level,
   // so it is applied here on load and on change rather than at each beep.
   useEffect(() => { setPlayOnSilent(!!S.soundOnSilent) }, [S.soundOnSilent])

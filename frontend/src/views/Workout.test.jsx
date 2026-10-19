@@ -9,6 +9,7 @@ import { buildCombinedEntries } from '../lib/session-merge.js'
 import { buildCompletedWorkout } from '../lib/finish-workout.js'
 import { isWarmupRow } from '../lib/workout-model.js'
 import { finishWorkout, finishWorkoutSheet } from '../sheets.jsx'
+import * as watch from '../lib/watch-link.js'
 
 // A menu's actions in order, whether it came as one list or in groups (menuSheet `sections`).
 const menuItemsOf = menu => (menu.sections ? menu.sections.flatMap(g => g.items || []) : menu.items || []).filter(Boolean)
@@ -106,6 +107,12 @@ vi.mock('../sheets.jsx', () => ({
   addRoutineToSessionSheet: vi.fn(),
 }))
 vi.mock('../components/Media.jsx', () => ({ default: () => null }))
+vi.mock('../lib/watch-link.js', () => ({
+  bindWatchSync: vi.fn(), bindWatchEvents: vi.fn(),
+  pushRestToWatch: vi.fn(), pushWeightToWatch: vi.fn(), pushRepsToWatch: vi.fn(),
+  pushSetToWatch: vi.fn(), pushUnsetToWatch: vi.fn(), pushAddSetToWatch: vi.fn(),
+  pushRemoveSetToWatch: vi.fn(), pushFocusToWatch: vi.fn(), pushAckToWatch: vi.fn(), pushSyncToWatch: vi.fn(),
+}))
 vi.mock('../components/WorkoutThumb.jsx', () => ({
   default: ({ onExpand }) => React.createElement('button', { className: 'wthumb', 'aria-label': 'Expand', onClick: onExpand }),
   hasWorkoutMedia: () => true,
@@ -197,6 +204,60 @@ async function pressNext() {
 }
 
 const buttonNamed = name => container.querySelector(`button[aria-label="${name}"]`)
+
+describe('watch training edits and work-set mapping', () => {
+  const receive = ev => act(async () => {
+    const handler = watch.bindWatchEvents.mock.calls.at(-1)[0]
+    handler({ sid: String(mocks.S.active.start), ...ev })
+  })
+
+  it('completes the correct exercise and raw row after warmups, including undo and redo', async () => {
+    const second = exercise('plain-row', [false, false, false])
+    second.sets[0].phase = 'warmup'
+    await mount([exercise('plain-bench', [false, false]), second], 1)
+    await receive({ t: 'set', ex: 1, set: 1, weight: '72.5', reps: '12', at: 100 })
+    expect(mocks.S.active.entries[0].sets.every(r => !r.done)).toBe(true)
+    expect(mocks.S.active.entries[1].sets.map(r => r.done)).toEqual([false, true, false])
+    await receive({ t: 'set', ex: 1, set: 1, at: 100 })
+    expect(watch.pushAckToWatch).toHaveBeenLastCalledWith(100)
+    await receive({ t: 'unset', ex: 1, set: 1, at: 101 })
+    expect(mocks.S.active.entries[1].sets[1].done).toBe(false)
+    await receive({ t: 'set', ex: 1, set: 1, at: 102 })
+    expect(mocks.S.active.entries[1].sets[1]).toMatchObject({ w: 72.5, r: '12', done: true })
+    expect(watch.pushAckToWatch).toHaveBeenLastCalledWith(102)
+  })
+
+  it('acknowledges duplicate add/remove events without changing group counts twice', async () => {
+    await mount([exercise('plain-bench', [false, false, false])])
+    await receive({ t: 'add_set', ex: 0, set: 4, at: 100 })
+    await receive({ t: 'add_set', ex: 0, set: 4, at: 100 })
+    expect(mocks.S.active.entries[0].sets).toHaveLength(4)
+    await receive({ t: 'remove_set', ex: 0, set: 4, at: 101 })
+    await receive({ t: 'remove_set', ex: 0, set: 4, at: 101 })
+    expect(mocks.S.active.entries[0].sets).toHaveLength(3)
+    expect(watch.pushAckToWatch).toHaveBeenLastCalledWith(101)
+  })
+
+  it('returns canonical watch edits with their timestamps to confirm the displayed values', async () => {
+    await mount([exercise('plain-bench', [false, false])])
+    await receive({ t: 'weight', ex: 0, set: 1, weight: '72.5', at: 100 })
+    await receive({ t: 'reps', ex: 0, set: 1, reps: '12', at: 101 })
+    expect(mocks.S.active.entries[0].sets[0]).toMatchObject({ w: 72.5, r: '12', reps: '12' })
+    expect(watch.pushWeightToWatch).toHaveBeenLastCalledWith(String(mocks.S.active.start), 0, 1, 72.5, 100)
+    expect(watch.pushRepsToWatch).toHaveBeenLastCalledWith(String(mocks.S.active.start), 0, 1, '12', 101)
+  })
+
+  it('sends phone completion to the watch and excludes warmup rows', async () => {
+    const entry = exercise('plain-bench', [false, false, false])
+    entry.sets[0].phase = 'warmup'
+    await mount([entry])
+    await toggleSet(0)
+    expect(watch.pushSetToWatch).not.toHaveBeenCalled()
+    await toggleSet(1)
+    expect(watch.pushSetToWatch).toHaveBeenCalledWith(String(mocks.S.active.start), 0, 1)
+  })
+})
+
 const click = async element => {
   expect(element).toBeTruthy()
   await act(async () => { element.dispatchEvent(new dom.Event('click', { bubbles: true })) })

@@ -43,9 +43,8 @@ export default {
 
     this.bindRpc()
 
-    const next = nextUndone(s)
-    if (next) { s.exIdx = next.exIdx; s.setIdx = next.setIdx }
-    else this.allFinished = true
+    // 保存的游标就是当前组；nextUndone 仅用于完成后找下一组。
+    this.allFinished = s.workout.rows.every(rows => rows.every(row => row.done))
 
     if (s.restUntil && s.restUntil <= Date.now()) {
       s.restUntil = 0
@@ -72,21 +71,31 @@ export default {
       this.profile = latest.profile || null
     }
     if (this.state) this.bindRpc()
+    // 与输入页通过持久化状态交接，使用当前连接的可靠事件队列发送。
+    const edits = this.state && this.state.pendingEdits || []
+    for (const edit of edits) sendEvent(edit)
     this.startHrCapture()
     this.refresh()
   },
 
   bindRpc() {
+    const handle = (method, ...args) => {
+      // 隐藏的训练页仍会收到 RPC；保留输入页刚保存的编辑和其他页面的更新。
+      const latest = loadState()
+      if (latest.active && latest.sid === this.state.sid) this.state = latest
+      return this[method](...args)
+    }
     startServer({
-      onPlan: (msg) => this.onPlanUpdate(msg),
-      onSync: (msg) => this.onSyncUpdate(msg),
-      onRest: (msg) => this.onRemoteRest(msg),
-      onUnset: (msg) => this.onRemoteUnset(msg),
-      onWeight: (msg) => this.onRemoteValue(msg, 'w'),
-      onReps: (msg) => this.onRemoteValue(msg, 'r'),
-      onAddSet: (msg) => this.onRemoteAddSet(msg),
-      onRemoveSet: (msg) => this.onRemoteRemoveSet(msg),
-      onFocus: (msg) => this.onRemoteFocus(msg),
+      onPlan: (msg) => handle('onPlanUpdate', msg),
+      onSync: (msg) => handle('onSyncUpdate', msg),
+      onRest: (msg) => handle('onRemoteRest', msg),
+      onSet: (msg) => handle('onRemoteSet', msg),
+      onUnset: (msg) => handle('onRemoteUnset', msg),
+      onWeight: (msg) => handle('onRemoteValue', msg, 'w'),
+      onReps: (msg) => handle('onRemoteValue', msg, 'r'),
+      onAddSet: (msg) => handle('onRemoteAddSet', msg),
+      onRemoveSet: (msg) => handle('onRemoteRemoveSet', msg),
+      onFocus: (msg) => handle('onRemoteFocus', msg),
       onEnded: () => this.onRemoteEnded(),
       onError: () => { this.syncLabel = '连接异常' },
     })
@@ -125,15 +134,25 @@ export default {
   touchStart(e) {
     const t = e.touches && e.touches[0]
     this.touch = t ? { x: t.clientX, y: t.clientY } : null
+    this.touchLast = this.touch
+  },
+
+  touchMove(e) {
+    if (!this.touch) return
+    const t = e.touches && e.touches[0]
+    if (t) this.touchLast = { x: t.clientX, y: t.clientY }
   },
 
   touchEnd(e) {
     if (!this.touch) return
-    const t = e.changedTouches && e.changedTouches[0]
-    if (!t) return
-    const dx = t.clientX - this.touch.x
-    const dy = t.clientY - this.touch.y
-    this.touch = null
+    // 固件触摸回调未必带 changedTouches，用最后一次 move 的坐标兜底。
+    const t = e.changedTouches && e.changedTouches[0] || e.touches && e.touches[0]
+    const end = t ? { x: t.clientX, y: t.clientY } : this.touchLast
+    const start = this.touch
+    this.touchCancel()
+    if (!end) return
+    const dx = end.x - start.x
+    const dy = end.y - start.y
     if (Math.abs(dx) < 60 && Math.abs(dy) < 60) return
     if (this.leaveChoice) return
     if (this.menuOn) {
@@ -150,6 +169,8 @@ export default {
       else if (dy > 60) this.stepExercise(1)
     }
   },
+
+  touchCancel() { this.touch = null; this.touchLast = null },
 
   closeMenu() { this.menuOn = false },
 
@@ -255,7 +276,24 @@ export default {
     const row = s.workout.rows[exIdx] && s.workout.rows[exIdx][setIdx]
     if (!row || !row.done) return
     toggleSet(s, false)
-    sendControl({ t: 'unset', sid: s.sid, ex: exIdx, set: setIdx + 1 })
+    this.allFinished = false
+    sendEvent({ t: 'unset', sid: s.sid, ex: exIdx, set: setIdx + 1, at: Date.now() })
+    this.refresh()
+  },
+
+  onRemoteSet(msg) {
+    const s = this.state
+    if (!msg || msg.sid !== s.sid) return
+    const row = s.workout.rows[msg.ex] && s.workout.rows[msg.ex][msg.set - 1]
+    if (!row || row.done) return
+    row.done = true
+    row.at = Date.now()
+    if (s.exIdx === msg.ex && s.setIdx === msg.set - 1) {
+      const next = nextUndone(s)
+      if (next) { s.exIdx = next.exIdx; s.setIdx = next.setIdx }
+    }
+    this.allFinished = s.workout.rows.every(rows => rows.every(r => r.done))
+    save(s)
     this.refresh()
   },
 
@@ -266,6 +304,7 @@ export default {
     if (!row || !row.done) return
     row.done = false
     row.at = 0
+    this.allFinished = false
     save(s)
     this.refresh()
   },
@@ -274,7 +313,13 @@ export default {
     const s = this.state
     if (!msg || msg.sid !== s.sid) return
     const value = field === 'w' ? msg.weight : msg.reps
-    setRowValue(s, msg.ex, msg.set - 1, field, value)
+    const type = field === 'w' ? 'weight' : 'reps'
+    // 回传关联编辑时间戳，旧快照/旧确认不能覆盖更新的本地输入。
+    s.pendingEdits = (s.pendingEdits || []).filter(edit => !(edit.t === type &&
+      edit.ex === msg.ex && edit.set === msg.set && msg.editAt != null && edit.at <= msg.editAt))
+    const pending = s.pendingEdits.filter(edit => edit.t === type && edit.ex === msg.ex && edit.set === msg.set)
+    const latest = pending[pending.length - 1]
+    setRowValue(s, msg.ex, msg.set - 1, field, latest ? latest[type] : value)
     this.refresh()
   },
 
@@ -282,9 +327,11 @@ export default {
     const s = this.state
     if (!msg || msg.sid !== s.sid) return
     const ex = Number(msg.ex)
-    addSet(s, ex)
     const rows = s.workout.rows[ex]
     if (!rows) return
+    const target = Number.isInteger(msg.sets) ? msg.sets : rows.length + 1
+    if (target <= rows.length || target > 100) return
+    while (rows.length < target) addSet(s, ex)
     const i = rows.length - 1
     if (msg.weight != null && msg.weight !== '') rows[i].w = msg.weight
     if (msg.reps != null && msg.reps !== '') rows[i].r = msg.reps
@@ -300,7 +347,9 @@ export default {
     const ex = Number(msg.ex)
     const rows = s.workout.rows[ex]
     if (!rows || rows.length <= 1) return
-    rows.pop()
+    const target = Number.isInteger(msg.sets) ? msg.sets : rows.length - 1
+    if (target < 1 || target >= rows.length) return
+    rows.splice(target)
     s.workout.exercises[ex].sets = rows.length
     if (s.exIdx === ex && s.setIdx >= rows.length) s.setIdx = rows.length - 1
     save(s)
@@ -375,9 +424,7 @@ export default {
     }
     if (msg && msg.profile) s.profile = msg.profile
     replacePlan(s, { name: msg.workout, exercises: msg.exercises })
-    const next = nextUndone(s)
-    if (next) { s.exIdx = next.exIdx; s.setIdx = next.setIdx; this.allFinished = false }
-    else this.allFinished = true
+    this.allFinished = s.workout.rows.every(rows => rows.every(row => row.done))
     save(s)
     this.refresh()
     return { status: 'applied', page: 'Workout', exercises: s.workout.exercises.length }
@@ -411,7 +458,6 @@ export default {
     this.weightVal = row && row.w !== '' && row.w != null ? row.w + ' kg' : '—'
     this.repsVal = row && row.r !== '' && row.r != null ? row.r + (this.isTimed(ex) ? ' 秒' : ' 次') : '—'
     this.isRest = !!(row && !row.done && s.restUntil)
-    this.menuOn = false
 
     const next = nextUndone(s)
     const totalSets = s.workout.rows.reduce((n, r) => n + r.length, 0)
@@ -502,7 +548,7 @@ function storageSetSummary(session) {
 </script>
 
 <template>
-  <div class="page" ontouchstart="touchStart" ontouchend="touchEnd">
+  <div class="page" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
     <text class="ex">{{ exName }}</text>
 
     <block if="{{ !isRest }}">
