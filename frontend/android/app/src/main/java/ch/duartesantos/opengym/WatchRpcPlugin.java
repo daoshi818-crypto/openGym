@@ -1,6 +1,7 @@
 package ch.duartesantos.opengym;
 
 import android.content.ComponentName;
+import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
@@ -124,8 +125,16 @@ public class WatchRpcPlugin extends Plugin {
     }
 
     private boolean healthServiceConnected() {
-        try { return RpcClient.getInstance().isConnected(TARGET_PACKAGE); }
+        try {
+            // 1.0.0.17 的 isConnected 会创建并缓存 client；init 前调用会永久缓存 null Context。
+            if (!sdkContextReady()) return false;
+            return RpcClient.getInstance().isConnected(TARGET_PACKAGE);
+        }
         catch (Exception e) { return false; }
+    }
+
+    private boolean sdkContextReady() {
+        return DeviceRpcManager.getInstance().getContext() != null;
     }
 
     private void handleDeviceDynamic(String data) {
@@ -255,7 +264,8 @@ public class WatchRpcPlugin extends Plugin {
 
     private JSObject environmentDiagnostics() {
         JSObject ret = new JSObject();
-        ret.put("bridgeVersion", "2026-10-19.1");
+        ret.put("bridgeVersion", "2026-10-19.2");
+        ret.put("sdkContextReady", sdkContextReady());
         ret.put("phonePackage", getContext().getPackageName());
         ret.put("watchTargetPackageMatches", "ch.duartesantos.opengym".equals(getContext().getPackageName()));
         ret.put("vivo", safeIsVivo());
@@ -274,15 +284,24 @@ public class WatchRpcPlugin extends Plugin {
                     : ai.metaData.getInt("health.device.manager.version", 0));
         } catch (Exception e) { ret.put("healthReadError", e.toString()); }
         ret.put("rpcServicePresent", false);
+        ComponentName rpcComponent = new ComponentName(TARGET_PACKAGE,
+                "com.vivo.health.deviceRpcSdk.service.DeviceRpcService");
         try {
             ServiceInfo service = getContext().getPackageManager().getServiceInfo(
-                    new ComponentName(TARGET_PACKAGE, "com.vivo.health.deviceRpcSdk.service.DeviceRpcService"),
+                    rpcComponent,
                     PackageManager.MATCH_DISABLED_COMPONENTS);
             ret.put("rpcServicePresent", true);
             ret.put("rpcServiceEnabled", service.enabled);
             ret.put("rpcServiceExported", service.exported);
             ret.put("rpcServicePermission", service.permission == null ? "" : service.permission);
         } catch (Exception e) { ret.put("rpcServiceReadError", e.toString()); }
+        try {
+            // enabled 字段之外，再观察运行时组件覆盖值及 SDK 的实际 Intent 能否解析。
+            PackageManager pm = getContext().getPackageManager();
+            ret.put("rpcServiceComponentState", pm.getComponentEnabledSetting(rpcComponent));
+            Intent rpcIntent = new Intent("com.vivo.health.device.rpc.channel").setComponent(rpcComponent);
+            ret.put("rpcServiceResolvable", pm.resolveService(rpcIntent, 0) != null);
+        } catch (Exception e) { ret.put("rpcServiceResolveError", e.toString()); }
         try {
             // 仅观察 SDK 的绑定前置条件；不修改系统设置或 start_bind。
             ret.put("boundWatchDeviceCount", Settings.Global.getInt(getContext().getContentResolver(),
@@ -326,6 +345,11 @@ public class WatchRpcPlugin extends Plugin {
     }
 
     private void probeRegistration() {
+        // init 若在写入 Context 前抛出异常，探测同样不能提前创建 SDK client。
+        if (!sdkContextReady()) {
+            log("REGISTER probe skipped: SDK Context unavailable");
+            return;
+        }
         try {
             JSONObject json = new JSONObject();
             json.put("appid", APP_ID);
