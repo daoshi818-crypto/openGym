@@ -47,6 +47,8 @@ import { refillAfter } from './lib/rotation.js'
 import { isWarmupRow, hasCompletedWork } from './lib/workout-model.js'
 import { saveSessionAsRoutine } from './lib/session-routines.js'
 import { repeatSessionEntries } from './lib/session-repeat.js'
+import { resumeCompletedSession, saveResumedWorkout, watchSidOf } from './lib/session-resume.js'
+import { clearWatchPlan } from './lib/watch-link.js'
 import { swapActiveExercise } from './lib/active-exercise-swap.js'
 import { useSheetKeyboard, useRevealActiveChip, tappable } from './lib/use-sheet-keyboard.js'
 import { useAutoMore } from './lib/use-auto-more.js'
@@ -2530,6 +2532,13 @@ function WorkoutDetail({ w, close }) {
       onFocus={onNoteFocus} onChange={e => setNote(e.target.value)} onBlur={saveNote} />
     <div style={{ height: 14 }} />
     {st.active && <p className="small muted">{t('Finish the current workout first.')}</p>}
+    <Button icon="play" disabled={!!st.active} style={{ marginBottom: 8 }} onClick={() => {
+      saveNote()
+      initial.current = latest.current.trim().slice(0, NOTE_MAX)
+      try { update(s => { resumeCompletedSession(s, w) }); closeThenNav(close, '/workout') }
+      catch (error) { toast(t(error.message)) }
+    }}>继续本次训练</Button>
+    {w.calorieSource === 'watch_estimate' && <p className="small muted">手表估算热量 {Math.round(w.calories || 0)} 千卡</p>}
     {/* The editor starts from the record as it is, so a note typed here goes in first — the same
         flush the date row does, and the unmount hook then has nothing left to write over it. */}
     <Button icon="pencil" disabled={!!st.active} onClick={() => {
@@ -3297,6 +3306,7 @@ function CardioDone({ st, w }) {
 
 function FinishSummary({ w, prs, e1prs = [], close }) {
   const st = useStore(s => s.S)
+  const saved = st.workouts.find(x => sameWorkout(x, w)) || w
   return <div style={{ textAlign: 'center', padding: '8px 0' }}>
     <div style={{ fontSize: 44, display: 'flex', justifyContent: 'center', color: 'var(--acc)' }}><Icon name="trophy" /></div>
     <h3 style={{ margin: '8px 0' }}>{t('Workout complete!')}</h3>
@@ -3306,6 +3316,7 @@ function FinishSummary({ w, prs, e1prs = [], close }) {
       <div className="tile"><div className="l">{t('Sets')}</div><div className="v" style={{ fontSize: '1.1rem' }}>{setsWorkCount(setsDone(w), workSetsDone(w))}</div></div>
       <div className="tile"><div className="l">{t('PRs')}</div><div className="v" style={{ fontSize: 20 }}>{prs.length || '–'}</div></div>
     </div>
+    {saved.calorieSource === 'watch_estimate' && <p className="small muted">手表估算热量 {Math.round(saved.calories || 0)} 千卡</p>}
     {(prs.length > 0 || e1prs.length > 0) && <div style={{ textAlign: 'start', marginBottom: 12 }}>
       {prs.map(id => <div key={id} className="small accent row" style={{ gap: 5 }}><Icon name="trophy" style={{ fontSize: 13 }} />{t('New PR:')} <span className={exerciseNameClass(EXIDX[id])}>{EXIDX[id] ? exerciseNameFor(EXIDX[id]) : id}</span></div>)}
       {e1prs.map(p => <div key={p.id} className="small accent row" style={{ gap: 5 }}><Icon name="chartLine" style={{ fontSize: 13 }} />{t('Best estimated 1RM:')} <span className={exerciseNameClass(EXIDX[p.id])}>{EXIDX[p.id] ? exerciseNameFor(EXIDX[p.id]) : p.id}</span> · {fmtNum(p.est)} {st.unit}</div>)}
@@ -3319,6 +3330,10 @@ function FinishSummary({ w, prs, e1prs = [], close }) {
         what is added here goes straight onto its record. */}
     <div style={{ textAlign: 'start' }}><WorkoutMediaSection w={w} hint /></div>
     <Button variant="primary" onClick={() => closeThenNav(close, '/home')}>{t('Nice!')}</Button>
+    <Button icon="play" disabled={!!st.active} style={{ marginTop: 8 }} onClick={() => {
+      try { update(s => { resumeCompletedSession(s, saved) }); closeThenNav(close, '/workout') }
+      catch (error) { toast(t(error.message)) }
+    }}>继续本次训练</Button>
   </div>
 }
 export function finishWorkout() {
@@ -3331,6 +3346,7 @@ export function finishWorkout() {
   if (done < total) { confirmSheet({ title: t('Finish early?'), message: tn('{0} set still unchecked. Finish the workout now?', '{0} sets still unchecked. Finish the workout now?', total - done), confirmText: t('Finish workout'), onConfirm: doFinishWorkout }); return }
   doFinishWorkout()
 }
+export function finishWorkoutFromWatch(endedAt) { doFinishWorkout(endedAt) }
 // The workout screen's Finish pill (v1.3.11): one sheet with both ways out, Finish and save or
 // Discard. It says what finishWorkout's confirm would have said about sets still unchecked, so
 // the save needs no second question. `onDiscard` is the screen's own discard, with its confirm.
@@ -3351,11 +3367,13 @@ export function finishWorkoutSheet({ onDiscard } = {}) {
     ],
   })
 }
-function doFinishWorkout() {
+function doFinishWorkout(endedAt) {
   const st = S()
   const A = st.active
   if (!A) return
   const past = !!A.backfill
+  const clockEnd = Number.isFinite(endedAt)
+    ? Math.max(A.segmentStartedAt || A.start, Math.min(Date.now(), endedAt)) : Date.now()
   const prs = []
   const e1prs = []
   // A workout logged into the past is held against the history before it, the way an edit of a
@@ -3373,7 +3391,7 @@ function doFinishWorkout() {
     if (rec && !prs.includes(e.id)) e1prs.push({ id: e.id, ...rec })
   })
   const w = buildCompletedWorkout(A, {
-    end: past ? backfillEnd(A) : sessionEnd(A),
+    end: past ? backfillEnd(A) : sessionEnd(A, clockEnd),
     prs,
     snapshotFor: e => isCustomEx(EXIDX[e.id]) ? exerciseMuscleSnapshot(EXIDX[e.id]) : null,
   })
@@ -3394,14 +3412,21 @@ function doFinishWorkout() {
         const mx = bestWeightForEntry(e)
         if (mx > 0 && beatsWeight(e.id, mx, (s.exWeights[e.id] || {}).w || 0)) s.exWeights[e.id] = { w: mx, d: w.d }
       })
-      s.workouts.push(w)
+      if (A.resumeWorkoutId != null) {
+        shown = saveResumedWorkout(s, A, w)
+        const touched = [...new Set(shown.entries.map(e => e.id))]
+        s.workouts = rebuildPrHistory(s.workouts, touched, shown)
+        shown = s.workouts.find(x => x.id === A.resumeWorkoutId)
+        stampWorkout(shown)
+      } else s.workouts.push(w)
     }
     s.active = null
     // A rotation pass this app manages starts its next pass the moment the last session lands
     // (lib/rotation.js). A planner's queue is left alone: it completes and waits for its writer.
-    refillAfter(s, w)
+    if (A.resumeWorkoutId == null) refillAfter(s, w)
   })
   useStore.getState().autoBackupNow()
+  clearWatchPlan(watchSidOf(A), 'finished', shown.finishedAt || shown.end)
   useUI.getState().stopRest()
   // A hold still counting (a plank left unchecked, then Finish early) goes with the workout, as
   // on Discard: its bar is app-wide and would chime over the summary, and its callback writes

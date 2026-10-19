@@ -2,6 +2,7 @@ import { Fragment, useEffect, useId, useRef, useState } from 'react'
 import SwipeCards from '../components/SwipeCards.jsx'
 import SwipeRow from '../components/SwipeRow.jsx'
 import { useNavigate } from 'react-router-dom'
+import { watchSidOf } from '../lib/session-resume.js'
 import { useStore } from '../store/useStore.js'
 import { workoutControls } from '../lib/workout-controls.js'
 import { useUI } from '../store/useUI.js'
@@ -1325,13 +1326,13 @@ function ActiveWorkout() {
     onAddSet: () => {
       addSet(idx)
       const a = useStore.getState().S.active
-      const id = a && a.start ? String(a.start) : ''
+      const id = watchSidOf(a)
       if (id) pushAddSetToWatch(id, idx, a.entries[idx].sets.filter(r => !isWarmupRow(r)).length)
     },
     onRemoveSet: () => {
       removeSet(idx)
       const a = useStore.getState().S.active
-      const id = a && a.start ? String(a.start) : ''
+      const id = watchSidOf(a)
       if (id) pushRemoveSetToWatch(id, idx, a.entries[idx].sets.filter(r => !isWarmupRow(r)).length)
     },
     onAddWarmup: () => addWarmup(idx),
@@ -1346,7 +1347,7 @@ function ActiveWorkout() {
   const selectFocusEntry = idx => {
     update(s => { if (s.active) s.active.cur = idx })
     const a = useStore.getState().S.active
-    const id = a && a.start ? String(a.start) : ''
+    const id = watchSidOf(a)
     if (id) pushFocusToWatch(id, idx)
   }
   const advanceFocusUnit = () => update(s => {
@@ -1810,7 +1811,7 @@ function ActiveWorkout() {
   const seenWatchEvents = useRef(new Set())
   const watchActions = useRef(null)
   watchActions.current = { toggle, addSet, removeSet }
-  const sid = A.start ? String(A.start) : ''
+  const sid = watchSidOf(A)
 
   // 休息调整 → 手表。timer 变化驱动；本地应用远端消息时 remoteRestSeq 挡住回环。
   const watchRestSeq = useRef(0)
@@ -2172,7 +2173,7 @@ function ActiveWorkout() {
       {editing
         ? <button className="iconbtn" aria-label={t('Close editor')} title={t('Close editor')} onClick={() => exitWorkoutEdit()}><Icon name="xmark" /></button>
         : <button className="iconbtn" aria-label={t('Minimize')} title={t('Minimize')} onClick={() => nav('/home')}><Icon name="chevronDown" /></button>}
-      <div className="whdr-mid"><div className="whdr-name">{A.name}</div><div className="sub">{(A.backfill || editing) ? fmtDate(A.d, true) : <Elapsed start={A.start} />} · {t('{0} sets', done + '/' + total)}</div></div>
+      <div className="whdr-mid"><div className="whdr-name">{A.name}</div><div className="sub">{(A.backfill || editing) ? fmtDate(A.d, true) : <Elapsed start={A.segmentStartedAt != null ? A.segmentStartedAt - (A.elapsedBeforeMs || 0) : A.start} />} · {t('{0} sets', done + '/' + total)}</div></div>
       <button className="iconbtn" aria-label={t('Workout options')} title={t('Workout options')} onClick={openViewMenu}><Icon name="more" /></button>
       <button className="btn primary pill whdr-finish" aria-label={editing ? t('Save changes') : undefined}
         onClick={() => (editing ? finishWorkout() : finishWorkoutSheet({ onDiscard: discardWorkout }))}>{editing ? t('Save') : t('Finish')}</button>

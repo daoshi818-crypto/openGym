@@ -31,6 +31,12 @@ let lastSyncReceipt = null
 let lastWatchRx = null
 let lastPlanClear = null
 let lastPublishedPlan = null
+let onWatchLifecycle = () => false
+export function bindWatchLifecycle(cb) {
+  onWatchLifecycle = cb
+  return () => { if (onWatchLifecycle === cb) onWatchLifecycle = () => false }
+}
+export const pushEndedToWatch = msg => sendWatchEvent({ ...msg, t: 'ended' })
 
 export function watchState() { return state }
 export function onWatchState(cb) {
@@ -85,6 +91,7 @@ async function bindNative() {
       }
       if (ev.t === 'sync_ack') { lastSyncReceipt = { ...ev, receivedAt: Date.now() }; return }
       if (ev.t === 'watch_rx') { lastWatchRx = { ...ev, receivedAt: Date.now() }; return }
+      if (onWatchLifecycle(ev)) return
       // 手表刚打开：如果计划之前没送到，借这次握手立刻补推。
       if (ev.t === 'hello' && latestPlan) {
         pendingPlan = latestPlan
@@ -222,9 +229,10 @@ export async function pushPlanToWatch(workout, sid, profile = null) {
   return flushPendingPlan()
 }
 
-export function clearWatchPlan(sid, reason = 'no_active_session') {
+export function clearWatchPlan(sid, reason = 'no_active_session', endedAt = Date.now()) {
   if (sid && latestPlan?.sid !== sid) return
   if (latestPlan) lastPlanClear = { sid: latestPlan.sid, planId: latestPlan.planId, reason, at: Date.now() }
+  if (latestPlan?.sid) pushEndedToWatch({ sid: latestPlan.sid, reason, endedAt })
   latestPlan = null
   pendingPlan = null
 }

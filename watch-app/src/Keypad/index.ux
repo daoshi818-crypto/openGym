@@ -66,6 +66,19 @@ export default {
   onKeyDot() { this.onKey('.') },
   onKeyC() { this.onKey('C') },
   onKeyOk() { this.onKey('ok') },
+  onCancel() { router.back() },
+  onReady() { this.focusCrown() },
+  onShow() { this.focusCrown() },
+  focusCrown() { try { this.$element('keypad').requestFocus(true) } catch (e) {} },
+  onRotation(ev) {
+    if (!ev || ev.state === 3) return
+    const delta = Number(ev.delta) || (ev.direction === true ? 1 : ev.direction === false ? -1 : 0)
+    if (!delta) return
+    const step = this.field === 'w' ? 0.5 : 1
+    const value = Math.max(0, Math.min(99999, (parseFloat(this.show) || 0) + (delta > 0 ? step : -step)))
+    this.buffer = String(Math.round(value * 10) / 10)
+    this.show = this.buffer; this.changed = true
+  },
 
   commit() {
     if (!this.changed) { router.back(); return }
@@ -80,7 +93,7 @@ export default {
 </script>
 
 <template>
-  <div class="page">
+  <div class="page" id="keypad" touch-focusable="true" onrotation="onRotation">
     <text class="label">{{ label }}（{{ unit }}）</text>
     <text class="show">{{ show }}</text>
 
@@ -99,7 +112,7 @@ export default {
       <input class="k c" type="button" value="C" onclick="onKeyC" />
     </div>
 
-    <input class="ok" type="button" value="确定" onclick="onKeyOk" />
+    <div class="actions"><input class="cancel" type="button" value="取消" onclick="onCancel" /><input class="ok" type="button" value="保存" onclick="onKeyOk" /></div>
   </div>
 </template>
 
@@ -108,7 +121,9 @@ export default {
 .label { font-size: 19px; color: #8e8e93; }
 .show { font-size: 42px; color: #30d158; margin: 3px 0 8px; }
 .grid { flex-direction: row; flex-wrap: wrap; justify-content: center; width: 330px; }
-.k { width: 104px; height: 68px; font-size: 25px; border-radius: 12px; background-color: #1c1c1e; color: #ffffff; margin: 2px; }
+.k { width: 104px; height: 58px; font-size: 25px; border-radius: 8px; background-color: #191d1f; color: #ffffff; margin: 2px; }
 .c { color: #ff453a; }
-.ok { width: 330px; height: 58px; font-size: 23px; border-radius: 14px; background-color: #30d158; color: #ffffff; margin-top: 10px; }
+.actions { width: 330px; height: 58px; justify-content: space-between; margin-top: 10px; }
+.ok { width: 214px; height: 54px; font-size: 22px; border-radius: 8px; background-color: #63dfb1; color: #001b12; }
+.cancel { width: 108px; height: 54px; font-size: 20px; border-radius: 8px; background-color: #191d1f; color: #ffffff; }
 </style>

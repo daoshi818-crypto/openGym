@@ -2,8 +2,8 @@
   "package": "com.zcode.gymtimer",
   "name": "训练助手",
   "icon": "/assets/images/logo.png",
-  "versionName": "0.4.4",
-  "versionCode": 11,
+  "versionName": "0.5.0",
+  "versionCode": 12,
   "appCategory": ["health"],
   "deviceTypeList": ["watch"],
   "config": {
@@ -26,7 +26,7 @@
     "entry": "Index",
     "pages": {
       "Index": { "component": "index" },
-      "Workout": { "component": "index" },
+      "Workout": { "component": "index", "followHand": "disable" },
       "Keypad": { "component": "index" },
       "ExerciseList": { "component": "index" },
       "Summary": { "component": "index" }

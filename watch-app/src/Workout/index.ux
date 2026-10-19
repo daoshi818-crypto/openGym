@@ -3,7 +3,7 @@
 import router from '@blueos.app.appmanager.router'
 import {
   loadState, save, replacePlan, applySync, toggleSet, nextUndone,
-  addHr, flushHr, endSession, addSet, removeSet, addRestTime, setRowValue,
+  addHr, flushHr, endSession, addSet, removeSet, addRestTime, setRowValue, calories,
 } from '../lib/session.js'
 import { startHr, stopHr, tick, restOver } from '../lib/sensors.js'
 import { startServer, sendEvent, sendControl, pendingCount, isConnected } from '../lib/rpc.js'
@@ -25,6 +25,8 @@ export default {
     menuOn: false,
     leaveChoice: false,
     allFinished: false,
+    rowDone: false,
+    kcalLabel: '0',
   },
 
   onInit() {
@@ -66,6 +68,7 @@ export default {
   onShow() {
     // Keypad/动作列表独立读取并保存会话，返回训练页时重新读取，确保重量立即回显。
     const latest = loadState()
+    if (!latest.active || !latest.workout) { this.stopHrCapture(); router.replace({ uri: '/Summary' }); return }
     if (latest.active && latest.workout) {
       this.state = latest
       this.profile = latest.profile || null
@@ -76,7 +79,28 @@ export default {
     for (const edit of edits) sendEvent(edit)
     this.startHrCapture()
     this.refresh()
+    this.focusCrown()
   },
+
+  onReady() { this.focusCrown() },
+  focusCrown() {
+    try { this.$element('training').requestFocus(true) } catch (e) {}
+  },
+  onRotation(ev) {
+    if (!ev || ev.state === 3 || this.menuOn || this.leaveChoice) return
+    const delta = Number(ev.delta) || (ev.direction === true ? 1 : ev.direction === false ? -1 : 0)
+    if (!delta) return
+    if (this.isRest) this.nudgeRest(delta > 0 ? 5 : -5)
+    else this.stepSet(delta > 0 ? 1 : -1)
+  },
+  onBackPress() {
+    if (this.menuOn) this.menuOn = false
+    else this.leaveChoice = true
+    return true
+  },
+  openMenu() { this.menuOn = true; this.leaveChoice = false },
+  openActions() { this.leaveChoice = true; this.menuOn = false },
+  openExercises() { router.push({ uri: '/ExerciseList' }) },
 
   bindRpc() {
     const handle = (method, ...args) => {
@@ -379,8 +403,12 @@ export default {
   },
 
   onRemoteEnded() {
-    if (!this.state || !this.state.active) return
-    this.onEnd('phone', false)
+    this.hrDirty = false
+    this.state = loadState()
+    this.stopHrCapture()
+    if (this.timer) clearInterval(this.timer)
+    if (this.hrFlush) clearInterval(this.hrFlush)
+    router.replace({ uri: '/Summary' })
   },
 
   onSkipRest() {
@@ -445,12 +473,14 @@ export default {
   isDoneRowCur() {
     const s = this.state
     const row = s.workout.rows[s.exIdx] && s.workout.rows[s.exIdx][s.setIdx]
+    this.rowDone = !!(row && row.done)
     return !!(row && row.done)
   },
 
   refresh() {
     const s = this.state
     if (!s || !s.workout) return
+    this.rowDone = this.isDoneRowCur()
     const ex = s.workout.exercises[s.exIdx]
     const row = s.workout.rows[s.exIdx] && s.workout.rows[s.exIdx][s.setIdx]
     this.exName = ex ? ex.name : ''
@@ -506,6 +536,7 @@ export default {
     this.restLabel = this.mmss(left)
     this.restTotalLabel = this.mmss(Math.round(s.restTotalSec || 0))
     this.hrLabel = this.hrLast ? '♥ ' + this.hrLast : '♥ --'
+    this.kcalLabel = String(calories(s, s.profile, Math.max(0, (Date.now() - (s.segmentStartedAt || s.startedAt)) / 60000)))
     const n = pendingCount()
     this.syncLabel = isConnected() ? '已同步' : (n > 0 ? '未同步 ' + n + ' 条' : '')
   },
@@ -518,41 +549,31 @@ export default {
   onEnd(reason, notifyPhone = true) {
     if (typeof reason !== 'string') reason = 'manual'
     const s = this.state
+    if (!s || !s.active) return
     this.stopHrCapture()
     const session = endSession(s, s.profile)
     if (notifyPhone) sendEvent({
       t: 'end', sid: session.sid, minutes: session.minutes, avgHr: session.avgHr,
       maxHr: session.maxHr, calories: session.calories, volume: session.volume || 0,
       sets: session.sets.length, reason: reason || 'manual',
+      endedAt: session.endedAt, completedSets: session.sets,
     })
-    storageSetSummary(session)
-    router.push({ uri: '/Summary' })
+    this.state = loadState()
+    if (this.timer) clearInterval(this.timer)
+    if (this.hrFlush) clearInterval(this.hrFlush)
+    router.replace({ uri: '/Summary' })
   },
 }
 
-import storage from '@blueos.storage.storage'
-function storageSetSummary(session) {
-  storage.set({
-    key: 'summary_last',
-    value: {
-      minutes: session.minutes,
-      sets: session.sets.length,
-      calories: session.calories,
-      avgHr: session.avgHr,
-      maxHr: session.maxHr,
-      volume: session.volume || 0,
-    },
-    fail: () => {},
-  })
-}
 </script>
 
 <template>
-  <div class="page" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
+  <div class="page" id="training" touch-focusable="true" onrotation="onRotation" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
+    <div class="topline"><text class="status">{{ syncLabel }}</text><text class="clock">{{ elapsedLabel }}</text></div>
     <text class="ex">{{ exName }}</text>
 
     <block if="{{ !isRest }}">
-      <text class="group">{{ groupLabel }} · {{ elapsedLabel }}</text>
+      <text class="group">{{ groupLabel }}{{ rowDone ? ' · 已完成' : '' }}</text>
       <div class="inputs">
         <div class="field" onclick="editWeight">
           <text class="fval">{{ weightVal }}</text>
@@ -567,7 +588,8 @@ function storageSetSummary(session) {
         <input class="nav" type="button" value="‹ 上组" onclick="onPrevSet" />
         <input class="nav" type="button" value="下组 ›" onclick="onNextSet" />
       </div>
-      <input class="complete" type="button" value="完成一组" onclick="onComplete" if="{{ !allFinished }}" />
+      <input class="complete" type="button" value="完成本组" onclick="onComplete" if="{{ !rowDone }}" />
+      <input class="complete secondary" type="button" value="撤销本组" onclick="onUndo" if="{{ rowDone }}" />
     </block>
 
     <block if="{{ isRest }}">
@@ -577,14 +599,19 @@ function storageSetSummary(session) {
         <text class="rtotal">{{ restTotalLabel }}</text>
         <input class="rbtn" type="button" value="+15s" onclick="onRestPlus" />
       </div>
-      <text class="prog">{{ restProgLabel }} · 动作</text>
-      <text class="next">{{ nextLabel }}</text>
+      <text class="prog">{{ restProgLabel }}</text>
       <input class="skip" type="button" value="跳过" onclick="onSkipRest" />
     </block>
 
-    <text class="hr">{{ hrLabel }} {{ syncLabel ? '· ' + syncLabel : '' }}</text>
+    <div class="metrics"><text class="hr">{{ hrLabel }}</text><text class="energy">{{ kcalLabel }} 千卡 · 估算</text></div>
+    <div class="footer">
+      <input class="tool" type="button" value="动作" onclick="openExercises" />
+      <input class="tool" type="button" value="组数" onclick="openMenu" />
+      <input class="tool" type="button" value="更多" onclick="openActions" />
+    </div>
 
     <div class="menu" if="{{ menuOn }}">
+      <text class="panel-title">调整组数</text>
       <div class="mrow">
         <input class="m" type="button" value="加组" onclick="onMenuAddSet" />
         <input class="m" type="button" value="减组" onclick="onMenuRemoveSet" />
@@ -596,46 +623,50 @@ function storageSetSummary(session) {
       <input class="mclose" type="button" value="收起" onclick="closeMenu" />
     </div>
 
-    <input class="finish" type="button" value="结束训练" onclick="onEnd" if="{{ allFinished && !isRest }}" />
-
     <div class="leave-panel" if="{{ leaveChoice }}">
       <text class="leave-title">训练操作</text>
-      <text class="leave-hint">左右滑动打开</text>
       <input class="leave-btn continue" type="button" value="继续训练" onclick="continueTraining" />
-      <input class="leave-btn exit" type="button" value="退出训练" onclick="leaveTraining" />
       <input class="leave-btn end" type="button" value="结束当前训练" onclick="onEnd" />
     </div>
   </div>
 </template>
 
 <style>
-.page { flex-direction: column; align-items: center; justify-content: flex-start; width: 390px; height: 450px; background-color: #000000; padding: 18px 8px 12px; }
-.ex { font-size: 29px; color: #ffffff; lines: 1; max-width: 370px; text-align: center; }
-.group { font-size: 19px; color: #8e8e93; margin-top: 6px; }
-.inputs { flex-direction: row; justify-content: center; margin-top: 18px; }
-.field { flex-direction: column; align-items: center; justify-content: center; width: 166px; height: 112px; border-radius: 14px; background-color: #1c1c1e; margin: 0 5px; }
-.fval { font-size: 30px; color: #ffffff; }
-.flbl { font-size: 17px; color: #8e8e93; margin-top: 3px; }
-.navrow { flex-direction: row; justify-content: center; margin-top: 16px; }
-.nav { width: 158px; height: 52px; font-size: 20px; border-radius: 13px; background-color: #1c1c1e; color: #ffffff; margin: 0 5px; }
-.complete { width: 326px; height: 66px; font-size: 24px; border-radius: 16px; background-color: #30d158; color: #ffffff; margin-top: 18px; }
-.rest { font-size: 66px; color: #30d158; margin-top: 22px; }
-.rrow { flex-direction: row; align-items: center; justify-content: center; margin-top: 14px; }
-.rbtn { width: 88px; height: 48px; font-size: 19px; border-radius: 12px; background-color: #1c1c1e; color: #ffffff; margin: 0 5px; }
-.rtotal { font-size: 20px; color: #8e8e93; margin: 0 5px; }
-.prog { font-size: 18px; color: #ffffff; margin-top: 16px; }
-.next { font-size: 17px; color: #8e8e93; margin-top: 7px; max-width: 370px; lines: 1; }
-.skip { width: 240px; height: 56px; font-size: 22px; border-radius: 14px; background-color: #30d158; color: #ffffff; margin-top: 18px; }
-.hr { font-size: 16px; color: #ff5a5f; margin-top: 16px; max-width: 370px; lines: 1; }
+.page { flex-direction: column; align-items: center; width: 390px; height: 450px; background-color: #000000; padding: 12px 20px; }
+.topline { width: 350px; height: 24px; justify-content: space-between; }
+.status { font-size: 16px; color: #63dfb1; }
+.clock { font-size: 17px; color: #bfc6c9; }
+.ex { width: 350px; height: 50px; font-size: 25px; color: #ffffff; lines: 2; text-align: center; }
+.group { height: 26px; font-size: 18px; color: #bfc6c9; text-align: center; }
+.inputs { flex-direction: row; justify-content: space-between; width: 350px; height: 92px; margin-top: 6px; }
+.field { flex-direction: column; align-items: center; justify-content: center; width: 170px; height: 86px; border-radius: 8px; background-color: #191d1f; }
+.fval { font-size: 27px; color: #ffffff; width: 164px; text-align: center; lines: 1; }
+.flbl { font-size: 16px; color: #aeb9bd; }
+.navrow { flex-direction: row; justify-content: space-between; width: 350px; height: 48px; }
+.nav { width: 170px; height: 44px; font-size: 19px; border-radius: 8px; background-color: #191d1f; color: #ffffff; }
+.complete { width: 350px; height: 56px; font-size: 23px; border-radius: 8px; background-color: #63dfb1; color: #001b12; margin-top: 6px; }
+.secondary { background-color: #283236; color: #ffffff; }
+.rest { width: 350px; height: 112px; font-size: 70px; color: #63dfb1; text-align: center; }
+.rrow { flex-direction: row; align-items: center; justify-content: space-between; width: 350px; height: 48px; }
+.rbtn { width: 100px; height: 44px; font-size: 20px; border-radius: 8px; background-color: #191d1f; color: #ffffff; }
+.rtotal { font-size: 18px; color: #aeb9bd; }
+.prog { width: 350px; height: 26px; font-size: 17px; color: #bfc6c9; text-align: center; }
+.skip { width: 350px; height: 56px; font-size: 23px; border-radius: 8px; background-color: #63dfb1; color: #001b12; margin-top: 12px; }
+.metrics { width: 350px; height: 38px; align-items: center; justify-content: space-between; }
+.hr { font-size: 17px; color: #ff7d93; }
+.energy { font-size: 17px; color: #e0c775; }
+.footer { width: 350px; height: 48px; justify-content: space-between; }
+.tool { width: 110px; height: 44px; border-radius: 8px; background-color: #191d1f; color: #ffffff; font-size: 18px; }
 .menu { position: absolute; top: 0; left: 0; width: 390px; height: 450px; flex-direction: column; align-items: center; justify-content: center; background-color: #000000; }
 .mrow { flex-direction: row; justify-content: center; }
-.m { width: 145px; height: 58px; font-size: 21px; border-radius: 14px; background-color: #1c1c1e; color: #ffffff; margin: 7px 8px; }
+.m { width: 145px; height: 58px; font-size: 21px; border-radius: 8px; background-color: #191d1f; color: #ffffff; margin: 7px 8px; }
+.panel-title { font-size: 26px; color: #ffffff; margin-bottom: 16px; }
 .mclose { width: 180px; height: 44px; font-size: 18px; border-radius: 12px; background-color: transparent; color: #636366; margin-top: 5px; }
 .finish { width: 250px; height: 56px; font-size: 22px; border-radius: 14px; background-color: #30d158; color: #ffffff; margin-top: 18px; }
 .leave-panel { position: absolute; top: 0; left: 0; width: 390px; height: 450px; flex-direction: column; align-items: center; justify-content: center; background-color: #000000; }
 .leave-title { font-size: 28px; color: #ffffff; margin-bottom: 4px; }
 .leave-hint { font-size: 16px; color: #8e8e93; margin-bottom: 14px; }
-.leave-btn { width: 270px; height: 54px; font-size: 21px; border-radius: 14px; margin-top: 7px; }
+.leave-btn { width: 310px; height: 60px; font-size: 21px; border-radius: 8px; margin-top: 14px; }
 .continue { background-color: #1c1c1e; color: #ffffff; }
 .exit { background-color: #3a3a3c; color: #ffffff; }
 .end { background-color: #ff453a; color: #ffffff; }

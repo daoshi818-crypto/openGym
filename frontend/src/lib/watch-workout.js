@@ -1,6 +1,7 @@
 import { isWarmupRow } from './workout-model.js'
 import { exOr } from './exercises.js'
 import { exerciseNameFor } from './i18n-core.js'
+import { watchSidOf, elapsedMsOf } from './session-resume.js'
 
 /** 活动条目只存 id；计划与重连快照必须和手机界面解析出相同名称。 */
 export function watchExercisesOf(S, entries) {
@@ -20,8 +21,23 @@ export function watchPlanOf(S) {
   const bw = S.bodyweight?.length ? S.bodyweight[S.bodyweight.length - 1].w : null
   const weightKg = bw ? (S.unit === 'lb' ? bw * 0.45359237 : bw) : 70
   return {
-    sid: String(A.start),
+    sid: watchSidOf(A),
     profile: { weight: Math.round(weightKg * 10) / 10 },
     workout: { name: A.name, exercises: watchExercisesOf(S, A.entries) },
   }
+}
+
+export function watchSnapshotOf(S, timer, now = Date.now()) {
+  const A = S.active, plan = watchPlanOf(S)
+  if (!plan) return null
+  const ex = A.cur || 0
+  const rows = A.entries.map(e => e.sets.filter(r => !isWarmupRow(r)).map(r => ({
+    w: r.w ?? '', r: r.reps ?? r.r ?? '', done: !!r.done, at: r.at || 0,
+  })))
+  const first = (rows[ex] || []).findIndex(r => !r.done)
+  return { ...plan, workout: A.name, exercises: plan.workout.exercises, rows,
+    rev: now, startedAt: now - elapsedMsOf(A, now),
+    segmentStartedAt: A.segmentStartedAt || A.start,
+    exIdx: ex, setIdx: first < 0 ? 0 : first,
+    restUntil: timer && !timer.ready ? timer.endsAt : 0 }
 }

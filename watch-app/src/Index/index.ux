@@ -2,9 +2,10 @@
 // 开始页：手表是手机训练的辅助端，不独立开始训练。
 // 手机开始训练后推送 plan；手表打开时如果已有活跃会话，直接接着显示。
 import router from '@blueos.app.appmanager.router'
-import { loadState, startSession } from '../lib/session.js'
+import { loadState, startSession, applySync } from '../lib/session.js'
 import { startServer } from '../lib/rpc.js'
 import { WATCH_VERSION } from '../lib/version.js'
+import storage from '@blueos.storage.storage'
 
 export default {
   data: {
@@ -34,12 +35,25 @@ export default {
     this.bindRpc()
   },
 
-  onShow() { this.bindRpc() },
+  onShow() {
+    const s = loadState()
+    const closed = storage.getSync({ key: 'closed_sessions' }) || []
+    if (!s.active && (closed.indexOf(this.resumeSid) >= 0 || this.plan && closed.indexOf(this.plan.sid) >= 0)) {
+      this.canResume = false; this.canStart = false; this.resumeSid = ''; this.plan = null
+      this.workoutName = ''; this.exerciseCount = 0; this.status = '请在手机上开始训练'
+    }
+    this.bindRpc()
+  },
 
   bindRpc() {
     startServer({
       onPlan: (msg) => this.onPlanMsg(msg),
       onSync: (msg) => this.onSyncMsg(msg),
+      onEnded: () => {
+        this.plan = null; this.canStart = false; this.canResume = false
+        this.resumeSid = ''; this.exerciseCount = 0; this.workoutName = ''
+        router.replace({ uri: '/Summary' })
+      },
       onState: (connected) => {
         this.linkLabel = connected ? '已连接手机' : ''
         if (!this.canResume && !this.plan && !connected) this.status = '请在手机上开始训练'
@@ -59,8 +73,10 @@ export default {
   },
 
   onSyncMsg(msg) {
+    this.snapshot = msg
     // 手机重连后推来的权威快照：如果本地没有活跃会话，按快照进入训练。
     if (this.canResume && (!msg.sid || msg.sid === this.resumeSid)) {
+      applySync(loadState(), msg)
       return { status: 'retained', page: 'Index', exercises: this.exerciseCount }
     }
     return this.applyPlan(msg.workout || msg.name, msg.exercises || [], msg.sid || '', msg.profile || null)
@@ -82,7 +98,8 @@ export default {
   onStart() {
     const p = this.plan
     if (!p) return
-    startSession({ name: p.name, sid: p.sid, exercises: p.exercises }, p.profile)
+    const s = startSession({ name: p.name, sid: p.sid, exercises: p.exercises }, p.profile)
+    if (this.snapshot && this.snapshot.sid === p.sid) applySync(s, this.snapshot)
     router.push({ uri: '/Workout' })
   },
 
@@ -92,8 +109,9 @@ export default {
 
 <template>
   <div class="page">
+    <image class="logo" src="/assets/images/logo.png" />
     <text class="title">训练助手</text>
-    <text class="link">v{{ version }}</text>
+    <text class="version">v{{ version }}</text>
     <text class="status">{{ status }}</text>
     <text class="sub" if="{{ exerciseCount }}">{{ exerciseCount }} 个动作</text>
     <text class="link" if="{{ linkLabel }}">{{ linkLabel }}</text>
@@ -105,10 +123,12 @@ export default {
 
 <style>
 .page { flex-direction: column; justify-content: center; align-items: center; width: 390px; height: 450px; background-color: #000000; padding: 16px; }
-.title { font-size: 30px; color: #a3e635; margin-bottom: 8px; }
+.logo { width: 54px; height: 54px; margin-bottom: 10px; }
+.title { font-size: 28px; color: #ffffff; margin-bottom: 6px; }
+.version { font-size: 15px; color: #aeb9bd; margin-bottom: 22px; }
 .status { font-size: 22px; color: #f5f5f7; text-align: center; max-width: 350px; lines: 2; margin-bottom: 5px; }
 .sub { font-size: 18px; color: #9aa0a6; margin-bottom: 10px; }
 .link { font-size: 17px; color: #4ade80; margin-bottom: 5px; }
-.btn { width: 220px; height: 54px; font-size: 22px; border-radius: 14px; margin-top: 8px; }
-.primary { background-color: #a3e635; color: #0c0e12; }
+.btn { width: 310px; height: 56px; font-size: 22px; border-radius: 8px; margin-top: 16px; }
+.primary { background-color: #63dfb1; color: #001b12; }
 </style>

@@ -27,6 +27,18 @@ beforeEach(async () => {
 describe('watch app and plan delivery', () => {
   const workout = name => ({ name, exercises: [{ name: 'Squat', sets: 3, reps: 8 }] })
   const drain = async () => { for (let i = 0; i < 15; i++) await Promise.resolve() }
+  it('sends ended on phone completion and lets the global lifecycle reconcile hello before plan replay', async () => {
+    native.sendEvent.mockResolvedValue({ ok: true })
+    await link.pushPlanToWatch(workout('Today'), 'today')
+    const global = vi.fn(() => true)
+    link.bindWatchLifecycle(global)
+    link.clearWatchPlan()
+    await drain()
+    expect(native.sendEvent.mock.calls.map(([m]) => JSON.parse(m.json))).toContainEqual(expect.objectContaining({ t: 'ended', sid: 'today' }))
+    native.events.watchEvent({ t: 'hello', sid: 'today' })
+    expect(global).toHaveBeenCalledWith({ t: 'hello', sid: 'today' })
+    expect(native.sendPlan).toHaveBeenCalledOnce()
+  })
 
   it('includes the resulting work-set count in phone group changes', async () => {
     native.sendEvent.mockResolvedValue({ ok: true })

@@ -4,7 +4,7 @@
 // 连接可用时按顺序发送，收到手机 ack 后清除。闪退重开后继续补发。
 import interconnect from '@blueos.bluexlink.connectionManager'
 import storage from '@blueos.storage.storage'
-import { loadState } from './session.js'
+import { loadState, endSession } from './session.js'
 import { WATCH_VERSION } from './version.js'
 
 const PHONE_PACKAGE = 'ch.duartesantos.opengym'
@@ -150,7 +150,22 @@ export function startServer(h) {
       return
     }
     if (msg.t === 'ack') { ackUpto(msg.upto); return }
+    if (msg.t === 'ended') {
+      const s = loadState()
+      if (s.active && s.sid === msg.sid) {
+        const summary = endSession(s, s.profile, msg.endedAt)
+        sendEvent({ ...summary, t: 'summary', sets: summary.sets.length, at: Date.now() })
+        if (handlers.onEnded) handlers.onEnded(msg)
+      }
+      sendControl({ t: 'ended_ack', sid: msg.sid, watchVersion: WATCH_VERSION })
+      return
+    }
     if (msg.t === 'plan' || msg.t === 'sync') {
+      const closed = storage.getSync({ key: 'closed_sessions' }) || []
+      if (closed.indexOf(msg.sid) >= 0) {
+        sendControl({ t: msg.t + '_ack', sid: msg.sid, planId: msg.planId || '', status: 'closed', watchVersion: WATCH_VERSION })
+        return
+      }
       const handler = msg.t === 'plan' ? handlers.onPlan : handlers.onSync
       let result = { status: 'no_handler' }
       try {

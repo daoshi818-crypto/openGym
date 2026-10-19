@@ -32,7 +32,7 @@ function session() {
     set: ({ key, value }) => values.set(key, JSON.parse(JSON.stringify(value))),
   }, console }
   runInNewContext(source('lib/session.js').replace(imports, '').replace(/export function /g, 'function ')
-    + '\nthis.api = { loadState, startSession, save, replacePlan, applySync, nextUndone, setRowValue, toggleSet, addSet, removeSet }', context)
+    + '\nthis.api = { loadState, startSession, save, replacePlan, applySync, nextUndone, setRowValue, toggleSet, addSet, removeSet, calories, endSession, storage }', context)
   return context.api
 }
 const plan = { t: 'plan', sid: 'today', planId: 'p1', workout: 'Leg day',
@@ -57,6 +57,79 @@ const envelopes = [
 ]
 
 describe('watch business message boundary', () => {
+  it('selects an explicit action-list row using the documented bound item parameter', () => {
+    const sessions = session(), back = vi.fn()
+    sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+    const list = page('ExerciseList/index.ux', { ...sessions, sendControl() {}, router: { back } })
+    list.onInit(); list.toggleEx(0)
+    expect(list.expanded).toBe(0)
+    list.pickRow({ exIdx: 0, setIdx: 2 })
+    expect(sessions.loadState().setIdx).toBe(2)
+    expect(back).toHaveBeenCalledOnce()
+  })
+  it('finalizes on a delayed phone end, sends energy reliably and refuses stale plans for the closed session', () => {
+    const sessions = session(), c = connection(), rpc = transport(c, sessions)
+    const state = sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+    state.startedAt = Date.now() - 600000
+    sessions.save(state)
+    const replace = vi.fn(), workout = training(sessions, rpc, { router: { replace } })
+    workout.onInit()
+    workout.hrDirty = true
+    c.onMessage({ data: { t: 'ended', sid: plan.sid, endedAt: Date.now() - 300000 } })
+    expect(sessions.loadState().active).toBe(false)
+    expect(replace).toHaveBeenCalledWith({ uri: '/Summary' })
+    const summary = c.sent.find(m => m.t === 'summary')
+    expect(summary.minutes).toBeCloseTo(5, 1)
+    expect(summary.calories).toBeGreaterThan(0)
+    c.onMessage({ data: plan })
+    expect(c.sent.at(-1)).toMatchObject({ t: 'plan_ack', status: 'closed' })
+    expect(sessions.loadState().active).toBe(false)
+    c.onClose(); c.onOpen()
+    expect(c.sent.filter(m => m.t === 'summary')).toHaveLength(2)
+  })
+
+  it('leaves another session active when an old end arrives', () => {
+    const sessions = session(), c = connection(), rpc = transport(c, sessions)
+    sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+    rpc.startServer({ onEnded: vi.fn() })
+    c.onMessage({ data: { t: 'ended', sid: 'old', endedAt: Date.now() } })
+    expect(sessions.loadState().active).toBe(true)
+    expect(c.sent.some(m => m.t === 'summary')).toBe(false)
+  })
+
+  it('intercepts system back and gives the crown focus, set navigation and rest adjustment', () => {
+    const sessions = session(), rpc = transport(connection())
+    sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+    const requestFocus = vi.fn(), workout = training(sessions, rpc, { $element: () => ({ requestFocus }) })
+    workout.$element = () => ({ requestFocus })
+    workout.onInit(); workout.onReady()
+    expect(requestFocus).toHaveBeenCalledWith(true)
+    expect(JSON.parse(source('manifest.json')).router.pages.Workout.followHand).toBe('disable')
+    expect(workout.onBackPress()).toBe(true)
+    expect(workout.leaveChoice).toBe(true)
+    workout.continueTraining()
+    workout.onRotation({ delta: 1, state: 1 })
+    expect(workout.state.setIdx).toBe(1)
+    workout.state.restUntil = Date.now() + 30000
+    workout.refresh()
+    const before = workout.state.restUntil
+    workout.onRotation({ delta: 1, state: 2 })
+    expect(workout.state.restUntil).toBeGreaterThanOrEqual(before + 4000)
+    const after = workout.state.restUntil
+    workout.onRotation({ delta: 1, state: 3 })
+    expect(workout.state.restUntil).toBe(after)
+  })
+
+  it('lets the crown fine tune keypad values without typing', () => {
+    const sessions = session()
+    sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+    const keypad = page('Keypad/index.ux', { ...sessions, router: { back() {} } })
+    keypad.onInit({ exIdx: 0, setIdx: 0, field: 'w' })
+    keypad.onRotation({ delta: 1, state: 1 })
+    keypad.commit()
+    expect(sessions.loadState().workout.rows[0][0].w).toBe('60.5')
+  })
+
   it.each([[-100, 'menuOn'], [100, 'leaveChoice']])(
     'opens the horizontal panel for a BlueOS touches-only gesture (%s)', (dx, panel) => {
       const sessions = session(), rpc = transport(connection())
@@ -284,7 +357,7 @@ describe('watch business message boundary', () => {
 
   it('refreshes Index handlers when the page becomes visible again', () => {
     const startServer = vi.fn()
-    const home = page('Index/index.ux', { startServer, loadState: () => ({}),
+    const home = page('Index/index.ux', { startServer, storage: { getSync: () => [] }, loadState: () => ({}),
       router: {}, startSession() {} })
     home.onInit()
     startServer.mockClear()

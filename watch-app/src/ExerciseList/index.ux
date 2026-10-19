@@ -2,9 +2,7 @@
 // 动作列表页：查看动作和组，点组返回训练页并切换游标。
 import router from '@blueos.app.appmanager.router'
 import { loadState, save } from '../lib/session.js'
-import { endSession } from '../lib/session.js'
-import { sendEvent, sendControl } from '../lib/rpc.js'
-import storage from '@blueos.storage.storage'
+import { sendControl } from '../lib/rpc.js'
 
 export default {
   data: { list: [], expanded: -1 },
@@ -26,6 +24,7 @@ export default {
       })),
     }))
   },
+  onReady() { try { this.$element('exercises').requestFocus(true) } catch (e) {} },
 
   rowTxt(row, ex) {
     const w = row.w === '' || row.w == null ? '' : row.w + 'kg*'
@@ -34,14 +33,14 @@ export default {
     return (w + r) || '—'
   },
 
-  toggleEx(e) {
-    const idx = Number(e.target.attr.dataIdx)
+  toggleEx(index) {
+    const idx = Number(index)
     this.expanded = this.expanded === idx ? -1 : idx
   },
 
-  pickRow(e) {
-    const d = e.target.attr
-    const s = this.state
+  pickRow(d) {
+    const s = loadState()
+    if (!s.active || !s.workout) { router.replace({ uri: '/Summary' }); return }
     const ex = Number(d.exIdx)
     const set = Number(d.setIdx)
     s.exIdx = ex
@@ -53,70 +52,52 @@ export default {
 
   onExit() { router.back() },
 
-  onFinish() {
-    const s = this.state
-    const session = endSession(s, s.profile)
-    sendEvent({
-      t: 'end', sid: session.sid, minutes: session.minutes, avgHr: session.avgHr,
-      maxHr: session.maxHr, calories: session.calories, volume: session.volume || 0,
-      sets: session.sets.length,
-    })
-    storage.set({
-      key: 'summary_last',
-      value: {
-        minutes: session.minutes,
-        sets: session.sets.length,
-        calories: session.calories,
-        avgHr: session.avgHr,
-        maxHr: session.maxHr,
-        volume: session.volume || 0,
-      },
-      fail: () => {},
-    })
-    router.replace({ uri: '/Summary' })
-  },
 }
 </script>
 
 <template>
   <div class="page">
-    <stack class="body">
-      <list class="scroll">
-        <stack class="exrow" for="{{ item in list }}" onclick="toggleEx" data-idx="{{ item.idx }}">
-          <text class="exname">{{ item.name }}</text>
-          <text class="cnt">{{ item.rows.length }}组</text>
-          <stack class="rows" if="{{ expanded === item.idx }}">
-            <div class="rrow" for="{{ r in item.rows }}" onclick="pickRow" data-ex-idx="{{ r.exIdx }}" data-set-idx="{{ r.setIdx }}">
+    <text class="title">训练动作</text>
+    <div class="body">
+      <list class="scroll" id="exercises" touch-focusable="true">
+        <list-item class="exrow" type="exercise" for="{{ item in list }}" tid="idx">
+          <div class="exhead" onclick="toggleEx(item.idx)">
+            <text class="exname">{{ item.name }}</text>
+            <text class="cnt">{{ item.rows.length }}组</text>
+          </div>
+          <div class="rows" if="{{ expanded === item.idx }}">
+            <div class="rrow" for="{{ r in item.rows }}" onclick="pickRow(r)">
               <text class="rno">{{ r.no }}</text>
               <text class="rtxt {{ r.done ? 'done' : '' }}">{{ r.txt }} {{ r.done ? '✓' : '' }}</text>
               <text class="chev">›</text>
             </div>
-          </stack>
-        </stack>
+          </div>
+        </list-item>
       </list>
-    </stack>
+    </div>
 
     <div class="foot">
-      <input class="fbtn" type="button" value="退出" onclick="onExit" />
-      <input class="fbtn save" type="button" value="保存" onclick="onFinish" />
+      <input class="fbtn" type="button" value="返回训练" onclick="onExit" />
     </div>
   </div>
 </template>
 
 <style>
 .page { flex-direction: column; width: 390px; height: 450px; background-color: #000000; }
-.body { flex: 1; width: 390px; }
-.scroll { width: 390px; height: 360px; padding-top: 8px; }
-.exrow { flex-direction: column; padding: 8px 18px; }
-.exname { font-size: 22px; color: #ffffff; }
+.title { height: 42px; width: 390px; font-size: 25px; color: #ffffff; text-align: center; }
+.body { width: 390px; height: 320px; }
+.scroll { width: 390px; height: 320px; padding-top: 4px; }
+.exrow { flex-direction: column; width: 390px; padding: 8px 20px; }
+.exhead { flex-direction: column; min-height: 48px; }
+.exname { width: 350px; font-size: 22px; color: #ffffff; lines: 2; }
 .cnt { font-size: 17px; color: #8e8e93; margin-top: 1px; }
 .rows { flex-direction: column; margin-top: 4px; }
-.rrow { flex-direction: row; align-items: center; padding: 6px 0; }
+.rrow { flex-direction: row; align-items: center; min-height: 48px; padding: 6px 0; }
 .rno { font-size: 20px; color: #30d158; width: 38px; }
 .rtxt { font-size: 20px; color: #ffffff; flex: 1; }
 .rtxt.done { color: #636366; }
 .chev { font-size: 22px; color: #48484a; }
 .foot { flex-direction: row; justify-content: center; padding: 10px 0 18px; }
-.fbtn { width: 145px; height: 54px; font-size: 21px; border-radius: 13px; background-color: #1c1c1e; color: #ffffff; margin: 0 8px; }
+.fbtn { width: 310px; height: 54px; font-size: 21px; border-radius: 8px; background-color: #191d1f; color: #ffffff; margin: 0 8px; }
 .save { background-color: #30d158; }
 </style>

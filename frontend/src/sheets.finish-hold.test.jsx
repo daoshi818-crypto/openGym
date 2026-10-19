@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createRoot } from 'react-dom/client'
 import { DEF, useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
-import { finishWorkout, finishWorkoutSheet } from './sheets.jsx'
+import { finishWorkout, finishWorkoutSheet, finishWorkoutFromWatch } from './sheets.jsx'
 import { EXDB } from './lib/exercises-data.js'
 
 const clone = v => JSON.parse(JSON.stringify(v))
@@ -54,6 +54,28 @@ afterEach(() => {
 })
 
 describe('finishing while a timed hold runs', () => {
+  it('uses the watch end time instead of time spent waiting to reconnect', () => {
+    install([{ w: 40, r: 5, done: true }])
+    const endedAt = Date.now() - 5 * 60000
+    act(() => finishWorkoutFromWatch(endedAt))
+    expect(S().workouts[0].end).toBe(endedAt)
+    expect(S().active).toBeNull()
+  })
+  it('continues the saved session and finishes into its original history record with accumulated time', () => {
+    install([{ w: 40, r: 5, done: true }])
+    act(() => finishWorkout())
+    const original = clone(S().workouts[0])
+    vi.advanceTimersByTime(10 * 60000)
+    tapInTopSheet('继续本次训练')
+    vi.advanceTimersByTime(5 * 60000)
+    useStore.getState().update(s => { s.active.entries[0].sets.push({ w: 45, r: 6, done: true }) })
+    act(() => finishWorkout())
+    expect(S().active).toBeNull()
+    expect(S().workouts).toHaveLength(1)
+    expect(S().workouts[0].id).toBe(original.id)
+    expect(S().workouts[0].end - S().workouts[0].start).toBe(original.end - original.start + 5 * 60000)
+    expect(S().workouts[0].entries[0].sets).toHaveLength(2)
+  })
   it('stops the hold, which then never calls back into the finished workout', () => {
     install([{ w: 40, r: 5, done: true }])
     const held = holdInto(0)

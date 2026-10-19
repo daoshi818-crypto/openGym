@@ -17,9 +17,10 @@ import { installViewportGuard } from './lib/viewport-guard.js'
 import { installChipDrag } from './lib/hchips.js'
 import { syncPushSubscription } from './lib/push.js'
 import { MOBILE } from './lib/mobile.js'
-import { pushPlanToWatch, clearWatchPlan } from './lib/watch-link.js'
+import { pushPlanToWatch, clearWatchPlan, bindWatchLifecycle, pushEndedToWatch, pushSyncToWatch, pushAckToWatch } from './lib/watch-link.js'
 import { watchPlanOf } from './lib/watch-workout.js'
-import { exitWorkoutEdit, startFlow } from './sheets.jsx'
+import { createWatchLifecycle } from './lib/watch-session.js'
+import { exitWorkoutEdit, startFlow, finishWorkoutFromWatch } from './sheets.jsx'
 import Icon from './components/Icon.jsx'
 import TabBar from './components/TabBar.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
@@ -74,6 +75,15 @@ function Shell() {
   const navType = useNavigationType()
   const { S, user, ready } = useStore()
   const watchPlan = MOBILE ? JSON.stringify(watchPlanOf(S)) : 'null'
+  useEffect(() => {
+    if (!MOBILE) return
+    return bindWatchLifecycle(createWatchLifecycle({
+      getState: () => useStore.getState().S,
+      update: fn => useStore.getState().update(fn), getTimer: () => useUI.getState().timer,
+      sendEnded: pushEndedToWatch, sendSync: pushSyncToWatch, sendAck: pushAckToWatch,
+      finish: finishWorkoutFromWatch,
+    }))
+  }, [])
   // 会话级生命周期：在设置页拉起手表时仍保留计划，结束/丢弃后才清除。
   useEffect(() => {
     if (!MOBILE) return

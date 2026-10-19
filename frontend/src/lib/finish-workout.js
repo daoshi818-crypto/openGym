@@ -2,6 +2,7 @@
 // exercise the exact shape the UI writes without mounting React or mutating store state.
 import { bestWeightForEntry, cleanupSg } from './history.js'
 import { hasCompletedWork, isSideSet } from './workout-model.js'
+import { elapsedMsOf } from './session-resume.js'
 
 // planSec is live-session bookkeeping: a hold displaced before it finished puts its plan aside so
 // the row still knows what it is asking for (Workout.startTimed). A finished session keeps only
@@ -47,6 +48,7 @@ function rowLengthMs(set) {
 }
 
 export function sessionEnd(active, now = Date.now(), gap = FORGOTTEN_GAP_MS) {
+  if (active?.segmentStartedAt != null) return now
   const ticks = (active?.entries || [])
     .flatMap(e => e.sets || [])
     .filter(s => hasCompletedWork(s) && Number.isFinite(s.at))
@@ -116,7 +118,15 @@ export function buildCompletedWorkout(active, { end = Date.now(), prs = [], snap
     id: active.id,
     d: active.d,
     start: active.start,
-    end,
+    // Existing readers use end-start as duration; retain wall-clock completion separately.
+    end: active.segmentStartedAt != null ? active.start + elapsedMsOf(active, end) : end,
+    ...(active.segmentStartedAt != null ? {
+      durationMs: elapsedMsOf(active, end), finishedAt: end,
+    } : {}),
+    ...(active.watchSid ? { watchSid: active.watchSid,
+      watchSids: [...new Set([...(active.watchSids || []), String(active.start), active.watchSid])] } : {}),
+    ...(active.watchSegments ? { watchSegments: active.watchSegments,
+      calories: active.calories || 0, calorieSource: 'watch_estimate' } : {}),
     routineIds,
     routineId: routineIds[0] ?? null,
     name: active.name,

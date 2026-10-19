@@ -121,10 +121,13 @@ export function applySync(state, snapshot) {
     // 手机已经换了一场训练：手表不该把旧会话续上去。
     state.sid = snapshot.sid
     state.startedAt = snapshot.startedAt || state.startedAt
+    state.hr = { sum: 0, count: 0, max: 0 }
   } else if (snapshot.sid) {
     state.sid = snapshot.sid
   }
   state.active = true
+  state.segmentStartedAt = snapshot.segmentStartedAt || state.segmentStartedAt || state.startedAt
+  if (snapshot.startedAt) state.startedAt = snapshot.startedAt
   state.workout = {
     name: snapshot.workout || snapshot.name || (state.workout && state.workout.name) || '',
     exercises: snapshot.exercises,
@@ -263,8 +266,9 @@ export function calories(state, profile, minutes) {
 }
 
 // 结束会话：结算（含每组实际录的 w/r、总时长、卡路里）→ 待上传队列 → 清空当前状态
-export function endSession(state, profile) {
-  const minutes = Math.max(1, Math.round((now() - state.startedAt) / 60000))
+export function endSession(state, profile, endedAt = now()) {
+  const end = Math.min(now(), Math.max(state.segmentStartedAt || state.startedAt, Number(endedAt) || now()))
+  const minutes = Math.max(0, (end - (state.segmentStartedAt || state.startedAt)) / 60000)
   const flat = []
   ;(state.workout.rows || []).forEach((rows, ex) => rows.forEach((row, set) => {
     if (row.done) flat.push({ ex, set: set + 1, reps: row.r != null ? String(row.r) : '', weight: row.w != null ? String(row.w) : '', at: row.at || now() })
@@ -274,7 +278,7 @@ export function endSession(state, profile) {
     sid: state.sid || 's' + state.startedAt,
     workout: state.workout ? state.workout.name : '',
     startedAt: state.startedAt,
-    endedAt: now(),
+    endedAt: end,
     minutes,
     avgHr: state.hr.count ? Math.round(state.hr.sum / state.hr.count) : 0,
     maxHr: state.hr.max,
@@ -287,6 +291,9 @@ export function endSession(state, profile) {
     sets: flat,
   }
   const s = blankState()
+  const closed = storage.getSync({ key: 'closed_sessions' }) || []
+  storage.set({ key: 'closed_sessions', value: [...closed.filter(id => id !== session.sid), session.sid].slice(-100), fail() {} })
+  storage.set({ key: 'summary_last', value: { ...session, sets: session.sets.length }, fail() {} })
   save(s)
   return session
 }

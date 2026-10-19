@@ -2,11 +2,14 @@
 // 结束页：本次训练摘要。手机是数据源，这里只展示手表本地结算的紧凑结果。
 import storage from '@blueos.storage.storage'
 import router from '@blueos.app.appmanager.router'
+import { startServer } from '../lib/rpc.js'
+import { startSession, applySync } from '../lib/session.js'
 
 export default {
   data: { minutes: '', sets: '', kcal: '', hr: '', volume: '' },
 
   onInit() {
+    this.bindRpc()
     try {
       const s = storage.getSync({ key: 'summary_last' })
       if (s && typeof s === 'object') {
@@ -19,6 +22,17 @@ export default {
     } catch (e) {}
   },
 
+  onShow() { this.bindRpc() },
+  bindRpc() {
+    const next = msg => {
+      const s = startSession({ name: msg.workout, sid: msg.sid, exercises: msg.exercises }, msg.profile)
+      if (msg.t === 'sync') applySync(s, msg)
+      router.replace({ uri: '/Workout' })
+      return { status: 'applied', page: 'Summary', exercises: msg.exercises.length }
+    }
+    startServer({ onPlan: next, onSync: next })
+  },
+
   fmtDur(min) {
     const m = Math.max(0, Math.round(min))
     return Math.floor(m / 60) + ':' + String(m % 60).padStart(2, '0')
@@ -26,7 +40,7 @@ export default {
 
   onBack() {
     try { storage.delete({ key: 'summary_last' }) } catch (e) {}
-    router.push({ uri: '/Index' })
+    router.replace({ uri: '/Index' })
   },
 }
 </script>
@@ -36,7 +50,7 @@ export default {
     <text class="title">训练完成</text>
 
     <text class="kcal">{{ kcal }}</text>
-    <text class="kcal-lbl">千卡</text>
+    <text class="kcal-lbl">估算千卡</text>
 
     <div class="row">
       <div class="cell">
@@ -68,5 +82,5 @@ export default {
 .num { font-size: 26px; color: #ffffff; }
 .lbl { font-size: 15px; color: #8e8e93; margin-top: 1px; }
 .volume { font-size: 16px; color: #8e8e93; margin-top: 8px; }
-.btn { width: 240px; height: 54px; font-size: 22px; border-radius: 14px; background-color: #30d158; color: #ffffff; margin-top: 14px; }
+.btn { width: 310px; height: 54px; font-size: 22px; border-radius: 8px; background-color: #63dfb1; color: #001b12; margin-top: 14px; }
 </style>
