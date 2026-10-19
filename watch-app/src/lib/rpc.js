@@ -5,6 +5,7 @@
 import interconnect from '@blueos.bluexlink.connectionManager'
 import storage from '@blueos.storage.storage'
 import { loadState } from './session.js'
+import { WATCH_VERSION } from './version.js'
 
 const PHONE_PACKAGE = 'ch.duartesantos.opengym'
 const PHONE_FINGERPRINT = '8bf64970048540fe913005d05becee1ecad819e7171518dabcd15817301a0149'
@@ -41,6 +42,8 @@ function sendHello() {
   const s = loadState()
   sendControl({
     t: 'hello',
+    watchVersion: WATCH_VERSION,
+    receipts: true,
     sid: s.sid || '',
     rev: s.rev || 0,
     pending: outbox.length,
@@ -82,20 +85,18 @@ function ackUpto(upto) {
 
 export function startServer(h) {
   if (h) handlers = h
-  if (connect) {
-    // 页面重复调用时只更新 handlers，不重复建实例。
-    if (connected && handlers.onState) handlers.onState(true)
-    return
-  }
-  outbox = loadOutbox()
-  try {
-    connect = interconnect.instance({ package: PHONE_PACKAGE, fingerprint: PHONE_FINGERPRINT })
-  } catch (e) {
-    connect = null
-    if (handlers.onError) handlers.onError({ code: 1000, data: String(e) })
-    return
+  if (!connect) {
+    outbox = loadOutbox()
+    try {
+      connect = interconnect.instance({ package: PHONE_PACKAGE, fingerprint: PHONE_FINGERPRINT })
+    } catch (e) {
+      connect = null
+      if (handlers.onError) handlers.onError({ code: 1000, data: String(e) })
+      return
+    }
   }
 
+  // 页面包可能各有一份模块，但复用同一个 SDK 实例。每次显示都重新接管回调。
   connect.onOpen = () => {
     connected = true
     if (handlers.onState) handlers.onState(true)
@@ -113,10 +114,25 @@ export function startServer(h) {
   }
   connect.onMessage = (data) => {
     const msg = parseMessage(data)
-    if (!msg) return
+    if (!msg || typeof msg.t !== 'string') {
+      sendControl({ t: 'watch_rx', watchVersion: WATCH_VERSION, status: 'invalid_message',
+        envelopeType: typeof data, keys: data && typeof data === 'object' ? Object.keys(data).slice(0, 8) : [] })
+      return
+    }
     if (msg.t === 'ack') { ackUpto(msg.upto); return }
-    if (msg.t === 'plan' && handlers.onPlan) { handlers.onPlan(msg); return }
-    if (msg.t === 'sync' && handlers.onSync) { handlers.onSync(msg); return }
+    if (msg.t === 'plan' || msg.t === 'sync') {
+      const handler = msg.t === 'plan' ? handlers.onPlan : handlers.onSync
+      let result = { status: 'no_handler' }
+      try {
+        if (handler) result = handler(msg) || { status: 'handled' }
+      } catch (e) {
+        result = { status: 'error', error: String(e && e.message || e).slice(0, 160) }
+      }
+      // code=0 仅代表手机 RPC 成功；此回执在页面实际处理后发出。
+      sendControl({ ...result, t: msg.t + '_ack', watchVersion: WATCH_VERSION,
+        sid: msg.sid || '', planId: msg.planId || '', rev: msg.rev || 0 })
+      return
+    }
     if (msg.t === 'rest' && handlers.onRest) { handlers.onRest(msg); return }
     if (msg.t === 'unset' && handlers.onUnset) { handlers.onUnset(msg); return }
     if (msg.t === 'weight' && handlers.onWeight) { handlers.onWeight(msg); return }
@@ -126,6 +142,7 @@ export function startServer(h) {
     if (msg.t === 'focus' && handlers.onFocus) { handlers.onFocus(msg); return }
     if (msg.t === 'ended' && handlers.onEnded) { handlers.onEnded(msg); return }
     if (msg.t === 'file' && handlers.onFile) { handlers.onFile(msg); return }
+    sendControl({ t: 'watch_rx', watchVersion: WATCH_VERSION, status: 'unhandled_type', messageType: msg.t })
   }
   // 不同固件文档里大小写不一致，两种都挂上。
   connect.onopen = connect.onOpen

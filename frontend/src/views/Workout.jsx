@@ -7,6 +7,7 @@ import { workoutControls } from '../lib/workout-controls.js'
 import { useUI } from '../store/useUI.js'
 import { bindWatchSync, bindWatchEvents, pushRestToWatch, pushWeightToWatch, pushRepsToWatch, pushUnsetToWatch, pushAddSetToWatch, pushRemoveSetToWatch, pushFocusToWatch, pushAckToWatch, pushSyncToWatch } from '../lib/watch-link.js'
 import { exOr, betterWeight } from '../lib/exercises.js'
+import { watchExercisesOf } from '../lib/watch-workout.js'
 import { usesBar } from '../lib/bar.js'
 import { loadKindFor, baseWeightFor, inventoryFor, rowLoad, sameLoad, plateDelta, dropGrid } from '../lib/plates.js'
 import { effectiveRoutines, effectiveRoutineIds, lastEntryFor, bestWeightFor, bestWeightForEntry, buildSets, freestyleConfig, defaultConfig, setsDoneActive, setUnitsTotal, supersetUnits, unitOf, setLabel, modeOf, isBw, isPerSide, repStep, EFFORT, effortOf, capEffort, cascadeWeight, insertWarmupRow, barFloor, makeWarmupAt, canBeWarmup, makeWorkAt, removeRowAt, removeLastSet, setSpanAt, copyRowAt, copySpanAt, insertRowAt, pairAdjacent, unpairSuperset, cleanupSg, applyIntensifierPlan, pinnedNoteFor, exNoteFor, setsRepsOf } from '../lib/history.js'
@@ -1906,13 +1907,7 @@ function ActiveWorkout() {
           startedAt: A2.start || Date.now(),
           workout: A2.name,
           profile: { weight: Math.round(weightKg * 10) / 10 },
-          exercises: A2.entries.map(e => ({
-            name: e.name,
-            sets: e.sets.filter(x => !isWarmupRow(x)).length,
-            reps: e.sets.find(x => !isWarmupRow(x))?.r ?? e.sets.find(x => !isWarmupRow(x))?.reps ?? '',
-            restSec: e.target?.restSec > 0 ? e.target.restSec : S.restSec || 60,
-            weight: e.sets.find(x => !isWarmupRow(x))?.w ?? '',
-          })),
+          exercises: watchExercisesOf(S, A2.entries),
           rows: A2.entries.map(e => e.sets.filter(x => !isWarmupRow(x)).map(r => ({
             w: r.w ?? '', r: r.reps ?? r.r ?? '', done: !!r.done, at: r.at || 0,
           }))),

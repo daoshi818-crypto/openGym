@@ -127,10 +127,19 @@ public class WatchRpcPlugin extends Plugin {
             String sid = msg.optString("sid", "");
             return "t=" + type.substring(0, Math.min(32, type.length()))
                     + " sid=" + sid.substring(0, Math.min(64, sid.length()))
-                    + " exercises=" + (msg.optJSONArray("exercises") == null ? 0 : msg.optJSONArray("exercises").length())
+                    + " exercises=" + (msg.optJSONArray("exercises") == null ? msg.optInt("exercises", 0) : msg.optJSONArray("exercises").length())
                     + " chars=" + json.length()
+                    + summaryField(msg, "planId") + summaryField(msg, "watchVersion")
+                    + summaryField(msg, "status") + summaryField(msg, "page")
+                    + summaryField(msg, "reason") + summaryField(msg, "error")
                     + ("unknown".equals(type) ? " keys=" + msg.names() : "");
         } catch (Exception e) { return "invalid JSON chars=" + json.length(); }
+    }
+
+    private String summaryField(JSONObject msg, String key) {
+        String value = msg.optString(key, "");
+        return value.isEmpty() ? "" : " " + key + "="
+                + value.substring(0, Math.min(160, value.length())).replace('\n', ' ').replace('\r', ' ');
     }
 
     private void notifyState(String state, String reason) {
@@ -285,7 +294,7 @@ public class WatchRpcPlugin extends Plugin {
 
     private JSObject environmentDiagnostics() {
         JSObject ret = new JSObject();
-        ret.put("bridgeVersion", "2026-10-19.3");
+        ret.put("bridgeVersion", "2026-10-19.4");
         ret.put("watchPackage", WATCH_PACKAGE);
         ret.put("watchRouter", WATCH_ROUTER);
         ret.put("lastRxType", lastRxType);

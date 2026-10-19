@@ -41,19 +41,7 @@ export default {
     this.clockPeriod = 0
     this.touch = null
 
-    startServer({
-      onPlan: (msg) => this.onPlanUpdate(msg),
-      onSync: (msg) => this.onSyncUpdate(msg),
-      onRest: (msg) => this.onRemoteRest(msg),
-      onUnset: (msg) => this.onRemoteUnset(msg),
-      onWeight: (msg) => this.onRemoteValue(msg, 'w'),
-      onReps: (msg) => this.onRemoteValue(msg, 'r'),
-      onAddSet: (msg) => this.onRemoteAddSet(msg),
-      onRemoveSet: (msg) => this.onRemoteRemoveSet(msg),
-      onFocus: (msg) => this.onRemoteFocus(msg),
-      onEnded: () => this.onRemoteEnded(),
-      onError: () => { this.syncLabel = '连接异常' },
-    })
+    this.bindRpc()
 
     const next = nextUndone(s)
     if (next) { s.exIdx = next.exIdx; s.setIdx = next.setIdx }
@@ -83,8 +71,25 @@ export default {
       this.state = latest
       this.profile = latest.profile || null
     }
+    if (this.state) this.bindRpc()
     this.startHrCapture()
     this.refresh()
+  },
+
+  bindRpc() {
+    startServer({
+      onPlan: (msg) => this.onPlanUpdate(msg),
+      onSync: (msg) => this.onSyncUpdate(msg),
+      onRest: (msg) => this.onRemoteRest(msg),
+      onUnset: (msg) => this.onRemoteUnset(msg),
+      onWeight: (msg) => this.onRemoteValue(msg, 'w'),
+      onReps: (msg) => this.onRemoteValue(msg, 'r'),
+      onAddSet: (msg) => this.onRemoteAddSet(msg),
+      onRemoveSet: (msg) => this.onRemoteRemoveSet(msg),
+      onFocus: (msg) => this.onRemoteFocus(msg),
+      onEnded: () => this.onRemoteEnded(),
+      onError: () => { this.syncLabel = '连接异常' },
+    })
   },
 
   onHide() {
@@ -314,11 +319,14 @@ export default {
   },
 
   onSyncUpdate(msg) {
-    if (!msg) return
+    if (!msg || !Array.isArray(msg.exercises) || !msg.exercises.length) {
+      return { status: 'rejected', page: 'Workout', reason: 'empty_exercises' }
+    }
     applySync(this.state, msg)
     this.profile = this.state.profile || this.profile
     this.allFinished = (this.state.workout.rows || []).every(rows => rows.every(r => r.done))
     this.refresh()
+    return { status: 'applied', page: 'Workout', exercises: this.state.workout.exercises.length }
   },
 
   onRemoteEnded() {
@@ -359,7 +367,12 @@ export default {
 
   onPlanUpdate(msg) {
     const s = this.state
-    if (msg && msg.sid && s.sid && msg.sid !== s.sid) return
+    if (msg && msg.sid && s.sid && msg.sid !== s.sid) {
+      return { status: 'rejected', page: 'Workout', reason: 'session_mismatch', activeSid: s.sid }
+    }
+    if (!msg || !Array.isArray(msg.exercises) || !msg.exercises.length) {
+      return { status: 'rejected', page: 'Workout', reason: 'empty_exercises' }
+    }
     if (msg && msg.profile) s.profile = msg.profile
     replacePlan(s, { name: msg.workout, exercises: msg.exercises })
     const next = nextUndone(s)
@@ -367,6 +380,7 @@ export default {
     else this.allFinished = true
     save(s)
     this.refresh()
+    return { status: 'applied', page: 'Workout', exercises: s.workout.exercises.length }
   },
 
   onRemoteRest(msg) {

@@ -23,6 +23,14 @@ let pendingPlan = null
 let latestPlan = null
 let planPushInFlight = false
 let bound = false
+let planSequence = 0
+let watchVersion = 'not_reported'
+let watchReceiptsSupported = false
+let lastPlanReceipt = null
+let lastSyncReceipt = null
+let lastWatchRx = null
+let lastPlanClear = null
+let lastPublishedPlan = null
 
 export function watchState() { return state }
 export function onWatchState(cb) {
@@ -63,6 +71,20 @@ async function bindNative() {
         device = { ...(device || {}), ...ev }
         return
       }
+      if (ev.watchVersion) watchVersion = String(ev.watchVersion)
+      if (ev.t === 'hello') {
+        watchVersion = ev.watchVersion ? String(ev.watchVersion) : 'not_reported'
+        watchReceiptsSupported = ev.receipts === true
+      }
+      if (ev.t === 'plan_ack') {
+        lastPlanReceipt = { ...ev, receivedAt: Date.now() }
+        if (latestPlan && ev.sid === latestPlan.sid && ev.planId === latestPlan.planId) {
+          latestPlan.receipt = lastPlanReceipt
+        }
+        return
+      }
+      if (ev.t === 'sync_ack') { lastSyncReceipt = { ...ev, receivedAt: Date.now() }; return }
+      if (ev.t === 'watch_rx') { lastWatchRx = { ...ev, receivedAt: Date.now() }; return }
       // 手表刚打开：如果计划之前没送到，借这次握手立刻补推。
       if (ev.t === 'hello' && latestPlan) {
         pendingPlan = latestPlan
@@ -176,7 +198,11 @@ export async function getWatchDiagnostics() {
   if (!p) return null
   try {
     return { ...await p.WatchRpc.getVersion(), planSid: latestPlan?.sid || '',
-      planPending: !!pendingPlan, planPushInFlight, planLastError: lastError }
+      planId: latestPlan?.planId || '',
+      planPending: !!pendingPlan, planPushInFlight, planLastError: lastError,
+      planDelivery: !latestPlan ? 'idle' : latestPlan.receipt?.status || latestPlan.delivery,
+      watchVersion, watchReceiptsSupported, lastPlanReceipt, lastSyncReceipt, lastWatchRx,
+      lastPublishedPlan, lastPlanClear }
   } catch (e) {
     return { lastError: e && e.message ? e.message : String(e) }
   }
@@ -187,15 +213,18 @@ export async function getWatchDiagnostics() {
 /** 训练开始时调用一次；训练中途计划变了（加/删动作）再调一次，手表整包热替换。 */
 export async function pushPlanToWatch(workout, sid, profile = null) {
   if (!MOBILE || !workout) return
-  latestPlan = { workout, sid, profile }
+  const planId = Date.now() + '-' + (++planSequence)
+  latestPlan = { workout, sid: String(sid || ''), profile, planId, delivery: 'queued', receipt: null }
+  lastPublishedPlan = { sid: latestPlan.sid, planId, exercises: workout.exercises?.length || 0, at: Date.now() }
   pendingPlan = latestPlan
   await bindNative()
   if (state === 'off' || state === 'error') await connectWatch()
   return flushPendingPlan()
 }
 
-export function clearWatchPlan(sid) {
+export function clearWatchPlan(sid, reason = 'no_active_session') {
   if (sid && latestPlan?.sid !== sid) return
+  if (latestPlan) lastPlanClear = { sid: latestPlan.sid, planId: latestPlan.planId, reason, at: Date.now() }
   latestPlan = null
   pendingPlan = null
 }
@@ -215,6 +244,7 @@ async function flushPendingPlan() {
         t: 'plan',
         v: 2,
         sid: next.sid || '',
+        planId: next.planId,
         workout: next.workout.name || '',
         profile: next.profile || null,
         exercises: (next.workout.exercises || []).map(e => ({
@@ -226,12 +256,15 @@ async function flushPendingPlan() {
         })),
       }
       let failed = false
+      next.delivery = 'awaiting_receipt'
       try {
         const r = await p.WatchRpc.sendPlan({ json: JSON.stringify(msg) })
         failed = !r?.ok
+        if (failed) next.delivery = 'transport_failed'
         lastError = failed ? `send plan code=${r?.code ?? -1}: ${r?.data || ''}` : ''
       } catch (e) {
         failed = true
+        next.delivery = 'transport_failed'
         lastError = e?.message || 'send plan failed'
       }
       if (failed && !pendingPlan && latestPlan === next) {

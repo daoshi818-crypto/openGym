@@ -4,6 +4,7 @@ const native = vi.hoisted(() => ({
   events: {},
   addListener: vi.fn(), connect: vi.fn(), disconnect: vi.fn(),
   getDeviceInfo: vi.fn(), isSupported: vi.fn(),
+  getVersion: vi.fn(),
   sendPlan: vi.fn(), sendEvent: vi.fn(), openWatchApp: vi.fn(),
 }))
 vi.mock('./mobile.js', () => ({ MOBILE: true, isAndroid: async () => true }))
@@ -19,6 +20,7 @@ beforeEach(async () => {
   native.disconnect.mockResolvedValue({})
   native.sendPlan.mockReset().mockResolvedValue({ ok: true, code: 0 })
   native.openWatchApp.mockReset().mockResolvedValue({ ok: true, code: 0 })
+  native.getVersion.mockResolvedValue({ initialized: true })
   link = await import('./watch-link.js')
 })
 
@@ -89,6 +91,51 @@ describe('watch app and plan delivery', () => {
     native.events.watchEvent({ t: 'hello', sid: '' })
     await drain()
     expect(native.sendPlan).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps transport success unconfirmed until the current plan receipt arrives', async () => {
+    await link.pushPlanToWatch(workout('Today'), 'today')
+    const msg = JSON.parse(native.sendPlan.mock.calls[0][0].json)
+    expect(msg.planId).toBeTypeOf('string')
+    expect((await link.getWatchDiagnostics()).planDelivery).toBe('awaiting_receipt')
+    native.events.watchEvent({ t: 'plan_ack', sid: msg.sid, planId: msg.planId,
+      status: 'applied', page: 'Index', exercises: 1, watchVersion: '0.4.2' })
+    expect(await link.getWatchDiagnostics()).toMatchObject({
+      planDelivery: 'applied', watchVersion: '0.4.2',
+      lastPlanReceipt: { status: 'applied', page: 'Index' },
+    })
+  })
+
+  it('does not confirm a newer publication or session using a stale receipt', async () => {
+    await link.pushPlanToWatch(workout('Old'), 'today')
+    const old = JSON.parse(native.sendPlan.mock.calls[0][0].json)
+    await link.pushPlanToWatch(workout('New'), 'today')
+    native.events.watchEvent({ t: 'plan_ack', sid: old.sid, planId: old.planId, status: 'applied' })
+    expect((await link.getWatchDiagnostics()).planDelivery).toBe('awaiting_receipt')
+    const current = JSON.parse(native.sendPlan.mock.calls[1][0].json)
+    native.events.watchEvent({ t: 'plan_ack', sid: 'another-session', planId: current.planId, status: 'applied' })
+    expect((await link.getWatchDiagnostics()).planDelivery).toBe('awaiting_receipt')
+  })
+
+  it('records legacy hello, parse failure, rejection and why an active plan was cleared', async () => {
+    await link.pushPlanToWatch(workout('Today'), 'today')
+    native.events.watchEvent({ t: 'hello' })
+    await drain()
+    expect(await link.getWatchDiagnostics()).toMatchObject({
+      watchVersion: 'not_reported', watchReceiptsSupported: false, planDelivery: 'awaiting_receipt',
+    })
+    native.events.watchEvent({ t: 'watch_rx', status: 'invalid_message', keys: ['data'] })
+    const msg = JSON.parse(native.sendPlan.mock.calls.at(-1)[0].json)
+    native.events.watchEvent({ t: 'plan_ack', sid: msg.sid, planId: msg.planId,
+      status: 'rejected', reason: 'session_mismatch', page: 'Workout' })
+    expect(await link.getWatchDiagnostics()).toMatchObject({ planDelivery: 'rejected',
+      lastWatchRx: { status: 'invalid_message' } })
+    link.clearWatchPlan(undefined, 'no_active_session')
+    native.events.watchEvent({ t: 'hello' })
+    await drain()
+    expect(await link.getWatchDiagnostics()).toMatchObject({ planSid: '', planDelivery: 'idle',
+      lastPlanClear: { sid: 'today', reason: 'no_active_session' },
+      lastPublishedPlan: { sid: 'today', exercises: 1 } })
   })
 })
 

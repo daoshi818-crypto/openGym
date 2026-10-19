@@ -78,7 +78,7 @@ function Shell() {
     if (!MOBILE) return
     const plan = watchPlanOf(useStore.getState().S)
     if (plan) pushPlanToWatch(plan.workout, plan.sid, plan.profile)
-    else clearWatchPlan()
+    else clearWatchPlan(undefined, S.active?.editingWorkoutId ? 'history_editor' : 'no_active_session')
   }, [S.active?.start, S.active?.name, S.active?.entries?.length, S.active?.editingWorkoutId])
   // iOS: whether timer sounds get past the ring/silent switch (Settings → Sounds). Page-level,
   // so it is applied here on load and on change rather than at each beep.

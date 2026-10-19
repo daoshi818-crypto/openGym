@@ -1,6 +1,40 @@
 # 手机与手表 RPC 连接排查（2026-10-19）
 
-应用版本：`1.5.11`，Android `versionCode=39`。本次诊断标识：`bridgeVersion=2026-10-19.3`，位于连接日志的 `environment=` 和设置页诊断 JSON 中。
+应用版本：`1.5.12`，Android `versionCode=40`；手表源码版本 `0.4.2 / versionCode=9`。本次诊断标识：`bridgeVersion=2026-10-19.4`，位于连接日志的 `environment=` 和设置页诊断 JSON 中。
+
+## 1.5.12 / 手表 0.4.2：动作名称、接收回调和业务回执
+
+用户已经将手表更新到 0.4.1，仍未收到动作。新附件中 17:15:54 拉起成功并收到 hello，17:15:56 发送 5 个动作返回 code=0，17:16:21 的 hello 后也能看到同一计划重发。因此，本次不能仅归因为旧手表版本或没有补发。日志只证明健康 RPC 请求获得响应，尚未证明计划到达手表页面；0.4.1 不含本轮新增的处理回执，现有日志不足以确定真机丢失边界。
+
+本轮已用失败回归确认并修正两个本地问题：
+
+- 实际会话构造器产生的训练条目只保存动作 id，没有 name。原计划和重连快照读取 e.name，动作名称为空。现在与手机界面一样从自定义动作或目录解析名称，计划和快照共用同一映射。此问题会导致名称缺失，但单独不能解释首页完全没有动作数量或按钮。
+- 两个页面各自打包的 RPC 模块可能共享原生连接实例。旧 startServer 在已有实例时直接返回，返回页面后无法重新接管回调。现在每次页面 onShow 重新挂接接收回调并查询连接状态。模拟共享连接的实际脚本回归可复现旧行为，尚不能证明该机制就是用户此次设备故障的唯一原因。
+
+重新对照参考 ZIP 的原生桥、RNvivoWatchModule 和 VivoTrainStartCoordinator：业务数据直接 JSON.stringify 透传；拉起后在 0/500/1000ms 探测应用就绪，收到业务就绪消息再发训练，并有 1800ms fallback。原生业务 request 的响应可以是占位字符串，和业务确认是不同层次。本项目已有 hello 补发，保留现有 plan/hello 协议和 JSON 形态，新增页面实际处理之后的回执；没有照搬参考应用私有 command/payload、凭据或超时参数。
+
+手表 hello 现在报告 watchVersion 和 receipts；每次手机发布计划产生 planId。手表 plan_ack / sync_ack 报告页面、会话、动作数量与处理结果；仅匹配当前 sid 和 planId 的 plan_ack 才更新当前投递状态。解析失败返回 watch_rx，异常返回 error 回执。手机同时保留 lastPublishedPlan、lastPlanClear 和最近回执，区分会话已结束与正在等待接收。
+
+| 诊断字段或回执 | 含义与下一步 |
+| --- | --- |
+| watchVersion=not_reported | 此次 hello 未报告版本；检查实际安装包。不能仅根据手机版本认定手表已更新。 |
+| planDelivery=awaiting_receipt | 已尝试发送，尚无匹配业务回执；即便 RPC code=0 也不表示已应用。回执本身也可能丢失。 |
+| planDelivery=transport_failed | RPC 请求失败，查看对应返回码；下次 hello/连接事件会补发。 |
+| lastPlanReceipt.status=applied, page=Index | 首页处理完成；检查训练名称、动作数，并点击“进入辅助”。 |
+| status=retained | 首页保留同一会话的本地训练，未声称应用新计划；检查继续训练内的数据。 |
+| status=rejected, reason=session_mismatch | Workout 正在显示另一会话，查看 activeSid 与手机 sid，需检查权威 sync 是否到达。 |
+| lastWatchRx.status=invalid_message | 已触发手表接收回调，但未识别消息；保留 envelopeType/keys。 |
+| status=no_handler / error | 已收到计划，但无页面处理器或处理抛错；保留 page/error。 |
+| planSid 为空，lastPlanClear 有记录 | 查看 reason=no_active_session/history_editor，及清理前 sid/planId，避免将结束会话当丢包。 |
+
+### 当前版本复测与构建边界
+
+1. 在 GitHub main 手动运行 **Build signed APK**，安装手机 1.5.12 / code 40，确认 bridgeVersion=.4。
+2. 使用现有 BlueOS 构建安装流程重新打包并安装手表源码 0.4.2 / code 9，首页应显示 v0.4.2。手机 GitHub APK 工作流不构建手表 RPK；之前检查到的 0.4.0 RPK 不能当作本轮新包，本轮没有更新手表构建产物。
+3. 在手机设置页拉起手表，确认收到含 watchVersion=0.4.2、receipts=true 的 hello。回手机开始训练并保持会话未结束，检查首页训练名称和动作数，再点“进入辅助”。
+4. 另测先开始手机训练再切设置页拉起手表，以及手表训练页退回首页再拉起。若失败，复制完整日志和诊断 JSON，重点看 planId、planDelivery、lastPlanReceipt、lastSyncReceipt、lastWatchRx、lastPlanClear。
+
+本轮专项回归 6 文件 / 55 项通过，涵盖真实会话构造、双端计划队列、回执匹配、实际手表 rpc/session/ux 脚本和设置页行为；手机模式 Vite 构建通过。脚本回归替换了设备 API，不验证真实 BlueOS 渲染或健康转发。当前环境没有 JDK 和 BlueOS 打包工具，未生成 APK/RPK，也未完成真机同步验证；下一次设备回执用于继续定位。
 
 ## 1.5.11：连接成功后的训练同步与拉起入口
 
@@ -24,7 +58,7 @@
 4. 再检查“先开始手机训练，再切到设置页拉起手表”的顺序，确认计划仍可补发。
 5. 如果仍不同步，发送完整诊断日志，重点保留 `LAUNCH`、`RX business`（有无 `t=hello`）、`TX plan` 和响应码，以及最终诊断 JSON。只有 ACTION_DEVICE_BUSINESS_DATA 行不足以判断负载是否被双方识别。
 
-本轮没有修改手表源码或已有 `watch-app/dist/`；拉起目标匹配当前手表 manifest。真机拉起与同步结果仍待安装新版手机 APK 后验证。
+1.5.11 没有修改手表源码或已有 `watch-app/dist/`；拉起目标匹配手表 manifest。后续真机已确认拉起成功，同步问题继续按上方 1.5.12 / 手表 0.4.2 排查。
 
 ## 1.5.9 真机日志发现的初始化顺序缺陷
 

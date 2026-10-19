@@ -4,9 +4,11 @@
 import router from '@blueos.app.appmanager.router'
 import { loadState, startSession } from '../lib/session.js'
 import { startServer } from '../lib/rpc.js'
+import { WATCH_VERSION } from '../lib/version.js'
 
 export default {
   data: {
+    version: WATCH_VERSION,
     status: '正在连接手机…',
     workoutName: '',
     exerciseCount: 0,
@@ -29,6 +31,12 @@ export default {
       this.status = '请在手机上开始训练'
     }
 
+    this.bindRpc()
+  },
+
+  onShow() { this.bindRpc() },
+
+  bindRpc() {
     startServer({
       onPlan: (msg) => this.onPlanMsg(msg),
       onSync: (msg) => this.onSyncMsg(msg),
@@ -44,25 +52,31 @@ export default {
   },
 
   onPlanMsg(msg) {
-    if (this.canResume && (!msg.sid || msg.sid === this.resumeSid)) return
-    this.applyPlan(msg.workout, msg.exercises || [], msg.sid || '', msg.profile || null)
+    if (this.canResume && (!msg.sid || msg.sid === this.resumeSid)) {
+      return { status: 'retained', page: 'Index', exercises: this.exerciseCount }
+    }
+    return this.applyPlan(msg.workout, msg.exercises || [], msg.sid || '', msg.profile || null)
   },
 
   onSyncMsg(msg) {
     // 手机重连后推来的权威快照：如果本地没有活跃会话，按快照进入训练。
-    if (this.canResume && (!msg.sid || msg.sid === this.resumeSid)) return
-    if (!msg.exercises || !msg.exercises.length) return
-    this.applyPlan(msg.workout || msg.name, msg.exercises, msg.sid || '', msg.profile || null)
+    if (this.canResume && (!msg.sid || msg.sid === this.resumeSid)) {
+      return { status: 'retained', page: 'Index', exercises: this.exerciseCount }
+    }
+    return this.applyPlan(msg.workout || msg.name, msg.exercises || [], msg.sid || '', msg.profile || null)
   },
 
   applyPlan(name, exercises, sid, profile) {
-    if (!exercises.length) return
+    if (!Array.isArray(exercises) || !exercises.length) {
+      return { status: 'rejected', page: 'Index', reason: 'empty_exercises', exercises: 0 }
+    }
     this.canResume = false
     this.plan = { sid, name, exercises, profile }
     this.workoutName = name
     this.exerciseCount = exercises.length
     this.status = '手机训练中\n今天：' + name
     this.canStart = true
+    return { status: 'applied', page: 'Index', exercises: exercises.length }
   },
 
   onStart() {
@@ -79,6 +93,7 @@ export default {
 <template>
   <div class="page">
     <text class="title">训练助手</text>
+    <text class="link">v{{ version }}</text>
     <text class="status">{{ status }}</text>
     <text class="sub" if="{{ exerciseCount }}">{{ exerciseCount }} 个动作</text>
     <text class="link" if="{{ linkLabel }}">{{ linkLabel }}</text>
