@@ -1,6 +1,30 @@
 # 手机与手表 RPC 连接排查（2026-10-19）
 
-应用版本：`1.5.10`，Android `versionCode=38`。本次诊断标识：`bridgeVersion=2026-10-19.2`，位于连接日志的 `environment=` 和设置页 Diagnostics JSON 中。
+应用版本：`1.5.11`，Android `versionCode=39`。本次诊断标识：`bridgeVersion=2026-10-19.3`，位于连接日志的 `environment=` 和设置页诊断 JSON 中。
+
+## 1.5.11：连接成功后的训练同步与拉起入口
+
+用户 16:02 的 1.5.10 真机日志已经确认 `init success via 4-arg`、`DEVICE_INFO code=0`，诊断为 `initialized=true`、`permissionStatus=true`、`healthServiceConnected=true`、`watchConnected=true`。初始化顺序修复已获该设备验证。日志中的 `rpcServiceEnabled=false` 是静态组件信息；同时有运行时覆盖 `rpcServiceComponentState=1`、`rpcServiceResolvable=true` 及真实绑定成功，不能继续将这个 false 当作当前同步失败的证据。
+
+本轮检查用户提供的 `Xunji_vivo_watch_reference.zip`，仅作为协议调用参考，没有执行其中脚本或采用其应用密钥/私有业务协议。参考桥用 `action_pull_up_watch`，向 `com.vivo.health` 发送包含 `package`、`router` 的 JSON。项目实际 AAR 的 `Constant.Action.ACTION_PULL_UP_WATCH` 与此一致。本轮新增同一调用，使用本项目手表 manifest 的 `com.zcode.gymtimer` / `Index`，通过异步 RPC 执行，在原有设置页的“连接手表”面板增加“打开手表应用”按钮。此拉起方式来自参考与实际 SDK 常量，不作为公开手机 API 页面已说明的能力。
+
+同步路径中修正了以下确定的问题：
+
+- 训练页卸载会清除保留计划，导致开始训练后切到设置页，再打开手表时无法补推。计划发布和清理改到全局 App Shell，以活动训练会话为生命周期。
+- 发送标记在 await 后才设置，且发送中收到的新计划或 hello 没有继续排空；失败旧计划还可能覆盖新计划。现在串行处理最新待发计划，失败等待下一次连接/hello，不持续热重试，也不会复活已结束会话。
+- 新打开的手表 hello 带空或旧 sid，被训练页拒绝，无法请求权威快照。hello 现在允许请求当前快照，其他业务写入仍要求会话 sid 一致。设置页时由全局缓存补推计划；完整快照及业务落库仍由活动训练页处理。
+
+新增 `LAUNCH ...`、`RX business t=... sid=...`、`TX plan t=...`、`TX plan response code=...` 日志，以及 `watchPackage`、`watchRouter`、`lastRxType`、`lastPlanCode`、`lastLaunchCode`、`planSid`、`planPending`、`planPushInFlight`、`planLastError` 诊断。消息日志只记录类型、会话、数量和长度，不输出完整训练内容。RPC code=0 仅代表请求响应成功，不证明手表已展示或应用训练数据。
+
+### 本轮真机复测
+
+1. 在 GitHub Actions 手动运行 main 分支的 **Build signed APK**，安装 `1.5.11 / versionCode 39`，确认诊断标识 `.3`。
+2. 运动健康中确认手表在线。在手机原有设置页打开“连接手表”，点击“打开手表应用”，确认手表出现训练助手首页。保留 `LAUNCH` 请求和返回码。
+3. 回手机开始训练，检查手表首页是否显示训练名称与动作数，然后在手表点“进入辅助”。现有手表界面需要此操作进入训练详情。
+4. 再检查“先开始手机训练，再切到设置页拉起手表”的顺序，确认计划仍可补发。
+5. 如果仍不同步，发送完整诊断日志，重点保留 `LAUNCH`、`RX business`（有无 `t=hello`）、`TX plan` 和响应码，以及最终诊断 JSON。只有 ACTION_DEVICE_BUSINESS_DATA 行不足以判断负载是否被双方识别。
+
+本轮没有修改手表源码或已有 `watch-app/dist/`；拉起目标匹配当前手表 manifest。真机拉起与同步结果仍待安装新版手机 APK 后验证。
 
 ## 1.5.9 真机日志发现的初始化顺序缺陷
 
@@ -15,7 +39,7 @@
 
 旧代码的 `isSupported -> isConnectedInternal` 和 1.5.9 的初始化前环境诊断都存在这种提前查询。1.5.10 在连接状态读取入口检查 SDK Context；Context 尚未写入时直接返回 false，不访问 RpcClient。失败 REGISTER 探测也加同样检查，防止 init 在写入 Context 前抛异常时再次提前创建客户端。
 
-这是已确认的软件缺陷和与日志吻合的失败机制；尚未通过用户真机验证它是否为唯一原因。`rpcServiceEnabled=false` 仍需独立核实。本版同时记录组件运行时覆盖状态和与 SDK 相同 Intent 的 `resolveService(..., 0)` 结果；不会尝试修改运动健康组件或系统绑定计数。
+这是已确认的软件缺陷和与日志吻合的失败机制，1.5.10 的用户真机日志已确认初始化和连接恢复。1.5.10 同时增加组件运行时覆盖状态和与 SDK 相同 Intent 的 `resolveService(..., 0)` 结果；不会尝试修改运动健康组件或系统绑定计数。
 
 ## 原始日志说明
 
@@ -43,7 +67,7 @@ SDK 初始化回调只传响应 data，不传 code，因此 8/null 最终会呈�
 - 增加健康应用版本、能力版本、启用状态、RPC 服务、绑定数量、包名和连接状态诊断；日志读取和写入加锁。
 - SDK 已初始化但设备连接未确认时，设置页不再显示手表已连接。
 
-## 复测步骤
+## 1.5.10 初始化问题复测记录
 
 1. 在 GitHub Actions 手动运行 **Build signed APK**，使用 main 分支。安装 `1.5.10 / versionCode 38` 的 release APK 后，在系统应用设置中强行停止手机 App 再重新打开，确保新进程中不保留旧 SDK 客户端。确认 Diagnostics 为 `bridgeVersion=2026-10-19.2`。无需清除应用数据。
 2. 在 vivo 运动健康中确认手表已绑定、当前在线，再打开手表训练应用。系统蓝牙显示已配对，不足以证明运动健康已完成绑定。
@@ -76,6 +100,8 @@ adb logcat -v time WatchRpc:I RpcLogger:V '*:S' | Select-String -Pattern 'WatchR
 `settings get` 返回 null 表示键不存在；该 AAR 的默认值为 0。上述过滤用于避免输出 SDK REGISTER 请求体中的密钥。
 
 ## 验证与限制
+
+1.5.11 本轮专项验证：`npm test -- src/lib/watch-link.test.js src/lib/watch-workout.test.js src/views/Settings.connstatus.test.jsx src/views/Settings.gifsize.test.jsx`，4 个文件、19 项全部通过，覆盖拉起转发、发送失败/并发更新/hello 补发/结束会话清理、计划映射及现有设置页行为。手机模式 `VITE_MOBILE=1 npm run build` 通过，仍有已有的大包和动态导入警告。这是 Vite 前端构建，不是 Android APK 构建。当前本地仍无 JDK，原生编译及真实手表拉起/同步待 GitHub 构建和用户复测。
 
 已有前端回归覆盖设备层级、连接残留、错误残留问题。本轮 1.5.10 复跑 `npm test -- src/lib/watch-link.test.js`，4/4 通过；`VITE_MOBILE=1 npm run build` 通过（仅 Vite 前端构建）。
 

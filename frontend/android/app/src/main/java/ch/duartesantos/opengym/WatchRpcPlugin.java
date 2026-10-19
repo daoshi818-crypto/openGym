@@ -44,6 +44,7 @@ import java.util.Locale;
 public class WatchRpcPlugin extends Plugin {
     private static final String TARGET_PACKAGE = "com.vivo.health";
     private static final String WATCH_PACKAGE = "com.zcode.gymtimer";
+    private static final String WATCH_ROUTER = "Index";
     private static final String APP_ID = "106163226";
     private static final String SDK_KEY = "376a3ae868544f4cadaa070ca93b451a";
 
@@ -52,6 +53,9 @@ public class WatchRpcPlugin extends Plugin {
     private volatile boolean sessionActive = false;
     private volatile boolean watchConnected = false;
     private String lastError = null;
+    private volatile String lastRxType = "";
+    private volatile int lastPlanCode = -1;
+    private volatile int lastLaunchCode = -1;
     private final List<String> logs = new ArrayList<>();
 
     private void log(String message) {
@@ -98,18 +102,35 @@ public class WatchRpcPlugin extends Plugin {
     };
 
     private void emit(String json, String kind) {
-        if (json == null || json.isEmpty()) return;
+        if (json == null || json.isEmpty()) { log("RX business empty"); return; }
         try {
             JSObject data = JSObject.fromJSONObject(new JSONObject(json));
+            lastRxType = data.optString("t", "unknown");
+            log("RX business " + messageSummary(json));
             data.put("_kind", kind);
             notifyListeners("watchEvent", data);
         } catch (Exception e) {
+            lastRxType = "raw";
+            log("RX business invalid JSON chars=" + json.length());
             JSObject data = new JSObject();
             data.put("t", "raw");
             data.put("data", json);
             data.put("_kind", kind);
             notifyListeners("watchEvent", data);
         }
+    }
+
+    private String messageSummary(String json) {
+        try {
+            JSONObject msg = new JSONObject(json);
+            String type = msg.optString("t", "unknown");
+            String sid = msg.optString("sid", "");
+            return "t=" + type.substring(0, Math.min(32, type.length()))
+                    + " sid=" + sid.substring(0, Math.min(64, sid.length()))
+                    + " exercises=" + (msg.optJSONArray("exercises") == null ? 0 : msg.optJSONArray("exercises").length())
+                    + " chars=" + json.length()
+                    + ("unknown".equals(type) ? " keys=" + msg.names() : "");
+        } catch (Exception e) { return "invalid JSON chars=" + json.length(); }
     }
 
     private void notifyState(String state, String reason) {
@@ -264,7 +285,12 @@ public class WatchRpcPlugin extends Plugin {
 
     private JSObject environmentDiagnostics() {
         JSObject ret = new JSObject();
-        ret.put("bridgeVersion", "2026-10-19.2");
+        ret.put("bridgeVersion", "2026-10-19.3");
+        ret.put("watchPackage", WATCH_PACKAGE);
+        ret.put("watchRouter", WATCH_ROUTER);
+        ret.put("lastRxType", lastRxType);
+        ret.put("lastPlanCode", lastPlanCode);
+        ret.put("lastLaunchCode", lastLaunchCode);
         ret.put("sdkContextReady", sdkContextReady());
         ret.put("phonePackage", getContext().getPackageName());
         ret.put("watchTargetPackageMatches", "ch.duartesantos.opengym".equals(getContext().getPackageName()));
@@ -385,7 +411,8 @@ public class WatchRpcPlugin extends Plugin {
         }
         ensureInit(call, () -> {
             try {
-                log("TX " + (plan ? "plan" : "event") + " bytes=" + json.length());
+                String label = plan ? "plan" : "event";
+                log("TX " + label + " " + messageSummary(json));
                 Request request = new Request.Builder()
                         .action(Constant.Action.ACTION_DEVICE_BUSINESS_DATA)
                         .pkgName(TARGET_PACKAGE)
@@ -397,14 +424,17 @@ public class WatchRpcPlugin extends Plugin {
                     public void onResponse(Response response) {
                         JSObject ret = new JSObject();
                         if (response == null) {
-                            log("TX response null");
+                            if (plan) lastPlanCode = -1;
+                            log("TX " + label + " response null");
                             ret.put("ok", false);
                             ret.put("code", -1);
                             ret.put("data", "");
                             call.resolve(ret);
                             return;
                         }
-                        log("TX response code=" + response.getCode() + " data=" + response.getData());
+                        if (plan) lastPlanCode = response.getCode();
+                        log("TX " + label + " response code=" + response.getCode()
+                                + " dataChars=" + (response.getData() == null ? 0 : response.getData().length()));
                         ret.put("ok", response.getCode() == 0);
                         ret.put("code", response.getCode());
                         ret.put("data", response.getData());
@@ -472,6 +502,40 @@ public class WatchRpcPlugin extends Plugin {
     @PluginMethod
     public void sendEvent(PluginCall call) {
         send(call, false);
+    }
+
+    @PluginMethod
+    public void openWatchApp(PluginCall call) {
+        ensureInit(call, () -> {
+            try {
+                // SDK 常量与参考应用一致，包名和路由来自本项目手表 manifest。
+                JSONObject payload = new JSONObject();
+                payload.put("package", WATCH_PACKAGE);
+                payload.put("router", WATCH_ROUTER);
+                log("LAUNCH package=" + WATCH_PACKAGE + " router=" + WATCH_ROUTER);
+                Request request = new Request.Builder()
+                        .action(Constant.Action.ACTION_PULL_UP_WATCH)
+                        .pkgName(TARGET_PACKAGE)
+                        .data(payload.toString())
+                        .timeout(Constant.DEFAULT_TIMEOUT)
+                        .build();
+                RpcClient.getInstance().callAsync(request, response -> {
+                    lastLaunchCode = response == null ? -1 : response.getCode();
+                    log("LAUNCH response code=" + lastLaunchCode);
+                    JSObject ret = new JSObject();
+                    ret.put("ok", lastLaunchCode == 0);
+                    ret.put("code", lastLaunchCode);
+                    ret.put("data", response == null || response.getData() == null ? "" : response.getData());
+                    ret.put("watchPackage", WATCH_PACKAGE);
+                    ret.put("router", WATCH_ROUTER);
+                    call.resolve(ret);
+                });
+            } catch (Exception e) {
+                lastLaunchCode = -1;
+                log("LAUNCH failed: " + e.getMessage());
+                call.reject("open watch app failed: " + e.getMessage());
+            }
+        });
     }
 
     @PluginMethod

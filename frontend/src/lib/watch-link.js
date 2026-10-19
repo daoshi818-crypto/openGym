@@ -121,6 +121,22 @@ export async function disconnectWatch() {
   setState('off')
 }
 
+/** 请求运动健康拉起手表应用；ok 表示 RPC 请求成功，实际启动看手表/hello。 */
+export async function openWatchApp() {
+  await bindNative()
+  if ((state === 'off' || state === 'error') && !(await connectWatch())) {
+    return { ok: false, code: -1, data: lastError }
+  }
+  const p = await watchPlugin()
+  if (!p) return { ok: false, code: -1, data: 'web' }
+  try {
+    const result = await p.WatchRpc.openWatchApp()
+    return result || { ok: false, code: -1, data: 'empty response' }
+  } catch (e) {
+    return { ok: false, code: -1, data: e?.message || 'open watch app failed' }
+  }
+}
+
 /** 读设备信息（名称、电量、存储、连接状态）。 */
 export async function getWatchDeviceInfo() {
   const p = await watchPlugin()
@@ -159,7 +175,8 @@ export async function getWatchDiagnostics() {
   const p = await watchPlugin()
   if (!p) return null
   try {
-    return await p.WatchRpc.getVersion()
+    return { ...await p.WatchRpc.getVersion(), planSid: latestPlan?.sid || '',
+      planPending: !!pendingPlan, planPushInFlight, planLastError: lastError }
   } catch (e) {
     return { lastError: e && e.message ? e.message : String(e) }
   }
@@ -178,43 +195,51 @@ export async function pushPlanToWatch(workout, sid, profile = null) {
 }
 
 export function clearWatchPlan(sid) {
-  if (!sid || latestPlan?.sid !== sid) return
+  if (sid && latestPlan?.sid !== sid) return
   latestPlan = null
-  if (pendingPlan?.sid === sid) pendingPlan = null
+  pendingPlan = null
 }
 
 async function flushPendingPlan() {
   if (planPushInFlight || !pendingPlan) return
   if (state !== 'ready' && state !== 'connected') return
-  const p = await watchPlugin()
-  if (!p) return
-  const next = pendingPlan
-  pendingPlan = null
+  // 在第一个 await 前占用发送位，ready/hello/新计划共用同一串行队列。
   planPushInFlight = true
   try {
-    const msg = {
-      t: 'plan',
-      v: 2,
-      sid: next.sid || '',
-      workout: next.workout.name || '',
-      profile: next.profile || null,
-      exercises: (next.workout.exercises || []).map(e => ({
-        name: e.name || '',
-        sets: e.sets || 1,
-        reps: e.reps != null ? String(e.reps) : '',
-        restSec: e.restSec || 60,
-        weight: e.weight != null ? String(e.weight) : '',
-      })),
+    const p = await watchPlugin()
+    if (!p) return
+    while (pendingPlan && (state === 'ready' || state === 'connected')) {
+      const next = pendingPlan
+      pendingPlan = null
+      const msg = {
+        t: 'plan',
+        v: 2,
+        sid: next.sid || '',
+        workout: next.workout.name || '',
+        profile: next.profile || null,
+        exercises: (next.workout.exercises || []).map(e => ({
+          name: e.name || '',
+          sets: e.sets || 1,
+          reps: e.reps != null ? String(e.reps) : '',
+          restSec: e.restSec || 60,
+          weight: e.weight != null ? String(e.weight) : '',
+        })),
+      }
+      let failed = false
+      try {
+        const r = await p.WatchRpc.sendPlan({ json: JSON.stringify(msg) })
+        failed = !r?.ok
+        lastError = failed ? `send plan code=${r?.code ?? -1}: ${r?.data || ''}` : ''
+      } catch (e) {
+        failed = true
+        lastError = e?.message || 'send plan failed'
+      }
+      if (failed && !pendingPlan && latestPlan === next) {
+        // 等下一次 hello/连接事件再试；不覆盖更新、不复活已结束的会话、不热循环。
+        pendingPlan = next
+        break
+      }
     }
-    const r = await p.WatchRpc.sendPlan({ json: JSON.stringify(msg) })
-    if (!r || !r.ok) {
-      // 手表可能还没打开；保留待发计划，下一次 ready 或训练开始时再推。
-      pendingPlan = next
-      lastError = (r && r.data) || 'send plan failed'
-    }
-  } catch (e) {
-    pendingPlan = next
-    lastError = e && e.message ? e.message : 'send plan failed'
   } finally {
     planPushInFlight = false
   }

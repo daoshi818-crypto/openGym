@@ -17,6 +17,8 @@ import { installViewportGuard } from './lib/viewport-guard.js'
 import { installChipDrag } from './lib/hchips.js'
 import { syncPushSubscription } from './lib/push.js'
 import { MOBILE } from './lib/mobile.js'
+import { pushPlanToWatch, clearWatchPlan } from './lib/watch-link.js'
+import { watchPlanOf } from './lib/watch-workout.js'
 import { exitWorkoutEdit, startFlow } from './sheets.jsx'
 import Icon from './components/Icon.jsx'
 import TabBar from './components/TabBar.jsx'
@@ -71,6 +73,13 @@ function Shell() {
   const loc = useLocation()
   const navType = useNavigationType()
   const { S, user, ready } = useStore()
+  // 会话级生命周期：在设置页拉起手表时仍保留计划，结束/丢弃后才清除。
+  useEffect(() => {
+    if (!MOBILE) return
+    const plan = watchPlanOf(useStore.getState().S)
+    if (plan) pushPlanToWatch(plan.workout, plan.sid, plan.profile)
+    else clearWatchPlan()
+  }, [S.active?.start, S.active?.name, S.active?.entries?.length, S.active?.editingWorkoutId])
   // iOS: whether timer sounds get past the ring/silent switch (Settings → Sounds). Page-level,
   // so it is applied here on load and on change rather than at each beep.
   useEffect(() => { setPlayOnSilent(!!S.soundOnSilent) }, [S.soundOnSilent])

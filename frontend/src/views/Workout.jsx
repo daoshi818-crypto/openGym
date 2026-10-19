@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
 import { workoutControls } from '../lib/workout-controls.js'
 import { useUI } from '../store/useUI.js'
-import { pushPlanToWatch, clearWatchPlan, bindWatchSync, bindWatchEvents, pushRestToWatch, pushWeightToWatch, pushRepsToWatch, pushUnsetToWatch, pushAddSetToWatch, pushRemoveSetToWatch, pushFocusToWatch, pushAckToWatch, pushSyncToWatch } from '../lib/watch-link.js'
+import { bindWatchSync, bindWatchEvents, pushRestToWatch, pushWeightToWatch, pushRepsToWatch, pushUnsetToWatch, pushAddSetToWatch, pushRemoveSetToWatch, pushFocusToWatch, pushAckToWatch, pushSyncToWatch } from '../lib/watch-link.js'
 import { exOr, betterWeight } from '../lib/exercises.js'
 import { usesBar } from '../lib/bar.js'
 import { loadKindFor, baseWeightFor, inventoryFor, rowLoad, sameLoad, plateDelta, dropGrid } from '../lib/plates.js'
@@ -1803,21 +1803,9 @@ function ActiveWorkout() {
   // 与在手机上点同一条 toggle 路径，休息、进度、完成判定全部一致（DESIGN.md 第 6 节）。
   // 事件带 sid 幂等：手机按 sid+动作下标+组号去重，重连重发不会记两次。
   // 双向实时同步：手机±休息/改重量 → 推给手表；手表±休息/改重量 → 落到手机会话。
-  // 计划变更（加/删动作）时 A.entries 变了，effect 重跑整包重推，手表热替换。
+  // 计划发布在 App Shell，离开训练页仍能响应 hello 补推。
   const seenWatchSets = useRef(new Set())
   const sid = A.start ? String(A.start) : ''
-  useEffect(() => () => clearWatchPlan(sid), [sid])
-  useEffect(() => {
-    if (editing) return
-    const bw = S.bodyweight?.length ? S.bodyweight[S.bodyweight.length - 1].w : null
-    const weightKg = bw ? (S.unit === 'lb' ? bw * 0.45359237 : bw) : 70
-    pushPlanToWatch({ name: A.name, exercises: A.entries.map(e => ({
-      name: e.name, sets: e.sets.filter(x => !isWarmupRow(x)).length,
-      reps: e.sets.find(x => !isWarmupRow(x))?.r ?? e.sets.find(x => !isWarmupRow(x))?.reps ?? '',
-      restSec: e.target?.restSec > 0 ? e.target.restSec : S.restSec || 60,
-      weight: e.sets.find(x => !isWarmupRow(x))?.w ?? '',
-    })) }, sid, { weight: Math.round(weightKg * 10) / 10 })
-  }, [editing, sid, A.name, A.entries.length])
 
   // 休息调整 → 手表。timer 变化驱动；本地应用远端消息时 remoteRestSeq 挡住回环。
   const watchRestSeq = useRef(0)
@@ -1831,7 +1819,8 @@ function ActiveWorkout() {
   useEffect(() => {
     if (editing) return
     const handleWatch = ev => {
-      if (!ev || ev.sid !== sid) return
+      // 新打开的手表尚无手机 sid；hello 只请求快照，业务写入仍严格校验 sid。
+      if (!ev || (ev.t !== 'hello' && ev.sid !== sid)) return
       const A2 = useStore.getState().S.active
       if (!A2) return
       if (ev.t === 'rest') {

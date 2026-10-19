@@ -30,7 +30,7 @@ import { syncMedia, fetchToStore } from '../lib/media-sync.js'
 import { getMediaStatus, subscribeMediaStatus, pendingRefCount } from '../lib/media-owed.js'
 import { limitsFrom, fmtMB, MB } from '../lib/media-limits.js'
 import { setRestAccent, overlayStatus, requestOverlay, hideOverlay, setOverlayStyle } from '../lib/rest-alert.js'
-import { watchAvailable, watchState, onWatchState, connectWatch, disconnectWatch, getWatchDeviceInfo, watchDevice, watchLastError, getWatchLogs, getWatchDiagnostics } from '../lib/watch-link.js'
+import { watchAvailable, watchState, onWatchState, connectWatch, disconnectWatch, openWatchApp, getWatchDeviceInfo, watchDevice, watchLastError, getWatchLogs, getWatchDiagnostics } from '../lib/watch-link.js'
 import { CUSTOM, accentKey, adjustedIn, applyAccent, cleanHex, inkOn, isGrey } from '../lib/accent.js'
 import { checkForUpdate, downloadAndInstall, fetchChecksum, RELEASES_PAGE } from '../lib/update.js'
 import { forgetCoach } from '../lib/coach-api.js'
@@ -87,6 +87,8 @@ function WatchPairSheet({ close }) {
   const [showLogs, setShowLogs] = useState(false)
   const [logs, setLogs] = useState('')
   const [diag, setDiag] = useState(null)
+  const [opening, setOpening] = useState(false)
+  const [launchResult, setLaunchResult] = useState('')
 
   useEffect(() => {
     const off = onWatchState(setStatus)
@@ -117,6 +119,17 @@ function WatchPairSheet({ close }) {
     }
   }
 
+  const launch = async () => {
+    setError('')
+    setLaunchResult('')
+    setOpening(true)
+    try {
+      const r = await openWatchApp()
+      if (r.ok) setLaunchResult(t('Launch request accepted. Check the watch screen.'))
+      else setError(`${t('Could not open watch app')} (code=${r.code}): ${r.data || ''}`)
+    } finally { setOpening(false) }
+  }
+
   const connected = status === 'connected'
   const dev = info && (info.device || info)
   return <>
@@ -138,7 +151,8 @@ function WatchPairSheet({ close }) {
       </div>
     </div>}
     {status === 'connecting' && <p className="muted small">{t('Connecting…')}</p>}
-    {error && <p className="small danger">{error}</p>}
+    {error && <p className="small danger" role="alert">{error}</p>}
+    {launchResult && <p className="small muted" role="status">{launchResult}</p>}
     {showLogs && <>
       {diag && <p className="muted small" style={{ marginTop: 8 }}>
         vivo: {String(diag.vivo)} · health: {String(diag.healthInstalled)} · init: {String(diag.initialized)} · health RPC: {String(diag.healthDeviceVersion)} · bound: {String(diag.boundWatchDeviceCount)} · watch: {String(diag.watchConnected)}
@@ -148,8 +162,9 @@ function WatchPairSheet({ close }) {
       </pre>
     </>}
     <div className="row" style={{ gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-      {!connected && <Button variant="primary" disabled={busy || status === 'connecting'} onClick={connect}>{busy ? t('Connecting…') : t('Connect')}</Button>}
-      {(connected || status === 'ready') && <Button variant="danger" disabled={busy} onClick={async () => { await disconnectWatch(); close() }}>{t('Disconnect')}</Button>}
+      <Button variant="primary" disabled={busy || opening || status === 'connecting'} onClick={launch}>{opening ? t('Opening watch app…') : t('Open watch app')}</Button>
+      {!connected && <Button variant="ghost" disabled={busy || opening || status === 'connecting'} onClick={connect}>{busy ? t('Connecting…') : t('Connect')}</Button>}
+      {(connected || status === 'ready') && <Button variant="danger" disabled={busy || opening} onClick={async () => { await disconnectWatch(); close() }}>{t('Disconnect')}</Button>}
       <Button variant="ghost" onClick={openLogs}>{t('Diagnostics')}</Button>
       <Button variant="ghost" onClick={close}>{t('Cancel')}</Button>
     </div>
