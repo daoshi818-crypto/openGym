@@ -110,14 +110,14 @@ function WatchPairSheet({ close }) {
     setShowLogs(true)
     try {
       const [l, d] = await Promise.all([getWatchLogs(), getWatchDiagnostics()])
-      setLogs((l && l.logs) || '')
+      setLogs([(l && l.logs) || '', d ? `diagnostics=${JSON.stringify(d, null, 2)}` : ''].filter(Boolean).join('\n'))
       setDiag(d || null)
     } catch (e) {
       setLogs(String(e))
     }
   }
 
-  const connected = status === 'ready' || status === 'connected'
+  const connected = status === 'connected'
   const dev = info && (info.device || info)
   return <>
     <h3>{t('Connect watch')}</h3>
@@ -141,7 +141,7 @@ function WatchPairSheet({ close }) {
     {error && <p className="small danger">{error}</p>}
     {showLogs && <>
       {diag && <p className="muted small" style={{ marginTop: 8 }}>
-        vivo: {String(diag.vivo)} · health: {String(diag.healthInstalled)} · init: {String(diag.initialized)} · device: {String(diag.deviceVersion)}
+        vivo: {String(diag.vivo)} · health: {String(diag.healthInstalled)} · init: {String(diag.initialized)} · health RPC: {String(diag.healthDeviceVersion)} · bound: {String(diag.boundWatchDeviceCount)} · watch: {String(diag.watchConnected)}
       </p>}
       <pre className="small" style={{ maxHeight: 220, overflow: 'auto', whiteSpace: 'pre-wrap', background: 'var(--surface-2)', padding: 8, borderRadius: 8 }}>
         {logs || t('No logs yet. Press Connect first.')}
@@ -149,7 +149,7 @@ function WatchPairSheet({ close }) {
     </>}
     <div className="row" style={{ gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
       {!connected && <Button variant="primary" disabled={busy || status === 'connecting'} onClick={connect}>{busy ? t('Connecting…') : t('Connect')}</Button>}
-      {connected && <Button variant="danger" disabled={busy} onClick={async () => { await disconnectWatch(); close() }}>{t('Disconnect')}</Button>}
+      {(connected || status === 'ready') && <Button variant="danger" disabled={busy} onClick={async () => { await disconnectWatch(); close() }}>{t('Disconnect')}</Button>}
       <Button variant="ghost" onClick={openLogs}>{t('Diagnostics')}</Button>
       <Button variant="ghost" onClick={close}>{t('Cancel')}</Button>
     </div>
@@ -619,7 +619,7 @@ export default function Settings({ page = null, find = null, via = null }) {
         {android && (
           <Row icon="dumbbell" iconTint="var(--green)" title={t('Connect watch')}
             subtitle={
-              watchSt === 'ready' || watchSt === 'connected' ? t('Connected. Start a workout and it lands on the watch.')
+              watchSt === 'connected' ? t('Connected. Start a workout and it lands on the watch.')
               : watchSt === 'connecting' ? t('Connecting… Make sure vivo Health is connected to the watch.')
               : watchWhy === 'notVivo' ? t('Watch support needs a vivo phone.')
               : watchWhy === 'healthMissing' ? t('vivo Health is not installed.')

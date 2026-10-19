@@ -1,10 +1,12 @@
 package ch.duartesantos.opengym;
 
+import android.content.ComponentName;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
-import android.content.pm.Signature;
+import android.content.pm.ServiceInfo;
 import android.os.Bundle;
+import android.provider.Settings;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -44,15 +46,19 @@ public class WatchRpcPlugin extends Plugin {
     private static final String APP_ID = "106163226";
     private static final String SDK_KEY = "376a3ae868544f4cadaa070ca93b451a";
 
-    private boolean initialized = false;
-    private boolean initInFlight = false;
+    private volatile boolean initialized = false;
+    private volatile boolean initInFlight = false;
+    private volatile boolean sessionActive = false;
+    private volatile boolean watchConnected = false;
     private String lastError = null;
     private final List<String> logs = new ArrayList<>();
 
     private void log(String message) {
         String line = new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date()) + "  " + message;
-        logs.add(line);
-        while (logs.size() > 300) logs.remove(0);
+        synchronized (logs) {
+            logs.add(line);
+            while (logs.size() > 300) logs.remove(0);
+        }
         android.util.Log.i("WatchRpc", line);
         JSObject data = new JSObject();
         data.put("line", line);
@@ -62,9 +68,13 @@ public class WatchRpcPlugin extends Plugin {
     private final IDataReceiver receiver = new IDataReceiver() {
         @Override
         public void onReceiveRequest(Request request) {
-            if (request == null) return;
+            if (request == null || !sessionActive) return;
             log("RX request action=" + request.getAction() + " bytes=" + (request.getData() == null ? 0 : request.getData().length()));
-            emit(request.getData(), "request");
+            if (Constant.Action.ACTION_DEVICE_DYNAMIC.equals(request.getAction())) {
+                handleDeviceDynamic(request.getData());
+            } else {
+                emit(request.getData(), "request");
+            }
             // 手表用 connect.send 发请求时，回一个传输层 ack；业务含义仍由 data 表达。
             try {
                 Response response = Util.responseData(request, "{\"code\":0}");
@@ -76,9 +86,13 @@ public class WatchRpcPlugin extends Plugin {
 
         @Override
         public void onReceiveNotification(Notification notification) {
-            if (notification == null) return;
+            if (notification == null || !sessionActive) return;
             log("RX notification action=" + notification.getAction());
-            emit(notification.getData(), "notification");
+            if (Constant.Action.ACTION_DEVICE_DYNAMIC.equals(notification.getAction())) {
+                handleDeviceDynamic(notification.getData());
+            } else {
+                emit(notification.getData(), "notification");
+            }
         }
     };
 
@@ -106,8 +120,62 @@ public class WatchRpcPlugin extends Plugin {
     }
 
     private boolean isConnectedInternal() {
+        return sessionActive && initialized && watchConnected && healthServiceConnected();
+    }
+
+    private boolean healthServiceConnected() {
         try { return RpcClient.getInstance().isConnected(TARGET_PACKAGE); }
         catch (Exception e) { return false; }
+    }
+
+    private void handleDeviceDynamic(String data) {
+        // SDK 自身的动态通知只表示 Android 服务绑定，不表示手表在线。
+        if ((TARGET_PACKAGE + ":false").equals(data)) {
+            watchConnected = false;
+            if (initialized) notifyState("ready", null);
+        } else if ((TARGET_PACKAGE + ":true").equals(data)) {
+            if (initialized) requestDeviceInfo(response -> { });
+        } else {
+            updateDeviceInfo(data);
+        }
+    }
+
+    private void updateDeviceInfo(String data) {
+        if (!sessionActive || data == null) return;
+        try {
+            JSONObject device = new JSONObject(data).optJSONObject("device");
+            if (device == null) return;
+            if (device.has("connected")) {
+                boolean connected = device.getBoolean("connected");
+                boolean changed = watchConnected != connected;
+                watchConnected = connected;
+                if (initialized && changed) notifyState(connected ? "connected" : "ready", null);
+            }
+            JSObject event = JSObject.fromJSONObject(device);
+            event.put("t", "device");
+            notifyListeners("watchEvent", event);
+        } catch (Exception e) {
+            log("device info parse failed: " + e.getMessage());
+        }
+    }
+
+    private void requestDeviceInfo(Callback callback) {
+        Request request = new Request.Builder()
+                .action(Constant.Action.ACTION_DEVICE_INFO)
+                .pkgName(TARGET_PACKAGE)
+                .data("{}")
+                .timeout(Constant.DEFAULT_TIMEOUT)
+                .build();
+        RpcClient.getInstance().callAsync(request, response -> {
+            log("DEVICE_INFO code=" + (response == null ? -1 : response.getCode()));
+            if (response != null && response.getCode() == 0) {
+                updateDeviceInfo(response.getData());
+            } else if (watchConnected) {
+                watchConnected = false;
+                if (sessionActive) notifyState("ready", null);
+            }
+            callback.onResponse(response);
+        });
     }
 
     private boolean healthInstalled() {
@@ -120,6 +188,7 @@ public class WatchRpcPlugin extends Plugin {
     }
 
     private void ensureInit(PluginCall call, Runnable after) {
+        sessionActive = true;
         if (initialized) {
             log("already initialized");
             after.run();
@@ -132,25 +201,19 @@ public class WatchRpcPlugin extends Plugin {
         initInFlight = true;
         lastError = null;
         log("init start: vivo=" + safeIsVivo() + ", healthInstalled=" + healthInstalled());
+        log("environment=" + environmentDiagnostics());
         log("app signature sha256=" + appSignatureSha256());
         logMeta();
         notifyState("connecting", null);
         try {
             // 4 参 init 的第一个 String 是健康应用包名，第二个是 SDK 密钥。
-            DeviceRpcManager.getInstance().init(getContext(), TARGET_PACKAGE, SDK_KEY, (success, message) -> {
+            DeviceRpcManager.getInstance().init(getContext().getApplicationContext(), TARGET_PACKAGE, SDK_KEY, (success, message) -> {
                 if (success) {
                     finishInit(call, after, "4-arg");
                     return;
                 }
-                log("4-arg init failed: " + message + " -> retry 3-arg");
-                try {
-                    DeviceRpcManager.getInstance().init(getContext(), SDK_KEY, (ok2, msg2) -> {
-                        if (ok2) finishInit(call, after, "3-arg");
-                        else failInit(call, msg2 != null ? msg2 : message);
-                    });
-                } catch (Exception e) {
-                    failInit(call, e.getMessage());
-                }
+                // 此 AAR 的四参方法直接委托三参，重复调用不会改变绑定/授权条件。
+                failInit(call, message);
             });
         } catch (Exception e) {
             failInit(call, e.getMessage());
@@ -158,16 +221,17 @@ public class WatchRpcPlugin extends Plugin {
     }
 
     private void finishInit(PluginCall call, Runnable after, String how) {
-        initInFlight = false;
-        initialized = true;
-        lastError = null;
-        log("init success via " + how);
         try {
             DeviceRpcManager.getInstance().registerDataReceiver(receiver);
             log("receiver registered");
         } catch (Exception e) {
-            log("receiver register failed: " + e.getMessage());
+            failInit(call, "receiver register failed: " + e.getMessage());
+            return;
         }
+        initInFlight = false;
+        initialized = true;
+        lastError = null;
+        log("init success via " + how);
         notifyState("ready", null);
         after.run();
     }
@@ -175,7 +239,10 @@ public class WatchRpcPlugin extends Plugin {
     private void failInit(PluginCall call, String message) {
         initInFlight = false;
         initialized = false;
-        lastError = message == null ? "unknown" : message;
+        watchConnected = false;
+        lastError = message == null || message.isEmpty()
+                ? "SDK init failed without detail; check environment and REGISTER code (8: health RPC unavailable; 9: permission denied)"
+                : message;
         log("init failed: " + lastError);
         notifyState("error", lastError);
         probeRegistration();
@@ -184,6 +251,49 @@ public class WatchRpcPlugin extends Plugin {
 
     private boolean safeIsVivo() {
         try { return Util.isVivoPhone(); } catch (Exception e) { return false; }
+    }
+
+    private JSObject environmentDiagnostics() {
+        JSObject ret = new JSObject();
+        ret.put("bridgeVersion", "2026-10-19.1");
+        ret.put("phonePackage", getContext().getPackageName());
+        ret.put("watchTargetPackageMatches", "ch.duartesantos.opengym".equals(getContext().getPackageName()));
+        ret.put("vivo", safeIsVivo());
+        try { ret.put("vos", Util.isVos()); } catch (Exception | LinkageError e) { ret.put("vos", "unknown"); }
+        try { ret.put("startBind", DeviceRpcManager.getInstance().isStartBind()); } catch (Exception e) { ret.put("startBind", "unknown"); }
+        ret.put("healthInstalled", healthInstalled());
+        ret.put("healthDeviceVersion", -1);
+        ret.put("healthEnabled", false);
+        try {
+            PackageInfo pi = getContext().getPackageManager().getPackageInfo(TARGET_PACKAGE, PackageManager.GET_META_DATA);
+            ret.put("healthVersion", pi.versionName);
+            ret.put("healthVersionCode", pi.versionCode);
+            ApplicationInfo ai = pi.applicationInfo;
+            ret.put("healthEnabled", ai != null && ai.enabled);
+            ret.put("healthDeviceVersion", ai == null || ai.metaData == null ? 0
+                    : ai.metaData.getInt("health.device.manager.version", 0));
+        } catch (Exception e) { ret.put("healthReadError", e.toString()); }
+        ret.put("rpcServicePresent", false);
+        try {
+            ServiceInfo service = getContext().getPackageManager().getServiceInfo(
+                    new ComponentName(TARGET_PACKAGE, "com.vivo.health.deviceRpcSdk.service.DeviceRpcService"),
+                    PackageManager.MATCH_DISABLED_COMPONENTS);
+            ret.put("rpcServicePresent", true);
+            ret.put("rpcServiceEnabled", service.enabled);
+            ret.put("rpcServiceExported", service.exported);
+            ret.put("rpcServicePermission", service.permission == null ? "" : service.permission);
+        } catch (Exception e) { ret.put("rpcServiceReadError", e.toString()); }
+        try {
+            // 仅观察 SDK 的绑定前置条件；不修改系统设置或 start_bind。
+            ret.put("boundWatchDeviceCount", Settings.Global.getInt(getContext().getContentResolver(),
+                    "com.vivo.health.watch.boundWatchDeviceCount", 0));
+        } catch (Exception e) {
+            ret.put("boundWatchDeviceCount", -1);
+            ret.put("boundWatchReadError", e.toString());
+        }
+        ret.put("healthServiceConnected", healthServiceConnected());
+        ret.put("watchConnected", isConnectedInternal());
+        return ret;
     }
 
     private String appSignatureSha256() {
@@ -220,7 +330,8 @@ public class WatchRpcPlugin extends Plugin {
             JSONObject json = new JSONObject();
             json.put("appid", APP_ID);
             json.put("appname", getContext().getPackageName());
-            json.put("encryVersion", 1);
+            // 与项目内 device-rpc 1.0.0.17 的 checkThirdPermission 保持一致。
+            json.put("encryVersion", 0);
             json.put("encryStr", SDK_KEY);
             Request req = new Request.Builder()
                     .action(Constant.Action.ACTION_THIRD_REGIST)
@@ -234,7 +345,8 @@ public class WatchRpcPlugin extends Plugin {
                     log("REGISTER probe response null");
                     return;
                 }
-                log("REGISTER probe code=" + response.getCode() + " data=" + response.getData());
+                log("REGISTER probe code=" + response.getCode()
+                        + " (0=ok, 8=health RPC unavailable, 9=permission denied)");
             });
         } catch (Exception e) {
             log("REGISTER probe failed: " + e.getMessage());
@@ -299,17 +411,24 @@ public class WatchRpcPlugin extends Plugin {
     @PluginMethod
     public void connect(PluginCall call) {
         ensureInit(call, () -> {
-            JSObject ret = new JSObject();
-            ret.put("connected", isConnectedInternal());
-            ret.put("appId", APP_ID);
-            ret.put("watchPackage", WATCH_PACKAGE);
-            call.resolve(ret);
+            try {
+                requestDeviceInfo(response -> {
+                    JSObject ret = new JSObject();
+                    ret.put("connected", isConnectedInternal());
+                    ret.put("healthServiceConnected", healthServiceConnected());
+                    ret.put("appId", APP_ID);
+                    ret.put("watchPackage", WATCH_PACKAGE);
+                    call.resolve(ret);
+                });
+            } catch (Exception e) { call.reject("get device info failed: " + e.getMessage()); }
         });
     }
 
     @PluginMethod
     public void disconnect(PluginCall call) {
         // SDK 没有公开的 unbind；停止业务收发并把状态交回前端即可。
+        sessionActive = false;
+        watchConnected = false;
         notifyState("off", null);
         call.resolve();
     }
@@ -335,13 +454,7 @@ public class WatchRpcPlugin extends Plugin {
     public void getDeviceInfo(PluginCall call) {
         ensureInit(call, () -> {
             try {
-                Request request = new Request.Builder()
-                        .action(Constant.Action.ACTION_DEVICE_INFO)
-                        .pkgName(TARGET_PACKAGE)
-                        .data("{}")
-                        .timeout(Constant.DEFAULT_TIMEOUT)
-                        .build();
-                RpcClient.getInstance().callAsync(request, response -> {
+                requestDeviceInfo(response -> {
                     JSObject ret = new JSObject();
                     ret.put("ok", response != null && response.getCode() == 0);
                     ret.put("code", response == null ? -1 : response.getCode());
@@ -358,7 +471,9 @@ public class WatchRpcPlugin extends Plugin {
     @PluginMethod
     public void getLogs(PluginCall call) {
         StringBuilder sb = new StringBuilder();
-        for (String line : logs) sb.append(line).append('\n');
+        synchronized (logs) {
+            for (String line : logs) sb.append(line).append('\n');
+        }
         JSObject ret = new JSObject();
         ret.put("logs", sb.toString());
         ret.put("lastError", lastError == null ? "" : lastError);
@@ -368,9 +483,7 @@ public class WatchRpcPlugin extends Plugin {
 
     @PluginMethod
     public void getVersion(PluginCall call) {
-        JSObject ret = new JSObject();
-        ret.put("vivo", safeIsVivo());
-        ret.put("healthInstalled", healthInstalled());
+        JSObject ret = environmentDiagnostics();
         ret.put("initialized", initialized);
         ret.put("appSignature", appSignatureSha256());
         try {
@@ -386,16 +499,6 @@ public class WatchRpcPlugin extends Plugin {
             ret.put("healthPkg", DeviceRpcManager.getHealthPackageName());
         } catch (Exception e) {
             ret.put("healthPkg", "");
-        }
-        try {
-            ret.put("healthDeviceVersion", DeviceRpcManager.getInstance().getHealthDeviceVersion());
-        } catch (Exception e) {
-            ret.put("healthDeviceVersion", -1);
-        }
-        try {
-            ret.put("deviceVersion", DeviceRpcManager.getInstance().getDeviceVersion(WATCH_PACKAGE));
-        } catch (Exception e) {
-            ret.put("deviceVersion", -1);
         }
         ret.put("lastError", lastError == null ? "" : lastError);
         call.resolve(ret);

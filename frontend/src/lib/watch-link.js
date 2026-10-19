@@ -33,7 +33,7 @@ export function onWatchState(cb) {
 
 function setState(s, error = '') {
   state = s
-  if (error) lastError = error
+  lastError = error
   for (const cb of listeners) {
     try { cb(state) } catch { /* 单个订阅者出错不影响别人 */ }
   }
@@ -48,7 +48,7 @@ async function bindNative() {
 
   p.WatchRpc.addListener('watchState', (ev) => {
     const next = ev && ev.state ? ev.state : 'off'
-    if (ev && ev.connected) device = { ...(device || {}), connected: true }
+    if (typeof ev?.connected === 'boolean') device = { ...(device || {}), connected: ev.connected }
     setState(next === 'disconnected' ? 'off' : next, ev && ev.reason ? ev.reason : '')
     if (next === 'ready' || next === 'connected') {
       if (!pendingPlan && latestPlan) pendingPlan = latestPlan
@@ -89,7 +89,7 @@ export async function watchAvailable() {
   if (!p) return { available: false, reason: 'web' }
   try {
     const r = await p.WatchRpc.isSupported()
-    if (r && r.connected) device = { ...(device || {}), connected: true }
+    if (typeof r?.connected === 'boolean') device = { ...(device || {}), connected: r.connected }
     if (!r || !r.available) return { available: false, reason: (r && r.reason) || 'notVivo' }
     return { available: true }
   } catch { return { available: false, reason: 'web' } }
@@ -103,6 +103,7 @@ export async function connectWatch() {
   setState('connecting')
   try {
     const r = await p.WatchRpc.connect()
+    device = { ...(device || {}), connected: !!r?.connected }
     setState(r && r.connected ? 'connected' : 'ready')
     return true
   } catch (e) {
@@ -116,6 +117,7 @@ export async function disconnectWatch() {
   if (p) {
     try { await p.WatchRpc.disconnect() } catch { /* 已经断开 */ }
   }
+  device = { ...(device || {}), connected: false }
   setState('off')
 }
 
@@ -128,8 +130,12 @@ export async function getWatchDeviceInfo() {
     if (!r || !r.ok || !r.data) return null
     try {
       const parsed = JSON.parse(r.data)
-      device = { ...(device || {}), ...parsed }
-      return parsed
+      const info = parsed.device || parsed
+      device = { ...(device || {}), ...info }
+      if ((state === 'ready' || state === 'connected') && typeof info.connected === 'boolean') {
+        setState(info.connected ? 'connected' : 'ready')
+      }
+      return info
     } catch { return { raw: r.data } }
   } catch { return null }
 }
