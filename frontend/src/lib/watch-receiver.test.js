@@ -37,10 +37,23 @@ function session() {
 }
 const plan = { t: 'plan', sid: 'today', planId: 'p1', workout: 'Leg day',
   exercises: [{ name: 'Squat', sets: 3, reps: '8', weight: '60' }] }
+// Compatibility cases, not a claim that any particular one is the device's format.
+const envelopes = [
+  ['object', msg => msg],
+  ['JSON', msg => JSON.stringify(msg)],
+  ['data JSON', msg => ({ data: JSON.stringify(msg) })],
+  ['data object', msg => ({ data: msg })],
+  ['nested data JSON', msg => ({ data: { data: JSON.stringify(msg) } })],
+  ['msg JSON', msg => ({ data: { msg: JSON.stringify(msg) } })],
+  ['JSON msg object', msg => ({ data: JSON.stringify({ msg }) })],
+  ['JSON data JSON', msg => ({ data: JSON.stringify({ data: JSON.stringify(msg) }) })],
+  ['double JSON', msg => ({ data: JSON.stringify(JSON.stringify(msg)) })],
+  ['BOM JSON', msg => ({ data: '\uFEFF' + JSON.stringify(msg) })],
+]
 
 describe('watch business message boundary', () => {
-  it.each([msg => ({ data: JSON.stringify(msg) }), msg => ({ data: msg })])(
-    'delivers a plan to the Index page and confirms the visible offer', envelope => {
+  it.each(envelopes)(
+    'delivers %s to the Index page and confirms the visible offer', (_name, envelope) => {
       const c = connection()
       const rpc = transport(c)
       const startSession = vi.fn()
@@ -68,6 +81,40 @@ describe('watch business message boundary', () => {
     expect(c.sent.find(m => m.t === 'plan_ack')).toMatchObject({
       status: 'error', error: 'render failed', planId: 'p1',
     })
+  })
+
+  it('reports bounded inner structure and a stable failure reason without workout contents', () => {
+    const c = connection(), onPlan = vi.fn()
+    transport(c).startServer({ onPlan })
+    c.onMessage({ data: JSON.stringify({ unexpected: { secret: 'private workout' } }) })
+    expect(c.sent.at(-1)).toMatchObject({ t: 'watch_rx', status: 'invalid_message',
+      reason: 'missing_type', decodePath: 'event.data.json',
+      layers: [{ type: 'object', keys: ['data'] }, { type: 'string' },
+        { type: 'object', keys: ['unexpected'] }] })
+    expect(JSON.stringify(c.sent.at(-1))).not.toContain('private workout')
+    c.onMessage({ data: '{private workout' })
+    expect(c.sent.at(-1)).toMatchObject({ reason: 'invalid_json', decodePath: 'event.data' })
+    const cycle = {}; cycle.data = cycle
+    c.onMessage(cycle)
+    expect(c.sent.at(-1)).toMatchObject({ reason: 'envelope_depth_limit' })
+    expect(c.sent.at(-1).layers.length).toBeLessThanOrEqual(8)
+    c.onMessage({ data: new Uint8Array([123, 125]) })
+    expect(c.sent.at(-1)).toMatchObject({ reason: 'unsupported_binary' })
+    expect(onPlan).not.toHaveBeenCalled()
+  })
+
+  it('keeps business data fields and file events intact and never unwraps an invalid type', () => {
+    const c = connection(), onPlan = vi.fn(), onFile = vi.fn()
+    transport(c).startServer({ onPlan, onFile })
+    const business = { ...plan, data: { note: 'keep me' } }
+    c.onMessage({ data: business })
+    expect(onPlan).toHaveBeenCalledWith(business)
+    c.onMessage({ isFileType: true, fileName: 'demo.bin', fileUri: 'internal://demo.bin' })
+    expect(onFile).toHaveBeenCalledWith(expect.objectContaining({ t: 'file', fileName: 'demo.bin' }))
+    onPlan.mockClear()
+    c.onMessage({ data: { t: 1, data: plan } })
+    expect(c.sent.at(-1)).toMatchObject({ reason: 'invalid_type' })
+    expect(onPlan).not.toHaveBeenCalled()
   })
 
   it('does not claim applied when no page handler can process the plan', () => {
@@ -124,10 +171,15 @@ describe('watch business message boundary', () => {
     expect(c.sent.at(-1)).toMatchObject({ t: 'plan_ack', status: 'applied', page: 'Workout' })
     c.onMessage({ data: { ...plan, sid: 'other' } })
     expect(c.sent.at(-1)).toMatchObject({ status: 'rejected', reason: 'session_mismatch', activeSid: 'today' })
-    c.onMessage({ data: { ...plan, t: 'sync', rev: 42, rows: [[{ w: '75', r: '6', done: false }]] } })
+    c.onMessage({ data: JSON.stringify({ msg: JSON.stringify({ ...plan, t: 'sync', rev: 42,
+      rows: [[{ w: '75', r: '6', done: false }]] }) }) })
     expect(workout.weightVal).toBe('75 kg')
     expect(workout.repsVal).toBe('6 次')
     expect(c.sent.at(-1)).toMatchObject({ t: 'sync_ack', status: 'applied', page: 'Workout', rev: 42 })
+    const beforeRest = Date.now()
+    c.onMessage({ data: { msg: JSON.stringify({ t: 'rest', sid: plan.sid, leftSec: 30 }) } })
+    expect(sessions.loadState().restUntil).toBeGreaterThanOrEqual(beforeRest + 30000)
+    expect(sessions.loadState().restUntil).toBeLessThanOrEqual(Date.now() + 30000)
     workout.onShow()
     expect(sessions.loadState().workout.rows[0][0].w).toBe('75')
   })

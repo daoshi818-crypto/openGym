@@ -1,6 +1,23 @@
 # 手机与手表 RPC 连接排查（2026-10-19）
 
-应用版本：`1.5.12`，Android `versionCode=40`；手表源码版本 `0.4.2 / versionCode=9`。本次诊断标识：`bridgeVersion=2026-10-19.4`，位于连接日志的 `environment=` 和设置页诊断 JSON 中。
+应用版本：`1.5.13`，Android `versionCode=41`；手表源码版本 `0.4.3 / versionCode=10`。本次诊断标识：`bridgeVersion=2026-10-19.5`，位于连接日志的 `environment=` 和设置页诊断 JSON 中。
+
+## 1.5.13 / 手表 0.4.3：接收解析兼容与内层诊断
+
+17:36 真机日志已确认手表为 0.4.2，初始化和权限正常；plan、rest、sync 的 RPC 响应均为 code=0，但手表随后返回 `watch_rx status=invalid_message`，外层为 object、keys=[data]，没有页面处理回执。因此消息已经到达手表回调，失败发生在进入训练页面处理之前。现有日志没有记录 data 内层形态，不能认定真机一定采用双重 JSON 或 msg 包裹。
+
+旧接收器只拆一次 data 并解析一次 JSON。本轮兼容已知 data/msg 包裹和多次 JSON 编码，最多检查 8 层，识别业务 t 后立即停止解包，保留业务自己的 data/msg 字段及文件消息。对不支持的二进制、畸形 JSON、无类型和层数超限分别报告原因，不猜测二进制编码。手机发送仍使用原始 JSON 字符串；参考 ZIP 的原生桥和 JS 模块均直接透传 JSON，手机 API 通用异步示例也允许业务字符串，目前没有证据要求改变发送协议。
+
+失败回执新增 `reason`、`decodePath`、`layers`；layers 仅含各层类型、有限字段名、对象类型和字符串/数组长度，不包含训练原文。成功的 plan_ack/sync_ack 也报告 decodePath，手机文本日志增加该字段，完整结构保留在 lastWatchRx 中。
+
+### 本轮复测
+
+1. 在 GitHub main 手动运行 **Build signed APK**，安装手机 `1.5.13 / code41`，确认 bridgeVersion=2026-10-19.5。
+2. 按现有 BlueOS 流程重新构建并安装手表 `0.4.3 / code10`，确认首页及 hello 的 watchVersion 都为 0.4.3。手机 APK 工作流不构建或更新手表 RPK，本轮未修改构建产物。
+3. 设置页拉起手表，再回手机开始训练并保持会话。检查首页训练名称、动作数量和“进入辅助”；正常回执应为 `plan_ack status=applied page=Index exercises=5`（数量依当前训练），并包含 decodePath；进入辅助后检查动作、重量、次数和休息倒计时。
+4. 若仍无动作，复制完整日志和诊断 JSON，尤其是 lastWatchRx 的 reason/decodePath/layers、lastPlanReceipt、lastSyncReceipt 和 watchVersion。仅 code=0 仍不足以认定页面已处理。
+
+本轮专项回归 6 文件 / 65 项通过，手机模式 Vite 构建、双端版本元数据及诊断日志字段校验通过。回归使用实际手表 rpc/session/ux 脚本并替换设备 API，覆盖接收包裹兼容和页面处理；这不能替代健康转发、BlueOS 渲染或真机业务回执验证。当前环境没有 JDK 和 BlueOS 打包工具，未生成 APK/RPK，真实设备结果仍待用户构建安装复测。
 
 ## 1.5.12 / 手表 0.4.2：动作名称、接收回调和业务回执
 

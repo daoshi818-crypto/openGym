@@ -131,7 +131,7 @@ public class WatchRpcPlugin extends Plugin {
                     + " chars=" + json.length()
                     + summaryField(msg, "planId") + summaryField(msg, "watchVersion")
                     + summaryField(msg, "status") + summaryField(msg, "page")
-                    + summaryField(msg, "reason") + summaryField(msg, "error")
+                    + summaryField(msg, "reason") + summaryField(msg, "decodePath") + summaryField(msg, "error")
                     + ("unknown".equals(type) ? " keys=" + msg.names() : "");
         } catch (Exception e) { return "invalid JSON chars=" + json.length(); }
     }
@@ -294,7 +294,7 @@ public class WatchRpcPlugin extends Plugin {
 
     private JSObject environmentDiagnostics() {
         JSObject ret = new JSObject();
-        ret.put("bridgeVersion", "2026-10-19.4");
+        ret.put("bridgeVersion", "2026-10-19.5");
         ret.put("watchPackage", WATCH_PACKAGE);
         ret.put("watchRouter", WATCH_ROUTER);
         ret.put("lastRxType", lastRxType);

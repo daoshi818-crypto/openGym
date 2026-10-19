@@ -29,13 +29,40 @@ function loadOutbox() {
 }
 
 function parseMessage(data) {
-  if (!data) return null
-  if (data.isFileType) return { t: 'file', ...data }
-  let value = data.data != null ? data.data : data
-  if (typeof value === 'string') {
-    try { return JSON.parse(value) } catch (e) { return null }
+  const diagnostics = { decodePath: 'event', layers: [] }
+  const fail = reason => ({ message: null, ...diagnostics, reason })
+  let value = data
+  // SDK 回调的 data 与手机示例的 msg 都是传输包裹。只拆这些已知字段，
+  // 不递归搜索训练内容；遇到业务 t 就停止，保留业务自己的 data/msg。
+  for (let depth = 0; depth < 8; depth++) {
+    const type = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value
+    const layer = { type }
+    if (value && type === 'object') {
+      layer.keys = Object.keys(value).slice(0, 8).map(k => k.slice(0, 40))
+      layer.objectType = Object.prototype.toString.call(value).slice(0, 48)
+    }
+    if (type === 'string' || type === 'array') layer.length = value.length
+    diagnostics.layers.push(layer)
+    if (type === 'string') {
+      // 不记录原文或 JSON.parse 的异常文本，避免把训练内容带入诊断。
+      if (value.length > 131072) return fail('message_too_large')
+      try { value = JSON.parse(value.replace(/^\uFEFF/, '').trim()) }
+      catch (e) { return fail('invalid_json') }
+      diagnostics.decodePath += '.json'
+      continue
+    }
+    if (!value || type !== 'object') return fail('unsupported_value')
+    if (value.isFileType) return { message: { ...value, t: 'file' }, ...diagnostics }
+    if (typeof value.t === 'string' && value.t) return { message: value, ...diagnostics }
+    if (value.t != null) return fail('invalid_type')
+    // 二进制格式尚未获真机证实，先明确报告，避免错误地当作普通对象。
+    if (typeof value.byteLength === 'number') return fail('unsupported_binary')
+    const key = value.data != null ? 'data' : value.msg != null ? 'msg' : ''
+    if (!key) return fail('missing_type')
+    value = value[key]
+    diagnostics.decodePath += '.' + key
   }
-  return value && typeof value === 'object' ? value : null
+  return fail('envelope_depth_limit')
 }
 
 function sendHello() {
@@ -113,10 +140,12 @@ export function startServer(h) {
     if (handlers.onError) handlers.onError(err || {})
   }
   connect.onMessage = (data) => {
-    const msg = parseMessage(data)
-    if (!msg || typeof msg.t !== 'string') {
+    const decoded = parseMessage(data)
+    const msg = decoded.message
+    if (!msg) {
       sendControl({ t: 'watch_rx', watchVersion: WATCH_VERSION, status: 'invalid_message',
-        envelopeType: typeof data, keys: data && typeof data === 'object' ? Object.keys(data).slice(0, 8) : [] })
+        envelopeType: typeof data, keys: data && typeof data === 'object' ? Object.keys(data).slice(0, 8) : [],
+        reason: decoded.reason, decodePath: decoded.decodePath, layers: decoded.layers })
       return
     }
     if (msg.t === 'ack') { ackUpto(msg.upto); return }
@@ -130,7 +159,8 @@ export function startServer(h) {
       }
       // code=0 仅代表手机 RPC 成功；此回执在页面实际处理后发出。
       sendControl({ ...result, t: msg.t + '_ack', watchVersion: WATCH_VERSION,
-        sid: msg.sid || '', planId: msg.planId || '', rev: msg.rev || 0 })
+        sid: msg.sid || '', planId: msg.planId || '', rev: msg.rev || 0,
+        decodePath: decoded.decodePath })
       return
     }
     if (msg.t === 'rest' && handlers.onRest) { handlers.onRest(msg); return }
