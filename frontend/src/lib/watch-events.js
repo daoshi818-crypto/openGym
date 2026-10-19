@@ -62,7 +62,8 @@ export function startFromWatch(S, ev) {
 }
 
 export function rememberClose(S, ev) {
-  S.watchClosed = { ...S.watchClosed, [ev.sid]: { sid: ev.sid, disposition: ev.disposition,
+  S.watchClosed = { ...S.watchClosed, [ev.sid]: { ...S.watchClosed?.[ev.sid], sid: ev.sid, disposition: ev.disposition,
     closedAt: ev.closedAt || Date.now(), eventId: ev.eventId || 'phone:' + ev.sid,
-    ...(ev.entries ? { entries: JSON.parse(JSON.stringify(ev.entries)) } : {}) } }
+    ...(ev.entries ? { entries: JSON.parse(JSON.stringify(ev.entries)) } : {}),
+    ...(ev.elapsedBeforeMs != null ? { elapsedBeforeMs: ev.elapsedBeforeMs } : {}) } }
 }

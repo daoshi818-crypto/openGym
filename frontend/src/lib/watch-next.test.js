@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import { createWatchLifecycle } from './watch-session.js'
-import { applyWatchEvent, startFromWatch } from './watch-events.js'
+import { applyWatchEvent, startFromWatch, rememberClose } from './watch-events.js'
 import { resolveWatchSave } from './watch-recovery.js'
 import { watchSnapshotOf } from './watch-workout.js'
 import { applyEdit, restOf, applyRest, applyFocus } from '../../../watch-app/src/lib/protocol.js'
@@ -77,6 +77,23 @@ describe('watch durable state and navigation', () => {
 })
 
 describe('phone reconciliation outside the workout view', () => {
+  it('retains local recovery details without sending history over RPC on reconnect or retried start', () => {
+    const S = phone(), entries = structuredClone(S.active.entries)
+    rememberClose(S, { sid: '1000', disposition: 'saved', entries, elapsedBeforeMs: 600000 })
+    rememberClose(S, { sid: '1000', disposition: 'saved', eventId: 'closed' })
+    expect(S.watchClosed['1000']).toMatchObject({ entries, elapsedBeforeMs: 600000 })
+    S.active = null
+    const app = life(S)
+    app.receive({ t: 'hello' })
+    app.receive({ t: 'watch_start', sid: '1000', plan: {}, eventId: 'retry' })
+    const messages = app.send.mock.calls.map(([msg]) => msg).filter(msg => msg.t === 'session_close')
+    expect(messages).toHaveLength(2)
+    for (const msg of messages) {
+      expect(msg.sid).toBe('1000')
+      expect(msg).not.toHaveProperty('entries')
+      expect(msg).not.toHaveProperty('elapsedBeforeMs')
+    }
+  })
   it('deduplicates durable edits after lifecycle recreation and ignores older field events', () => {
     const S = phone(), ev = { sid: '1000', t: 'add_set', ex: 0, set: 3, sets: 3, at: 10, eventId: 'a' }
     life(S).receive(ev); life(S).receive(ev)
@@ -155,6 +172,21 @@ describe('phone reconciliation outside the workout view', () => {
     resolveWatchSave(S, 'late', true); resolveWatchSave(S, 'late', true)
     expect(S.workouts).toHaveLength(1)
     expect(S.workouts[0].entries[0].sets[0].w).toBe(80)
+  })
+  it('retains later phone entries, PRs and muscle snapshots and reconciles resumed duration', () => {
+    const S = phone(), original = structuredClone(S.active.entries)
+    original[0].sets[0].done = true
+    const record = { ...S.active, id: 'saved', end: 901000, durationMs: 900000, finishedAt: 2000000,
+      entries: [{ ...structuredClone(original[0]), muscleSnapshot: { chest: 1 } },
+        { id: 'plain-row', sets: [{ w: 30, r: '10', done: true }] }], prs: ['existing-pr'] }
+    S.active = null; S.workouts = [record]
+    S.watchClosed = { '1000': { entries: original, elapsedBeforeMs: 600000 } }
+    S.watchPendingSaves = { late: { sid: '1000', closedAt: 2001000, summary: { calories: 40, minutes: 8 },
+      completedSets: [{ ex: 0, set: 1, weight: '80', reps: '10' }] } }
+    resolveWatchSave(S, 'late', true)
+    expect(S.workouts[0]).toMatchObject({ durationMs: 1080000, end: 1081000, finishedAt: 2001000, prs: ['existing-pr'] })
+    expect(S.workouts[0].entries.map(e => e.id)).toEqual(['plain-bench', 'plain-row'])
+    expect(S.workouts[0].entries[0].muscleSnapshot).toEqual({ chest: 1 })
   })
   it('does not let a delayed completion overwrite a newer weight field', () => {
     const S = phone()

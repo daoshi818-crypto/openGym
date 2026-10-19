@@ -39,12 +39,17 @@ export function createWatchLifecycle({ getState, update, getTimer, sendEnded, se
       send({ t: 'watch_start_ack', status, sid: ev.sid, eventId: ev.eventId, at: ev.at,
         snapshot: status === 'conflict' ? watchSnapshotOf(getState(), getTimer()) : null })
       if (status === 'started') { ack(); sync() }
-      else if (status === 'closed') { ack(); send({ t: 'session_close', ...getState().watchClosed?.[ev.sid], sid: ev.sid, disposition: getState().watchClosed?.[ev.sid]?.disposition || 'saved' }) }
+      else if (status === 'closed') {
+        const close = getState().watchClosed?.[ev.sid]
+        ack(); send({ t: 'session_close', sid: ev.sid, disposition: close?.disposition || 'saved',
+          closedAt: close?.closedAt, eventId: close?.eventId })
+      }
       return true
     }
     if (ev.t === 'hello') {
       send(watchCatalogOf(current))
-      for (const close of Object.values(current.watchClosed || {})) send({ ...close, t: 'session_close' })
+      for (const close of Object.values(current.watchClosed || {})) send({ t: 'session_close', sid: close.sid,
+        disposition: close.disposition, closedAt: close.closedAt, eventId: close.eventId })
       const snapshot = watchSnapshotOf(current, getTimer())
       if (ev.sid && !ev.pendingStart && (!snapshot || snapshot.sid !== ev.sid)) sendEnded(endedWatchSession(current, ev.sid))
       if (snapshot) sendSync(snapshot)

@@ -124,7 +124,7 @@ function Shell() {
       if (!S.watchClosed?.[oldSid]) {
         useStore.getState().update(s => rememberClose(s, close))
       }
-      sendToWatch({ ...close, t: 'session_close' })
+      sendToWatch({ t: 'session_close', sid: close.sid, disposition: close.disposition, closedAt: close.closedAt, eventId: close.eventId })
     }
   }, [S.active, S.workouts])
   // iOS: whether timer sounds get past the ring/silent switch (Settings → Sounds). Page-level,

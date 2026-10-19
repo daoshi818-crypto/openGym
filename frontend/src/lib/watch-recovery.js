@@ -25,6 +25,7 @@ export function resolveWatchSave(S, key, accept) {
       used.add(match)
       return JSON.parse(JSON.stringify(record.entries[match]))
     })
+    entries.push(...record.entries.filter((entry, i) => !used.has(i)).map(entry => JSON.parse(JSON.stringify(entry))))
     const draft = { ...S, active: { ...record, entries, watchSid: ev.sid, watchEvents: [], watchVersions: {} } }
     for (const set of ev.completedSets || []) {
       const entry = entries[set.ex]
@@ -35,8 +36,16 @@ export function resolveWatchSave(S, key, accept) {
     for (const set of ev.completedSets || []) applyWatchEvent(draft, { ...set, t: 'set', sid: ev.sid,
       eventId: key + ':' + set.ex + ':' + set.set, seq: ev.closedAt })
     applyWatchSummary(draft, { ...ev, ...ev.summary, at: ev.closedAt })
-    const completed = buildCompletedWorkout(draft.active, { end: Math.max(record.end || 0, ev.closedAt || 0) })
+    const completed = buildCompletedWorkout(draft.active, { end: Math.max(record.end || 0, ev.closedAt || 0),
+      prs: record.prs || [], snapshotFor: entry => entry.muscleSnapshot })
     const result = { ...record, ...completed, id: record.id }
+    if (Number.isFinite(Number(ev.summary?.minutes))) {
+      const base = S.watchClosed?.[ev.sid]?.elapsedBeforeMs || 0
+      result.durationMs = Math.max(record.durationMs ?? Math.max(0, (record.end || record.start) - record.start),
+        base + Math.max(0, Number(ev.summary.minutes)) * 60000)
+      result.end = record.start + result.durationMs
+      result.finishedAt = Math.max(record.finishedAt || record.end || 0, ev.closedAt || 0)
+    }
     if (index >= 0) S.workouts[index] = result
     else S.workouts.push(result)
   }
