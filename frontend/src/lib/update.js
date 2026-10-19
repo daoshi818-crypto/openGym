@@ -13,11 +13,11 @@ import { MOBILE } from './mobile.js'
 const REPO = 'daoshi818-crypto/openGym'   // [fork] 指向自己的 fork：Actions 会把官方更新 rebase 本地定制后自动构建签名，发布到这里
 export const RELEASES_PAGE = `https://github.com/${REPO}/releases/latest`
 
-// [fork] The release metadata is a tiny static file in this repository. jsDelivr serves it from
-// its edge without requiring a Worker or another server. The hourly query key keeps a phone from
-// holding on to the CDN's branch cache for days while still allowing ordinary edge caching.
+// The CDN keeps a domestic-accessible path; origin avoids stale branch-cache metadata after
+// a release. Either source may fail, and the newer successful manifest wins.
 const UPDATE_PROXY = 'https://cdn.jsdelivr.net/gh/daoshi818-crypto/openGym@main/update.json'
 const updateUrl = () => `${UPDATE_PROXY}?og=${Math.floor(Date.now() / 3600000)}`
+const UPDATE_ORIGIN = `https://raw.githubusercontent.com/${REPO}/main/update.json`
 
 /**
  * Compares two semver strings (e.g. "1.2.11" vs "1.3.0").
@@ -62,10 +62,20 @@ export async function checkForUpdate() {
   return cached
 }
 async function fetchLatest() {
-  const res = await fetch(updateUrl(), { cache: 'no-store' })
-  if (res.status === 404) return { hasUpdate: false, latestVersion: __APP_VERSION__, apkUrl: null, hashUrl: null }
-  if (!res.ok) throw new Error(`Update metadata ${res.status}`)
-  const latest = await res.json()
+  // Bound an unreachable source without letting it hide the other source's newer release.
+  const results = await Promise.allSettled([updateUrl(), UPDATE_ORIGIN].map(async url => {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 8000)
+    try {
+      const res = await fetch(url, { cache: 'no-store', signal: controller.signal })
+      if (res.status === 404) return null
+      if (!res.ok) throw new Error(`Update metadata ${res.status}`)
+      return await res.json()
+    } finally { clearTimeout(timeout) }
+  }))
+  const manifests = results.filter(r => r.status === 'fulfilled' && r.value?.tag_name).map(r => r.value)
+  if (!manifests.length && results.every(r => r.status === 'rejected')) throw results[0].reason
+  const latest = manifests.sort((a, b) => compareSemver(String(b.tag_name), String(a.tag_name)))[0] || {}
   const latestVersion = String(latest.tag_name || '').replace(/^v/, '')
   if (!latestVersion) return { hasUpdate: false, latestVersion: __APP_VERSION__, apkUrl: null, hashUrl: null }
   const hasUpdate = compareSemver(latestVersion, __APP_VERSION__) > 0

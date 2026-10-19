@@ -39,6 +39,17 @@ describe('checkForUpdate', () => {
     }))
   }
   const asset = (name, url = 'https://github.com/x/releases/download/v9/' + name) => ({ name, browser_download_url: url })
+  it('uses fresh origin metadata when the CDN still advertises an older release', async () => {
+    globalThis.fetch = vi.fn(url => Promise.resolve({ ok: true, status: 200,
+      json: async () => ({ tag_name: url.includes('raw.githubusercontent.com') ? 'v99.0.0' : 'v1.5.17',
+        apk_url: 'https://github.com/x/new.apk' }) }))
+    expect(await checkForUpdate()).toMatchObject({ hasUpdate: true, latestVersion: '99.0.0' })
+  })
+  it('keeps the CDN available when the origin is unreachable', async () => {
+    globalThis.fetch = vi.fn(url => url.includes('raw.githubusercontent.com') ? Promise.reject(new Error('offline')) :
+      Promise.resolve({ ok: true, status: 200, json: async () => ({ tag_name: 'v99.0.0' }) }))
+    expect(await checkForUpdate()).toMatchObject({ hasUpdate: true, latestVersion: '99.0.0' })
+  })
 
   it('asks GitHub for the latest published release (never a draft or a beta)', async () => {
     mockFetch({ tag_name: 'v' + __APP_VERSION__, assets: [] })

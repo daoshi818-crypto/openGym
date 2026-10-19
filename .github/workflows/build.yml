@@ -105,12 +105,12 @@ jobs:
 
       - name: Purge jsDelivr update metadata
         run: |
-          for i in 1 2 3 4 5 6; do
-            curl -fsS "https://purge.jsdelivr.net/gh/daoshi818-crypto/openGym@main/update.json" >/dev/null || true
-            sleep 10
-            body=$(curl -fsS "https://cdn.jsdelivr.net/gh/daoshi818-crypto/openGym@main/update.json?og=$(date +%s)")
-            if echo "$body" | grep -q "v${APP_VERSION}"; then
-              echo "update.json now points at v${APP_VERSION}"
-              break
-            fi
-          done
+          curl -fsS "https://purge.jsdelivr.net/gh/daoshi818-crypto/openGym@main/update.json" || true
+          sleep 10
+          hour=$(( $(date +%s) / 3600 ))
+          body=$(curl -fsS "https://cdn.jsdelivr.net/gh/daoshi818-crypto/openGym@main/update.json?og=$hour" || true)
+          if echo "$body" | grep -q "v${APP_VERSION}"; then
+            echo "CDN update check finds v${APP_VERSION}"
+          else
+            echo "::warning::CDN metadata is still cached. New clients also check origin metadata; older clients need CDN propagation."
+          fi
