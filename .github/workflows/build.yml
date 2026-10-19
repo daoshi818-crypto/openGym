@@ -67,6 +67,28 @@ jobs:
             openGym.apk.sha256
           make_latest: true
 
+      - name: Publish update metadata with the release
+        env:
+          APP_VERSION: ${{ env.APP_VERSION }}
+        run: |
+          set -euo pipefail
+          cat > update.json <<EOF
+          {
+            "tag_name": "v${APP_VERSION}",
+            "apk_url": "https://github.com/daoshi818-crypto/openGym/releases/download/v${APP_VERSION}/openGym.apk",
+            "hash_url": "https://github.com/daoshi818-crypto/openGym/releases/download/v${APP_VERSION}/openGym.apk.sha256"
+          }
+          EOF
+          git config user.email "actions@users.noreply.github.com"
+          git config user.name "openGym release builder"
+          git add update.json
+          if git diff --cached --quiet; then
+            echo "update.json already points at v${APP_VERSION}"
+          else
+            git commit -m "chore: publish update metadata for v${APP_VERSION} [skip ci]"
+            git push origin HEAD:main
+          fi
+
       - name: Purge jsDelivr update metadata
         run: |
           for i in 1 2 3 4 5 6; do
