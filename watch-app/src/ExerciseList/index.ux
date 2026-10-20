@@ -5,7 +5,7 @@ import { loadState, save, endSession, closeSession } from '../lib/session.js'
 import { sendControl, sendEvent } from '../lib/rpc.js'
 
 export default {
-  data: { list: [], expanded: -1 },
+  data: { list: [], expanded: -1, endOn: false },
 
   onInit() {
     const s = loadState()
@@ -24,7 +24,36 @@ export default {
       })),
     }))
   },
-  onReady() { try { this.$element('exercises').requestFocus(true) } catch (e) {} },
+  onReady() { this.focusPanel() },
+  focusPanel() { try { this.$element(this.endOn ? 'end-panel' : 'exercises').requestFocus(true) } catch (e) {} },
+  touchStart(e) {
+    const t = e.touches && e.touches[0]
+    this.touch = t ? { x: t.clientX, y: t.clientY } : null
+    this.touchLast = this.touch
+  },
+  touchMove(e) {
+    const t = e.touches && e.touches[0]
+    if (this.touch && t) this.touchLast = { x: t.clientX, y: t.clientY }
+  },
+  touchCancel() { this.touch = null; this.touchLast = null },
+  touchEnd(e) {
+    const start = this.touch
+    const t = e.changedTouches && e.changedTouches[0] || e.touches && e.touches[0]
+    const end = t ? { x: t.clientX, y: t.clientY } : this.touchLast
+    this.touchCancel()
+    if (!start || !end) return
+    const dx = end.x - start.x, dy = end.y - start.y
+    if (Math.abs(dx) < 60 || Math.abs(dx) <= Math.abs(dy)) return
+    this.ignoreTapUntil = Date.now() + 350
+    if (dx > 0 && !this.endOn) { this.endOn = true; this.focusPanel() }
+    else if (dx < 0 && this.endOn) this.backToExercises()
+  },
+  backToExercises() { this.endOn = false; this.focusPanel() },
+  onBackPress() {
+    if (this.endOn) this.backToExercises()
+    else router.back()
+    return true
+  },
 
   rowTxt(row, ex) {
     const w = row.w === '' || row.w == null ? '' : row.w + 'kg*'
@@ -34,11 +63,13 @@ export default {
   },
 
   toggleEx(index) {
+    if (this.endOn || Date.now() < (this.ignoreTapUntil || 0)) return
     const idx = Number(index)
     this.expanded = this.expanded === idx ? -1 : idx
   },
 
   pickRow(d) {
+    if (this.endOn || Date.now() < (this.ignoreTapUntil || 0)) return
     const s = loadState()
     if (!s.active || !s.workout) { router.replace({ uri: '/Summary' }); return }
     const ex = Number(d.exIdx)
@@ -51,7 +82,7 @@ export default {
     router.back()
   },
 
-  onExit() { router.back() },
+  onExit() { if (Date.now() >= (this.ignoreTapUntil || 0)) router.back() },
 
   closeWorkout(disposition) {
     const s = loadState()
@@ -70,8 +101,8 @@ export default {
 </script>
 
 <template>
-  <div class="page">
-    <div class="content">
+  <div class="page" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
+    <div class="content" if="{{ !endOn }}">
     <text class="title">训练动作</text>
     <div class="body">
       <list class="scroll" id="exercises" touch-focusable="true">
@@ -93,11 +124,14 @@ export default {
 
     <div class="foot">
       <input class="back" type="button" value="返回训练" onclick="onExit" />
-      <div class="endrow">
-        <input class="fbtn abandon" type="button" value="退出" onclick="abandonWorkout" />
-        <input class="fbtn save" type="button" value="保存" onclick="saveWorkout" />
-      </div>
     </div>
+    </div>
+    <div class="end-panel" id="end-panel" touch-focusable="true" if="{{ endOn }}">
+      <text class="title">结束本次训练</text>
+      <text class="hint">完成保存记录，取消放弃记录</text>
+      <input class="endbtn save" type="button" value="完成" onclick="saveWorkout" />
+      <input class="endbtn abandon" type="button" value="取消" onclick="abandonWorkout" />
+      <input class="endbtn" type="button" value="返回" onclick="backToExercises" />
     </div>
   </div>
 </template>
@@ -106,8 +140,8 @@ export default {
 .page { flex-direction: column; align-items: center; width: 100%; height: 100%; background-color: #000000; }
 .content { width: 350px; height: 414px; margin-top: 18px; flex-direction: column; align-items: center; }
 .title { height: 36px; width: 350px; font-size: 26px; color: #ffffff; text-align: center; }
-.body { width: 350px; height: 290px; }
-.scroll { width: 350px; height: 290px; }
+.body { width: 350px; height: 322px; }
+.scroll { width: 350px; height: 322px; }
 .exrow { flex-direction: column; width: 350px; padding: 8px 4px; }
 .exhead { flex-direction: column; min-height: 48px; }
 .exname { width: 342px; font-size: 23px; color: #ffffff; lines: 2; }
@@ -118,10 +152,11 @@ export default {
 .rtxt { font-size: 20px; color: #ffffff; flex: 1; }
 .rtxt.done { color: #636366; }
 .chev { font-size: 22px; color: #48484a; }
-.foot { height: 88px; flex-direction: column; align-items: center; justify-content: flex-end; }
-.back { width: 140px; height: 38px; font-size: 16px; color: #8e8e93; background-color: transparent; }
-.endrow { width: 350px; height: 54px; flex-direction: row; justify-content: space-between; }
-.fbtn { width: 170px; height: 48px; font-size: 22px; border-radius: 8px; background-color: #191d1f; color: #ffffff; }
+.foot { height: 56px; flex-direction: column; align-items: center; justify-content: center; }
+.back { width: 180px; height: 44px; font-size: 18px; color: #8e8e93; background-color: transparent; }
+.end-panel { width: 350px; height: 414px; margin-top: 18px; flex-direction: column; align-items: center; justify-content: center; }
+.hint { width: 350px; height: 48px; font-size: 18px; color: #aeb9bd; text-align: center; lines: 2; }
+.endbtn { width: 310px; height: 52px; margin-top: 14px; font-size: 23px; border-radius: 8px; background-color: #191d1f; color: #ffffff; }
 .abandon { background-color: #3a3a3c; }
 .save { background-color: #30d158; }
 </style>
