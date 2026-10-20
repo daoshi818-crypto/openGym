@@ -6,12 +6,15 @@ BlueOS watch companion for openGym. Display name: `opengym`; package identity:
 ## Training
 
 - Swipe up/down between training and operations. Two dots at the right show the page.
-- Swipe right or tap Training Exercises to select any exercise/set. Previous/next buttons
+- Swipe right to select any exercise/set. Previous/next buttons
   and the crown move within the current exercise; the crown adjusts rest in 5-second steps.
 - Heart rate stays on the training screen, including rest. Calories are estimates.
 - Phone-started workouts open the training page directly, including an active session restored
   at launch. End/abandon and conflicting-session confirmation remain in place.
-- Operations includes set count, undo completion, pause/resume, save/end and abandon.
+- Training shows completed/remaining sets, calories and heart rate; tap completion again to undo.
+- Operations shows the clock, elapsed time, completed volume, calories and heart rate, with
+  add/remove set and pause/resume controls. Swipe right again from the exercise list for
+  save/end, abandon and return; save/end and abandon also appear at the list bottom.
 - Plans sent from the phone are cached for offline starts. The phone must confirm conflicts
   before an offline watch save changes an already closed phone record.
 - Unsaved watch sessions expire after six hours from the current training segment's start.

@@ -101,11 +101,11 @@ export default {
 </script>
 
 <template>
-  <div class="page" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
+  <div class="page">
     <div class="content" if="{{ !endOn }}">
     <text class="title">训练动作</text>
     <div class="body">
-      <list class="scroll" id="exercises" touch-focusable="true">
+      <list class="scroll" id="exercises" touch-focusable="true" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
         <list-item class="exrow" type="exercise" for="{{ item in list }}" tid="idx">
           <div class="exhead" onclick="toggleEx(item.idx)">
             <text class="exname">{{ item.name }}</text>
@@ -113,8 +113,8 @@ export default {
           </div>
           <div class="rows" if="{{ expanded === item.idx }}">
             <div class="rrow" for="{{ r in item.rows }}" onclick="pickRow(r)">
-              <text class="rno">{{ r.no }}</text>
-              <text class="rtxt {{ r.done ? 'done' : '' }}">{{ r.txt }} {{ r.done ? '✓' : '' }}</text>
+              <text class="rno {{ r.done ? 'done-no' : '' }}">{{ r.done ? '✓' : r.no }}</text>
+              <text class="rtxt {{ r.done ? 'done' : '' }}">{{ r.txt }}{{ r.done ? ' · 已完成' : '' }}</text>
               <text class="chev">›</text>
             </div>
           </div>
@@ -122,16 +122,20 @@ export default {
       </list>
     </div>
 
-    <div class="foot">
+    <div class="foot" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
+      <div class="exit-row">
+        <input class="endbtn save" type="button" value="保存结束" onclick="saveWorkout" />
+        <input class="endbtn abandon" type="button" value="放弃训练" onclick="abandonWorkout" />
+      </div>
       <input class="back" type="button" value="返回训练" onclick="onExit" />
     </div>
     </div>
-    <div class="end-panel" id="end-panel" touch-focusable="true" if="{{ endOn }}">
+    <div class="end-panel" id="end-panel" touch-focusable="true" if="{{ endOn }}" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
       <text class="title">结束本次训练</text>
-      <text class="hint">完成保存记录，取消放弃记录</text>
-      <input class="endbtn save" type="button" value="完成" onclick="saveWorkout" />
-      <input class="endbtn abandon" type="button" value="取消" onclick="abandonWorkout" />
-      <input class="endbtn" type="button" value="返回" onclick="backToExercises" />
+      <text class="hint">保存训练记录，或放弃本次训练</text>
+      <input class="endbtn save" type="button" value="保存结束" onclick="saveWorkout" />
+      <input class="endbtn abandon" type="button" value="放弃训练" onclick="abandonWorkout" />
+      <input class="endbtn" type="button" value="返回动作" onclick="backToExercises" />
     </div>
   </div>
 </template>
@@ -140,8 +144,8 @@ export default {
 .page { flex-direction: column; align-items: center; width: 100%; height: 100%; background-color: #000000; }
 .content { width: 350px; height: 414px; margin-top: 18px; flex-direction: column; align-items: center; }
 .title { height: 36px; width: 350px; font-size: 26px; color: #ffffff; text-align: center; }
-.body { width: 350px; height: 322px; }
-.scroll { width: 350px; height: 322px; }
+.body { width: 350px; height: 274px; }
+.scroll { width: 350px; height: 274px; }
 .exrow { flex-direction: column; width: 350px; padding: 8px 4px; }
 .exhead { flex-direction: column; min-height: 48px; }
 .exname { width: 342px; font-size: 23px; color: #ffffff; lines: 2; }
@@ -150,13 +154,16 @@ export default {
 .rrow { flex-direction: row; align-items: center; min-height: 48px; padding: 6px 0; }
 .rno { font-size: 20px; color: #30d158; width: 38px; }
 .rtxt { font-size: 20px; color: #ffffff; flex: 1; }
-.rtxt.done { color: #636366; }
+.rtxt.done { color: #63dfb1; }
+.done-no { color: #63dfb1; }
 .chev { font-size: 22px; color: #48484a; }
-.foot { height: 56px; flex-direction: column; align-items: center; justify-content: center; }
-.back { width: 180px; height: 44px; font-size: 18px; color: #8e8e93; background-color: transparent; }
+.foot { width: 350px; height: 104px; flex-direction: column; align-items: center; justify-content: space-between; padding-top: 4px; }
+.exit-row { width: 326px; height: 48px; flex-direction: row; justify-content: space-between; }
+.back { width: 180px; height: 42px; font-size: 18px; color: #8e8e93; background-color: transparent; }
 .end-panel { width: 350px; height: 414px; margin-top: 18px; flex-direction: column; align-items: center; justify-content: center; }
 .hint { width: 350px; height: 48px; font-size: 18px; color: #aeb9bd; text-align: center; lines: 2; }
 .endbtn { width: 310px; height: 52px; margin-top: 14px; font-size: 23px; border-radius: 8px; background-color: #191d1f; color: #ffffff; }
+.exit-row .endbtn { width: 156px; height: 46px; margin-top: 0; font-size: 18px; }
 .abandon { background-color: #3a3a3c; }
 .save { background-color: #30d158; }
 </style>
