@@ -81,21 +81,20 @@ describe('watch completed sets and rest clock', () => {
     return { sessions, workout, sendControl, sendEvent, brightness, restOver, writes }
   }
 
-  it('never completes or implicitly undoes an already completed set', () => {
+  it('toggles a completed set back to incomplete on the second tap', () => {
     const { workout, sendEvent } = resting()
     workout.onSkipRest()
     workout.state.workout.rows[0] = [workout.state.workout.rows[0][0]]
     workout.state.workout.exercises[0].sets = 1
     workout.onCurrentSetAction()
     workout.onCurrentSetAction()
-    workout.onComplete()
-    expect(workout.rowDone).toBe(true)
-    expect(sendEvent.mock.calls.filter(([m]) => m.t === 'set')).toHaveLength(1)
-    expect(sendEvent.mock.calls.filter(([m]) => m.t === 'unset')).toHaveLength(0)
-    expect(source('Workout/index.ux')).toContain('disabled="{{ rowDone || paused }}"')
-    workout.onMenuUndo()
     expect(workout.rowDone).toBe(false)
+    expect(sendEvent.mock.calls.filter(([m]) => m.t === 'set')).toHaveLength(1)
     expect(sendEvent.mock.calls.filter(([m]) => m.t === 'unset')).toHaveLength(1)
+    expect(source('Workout/index.ux')).toContain('disabled="{{ paused }}"')
+    workout.onCurrentSetAction()
+    expect(workout.rowDone).toBe(true)
+    expect(sendEvent.mock.calls.filter(([m]) => m.t === 'set')).toHaveLength(2)
   })
 
   it('updates a crown burst immediately and saves/sends only after rotation settles', () => {
@@ -120,6 +119,117 @@ describe('watch completed sets and rest clock', () => {
     workout.onCurrentSetAction()
     expect(workout.state.workout.rows[0].filter(row => row.done)).toHaveLength(1)
     expect(sendEvent.mock.calls.filter(([m]) => m.t === 'set')).toHaveLength(1)
+  })
+
+  it('shows the actual upcoming set and restores completed context after reopening', () => {
+    const { workout, sessions } = resting()
+    workout.onSkipRest()
+    workout.state.workout.rows[0][1].w = '65'
+    workout.state.workout.rows[0][1].r = '6'
+    workout.onCurrentSetAction()
+    expect(workout.nextDetails).toBe('第 2 / 3 组 · 65kg × 6次')
+    expect(workout.restExerciseName).toBe('Squat')
+    expect(workout.nextLabel).toBe('下一组')
+    const reopened = training(sessions, { startServer() {}, pendingCount: () => 0 })
+    reopened.onInit()
+    expect(reopened.restExerciseName).toBe(workout.restExerciseName)
+    expect(reopened.nextDetails).toBe(workout.nextDetails)
+    workout.onSkipRest()
+    workout.onCurrentSetAction()
+    workout.onSkipRest()
+    workout.onCurrentSetAction()
+    expect(workout.nextLabel).toBe('本次训练已完成')
+  })
+
+  it('names the upcoming exercise only when it changes', () => {
+    const { workout } = resting()
+    workout.onSkipRest()
+    workout.state.workout.exercises.push({ name: 'Row', sets: 1, reps: '10' })
+    workout.state.workout.rows.push([{ w: '30', r: '10', done: false, at: 0 }])
+    workout.state.workout.rows[0][0].done = true
+    workout.state.workout.rows[0][1].done = true
+    workout.state.setIdx = 2
+    workout.refresh()
+    workout.onCurrentSetAction()
+    expect(workout.restExerciseName).toBe('Squat')
+    expect(workout.nextLabel).toBe('下一动作 · Row')
+    expect(workout.nextDetails).toBe('第 1 / 1 组 · 30kg × 10次')
+  })
+
+  it('updates local wall time across midnight even while elapsed time is paused', () => {
+    const { workout } = resting()
+    vi.setSystemTime(new Date(2026, 9, 20, 23, 59, 30))
+    workout.state.startedAt = Date.now() - 60000
+    workout.state.segmentStartedAt = workout.state.startedAt
+    workout.state.restUntil = 0
+    workout.refresh()
+    expect(workout.clockLabel).toBe('23:59')
+    expect(workout.elapsedLabel).toBe('1:00')
+    workout.onPause()
+    vi.advanceTimersByTime(60000)
+    expect(workout.clockLabel).toBe('00:00')
+    expect(workout.elapsedLabel).toBe('1:00')
+  })
+
+  it('keeps rest on one page while allowing the exercise list and crown time adjustment', () => {
+    const { workout } = resting()
+    workout.openExercises = vi.fn()
+    for (const [dx, dy] of [[0, -100], [0, 100], [-100, 0]]) {
+      workout.touchStart({ touches: [{ clientX: 180, clientY: 180 }] })
+      workout.touchEnd({ changedTouches: [{ clientX: 180 + dx, clientY: 180 + dy }] })
+      expect(workout.pageIndex).toBe(0)
+    }
+    workout.openActions()
+    expect(workout.pageIndex).toBe(0)
+    workout.pageIndex = 1
+    workout.refresh()
+    expect(workout.pageIndex).toBe(0)
+    workout.touchStart({ touches: [{ clientX: 180, clientY: 180 }] })
+    workout.touchEnd({ changedTouches: [{ clientX: 280, clientY: 180 }] })
+    expect(workout.openExercises).toHaveBeenCalledOnce()
+    const before = workout.state.restUntil
+    workout.onRotation({ delta: 1, state: 2 })
+    expect(workout.state.restUntil).toBe(before + 5000)
+  })
+
+  it('does not route crown events to hidden, operation or paused training pages', () => {
+    const { workout } = resting()
+    workout.onSkipRest()
+    workout.onHide()
+    workout.onRotation({ delta: 1, state: 2 })
+    expect(workout.state.setIdx).toBe(0)
+    workout.onShow()
+    workout.openActions()
+    workout.onRotation({ delta: 1, state: 2 })
+    expect(workout.state.setIdx).toBe(0)
+    workout.pageIndex = 0
+    workout.onPause()
+    workout.onRotation({ delta: 1, state: 2 })
+    expect(workout.state.setIdx).toBe(0)
+  })
+
+  it.each(['saved', 'abandoned'])('closes from the action list once with %s semantics', disposition => {
+    const { workout, sessions } = resting()
+    workout.onSkipRest()
+    workout.onCurrentSetAction()
+    workout.onHide()
+    const sendEvent = vi.fn(), router = { replace: vi.fn() }
+    const list = page('ExerciseList/index.ux', { ...sessions, sendEvent, router })
+    list.onInit()
+    list.closeWorkout(disposition)
+    list.closeWorkout(disposition)
+    expect(sessions.loadState().active).toBe(false)
+    expect(sendEvent).toHaveBeenCalledOnce()
+    expect(sendEvent.mock.calls[0][0]).toMatchObject({ t: 'session_close', sid: plan.sid, disposition })
+    if (disposition === 'saved') {
+      expect(sendEvent.mock.calls[0][0].completedSets).toHaveLength(1)
+      expect(sessions.storage.getSync({ key: 'summary_last' }).sets).toBe(1)
+      expect(router.replace.mock.calls[0][0].uri).toBe('/Summary')
+    } else {
+      expect(sendEvent.mock.calls[0][0].completedSets).toBeUndefined()
+      expect(sessions.storage.getSync({ key: 'summary_last' })).toBeNull()
+      expect(router.replace.mock.calls[0][0].uri).toBe('/Index')
+    }
   })
 
   it('keeps an in-progress crown edit across a phone snapshot and rest echo', () => {

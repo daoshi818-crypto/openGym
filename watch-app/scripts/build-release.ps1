@@ -7,13 +7,16 @@ if (!$Compiler) {
 if (!(Test-Path -LiteralPath $Compiler)) { throw 'Set BLUEOS_PACK to BlueOS Studio blueos-pack/bin/index.js.' }
 Push-Location $project
 try {
-    $buildOutput = & node $Compiler release --device-type watch-square --force 2>&1
+    # cmd merges blueos-pack warnings into stdout; PowerShell otherwise promotes
+    # native stderr warnings to terminating NativeCommandError under Stop mode.
+    $buildOutput = & cmd.exe /d /c "node `"$Compiler`" release --device-type watch-square --force 2>&1"
     $buildOutput | ForEach-Object { Write-Output $_ }
     if ($LASTEXITCODE -ne 0 -or ($buildOutput -match '\[ERROR\]')) { throw 'BlueOS compilation failed.' }
     & node (Join-Path $PSScriptRoot 'verify-layout.cjs')
     if ($LASTEXITCODE -ne 0) { throw 'Compiled watch layout validation failed.' }
     $manifest = Get-Content 'src/manifest.json' -Raw | ConvertFrom-Json
     $file = Join-Path $project "dist/watch-square/release/$($manifest.package).release.$($manifest.versionName).rpk"
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip = [IO.Compression.ZipFile]::OpenRead($file)
     try {
         if (!$zip.GetEntry("$($manifest.package).vru") -or !$zip.GetEntry('META-INF/CERT')) { throw 'Not a BlueOS VRU package.' }

@@ -1,8 +1,8 @@
 <script>
 // 动作列表页：查看动作和组，点组返回训练页并切换游标。
 import router from '@blueos.app.appmanager.router'
-import { loadState, save } from '../lib/session.js'
-import { sendControl } from '../lib/rpc.js'
+import { loadState, save, endSession, closeSession } from '../lib/session.js'
+import { sendControl, sendEvent } from '../lib/rpc.js'
 
 export default {
   data: { list: [], expanded: -1 },
@@ -53,6 +53,19 @@ export default {
 
   onExit() { router.back() },
 
+  closeWorkout(disposition) {
+    const s = loadState()
+    if (!s.active || !s.workout) { router.replace({ uri: '/Index' }); return }
+    const closedAt = Date.now()
+    const session = disposition === 'saved' ? endSession(s, s.profile, closedAt) : null
+    if (!session) closeSession(s.sid)
+    sendEvent({ t: 'session_close', sid: s.sid, disposition, closedAt, at: closedAt,
+      ...(session ? { workout: s.workout, startedAt: s.startedAt, summary: { minutes: session.minutes, avgHr: session.avgHr, maxHr: session.maxHr, calories: session.calories, volume: session.volume }, completedSets: session.sets } : {}) })
+    router.replace({ uri: disposition === 'saved' ? '/Summary' : '/Index' })
+  },
+  abandonWorkout() { this.closeWorkout('abandoned') },
+  saveWorkout() { this.closeWorkout('saved') },
+
 }
 </script>
 
@@ -79,7 +92,11 @@ export default {
     </div>
 
     <div class="foot">
-      <input class="fbtn" type="button" value="返回训练" onclick="onExit" />
+      <input class="back" type="button" value="返回训练" onclick="onExit" />
+      <div class="endrow">
+        <input class="fbtn abandon" type="button" value="退出" onclick="abandonWorkout" />
+        <input class="fbtn save" type="button" value="保存" onclick="saveWorkout" />
+      </div>
     </div>
     </div>
   </div>
@@ -89,8 +106,8 @@ export default {
 .page { flex-direction: column; align-items: center; width: 100%; height: 100%; background-color: #000000; }
 .content { width: 350px; height: 414px; margin-top: 18px; flex-direction: column; align-items: center; }
 .title { height: 36px; width: 350px; font-size: 26px; color: #ffffff; text-align: center; }
-.body { width: 350px; height: 316px; }
-.scroll { width: 350px; height: 316px; }
+.body { width: 350px; height: 290px; }
+.scroll { width: 350px; height: 290px; }
 .exrow { flex-direction: column; width: 350px; padding: 8px 4px; }
 .exhead { flex-direction: column; min-height: 48px; }
 .exname { width: 342px; font-size: 23px; color: #ffffff; lines: 2; }
@@ -101,7 +118,10 @@ export default {
 .rtxt { font-size: 20px; color: #ffffff; flex: 1; }
 .rtxt.done { color: #636366; }
 .chev { font-size: 22px; color: #48484a; }
-.foot { height: 62px; flex-direction: row; align-items: center; justify-content: center; }
-.fbtn { width: 350px; height: 48px; font-size: 22px; border-radius: 8px; background-color: #191d1f; color: #ffffff; }
+.foot { height: 88px; flex-direction: column; align-items: center; justify-content: flex-end; }
+.back { width: 140px; height: 38px; font-size: 16px; color: #8e8e93; background-color: transparent; }
+.endrow { width: 350px; height: 54px; flex-direction: row; justify-content: space-between; }
+.fbtn { width: 170px; height: 48px; font-size: 22px; border-radius: 8px; background-color: #191d1f; color: #ffffff; }
+.abandon { background-color: #3a3a3c; }
 .save { background-color: #30d158; }
 </style>

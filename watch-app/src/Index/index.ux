@@ -7,7 +7,7 @@ import { WATCH_VERSION } from '../lib/version.js'
 
 export default {
   data: { version: WATCH_VERSION, status: '正在连接手机', plans: [], selected: null, workoutName: '',
-    exerciseCount: 0, canResume: false, conflict: null, hasSummary: false, settingsOn: false, restSetting: 90, weightStep: 0.5 },
+    exerciseCount: 0, canResume: false, conflict: null, hasSummary: false },
   onInit(params) {
     this.visible = true
     if (params && params.conflict) { try { this.conflict = JSON.parse(params.conflict) } catch (e) {} }
@@ -19,7 +19,7 @@ export default {
   onHide() { this.visible = false; this.navigating = false },
   onDestroy() { this.visible = false },
   enterWorkout() {
-    if (!this.ready || !this.visible || this.navigating || this.conflict || this.settingsOn) return
+    if (!this.ready || !this.visible || this.navigating || this.conflict) return
     const s = loadState()
     if (!s.active || !s.workout || !s.workout.exercises.length) return
     this.navigating = true
@@ -29,8 +29,6 @@ export default {
     const s = loadState()
     this.canResume = !!s.active
     this.hasSummary = !!storage.getSync({ key: 'summary_last' })
-    this.restSetting = storage.getSync({ key: 'default_rest_sec' }) || 90
-    this.weightStep = storage.getSync({ key: 'weight_step' }) || 0.5
     const catalog = storage.getSync({ key: 'plan_catalog' })
     if (catalog) this.onCatalog(catalog)
     if (s.active) {
@@ -98,15 +96,6 @@ export default {
   },
   keepConflict() { this.conflict = null },
   showSummary() { router.push({ uri: '/Summary' }) },
-  openSettings() { this.settingsOn = true },
-  closeSettings() { this.settingsOn = false; this.enterWorkout() },
-  lessRest() { this.restSetting = Math.max(15, this.restSetting - 15); this.saveSettings() },
-  moreRest() { this.restSetting = Math.min(900, this.restSetting + 15); this.saveSettings() },
-  changeStep() { this.weightStep = this.weightStep === 0.5 ? 1 : this.weightStep === 1 ? 2.5 : 0.5; this.saveSettings() },
-  saveSettings() {
-    storage.set({ key: 'default_rest_sec', value: this.restSetting, fail() {} })
-    storage.set({ key: 'weight_step', value: this.weightStep, fail() {} })
-  },
 }
 </script>
 <template>
@@ -122,9 +111,10 @@ export default {
         <text class="count">{{ p.exercises.length }} 个动作</text>
       </list-item>
     </list>
+    <text class="empty" if="{{ !canResume && !plans.length }}">暂无可用训练计划</text>
     <input class="btn" type="button" value="继续当前训练" onclick="onResume" if="{{ canResume }}" />
     <input class="btn" type="button" value="开始训练" onclick="onStart" if="{{ !canResume && selected }}" />
-    <div class="links"><input class="link" type="button" value="最近结果" onclick="showSummary" if="{{ hasSummary }}" /><input class="link" type="button" value="设置" onclick="openSettings" /></div>
+    <div class="links"><input class="link" type="button" value="最近结果" onclick="showSummary" if="{{ hasSummary }}" /></div>
     </div>
     <div class="overlay" if="{{ conflict }}">
       <text class="name">手机已有活动训练</text>
@@ -132,29 +122,23 @@ export default {
       <input class="btn" type="button" value="继续手机训练" onclick="acceptConflict" />
       <input class="link" type="button" value="返回" onclick="keepConflict" />
     </div>
-    <div class="overlay" if="{{ settingsOn }}">
-      <text class="title">训练设置</text>
-      <text class="name">默认休息 {{ restSetting }} 秒</text>
-      <div class="links"><input class="link" type="button" value="−15秒" onclick="lessRest" /><input class="link" type="button" value="+15秒" onclick="moreRest" /></div>
-      <input class="btn" type="button" value="重量步长 {{ weightStep }} kg" onclick="changeStep" />
-      <input class="link" type="button" value="返回" onclick="closeSettings" />
-    </div>
   </div>
 </template>
 <style>
 .page { width: 100%; height: 100%; flex-direction: column; align-items: center; background-color: #000000; }
-.content { width: 350px; height: 414px; margin-top: 18px; flex-direction: column; align-items: center; }
-.logo { width: 32px; height: 32px; }
-.title { width: 350px; height: 34px; font-size: 27px; color: #ffffff; text-align: center; }
-.status { width: 350px; height: 36px; font-size: 18px; color: #aeb9bd; text-align: center; lines: 2; }
-.name { width: 350px; height: 58px; font-size: 24px; color: #ffffff; text-align: center; lines: 2; }
-.plans { width: 350px; height: 144px; }
-.plan { width: 350px; height: 70px; flex-direction: column; padding: 5px 8px; }
-.plan-name { width: 334px; height: 32px; font-size: 23px; color: #ffffff; lines: 1; }
+.content { width: 350px; height: 414px; margin-top: 18px; flex-direction: column; align-items: center; justify-content: flex-start; }
+.logo { width: 54px; height: 54px; margin-bottom: 3px; }
+.title { width: 350px; height: 38px; font-size: 30px; color: #ffffff; text-align: center; }
+.status { width: 350px; height: 34px; font-size: 17px; color: #aeb9bd; text-align: center; lines: 2; }
+.name { width: 350px; height: 46px; font-size: 24px; color: #ffffff; text-align: center; lines: 2; }
+.plans { width: 350px; height: 170px; }
+.plan { width: 350px; height: 76px; flex-direction: column; padding: 7px 8px; }
+.plan-name { width: 334px; height: 34px; font-size: 23px; color: #ffffff; lines: 1; }
 .selected { color: #63dfb1; }
 .count { font-size: 16px; color: #aeb9bd; }
-.btn { width: 350px; height: 52px; font-size: 23px; border-radius: 8px; margin-top: 8px; background-color: #63dfb1; color: #001b12; }
-.links { width: 350px; height: 40px; justify-content: center; }
+.empty { width: 350px; height: 52px; font-size: 19px; color: #8e8e93; text-align: center; }
+.btn { width: 350px; height: 54px; font-size: 23px; border-radius: 8px; margin-top: 10px; background-color: #63dfb1; color: #001b12; }
+.links { width: 350px; height: 40px; justify-content: center; margin-top: 7px; }
 .link { width: 170px; height: 40px; font-size: 19px; background-color: transparent; color: #aeb9bd; }
 .overlay { position: absolute; left: 0; top: 0; width: 100%; height: 100%; flex-direction: column; align-items: center; justify-content: center; background-color: #000000; }
 </style>
