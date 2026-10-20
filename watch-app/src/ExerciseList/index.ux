@@ -94,8 +94,8 @@ export default {
       ...(session ? { workout: s.workout, startedAt: s.startedAt, summary: { minutes: session.minutes, avgHr: session.avgHr, maxHr: session.maxHr, calories: session.calories, volume: session.volume }, completedSets: session.sets } : {}) })
     router.replace({ uri: disposition === 'saved' ? '/Summary' : '/Index' })
   },
-  abandonWorkout() { this.closeWorkout('abandoned') },
-  saveWorkout() { this.closeWorkout('saved') },
+  abandonWorkout() { if (Date.now() >= (this.ignoreTapUntil || 0)) this.closeWorkout('abandoned') },
+  saveWorkout() { if (Date.now() >= (this.ignoreTapUntil || 0)) this.closeWorkout('saved') },
 
 }
 </script>

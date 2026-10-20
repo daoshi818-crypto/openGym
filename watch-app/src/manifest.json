@@ -29,7 +29,7 @@
       "Index": { "component": "index" },
       "Workout": { "component": "index", "followHand": "disable" },
       "Keypad": { "component": "index" },
-      "ExerciseList": { "component": "index" },
+      "ExerciseList": { "component": "index", "followHand": "disable" },
       "Summary": { "component": "index" }
     }
   }

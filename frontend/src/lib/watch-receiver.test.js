@@ -425,6 +425,11 @@ describe('watch business message boundary', () => {
     expect(source('ExerciseList/index.ux')).toContain('value="返回"')
     list.touchStart({ touches: [{ clientX: 80, clientY: 180 }] })
     list.touchEnd({ changedTouches: [{ clientX: 170, clientY: 182 }] })
+    expect(JSON.parse(source('manifest.json')).router.pages.ExerciseList.followHand).toBe('disable')
+    list.saveWorkout()
+    list.abandonWorkout()
+    expect(sendEvent).not.toHaveBeenCalled()
+    list.ignoreTapUntil = 0
     list.saveWorkout()
     expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({ t: 'session_close', disposition: 'saved' }))
     expect(replace).toHaveBeenCalledWith({ uri: '/Summary' })
