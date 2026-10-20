@@ -87,6 +87,8 @@ describe('watch completed sets and rest clock', () => {
     workout.state.workout.rows[0] = [workout.state.workout.rows[0][0]]
     workout.state.workout.exercises[0].sets = 1
     workout.onCurrentSetAction()
+    vi.advanceTimersByTime(400)
+    workout.cancelClose()
     workout.onCurrentSetAction()
     expect(workout.rowDone).toBe(false)
     expect(sendEvent.mock.calls.filter(([m]) => m.t === 'set')).toHaveLength(1)
@@ -109,6 +111,73 @@ describe('watch completed sets and rest clock', () => {
     expect(writes).toHaveBeenCalledOnce()
     expect(sendControl).toHaveBeenCalledOnce()
     expect(sendControl.mock.calls[0][0]).toMatchObject({ t: 'rest', leftSec: 460 })
+  })
+
+  it('prompts on the final set without closing, ignores trailing taps and continues once', () => {
+    const { workout, sessions, sendEvent } = resting()
+    workout.onSkipRest()
+    workout.state.workout.rows[0] = [workout.state.workout.rows[0][0]]
+    workout.state.workout.exercises[0].sets = 1
+    workout.onComplete()
+    expect(workout.closeMode).toBe('complete')
+    expect(sessions.loadState().active).toBe(true)
+    workout.saveEnd(); workout.cancelClose(); workout.onCurrentSetAction()
+    expect(workout.closeMode).toBe('complete')
+    expect(workout.rowDone).toBe(true)
+    expect(sendEvent.mock.calls.some(([m]) => m.t === 'session_close')).toBe(false)
+    vi.advanceTimersByTime(400)
+    workout.cancelClose()
+    workout.refresh(); workout.onShow()
+    expect(workout.closeMode).toBe('')
+    const restored = training(sessions, { startServer() {}, sendEvent })
+    restored.onInit()
+    expect(restored.closeMode).toBe('')
+    workout.onMenuAddSet()
+    expect(workout.allFinished).toBe(false)
+    workout.onSkipRest(); workout.onComplete()
+    expect(workout.closeMode).toBe('complete')
+    vi.advanceTimersByTime(400)
+    workout.saveEnd()
+    expect(sessions.loadState().active).toBe(false)
+    expect(sendEvent.mock.calls.at(-1)[0]).toMatchObject({ t: 'session_close', disposition: 'saved' })
+  })
+
+  it('prompts once for restored or synced completion and re-arms after undo', () => {
+    const { workout, sessions } = resting()
+    workout.state.workout.rows[0].forEach(r => { r.done = true })
+    sessions.save(workout.state)
+    workout.visible = false; workout.refresh()
+    expect(workout.closeMode).toBe('')
+    workout.onShow()
+    expect(workout.closeMode).toBe('complete')
+    vi.advanceTimersByTime(400); workout.cancelClose()
+    const snapshot = { ...plan, rows: workout.state.workout.rows }
+    workout.onSyncUpdate(snapshot); workout.tickClock()
+    expect(workout.closeMode).toBe('')
+    workout.onRemoteUnset({ sid: plan.sid, ex: 0, set: 1 })
+    workout.onRemoteSet({ sid: plan.sid, ex: 0, set: 1 })
+    expect(workout.closeMode).toBe('complete')
+    workout.state.workout.rows = [[]]; workout.refresh()
+    expect(workout.allFinished).toBe(false)
+    expect(workout.closeMode).toBe('')
+  })
+
+  it('shows the completion choice for a real phone snapshot and isolates crown/swipes', () => {
+    const sessions = session(), c = connection(), rpc = transport(c, sessions)
+    sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+    const router = { push: vi.fn(), replace: vi.fn() }, workout = training(sessions, rpc, { router })
+    workout.onInit()
+    c.onMessage({ data: { ...plan, t: 'sync', rows: [[0, 1, 2].map(() => ({ done: true, w: '60', r: '8' }))] } })
+    expect(workout.closeMode).toBe('complete')
+    const position = [workout.state.exIdx, workout.state.setIdx]
+    workout.onRotation({ delta: 1, state: 1 })
+    workout.touchStart({ touches: [{ clientX: 50, clientY: 180 }] })
+    workout.touchEnd({ changedTouches: [{ clientX: 200, clientY: 180 }] })
+    expect([workout.state.exIdx, workout.state.setIdx]).toEqual(position)
+    expect(router.push).not.toHaveBeenCalled()
+    expect(sessions.loadState().active).toBe(true)
+    expect(source('Workout/index.ux')).toContain('if="{{ closeMode === \'complete\' }}"')
+    expect(source('Workout/index.ux')).toContain('value="继续训练" onclick="cancelClose"')
   })
 
   it('does not complete the next set when a second click arrives during rest', () => {
@@ -418,6 +487,11 @@ describe('watch business message boundary', () => {
     list.touchStart({ touches: [{ clientX: 80, clientY: 180 }] })
     list.touchEnd({ changedTouches: [{ clientX: 170, clientY: 182 }] })
     expect(list.endOn).toBe(true)
+    // The same swipe may emit a system back and a click on the newly mounted button.
+    list.onBackPress()
+    list.backToExercises()
+    expect(list.endOn).toBe(true)
+    list.ignoreTapUntil = 0
     list.backToExercises()
     expect(list.endOn).toBe(false)
     const ux = source('ExerciseList/index.ux')
@@ -445,6 +519,33 @@ describe('watch business message boundary', () => {
     list.saveWorkout()
     expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({ t: 'session_close', disposition: 'saved' }))
     expect(replace).toHaveBeenCalledWith({ uri: '/Summary' })
+  })
+
+  it('keeps the end panel through a long swipe and accepts a later deliberate return', () => {
+    const sessions = session(), back = vi.fn()
+    sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+    let now = Date.now()
+    const list = page('ExerciseList/index.ux', { ...sessions, Date: { now: () => now }, router: { back } })
+    list.onInit()
+    list.touchStart({ touches: [{ clientX: 60, clientY: 180 }] })
+    list.touchMove({ touches: [{ clientX: 140, clientY: 181 }] })
+    now += 1000
+    list.touchMove({ touches: [{ clientX: 210, clientY: 182 }] })
+    list.onBackPress()
+    expect(list.endOn).toBe(true)
+    list.touchEnd({ touches: [] })
+    list.backToExercises()
+    expect(list.endOn).toBe(true)
+    now += 500
+    list.onBackPress()
+    expect(list.endOn).toBe(false)
+    expect(back).not.toHaveBeenCalled()
+    list.touchStart({ touches: [{ clientX: 60, clientY: 180 }] })
+    list.touchEnd({ changedTouches: [{ clientX: 140, clientY: 180 }] })
+    now += 500
+    list.touchStart({ touches: [{ clientX: 200, clientY: 180 }] })
+    list.touchEnd({ changedTouches: [{ clientX: 100, clientY: 180 }] })
+    expect(list.endOn).toBe(false)
   })
 
   it('crosses the action boundary with crown or button navigation and syncs the phone focus', () => {

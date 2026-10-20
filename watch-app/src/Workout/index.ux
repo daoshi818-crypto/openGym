@@ -116,8 +116,8 @@ export default {
     else this.stepSet(delta > 0 ? 1 : -1)
   },
   onBackPress() {
-    if (this.menuOn) this.menuOn = false
-    else if (this.closeMode) this.closeMode = ''
+    if (this.closeMode) this.cancelClose()
+    else if (this.menuOn) this.menuOn = false
     else if (this.pageIndex) this.pageIndex = 0
     else this.openExercises()
     return true
@@ -233,11 +233,11 @@ export default {
     const dx = end.x - start.x
     const dy = end.y - start.y
     if (Math.abs(dx) < 60 && Math.abs(dy) < 60) return
+    if (this.closeMode) return
     if (this.isRest) {
       if (dx > 60 && Math.abs(dx) > Math.abs(dy)) this.openExercises()
       return
     }
-    if (this.closeMode) return
     if (this.menuOn) {
       if (dy > 60) this.menuOn = false
       return
@@ -341,7 +341,7 @@ export default {
   },
 
   onComplete() {
-    if (this.isRest || this.paused) return
+    if (this.isRest || this.paused || this.closeMode) return
     const s = this.state
     const exIdx = s.exIdx, setIdx = s.setIdx
     const current = s.workout.rows[exIdx] && s.workout.rows[exIdx][setIdx]
@@ -375,6 +375,7 @@ export default {
   },
 
   onCurrentSetAction() {
+    if (this.closeMode) return
     if (this.rowDone) this.onUndo()
     else this.onComplete()
   },
@@ -621,6 +622,7 @@ export default {
     const next = row && !row.done ? { exIdx: s.exIdx, setIdx: s.setIdx } : nextUndone(s)
     const totalSets = s.workout.rows.reduce((n, r) => n + r.length, 0)
     const doneSets = s.workout.rows.reduce((n, r) => n + r.filter(x => x.done).length, 0)
+    this.checkCompletion(totalSets, doneSets)
     this.setProgressLabel = '完成 ' + doneSets + ' / 剩余 ' + Math.max(0, totalSets - doneSets) + ' 组'
     let completedVolume = 0
     s.workout.rows.forEach((rows, exIdx) => {
@@ -654,6 +656,24 @@ export default {
   },
 
   isTimed(ex) { return ex && String(ex.reps || '').indexOf('秒') >= 0 },
+
+  checkCompletion(total, done) {
+    this.allFinished = total > 0 && done === total
+    if (!this.allFinished) {
+      if (this.state.completionAcknowledged) {
+        this.state.completionAcknowledged = false
+        save(this.state)
+      }
+      if (this.closeMode === 'complete') this.closeMode = ''
+      return
+    }
+    if (this.visible === false || !this.state.active || this.state.completionAcknowledged || this.closeMode) return
+    this.menuOn = false
+    this.closeMode = 'complete'
+    this.completionIgnoreUntil = Date.now() + 400
+    this.touchCancel()
+    this.focusCrown()
+  },
 
   formatVolume(value) {
     return String(Math.round(value)).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
@@ -727,8 +747,20 @@ export default {
   },
   askEnd() { this.closeMode = 'end' },
   askAbandon() { this.closeMode = 'abandon' },
-  cancelClose() { this.closeMode = '' },
-  saveEnd() { this.onEnd('saved') },
+  cancelClose() {
+    if (this.closeMode === 'complete') {
+      if (Date.now() < this.completionIgnoreUntil) return
+      // 继续训练后不因时钟、同步或页面恢复反复弹窗；出现未完成组才重新提示。
+      this.state.completionAcknowledged = true
+      save(this.state)
+    }
+    this.closeMode = ''
+    this.focusCrown()
+  },
+  saveEnd() {
+    if (this.closeMode === 'complete' && Date.now() < this.completionIgnoreUntil) return
+    this.onEnd('saved')
+  },
   discardEnd() { this.onEnd('discarded') },
   abandonEnd() { this.onEnd('abandoned') },
   onEnd(reason, notifyPhone = true) {
@@ -754,7 +786,7 @@ export default {
 
 <template>
   <div class="page" id="training" touch-focusable="true" onrotation="onRotation" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
-    <div class="screen" if="{{ pageIndex === 0 }}">
+    <div class="screen" if="{{ pageIndex === 0 && !closeMode }}">
     <div class="topline"><text class="status">{{ syncLabel }}</text><text class="clock now">{{ clockLabel }}</text><text class="clock">已用 {{ elapsedLabel }}</text></div>
     <text class="ex">{{ isRest ? restExerciseName : exName }}</text>
 
@@ -789,7 +821,7 @@ export default {
     </div>
     <div class="primary-footer"><text class="progress">{{ setProgressLabel }}</text><div class="footer-metrics"><text class="energy">{{ kcalLabel }} 千卡</text><text class="hr">{{ hrLabel }}</text></div></div>
     </div>
-    <div class="screen operation-screen" if="{{ pageIndex === 1 }}">
+    <div class="screen operation-screen" if="{{ pageIndex === 1 && !closeMode }}">
     <div class="topline"><text class="status">{{ syncLabel }}</text><text class="clock now">{{ clockLabel }}</text><text class="clock">已用 {{ elapsedLabel }}</text></div>
     <text class="group">{{ setProgressLabel }}</text>
     <text class="volume-line">已完成容量 {{ volumeLabel }} kg·次</text>
@@ -800,7 +832,13 @@ export default {
     </div>
     <input class="operation" type="button" value="{{ pauseLabel }}" onclick="onPause" />
     </div>
-    <div class="dots" if="{{ !isRest }}"><div class="dot {{ pageIndex === 0 ? 'selected' : '' }}"></div><div class="dot {{ pageIndex === 1 ? 'selected' : '' }}"></div></div>
+    <div class="dots" if="{{ !isRest && !closeMode }}"><div class="dot {{ pageIndex === 0 ? 'selected' : '' }}"></div><div class="dot {{ pageIndex === 1 ? 'selected' : '' }}"></div></div>
+    <div class="completion-panel" if="{{ closeMode === 'complete' }}">
+      <text class="completion-title">全部组已完成</text>
+      <text class="completion-progress">{{ setProgressLabel }}</text>
+      <input class="completion-btn finish" type="button" value="保存结束" onclick="saveEnd" />
+      <input class="completion-btn continue" type="button" value="继续训练" onclick="cancelClose" />
+    </div>
 
   </div>
 </template>
@@ -835,11 +873,11 @@ export default {
 .complete { width: 190px; height: 52px; font-size: 25px; border-radius: 8px; background-color: #63dfb1; color: #001b12; }
 .secondary { background-color: #283236; color: #ffffff; }
 .rest-kicker { width: 350px; height: 22px; font-size: 18px; color: #aeb9bd; text-align: center; }
-.rest { width: 350px; height: 68px; font-size: 62px; color: #63dfb1; text-align: center; }
-.rrow { flex-direction: row; align-items: center; justify-content: space-between; width: 350px; height: 48px; }
+.rest { width: 350px; height: 82px; line-height: 76px; font-size: 62px; color: #63dfb1; text-align: center; lines: 1; }
+.rrow { flex-direction: row; align-items: center; justify-content: space-between; width: 350px; height: 48px; margin-top: 8px; }
 .rbtn { width: 105px; height: 44px; font-size: 20px; border-radius: 8px; background-color: #191d1f; color: #ffffff; }
 .rest-total { width: 120px; font-size: 18px; color: #ffffff; text-align: center; lines: 1; }
-.next { width: 350px; height: 36px; font-size: 16px; color: #63dfb1; text-align: center; lines: 2; }
+.next { width: 350px; height: 36px; line-height: 18px; font-size: 16px; color: #63dfb1; text-align: center; lines: 2; }
 .next-details { width: 350px; height: 24px; font-size: 18px; color: #ffffff; text-align: center; lines: 1; }
 .prog { width: 350px; height: 26px; font-size: 18px; color: #bfc6c9; text-align: center; }
 .skip { width: 220px; height: 44px; font-size: 21px; border-radius: 8px; background-color: #63dfb1; color: #001b12; margin-top: 0; }
@@ -868,4 +906,8 @@ export default {
 .continue { background-color: #1c1c1e; color: #ffffff; }
 .exit { background-color: #3a3a3c; color: #ffffff; }
 .end { background-color: #ff453a; color: #ffffff; }
+.completion-panel { width: 350px; height: 414px; margin-top: 18px; flex-direction: column; align-items: center; justify-content: center; }
+.completion-title { width: 350px; height: 44px; font-size: 26px; color: #ffffff; text-align: center; }
+.completion-progress { width: 350px; height: 32px; font-size: 18px; color: #bfc6c9; text-align: center; }
+.completion-btn { width: 310px; height: 56px; margin-top: 18px; font-size: 23px; border-radius: 8px; }
 </style>

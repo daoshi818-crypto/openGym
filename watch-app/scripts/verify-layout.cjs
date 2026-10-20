@@ -22,5 +22,12 @@ for (const page of Object.keys(manifest.router.pages)) {
     assert.ok(parseFloat(content.width) >= 340 && parseFloat(content.width) <= 354, page + ' content is too narrow or clips the sides')
     assert.ok(parseFloat(content.height) + parseFloat(content.marginTop || 0) <= 434, page + ' content clips the bottom')
   }
+  if (page === 'Workout') {
+    const digits = styles['.rest']
+    assert.ok(parseFloat(digits.lineHeight) >= parseFloat(digits.fontSize) * 1.2, 'Native countdown line-height is too tight')
+    assert.ok(parseFloat(digits.height) >= parseFloat(digits.lineHeight), 'Native countdown clips its line box')
+    assert.ok(parseFloat(styles['.rrow'].marginTop) >= 8, 'Native countdown needs separation from rest controls')
+    assert.ok(styles['.completion-panel'], 'All-complete choice was not compiled')
+  }
   console.log(page + ': full viewport, content bounds verified')
 }

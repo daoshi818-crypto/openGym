@@ -30,6 +30,7 @@ export default {
     const t = e.touches && e.touches[0]
     this.touch = t ? { x: t.clientX, y: t.clientY } : null
     this.touchLast = this.touch
+    this.swipeConsumed = false
   },
   touchMove(e) {
     const t = e.touches && e.touches[0]
@@ -38,7 +39,12 @@ export default {
       this.handleSwipe(this.touchLast)
     }
   },
-  touchCancel() { this.touch = null; this.touchLast = null },
+  touchCancel() {
+    // 固件可在新面板挂载时 cancel；保护持续到抬手/取消之后，长滑也不会误点。
+    if (this.swipeConsumed) this.ignoreTapUntil = Date.now() + 400
+    this.swipeConsumed = false
+    this.touch = null; this.touchLast = null
+  },
   touchEnd(e) {
     const t = e.changedTouches && e.changedTouches[0] || e.touches && e.touches[0]
     const end = t ? { x: t.clientX, y: t.clientY } : this.touchLast
@@ -46,16 +52,21 @@ export default {
     this.touchCancel()
   },
   handleSwipe(end) {
-    if (!this.touch) return
+    if (!this.touch || this.swipeConsumed) return
     const dx = end.x - this.touch.x, dy = end.y - this.touch.y
     if (Math.abs(dx) < 45 || Math.abs(dx) <= Math.abs(dy) + 8) return
-    this.touchCancel()
-    this.ignoreTapUntil = Date.now() + 350
+    this.swipeConsumed = true
+    this.ignoreTapUntil = Date.now() + 400
     if (dx > 0 && !this.endOn) { this.endOn = true; this.focusPanel() }
-    else if (dx < 0 && this.endOn) this.backToExercises()
+    else if (dx < 0 && this.endOn) { this.endOn = false; this.focusPanel() }
   },
-  backToExercises() { this.endOn = false; this.focusPanel() },
+  interactionBlocked() { return this.swipeConsumed || Date.now() < (this.ignoreTapUntil || 0) },
+  backToExercises() {
+    if (this.interactionBlocked()) return
+    this.endOn = false; this.focusPanel()
+  },
   onBackPress() {
+    if (this.interactionBlocked()) return true
     if (this.endOn) this.backToExercises()
     else router.back()
     return true
@@ -69,13 +80,13 @@ export default {
   },
 
   toggleEx(index) {
-    if (this.endOn || Date.now() < (this.ignoreTapUntil || 0)) return
+    if (this.endOn || this.interactionBlocked()) return
     const idx = Number(index)
     this.expanded = this.expanded === idx ? -1 : idx
   },
 
   pickRow(d) {
-    if (this.endOn || Date.now() < (this.ignoreTapUntil || 0)) return
+    if (this.endOn || this.interactionBlocked()) return
     const s = loadState()
     if (!s.active || !s.workout) { router.replace({ uri: '/Summary' }); return }
     const ex = Number(d.exIdx)
@@ -88,7 +99,7 @@ export default {
     router.back()
   },
 
-  onExit() { if (Date.now() >= (this.ignoreTapUntil || 0)) router.back() },
+  onExit() { if (!this.interactionBlocked()) router.back() },
 
   closeWorkout(disposition) {
     const s = loadState()
@@ -100,8 +111,8 @@ export default {
       ...(session ? { workout: s.workout, startedAt: s.startedAt, summary: { minutes: session.minutes, avgHr: session.avgHr, maxHr: session.maxHr, calories: session.calories, volume: session.volume }, completedSets: session.sets } : {}) })
     router.replace({ uri: disposition === 'saved' ? '/Summary' : '/Index' })
   },
-  abandonWorkout() { if (Date.now() >= (this.ignoreTapUntil || 0)) this.closeWorkout('abandoned') },
-  saveWorkout() { if (Date.now() >= (this.ignoreTapUntil || 0)) this.closeWorkout('saved') },
+  abandonWorkout() { if (!this.interactionBlocked()) this.closeWorkout('abandoned') },
+  saveWorkout() { if (!this.interactionBlocked()) this.closeWorkout('saved') },
 
 }
 </script>
