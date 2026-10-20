@@ -27,6 +27,14 @@ function life(S) {
 }
 
 describe('watch durable state and navigation', () => {
+  it('applies a watch focus as the phone current action and returns that set in snapshots', () => {
+    const S = phone(), app = life(S)
+    app.receive({ sid: '1000', t: 'focus', ex: 1, set: 2, at: 100, eventId: 'focus:1' })
+    expect(S.active.cur).toBe(1)
+    expect(S.active.watchFocus).toMatchObject({ ex: 1, set: 2 })
+    expect(watchSnapshotOf(S, null, 200)).toMatchObject({ exIdx: 1, setIdx: 1 })
+    expect(app.sendAck).toHaveBeenCalledWith(100, 'focus:1')
+  })
   it('retains B-2 through repeated plan/sync and restart', () => {
     const w = watch(), s = w.startSession({ sid: 'x', name: 'Test', exercises: [exercise('A'), exercise('B')] })
     s.exIdx = 1; s.setIdx = 1; w.save(s)

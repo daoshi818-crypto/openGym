@@ -2,7 +2,7 @@
 // 动作列表页：查看动作和组，点组返回训练页并切换游标。
 import router from '@blueos.app.appmanager.router'
 import { loadState, save, endSession, closeSession } from '../lib/session.js'
-import { sendControl, sendEvent } from '../lib/rpc.js'
+import { sendEvent } from '../lib/rpc.js'
 
 export default {
   data: { list: [], expanded: -1, endOn: false },
@@ -25,7 +25,7 @@ export default {
     }))
   },
   onReady() { this.focusPanel() },
-  focusPanel() { try { this.$element(this.endOn ? 'end-panel' : 'exercises').requestFocus(true) } catch (e) {} },
+  focusPanel() { try { this.$element('page').requestFocus(true) } catch (e) {} },
   touchStart(e) {
     const t = e.touches && e.touches[0]
     this.touch = t ? { x: t.clientX, y: t.clientY } : null
@@ -33,17 +33,23 @@ export default {
   },
   touchMove(e) {
     const t = e.touches && e.touches[0]
-    if (this.touch && t) this.touchLast = { x: t.clientX, y: t.clientY }
+    if (this.touch && t) {
+      this.touchLast = { x: t.clientX, y: t.clientY }
+      this.handleSwipe(this.touchLast)
+    }
   },
   touchCancel() { this.touch = null; this.touchLast = null },
   touchEnd(e) {
-    const start = this.touch
     const t = e.changedTouches && e.changedTouches[0] || e.touches && e.touches[0]
     const end = t ? { x: t.clientX, y: t.clientY } : this.touchLast
+    if (end) this.handleSwipe(end)
     this.touchCancel()
-    if (!start || !end) return
-    const dx = end.x - start.x, dy = end.y - start.y
-    if (Math.abs(dx) < 60 || Math.abs(dx) <= Math.abs(dy)) return
+  },
+  handleSwipe(end) {
+    if (!this.touch) return
+    const dx = end.x - this.touch.x, dy = end.y - this.touch.y
+    if (Math.abs(dx) < 45 || Math.abs(dx) <= Math.abs(dy) + 8) return
+    this.touchCancel()
     this.ignoreTapUntil = Date.now() + 350
     if (dx > 0 && !this.endOn) { this.endOn = true; this.focusPanel() }
     else if (dx < 0 && this.endOn) this.backToExercises()
@@ -78,7 +84,7 @@ export default {
     s.setIdx = set
     s.focusAt = Date.now()
     save(s)
-    sendControl({ t: 'focus', sid: s.sid, ex, set: set + 1, at: s.focusAt, source: 'watch' })
+    sendEvent({ t: 'focus', sid: s.sid, ex, set: set + 1, at: s.focusAt, source: 'watch' })
     router.back()
   },
 
@@ -101,7 +107,7 @@ export default {
 </script>
 
 <template>
-  <div class="page">
+  <div class="page" id="page" touch-focusable="true" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
     <div class="content" if="{{ !endOn }}">
     <text class="title">训练动作</text>
     <div class="body">
@@ -122,7 +128,7 @@ export default {
       </list>
     </div>
 
-    <div class="foot" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
+    <div class="foot">
       <div class="exit-row">
         <input class="endbtn save" type="button" value="保存结束" onclick="saveWorkout" />
         <input class="endbtn abandon" type="button" value="放弃训练" onclick="abandonWorkout" />
@@ -130,7 +136,7 @@ export default {
       <input class="back" type="button" value="返回训练" onclick="onExit" />
     </div>
     </div>
-    <div class="end-panel" id="end-panel" touch-focusable="true" if="{{ endOn }}" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
+    <div class="end-panel" id="end-panel" touch-focusable="true" if="{{ endOn }}">
       <text class="title">结束本次训练</text>
       <text class="hint">保存训练记录，或放弃本次训练</text>
       <input class="endbtn save" type="button" value="保存结束" onclick="saveWorkout" />

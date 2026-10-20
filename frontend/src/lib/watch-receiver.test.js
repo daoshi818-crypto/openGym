@@ -403,7 +403,7 @@ describe('watch business message boundary', () => {
   it('selects an explicit action-list row using the documented bound item parameter', () => {
     const sessions = session(), back = vi.fn()
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
-    const list = page('ExerciseList/index.ux', { ...sessions, sendControl() {}, router: { back } })
+    const list = page('ExerciseList/index.ux', { ...sessions, sendEvent() {}, router: { back } })
     list.onInit(); list.toggleEx(0)
     expect(list.expanded).toBe(0)
     list.pickRow({ exIdx: 0, setIdx: 2 })
@@ -426,7 +426,15 @@ describe('watch business message boundary', () => {
     expect(ux).toContain('value="返回动作"')
     expect(ux).toContain('value="返回训练"')
     expect(ux).toContain('ontouchend="touchEnd"')
+    expect(ux).toContain('<div class="page" id="page" touch-focusable="true"')
+    expect(ux).toContain('<list class="scroll" id="exercises" touch-focusable="true" ontouchstart')
     expect(ux).toContain("r.done ? '✓' : r.no")
+    list.touchStart({ touches: [{ clientX: 80, clientY: 180 }] })
+    list.touchMove({ touches: [{ clientX: 135, clientY: 182 }] })
+    expect(list.endOn).toBe(true)
+    list.touchCancel()
+    list.touchEnd({ touches: [] })
+    expect(list.endOn).toBe(true)
     list.touchStart({ touches: [{ clientX: 80, clientY: 180 }] })
     list.touchEnd({ changedTouches: [{ clientX: 170, clientY: 182 }] })
     expect(JSON.parse(source('manifest.json')).router.pages.ExerciseList.followHand).toBe('disable')
@@ -437,6 +445,24 @@ describe('watch business message boundary', () => {
     list.saveWorkout()
     expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({ t: 'session_close', disposition: 'saved' }))
     expect(replace).toHaveBeenCalledWith({ uri: '/Summary' })
+  })
+
+  it('crosses the action boundary with crown or button navigation and syncs the phone focus', () => {
+    const sessions = session(), sendEvent = vi.fn()
+    const state = sessions.startSession({ name: 'two', sid: 'two', exercises: [
+      { name: 'Squat', sets: 1, reps: '8', weight: '60' },
+      { name: 'Row', sets: 2, reps: '10', weight: '30' },
+    ] })
+    const workout = training(sessions, { startServer() {}, sendEvent, pendingCount: () => 0, isConnected: () => true })
+    workout.onInit()
+    workout.stepSet(1)
+    expect(workout.state.exIdx).toBe(1)
+    expect(workout.state.setIdx).toBe(0)
+    expect(sendEvent.mock.calls.at(-1)[0]).toMatchObject({ t: 'focus', ex: 1, set: 1 })
+    workout.stepSet(-1)
+    expect(workout.state.exIdx).toBe(0)
+    expect(workout.state.setIdx).toBe(0)
+    expect(sendEvent.mock.calls.at(-1)[0]).toMatchObject({ t: 'focus', ex: 0, set: 1 })
   })
 
   it('keeps the training page compact and puts page dots on the right', () => {
@@ -461,6 +487,8 @@ describe('watch business message boundary', () => {
     expect(operationPage).toContain('{{ kcalLabel }} 千卡')
     expect(operationPage).toContain('{{ hrLabel }}')
     expect(operationPage).not.toContain('估算')
+    expect(ux).toContain('class="training-panel rest-panel"')
+    expect(ux).toContain('.rest-panel { height: 270px; }')
     expect(ux).not.toContain('训练操作')
     expect(source('ExerciseList/index.ux')).not.toContain('value="训练动作"')
     expect(source('Index/index.ux')).toContain('justify-content: center')
