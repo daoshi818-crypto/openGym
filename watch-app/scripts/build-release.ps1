@@ -7,17 +7,20 @@ if (!$Compiler) {
 if (!(Test-Path -LiteralPath $Compiler)) { throw 'Set BLUEOS_PACK to BlueOS Studio blueos-pack/bin/index.js.' }
 Push-Location $project
 try {
-    $buildOutput = & node $Compiler release --device-type watch-round 2>&1
+    $buildOutput = & node $Compiler release --device-type watch-square --force 2>&1
     $buildOutput | ForEach-Object { Write-Output $_ }
     if ($LASTEXITCODE -ne 0 -or ($buildOutput -match '\[ERROR\]')) { throw 'BlueOS compilation failed.' }
+    & node (Join-Path $PSScriptRoot 'verify-layout.cjs')
+    if ($LASTEXITCODE -ne 0) { throw 'Compiled watch layout validation failed.' }
     $manifest = Get-Content 'src/manifest.json' -Raw | ConvertFrom-Json
-    $file = Join-Path $project "dist/watch-round/release/$($manifest.package).release.$($manifest.versionName).rpk"
+    $file = Join-Path $project "dist/watch-square/release/$($manifest.package).release.$($manifest.versionName).rpk"
     $zip = [IO.Compression.ZipFile]::OpenRead($file)
     try {
         if (!$zip.GetEntry("$($manifest.package).vru") -or !$zip.GetEntry('META-INF/CERT')) { throw 'Not a BlueOS VRU package.' }
         $reader = [IO.StreamReader]::new($zip.GetEntry('manifest.json').Open())
         try { $packed = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
         if ($packed.versionName -ne $manifest.versionName -or $packed.versionCode -ne $manifest.versionCode -or $packed.name -ne $manifest.name) { throw 'Packaged manifest does not match source.' }
+        if ($packed.deviceTypeList -notcontains 'watch-square') { throw 'Package must target the rectangular watch.' }
     } finally { $zip.Dispose() }
     $release = Join-Path $project 'releases'
     New-Item -ItemType Directory -Path $release -Force | Out-Null

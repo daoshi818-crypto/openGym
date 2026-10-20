@@ -222,6 +222,73 @@ describe('watch completed sets and rest clock', () => {
   })
 })
 
+describe('watch direct workout entry', () => {
+  function home(sessions, params) {
+    const router = { replace: vi.fn() }
+    const index = page('Index/index.ux', { ...sessions, router, startServer() {}, sendEvent() {} })
+    index.onInit(params)
+    return { index, router }
+  }
+
+  it('opens an already active session on launch without a continue tap', () => {
+    const sessions = session()
+    sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+    const { index, router } = home(sessions)
+    index.onShow()
+    index.onReady()
+    expect(router.replace).toHaveBeenCalledExactlyOnceWith({ uri: '/Workout' })
+  })
+
+  it('navigates once when native ready fires before show', () => {
+    const sessions = session()
+    sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+    const { index, router } = home(sessions)
+    index.onReady()
+    index.onShow()
+    expect(router.replace).toHaveBeenCalledOnce()
+  })
+
+  it('persists a phone plan and opens it once when the page is ready', () => {
+    const sessions = session(), { index, router } = home(sessions)
+    index.onPlan(plan)
+    expect(sessions.loadState()).toMatchObject({ active: true, sid: plan.sid })
+    expect(router.replace).not.toHaveBeenCalled()
+    index.onReady()
+    index.onSync({ ...plan, t: 'sync', rows: [[{ w: '75', r: '6', done: true }]] })
+    expect(sessions.loadState().workout.rows[0][0]).toMatchObject({ w: '75', done: true })
+    expect(router.replace).toHaveBeenCalledOnce()
+  })
+
+  it('opens a sync-only phone session without resetting its rows', () => {
+    const sessions = session(), { index, router } = home(sessions)
+    index.onReady()
+    index.onSync({ ...plan, t: 'sync', rows: [[{ w: '75', r: '6', done: true }]] })
+    expect(router.replace).toHaveBeenCalledExactlyOnceWith({ uri: '/Workout' })
+    expect(sessions.loadState().workout.rows[0][0].done).toBe(true)
+  })
+
+  it('preserves conflict confirmation and rejects a different active session', () => {
+    const sessions = session()
+    sessions.startSession({ sid: 'local', exercises: plan.exercises })
+    const { index, router } = home(sessions, { conflict: JSON.stringify(plan) })
+    index.onReady()
+    expect(index.onPlan(plan).status).toBe('conflict')
+    expect(index.onSync({ ...plan, t: 'sync' }).status).toBe('conflict')
+    expect(sessions.loadState().sid).toBe('local')
+    expect(router.replace).not.toHaveBeenCalled()
+  })
+
+  it('keeps cached plans idle and does not navigate a hidden home page', () => {
+    const sessions = session(), { index, router } = home(sessions)
+    index.onReady()
+    index.onCatalog({ plans: [{ id: 'p', name: 'Plan', exercises: plan.exercises }] })
+    expect(sessions.loadState().active).toBe(false)
+    index.onHide()
+    index.onPlan(plan)
+    expect(router.replace).not.toHaveBeenCalled()
+  })
+})
+
 describe('watch business message boundary', () => {
   it('selects an explicit action-list row using the documented bound item parameter', () => {
     const sessions = session(), back = vi.fn()
@@ -437,13 +504,14 @@ describe('watch business message boundary', () => {
   })
 
   it.each(envelopes)(
-    'delivers %s to the Index page and confirms the visible offer', (_name, envelope) => {
+    'delivers %s to the Index page and starts phone training directly', (_name, envelope) => {
       const c = connection()
-      const rpc = transport(c)
-      const startSession = vi.fn()
-      const home = page('Index/index.ux', { startServer: rpc.startServer, loadState: () => ({}),
-        router: { push: vi.fn() }, startSession })
+      const sessions = session(), startSession = vi.spyOn(sessions, 'startSession')
+      const rpc = transport(c, { loadState: sessions.loadState })
+      const router = { replace: vi.fn() }
+      const home = page('Index/index.ux', { ...sessions, startServer: rpc.startServer, router })
       home.onInit()
+      home.onReady()
       c.onMessage(envelope(plan))
       expect(home.workoutName).toBe('Leg day')
       expect(home.exerciseCount).toBe(1)
@@ -451,8 +519,8 @@ describe('watch business message boundary', () => {
       expect(c.sent.find(m => m.t === 'plan_ack')).toMatchObject({
         sid: 'today', planId: 'p1', status: 'applied', page: 'Index', exercises: 1,
       })
-      home.onStart()
       expect(startSession).toHaveBeenCalledWith({ name: 'Leg day', sid: 'today', exercises: plan.exercises }, undefined)
+      expect(router.replace).toHaveBeenCalledExactlyOnceWith({ uri: '/Workout' })
       expect(c.sent.find(m => m.t === 'hello')).toMatchObject({ watchVersion: 'test-watch', receipts: true })
     })
 

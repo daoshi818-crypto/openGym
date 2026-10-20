@@ -72,7 +72,7 @@ jobs:
             手机 APK：openGym.apk；手表 BlueOS 安装包：opengym-watch-${{ env.WATCH_VERSION }}.rpk。
             手表改名 opengym，圆形图标；训练/操作上下翻页，右滑选择动作，训练页保留心率。
             新增缓存计划与手表开始训练、暂停、保存/放弃、离线补传及手机端冲突确认。
-            手机 APK 沿用本仓库签名。RPK 使用 BlueOS Studio 官方 watch-round 编译器构建。
+            手机 APK 沿用本仓库签名。RPK 使用 BlueOS Studio 官方编译器，按 390x450 矩形手表适配。
             真机传感器、息屏和后台恢复仍需在具体 vivo 设备上验证。
           files: |
             openGym.apk

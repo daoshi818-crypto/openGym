@@ -9,6 +9,8 @@ BlueOS watch companion for openGym. Display name: `opengym`; package identity:
 - Swipe right or tap Training Exercises to select any exercise/set. Previous/next buttons
   and the crown move within the current exercise; the crown adjusts rest in 5-second steps.
 - Heart rate stays on the training screen, including rest. Calories are estimates.
+- Phone-started workouts open the training page directly, including an active session restored
+  at launch. End/abandon and conflicting-session confirmation remain in place.
 - Operations includes set count, undo completion, pause/resume, save/end and abandon.
 - Plans sent from the phone are cached for offline starts. The phone must confirm conflicts
   before an offline watch save changes an already closed phone record.
@@ -37,8 +39,10 @@ $env:BLUEOS_PACK = 'path/to/blueos-debugger/node_modules/blueos-pack/bin/index.j
 ./scripts/build-release.ps1
 ```
 
-The script targets `watch-round`, verifies the VRU payload and writes the RPK/checksum into
-`releases/`. The matching phone GitHub release includes these files. Development keys and
+The script targets `watch-square` for the 390x450 rectangular watch, verifies the VRU payload
+and writes the RPK/checksum into `releases/`. Root pages fill the viewport; the 350px content
+area uses 20px side margins and 18px top/bottom clearance. Watch-only releases can ship
+independently of the phone APK. Development keys and
 Studio output are ignored. Current validation uses blueos-pack `1.0.12-beta.13`.
 
 Install the RPK through BlueOS Studio's watch debugging/install flow. Validate 390x450 layout,

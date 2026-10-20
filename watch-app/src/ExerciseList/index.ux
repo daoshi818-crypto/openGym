@@ -58,6 +58,7 @@ export default {
 
 <template>
   <div class="page">
+    <div class="content">
     <text class="title">训练动作</text>
     <div class="body">
       <list class="scroll" id="exercises" touch-focusable="true">
@@ -80,17 +81,19 @@ export default {
     <div class="foot">
       <input class="fbtn" type="button" value="返回训练" onclick="onExit" />
     </div>
+    </div>
   </div>
 </template>
 
 <style>
-.page { flex-direction: column; align-items: center; width: 390px; height: 450px; background-color: #000000; padding: 38px 44px; }
-.title { height: 38px; width: 290px; font-size: 24px; color: #ffffff; text-align: center; }
-.body { width: 290px; height: 270px; }
-.scroll { width: 290px; height: 270px; padding-top: 4px; }
-.exrow { flex-direction: column; width: 290px; padding: 8px 4px; }
+.page { flex-direction: column; align-items: center; width: 100%; height: 100%; background-color: #000000; }
+.content { width: 350px; height: 414px; margin-top: 18px; flex-direction: column; align-items: center; }
+.title { height: 36px; width: 350px; font-size: 26px; color: #ffffff; text-align: center; }
+.body { width: 350px; height: 316px; }
+.scroll { width: 350px; height: 316px; }
+.exrow { flex-direction: column; width: 350px; padding: 8px 4px; }
 .exhead { flex-direction: column; min-height: 48px; }
-.exname { width: 282px; font-size: 21px; color: #ffffff; lines: 2; }
+.exname { width: 342px; font-size: 23px; color: #ffffff; lines: 2; }
 .cnt { font-size: 17px; color: #8e8e93; margin-top: 1px; }
 .rows { flex-direction: column; margin-top: 4px; }
 .rrow { flex-direction: row; align-items: center; min-height: 48px; padding: 6px 0; }
@@ -98,7 +101,7 @@ export default {
 .rtxt { font-size: 20px; color: #ffffff; flex: 1; }
 .rtxt.done { color: #636366; }
 .chev { font-size: 22px; color: #48484a; }
-.foot { flex-direction: row; justify-content: center; padding: 10px 0 18px; }
-.fbtn { width: 240px; height: 48px; font-size: 20px; border-radius: 8px; background-color: #191d1f; color: #ffffff; }
+.foot { height: 62px; flex-direction: row; align-items: center; justify-content: center; }
+.fbtn { width: 350px; height: 48px; font-size: 22px; border-radius: 8px; background-color: #191d1f; color: #ffffff; }
 .save { background-color: #30d158; }
 </style>
