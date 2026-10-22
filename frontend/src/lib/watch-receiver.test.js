@@ -35,7 +35,7 @@ function session() {
     set: ({ key, value }) => values.set(key, JSON.parse(JSON.stringify(value))),
   }, console, applyEdit, applyRest }
   runInNewContext(source('lib/session.js').replace(imports, '').replace(/export function /g, 'function ')
-    + '\nthis.api = { loadState, startSession, save, replacePlan, applySync, nextUndone, setRowValue, toggleSet, addSet, removeSet, addRestTime, calories, endSession, closeSession, storage }', context)
+    + '\nthis.api = { loadState, startSession, save, replacePlan, applySync, nextUndone, nextUndoneFrom, setRowValue, toggleSet, addSet, removeSet, addRestTime, calories, endSession, closeSession, storage }', context)
   return context.api
 }
 const plan = { t: 'plan', sid: 'today', planId: 'p1', workout: 'Leg day',
@@ -792,9 +792,29 @@ describe('watch business message boundary', () => {
     workout.onInit()
     c.onMessage({ data: { t: 'set', sid: plan.sid, ex: 0, set: 1 } })
     expect(sessions.loadState().workout.rows[0][0].done).toBe(true)
-    expect(workout.groupLabel).toBe('第 1 / 3 组')
+    expect(workout.groupLabel).toBe('第 2 / 3 组')
     c.onMessage({ data: { t: 'set', sid: plan.sid, ex: 0, set: 1 } })
-    expect(workout.groupLabel).toBe('第 1 / 3 组')
+    expect(workout.groupLabel).toBe('第 2 / 3 组')
+  })
+
+  it('advances past a phone-completed set from another exercise', () => {
+    const sessions = session(), c = connection(), rpc = transport(c, sessions)
+    const exercises = Array.from({ length: 4 }, (_, i) => ({ name: 'Exercise ' + i, sets: 4, reps: '8', weight: '60' }))
+    const state = sessions.startSession({ name: 'Four exercises', sid: 'four', exercises })
+    state.workout.rows[0].forEach(row => { row.done = true })
+    state.exIdx = 0
+    state.setIdx = 3
+    sessions.save(state)
+    const workout = training(sessions, rpc)
+    workout.onInit()
+
+    workout.onRemoteSet({ sid: 'four', ex: 1, set: 1, at: 200 })
+
+    expect(workout.state.exIdx).toBe(1)
+    expect(workout.state.setIdx).toBe(1)
+    expect(workout.state.workout.rows[0][3].done).toBe(true)
+    workout.onCurrentSetAction()
+    expect(workout.state.workout.rows[0][3].done).toBe(true)
   })
 
   it.each(envelopes)(

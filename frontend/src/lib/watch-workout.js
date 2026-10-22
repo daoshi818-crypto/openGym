@@ -33,7 +33,7 @@ export function watchPlanOf(S) {
 export function watchSnapshotOf(S, timer, now = Date.now()) {
   const A = S.active, plan = watchPlanOf(S)
   if (!plan) return null
-  const ex = A.cur || 0
+  const ex = Number.isInteger(A.watchFocus?.ex) ? A.watchFocus.ex : (A.cur || 0)
   const rows = A.entries.map(e => e.sets.filter(r => !isWarmupRow(r)).map(r => ({
     w: r.w ?? '', r: r.sec ?? r.reps ?? r.r ?? '', done: !!r.done, at: r.at || 0,
   })))
@@ -42,6 +42,7 @@ export function watchSnapshotOf(S, timer, now = Date.now()) {
     rev: now, startedAt: now - elapsedMsOf(A, now) - (A.pausedMs || 0) - (A.pausedAt ? now - A.pausedAt : 0),
     segmentStartedAt: A.segmentStartedAt || A.start,
     exIdx: ex, setIdx: A.watchFocus?.ex === ex ? A.watchFocus.set - 1 : first < 0 ? 0 : first,
+    focusAt: Number(A.watchFocus?.at || A.watchFocusAt || 0),
     ackedEvents: A.watchEvents || [], pausedAt: A.pausedAt || 0, pausedMs: A.pausedMs || 0,
     pauseVersion: A.pauseVersion || 0, baseCalories: Object.entries(A.watchSegments || {}).filter(([id]) => id !== watchSidOf(A)).reduce((n, [, s]) => n + s.calories, 0),
     rest: timer ? { restId: timer.restId || String(timer.startedAt || timer.endsAt - timer.total * 1000),

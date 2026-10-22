@@ -25,6 +25,7 @@ export function blankState() {
     profile: null,      // { weight, age, sex } 热量估算用，随计划推送过来
     exIdx: 0,           // 当前动作下标（游标，可自由切）
     setIdx: 0,          // 当前动作内的组下标（游标，可自由切）
+    focusAt: 0,         // 手机/手表显式焦点的时间戳，防止旧快照回滚游标
     restUntil: 0,       // 绝对时间戳；0 表示不在休息
     hr: { sum: 0, count: 0, max: 0 },
     rev: 0,             // 本地修订号；手机 sync 用它判断谁更新
@@ -171,6 +172,14 @@ export function applySync(state, snapshot) {
   if (focusedIndex >= 0) state.exIdx = focusedIndex
   const curRows = state.workout.rows[state.exIdx] || []
   state.setIdx = Math.max(0, Math.min(Number(state.setIdx) || 0, Math.max(0, curRows.length - 1)))
+  const incomingFocusAt = Number(snapshot.focusAt || (snapshot.focus && snapshot.focus.at) || 0)
+  if (incomingFocusAt > (state.focusAt || 0)) {
+    const incomingEx = Math.max(0, Math.min(Number(snapshot.exIdx) || 0, maxEx))
+    const incomingRows = state.workout.rows[incomingEx] || []
+    state.exIdx = incomingEx
+    state.setIdx = Math.max(0, Math.min(Number(snapshot.setIdx) || 0, Math.max(0, incomingRows.length - 1)))
+    state.focusAt = incomingFocusAt
+  }
   if (snapshot.pauseVersion >= (state.pauseVersion || 0)) {
     state.pausedAt = snapshot.pausedAt || 0
     state.pausedMs = snapshot.pausedMs || 0
@@ -184,19 +193,21 @@ export function applySync(state, snapshot) {
   persist(state)
   return state
 }
-export function nextUndone(s) {
-  for (let i = 0; i < s.workout.rows.length; i++) {
-    const startJ = i === s.exIdx ? s.setIdx + 1 : 0
+export function nextUndoneFrom(s, exIdx = s.exIdx, setIdx = s.setIdx) {
+  const count = s.workout.rows.length
+  const start = Math.max(0, Math.min(Number(exIdx) || 0, Math.max(0, count - 1)))
+  for (let offset = 0; offset < count; offset++) {
+    const i = (start + offset) % count
+    const startJ = offset === 0 ? (Number(setIdx) || 0) + 1 : 0
     for (let j = startJ; j < s.workout.rows[i].length; j++) {
       if (!s.workout.rows[i][j].done) return { exIdx: i, setIdx: j }
     }
   }
-  for (let i = 0; i <= s.exIdx && i < s.workout.rows.length; i++) {
-    for (let j = 0; j < s.workout.rows[i].length; j++) {
-      if (!s.workout.rows[i][j].done) return { exIdx: i, setIdx: j }
-    }
-  }
   return null
+}
+
+export function nextUndone(s) {
+  return nextUndoneFrom(s, s.exIdx, s.setIdx)
 }
 
 // 会话是否全部完成

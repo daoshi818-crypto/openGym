@@ -256,6 +256,14 @@ describe('watch training edits and work-set mapping', () => {
     await toggleSet(1)
     expect(watch.pushSetToWatch).toHaveBeenCalledWith(String(mocks.S.active.start), 0, 1)
   })
+
+  it('persists a phone-visible watch group focus for later snapshots', async () => {
+    await mount([exercise('plain-bench', [false, false]), exercise('plain-row', [false, false])])
+    await receive({ t: 'focus', ex: 1, set: 2, at: 100 })
+    expect(mocks.S.active.cur).toBe(1)
+    expect(mocks.S.active.watchFocus).toMatchObject({ ex: 1, set: 2, at: 100 })
+    expect(mocks.S.active.watchFocusAt).toBe(100)
+  })
 })
 
 const click = async element => {

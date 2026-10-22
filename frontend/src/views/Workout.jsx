@@ -1919,7 +1919,14 @@ function ActiveWorkout() {
         return
       }
       if (ev.t === 'focus') {
-        update(s => { if (s.active) s.active.cur = ev.ex })
+        update(s => {
+          if (!s.active) return
+          const at = Number(ev.at) || Date.now()
+          if (at <= (s.active.watchFocus?.at || 0)) return
+          s.active.cur = ev.ex
+          s.active.watchFocus = { ex: ev.ex, set: ev.set, at }
+          s.active.watchFocusAt = at
+        })
         if (ev.at != null) pushAckToWatch(ev.at)
         return
       }
@@ -1927,9 +1934,10 @@ function ActiveWorkout() {
         const restLeft = useUI.getState().timer && !useUI.getState().timer.ready
           ? Math.max(0, Math.round((useUI.getState().timer.endsAt - Date.now()) / 1000))
           : 0
-        const curEx = A2.cur || 0
+        const curEx = Number.isInteger(A2.watchFocus?.ex) ? A2.watchFocus.ex : (A2.cur || 0)
         const curRows = A2.entries[curEx]?.sets?.filter(x => !isWarmupRow(x)) || []
         const firstUndone = curRows.findIndex(r => !r.done)
+        const focusSet = A2.watchFocus?.ex === curEx ? Number(A2.watchFocus.set) - 1 : -1
         const bw = S.bodyweight?.length ? S.bodyweight[S.bodyweight.length - 1].w : null
         const weightKg = bw ? (S.unit === 'lb' ? bw * 0.45359237 : bw) : 70
         const snapshot = {
@@ -1943,7 +1951,8 @@ function ActiveWorkout() {
             w: r.w ?? '', r: r.reps ?? r.r ?? '', done: !!r.done, at: r.at || 0,
           }))),
           exIdx: curEx,
-          setIdx: firstUndone >= 0 ? firstUndone : 0,
+          setIdx: focusSet >= 0 ? focusSet : firstUndone >= 0 ? firstUndone : 0,
+          focusAt: Number(A2.watchFocus?.at || A2.watchFocusAt || 0),
           restUntil: restLeft > 0 ? Date.now() + restLeft * 1000 : 0,
         }
         pushSyncToWatch(snapshot)

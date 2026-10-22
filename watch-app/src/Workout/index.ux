@@ -3,7 +3,7 @@
 import router from '@blueos.app.appmanager.router'
 import brightness from '@blueos.hardware.display.brightness'
 import {
-  loadState, save, replacePlan, applySync, toggleSet, nextUndone,
+  loadState, save, replacePlan, applySync, toggleSet, nextUndone, nextUndoneFrom,
   addHr, flushHr, endSession, closeSession, addSet, removeSet, addRestTime, setRowValue, calories,
 } from '../lib/session.js'
 import { startHr, stopHr, tick, restOver } from '../lib/sensors.js'
@@ -386,7 +386,15 @@ export default {
     const row = s.workout.rows[msg.ex] && s.workout.rows[msg.ex][msg.set - 1]
     if (!row || row.done) return
     row.done = true
-    row.at = Date.now()
+    row.at = Number(msg.at) || Date.now()
+    const next = nextUndoneFrom(s, Number(msg.ex), Number(msg.set) - 1)
+    if (next) {
+      s.exIdx = next.exIdx
+      s.setIdx = next.setIdx
+    } else {
+      s.exIdx = Number(msg.ex)
+      s.setIdx = Number(msg.set) - 1
+    }
     this.allFinished = s.workout.rows.every(rows => rows.every(r => r.done))
     save(s)
     this.refresh()
@@ -399,6 +407,8 @@ export default {
     if (!row || !row.done) return
     row.done = false
     row.at = 0
+    s.exIdx = Number(msg.ex)
+    s.setIdx = Number(msg.set) - 1
     this.allFinished = false
     save(s)
     this.refresh()

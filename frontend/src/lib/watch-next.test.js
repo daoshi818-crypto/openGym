@@ -32,7 +32,7 @@ describe('watch durable state and navigation', () => {
     app.receive({ sid: '1000', t: 'focus', ex: 1, set: 2, at: 100, eventId: 'focus:1' })
     expect(S.active.cur).toBe(1)
     expect(S.active.watchFocus).toMatchObject({ ex: 1, set: 2 })
-    expect(watchSnapshotOf(S, null, 200)).toMatchObject({ exIdx: 1, setIdx: 1 })
+    expect(watchSnapshotOf(S, null, 200)).toMatchObject({ exIdx: 1, setIdx: 1, focusAt: 100 })
     expect(app.sendAck).toHaveBeenCalledWith(100, 'focus:1')
   })
   it('retains B-2 through repeated plan/sync and restart', () => {
@@ -44,6 +44,14 @@ describe('watch durable state and navigation', () => {
     expect(applyFocus(s, { sid: 'x', ex: 0, set: 1, at: 20, source: 'watch' })).toBe(false)
     expect(applyFocus(s, { sid: 'x', ex: 0, set: 1, at: 20, source: 'phone' })).toBe(true)
     expect(applyFocus(s, { sid: 'x', ex: 1, set: 1, at: 19, source: 'phone' })).toBe(false)
+  })
+  it('accepts newer phone group focus while rejecting an older snapshot focus', () => {
+    const w = watch(), s = w.startSession({ sid: 'x', name: 'Test', exercises: [exercise('A'), exercise('B')] })
+    const rows = structuredClone(s.workout.rows)
+    w.applySync(s, { sid: 'x', exercises: s.workout.exercises, rows, exIdx: 1, setIdx: 1, focusAt: 100, rev: 10 })
+    expect(s).toMatchObject({ exIdx: 1, setIdx: 1, focusAt: 100 })
+    w.applySync(s, { sid: 'x', exercises: s.workout.exercises, rows, exIdx: 0, setIdx: 0, focusAt: 90, rev: 11 })
+    expect(s).toMatchObject({ exIdx: 1, setIdx: 1, focusAt: 100 })
   })
   it('preserves field, structure and completed edits until their snapshot acknowledgment', () => {
     const w = watch(), s = w.startSession({ sid: 'x', exercises: [exercise('A')] })
