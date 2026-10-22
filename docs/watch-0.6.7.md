@@ -9,3 +9,5 @@
 验证：前端同步专项 5 个测试文件共 314 项通过；手表 5 个页面布局校验通过。HTML/自动化测试不等同于真机，实物触摸、表冠和手机/手表断线重连仍需安装复核。
 
 RPK SHA256：`8ef485889d38b90d257398bbf53e0da02e2c80e1bdf413352e9d1785c64b4f10`
+
+CI release trigger: watch package is included by the repository build workflow.
