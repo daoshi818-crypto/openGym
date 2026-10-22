@@ -90,4 +90,15 @@ export default {
 .lbl { font-size: 15px; color: #8e8e93; margin-top: 1px; }
 .volume { font-size: 16px; color: #8e8e93; margin-top: 8px; }
 .btn { width: 350px; height: 52px; font-size: 23px; border-radius: 8px; background-color: #63dfb1; color: #001b12; margin-top: 12px; }
+@media screen and (min-width: 450px) {
+  .title { font-size: 22px; margin-bottom: 4px; }
+  .kcal { font-size: 52px; }
+  .kcal-lbl { font-size: 15px; margin-bottom: 6px; }
+  .row { width: 280px; }
+  .cell { width: 93px; }
+  .num { font-size: 22px; }
+  .lbl { font-size: 13px; }
+  .volume { font-size: 14px; margin-top: 5px; }
+  .btn { width: 280px; height: 44px; font-size: 20px; margin-top: 9px; }
+}
 </style>

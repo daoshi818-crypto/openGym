@@ -183,4 +183,23 @@ export default {
 .exit-row .endbtn { width: 156px; height: 46px; margin-top: 0; font-size: 18px; }
 .abandon { background-color: #3a3a3c; }
 .save { background-color: #30d158; }
+@media screen and (min-width: 450px) {
+  .content { width: 280px; height: 300px; margin-top: 70px; }
+  .title { width: 280px; height: 32px; font-size: 22px; }
+  .body, .scroll { width: 280px; height: 190px; }
+  .exrow { width: 280px; padding: 5px 3px; }
+  .exname { width: 274px; font-size: 20px; }
+  .cnt { font-size: 15px; }
+  .rrow { min-height: 38px; padding: 4px 0; }
+  .rno { width: 30px; font-size: 18px; }
+  .rtxt { font-size: 18px; }
+  .chev { font-size: 20px; }
+  .foot { width: 280px; height: 76px; }
+  .exit-row { width: 260px; height: 38px; }
+  .exit-row .endbtn { width: 124px; height: 36px; font-size: 16px; }
+  .back { width: 150px; height: 34px; font-size: 16px; }
+  .end-panel { width: 280px; height: 300px; margin-top: 70px; }
+  .hint { width: 280px; height: 36px; font-size: 15px; }
+  .endbtn { width: 250px; height: 42px; margin-top: 10px; font-size: 20px; }
+}
 </style>

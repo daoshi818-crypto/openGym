@@ -5,10 +5,11 @@
 - 表冠切换组只写入一次焦点状态，减少快速旋转时的存储写入。
 - 滑动手势在移动超过 24px 后锁定横向或纵向，避免斜向滑动过程中方向改变导致切页不稳定。
 
-版本：0.6.8（code 23），390×450 矩形 watch-square 目标。手机 APK 版本不变。
+版本：0.6.8（code 23），同时构建 watch-square（390×450 基准，适配 432×514 的 vivo WATCH GT 2）和 watch-round（vivo WATCH 4/5 圆形安全区）目标。手机 APK 版本不变。
 
 验证：前端同步与手表交互专项 316 项通过；5 个手表页面布局校验通过。真机滑动、表冠和息屏恢复仍需安装后复核。
 
-RPK SHA256：`576a312f5644e902189c0a4ba2fb28565e2e2bbd6de7245f13e98a67a3e25699`
+watch-square（390×450、432×514 GT 2）RPK SHA256：`56f996bf6c232d6d0e2f8a4194b4e1df1dec4b75f2157ce744dda9ca5edf516c`
+watch-round（WATCH 4/5）RPK SHA256：`8455f501daf193f336444dfa4b71668170701e25aebb1d3a70718720d5668e58`
 
 GitHub Actions 会随带有 '[build]' 的主分支提交发布伴随构建包。

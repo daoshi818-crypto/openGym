@@ -933,4 +933,43 @@ export default {
 .completion-title { width: 350px; height: 44px; font-size: 26px; color: #ffffff; text-align: center; }
 .completion-progress { width: 350px; height: 32px; font-size: 18px; color: #bfc6c9; text-align: center; }
 .completion-btn { width: 310px; height: 56px; margin-top: 18px; font-size: 23px; border-radius: 8px; }
+@media screen and (min-width: 450px) {
+  .screen { width: 280px; height: 300px; margin-top: 70px; }
+  .training-panel { width: 280px; height: 210px; }
+  .rest-panel { height: 210px; }
+  .compact { height: 180px; }
+  .primary-footer { width: 260px; height: 40px; }
+  .progress { font-size: 14px; }
+  .footer-metrics { width: 260px; height: 19px; }
+  .dots { right: 20px; top: 106px; }
+  .operation { width: 260px; height: 44px; font-size: 20px; }
+  .topline { width: 260px; height: 18px; }
+  .status { font-size: 13px; }
+  .clock { font-size: 14px; }
+  .ex { width: 280px; height: 42px; font-size: 21px; }
+  .group { width: 280px; height: 22px; font-size: 17px; }
+  .inputs { width: 280px; height: 58px; margin-top: 7px; margin-bottom: 10px; }
+  .field { width: 136px; height: 58px; }
+  .fval { width: 130px; font-size: 28px; }
+  .navrow { width: 280px; height: 44px; }
+  .nav { width: 58px; height: 44px; font-size: 20px; }
+  .complete { width: 154px; height: 44px; font-size: 21px; }
+  .rest-kicker { width: 280px; height: 18px; font-size: 15px; }
+  .rest { width: 280px; height: 56px; line-height: 52px; font-size: 46px; }
+  .rrow { width: 280px; height: 38px; margin-top: 5px; }
+  .rbtn { width: 82px; height: 36px; font-size: 16px; }
+  .rest-total { width: 96px; font-size: 15px; }
+  .next { width: 280px; height: 32px; line-height: 16px; font-size: 14px; }
+  .next-details { width: 280px; height: 20px; font-size: 15px; }
+  .skip { width: 180px; height: 36px; font-size: 17px; }
+  .metrics { width: 260px; height: 28px; }
+  .hr, .energy { font-size: 14px; }
+  .volume-line { width: 260px; height: 24px; font-size: 16px; }
+  .mrow { width: 260px; height: 48px; }
+  .m { width: 124px; height: 44px; font-size: 19px; }
+  .completion-panel { width: 280px; height: 300px; margin-top: 70px; }
+  .completion-title { width: 280px; height: 36px; font-size: 22px; }
+  .completion-progress { width: 280px; height: 26px; font-size: 16px; }
+  .completion-btn { width: 250px; height: 44px; margin-top: 12px; font-size: 20px; }
+}
 </style>

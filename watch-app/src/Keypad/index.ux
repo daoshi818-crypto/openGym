@@ -127,4 +127,13 @@ export default {
 .actions { width: 350px; height: 52px; flex-direction: row; justify-content: space-between; margin-top: 8px; }
 .ok { width: 232px; height: 52px; font-size: 23px; border-radius: 8px; background-color: #63dfb1; color: #001b12; }
 .cancel { width: 110px; height: 52px; font-size: 21px; border-radius: 8px; background-color: #191d1f; color: #ffffff; }
+@media screen and (min-width: 450px) {
+  .label { margin-top: 14px; font-size: 18px; }
+  .show { height: 44px; font-size: 38px; margin: 2px 0 6px; }
+  .grid { width: 280px; }
+  .k { width: 88px; height: 44px; font-size: 22px; margin: 2px; }
+  .actions { width: 280px; height: 44px; margin-top: 6px; }
+  .ok { width: 184px; height: 44px; font-size: 20px; }
+  .cancel { width: 88px; height: 44px; font-size: 18px; }
+}
 </style>

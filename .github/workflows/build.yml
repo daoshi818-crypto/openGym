@@ -53,10 +53,12 @@ jobs:
         run: |
           set -euo pipefail
           WATCH_VERSION=$(node -p "require('./watch-app/src/manifest.json').versionName")
-          export WATCH_RPK="watch-app/releases/opengym-watch-${WATCH_VERSION}.rpk"
-          test -f "$WATCH_RPK"
-          test "$(sha256sum "$WATCH_RPK" | cut -d' ' -f1)" = "$(tr -d '\r\n' < "$WATCH_RPK.sha256")"
-          node -e 'const cp=require("node:child_process");const source=require("./watch-app/src/manifest.json");const packed=JSON.parse(cp.execFileSync("unzip",["-p",process.env.WATCH_RPK,"manifest.json"],{encoding:"utf8"}));for(const key of ["package","name","versionName","versionCode"])if(source[key]!==packed[key])throw Error("Watch manifest mismatch: "+key)'
+          for WATCH_TARGET in watch-square watch-round; do
+            if [ "$WATCH_TARGET" = watch-square ]; then WATCH_RPK="watch-app/releases/opengym-watch-${WATCH_VERSION}.rpk"; else WATCH_RPK="watch-app/releases/opengym-watch-round-${WATCH_VERSION}.rpk"; fi
+            test -f "$WATCH_RPK"
+            test "$(sha256sum "$WATCH_RPK" | cut -d' ' -f1)" = "$(tr -d '\r\n' < "$WATCH_RPK.sha256")"
+            WATCH_RPK="$WATCH_RPK" WATCH_TARGET="$WATCH_TARGET" node -e 'const cp=require("node:child_process");const source=require("./watch-app/src/manifest.json");const packed=JSON.parse(cp.execFileSync("unzip",["-p",process.env.WATCH_RPK,"manifest.json"],{encoding:"utf8"}));for(const key of ["package","name","versionName","versionCode"])if(source[key]!==packed[key])throw Error("Watch manifest mismatch: "+key);if(!packed.deviceTypeList.includes(process.env.WATCH_TARGET))throw Error("Watch target mismatch: "+process.env.WATCH_TARGET)'
+          done
           echo "WATCH_VERSION=$WATCH_VERSION" >> "$GITHUB_ENV"
 
       - name: Push rebased main
@@ -72,7 +74,7 @@ jobs:
             手机 APK：openGym.apk；手表 BlueOS 安装包：opengym-watch-${{ env.WATCH_VERSION }}.rpk。
             手表改名 opengym，圆形图标；训练/操作上下翻页，右滑选择动作，训练页保留心率。
             新增缓存计划与手表开始训练、暂停、保存/放弃、离线补传及手机端冲突确认。
-            手机 APK 沿用本仓库签名。RPK 使用 BlueOS Studio 官方编译器，按 390x450 矩形手表适配。
+            手机 APK 沿用本仓库签名。手表同时提供 watch-square（含 432x514 的 vivo WATCH GT 2）和 watch-round（vivo WATCH 4/5）RPK，使用 BlueOS Studio 官方编译器。
             真机传感器、息屏和后台恢复仍需在具体 vivo 设备上验证。
           files: |
             openGym.apk

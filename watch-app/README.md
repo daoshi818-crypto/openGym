@@ -42,12 +42,14 @@ $env:BLUEOS_PACK = 'path/to/blueos-debugger/node_modules/blueos-pack/bin/index.j
 ./scripts/build-release.ps1
 ```
 
-The script targets `watch-square` for the 390x450 rectangular watch, verifies the VRU payload
-and writes the RPK/checksum into `releases/`. Root pages fill the viewport; the 350px content
-area uses 20px side margins and 18px top/bottom clearance. Watch-only releases can ship
-independently of the phone APK. Development keys and
-Studio output are ignored. Current validation uses blueos-pack `1.0.12-beta.13`.
+The script builds both `watch-square` and `watch-round` targets, verifies each VRU payload,
+and writes both RPKs/checksums into `releases/`. The square layout keeps the 390x450 baseline
+and scales naturally to the 432x514 vivo WATCH GT 2. The round target adds a circular safe-area
+layout for vivo WATCH 4/5. Watch-only releases can ship independently of the phone APK.
+Development keys and Studio output are ignored. Current validation uses blueos-pack
+`1.0.12-beta.13`.
 
-Install the RPK through BlueOS Studio's watch debugging/install flow. Validate 390x450 layout,
-gesture/crown behavior, sensor permissions, sleep/resume, offline uploads and phone conflicts
-on a physical vivo watch. HTML layout previews are approximate, not a device runtime test.
+Install the matching RPK through BlueOS Studio's watch debugging/install flow. Validate 390x450,
+432x514 and round 466x466 layout, gesture/crown behavior, sensor permissions, sleep/resume,
+offline uploads and phone conflicts on physical vivo watches. HTML layout previews are approximate,
+not a device runtime test.
