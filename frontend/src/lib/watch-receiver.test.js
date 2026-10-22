@@ -113,6 +113,14 @@ describe('watch completed sets and rest clock', () => {
     expect(sendControl.mock.calls[0][0]).toMatchObject({ t: 'rest', leftSec: 460 })
   })
 
+  it('keeps rest rendering at a display-sized cadence and batches a crown focus save', () => {
+    const { workout, writes } = resting()
+    expect(workout.clockPeriod).toBe(500)
+    writes.mockClear()
+    workout.stepSet(1)
+    expect(writes).toHaveBeenCalledOnce()
+  })
+
   it('prompts on the final set without closing, ignores trailing taps and continues once', () => {
     const { workout, sessions, sendEvent } = resting()
     workout.onSkipRest()
@@ -672,6 +680,18 @@ describe('watch business message boundary', () => {
       expect(source('Workout/index.ux')).toContain('ontouchmove="touchMove"')
       expect(source('Workout/index.ux')).toContain('ontouchcancel="touchCancel"')
     })
+
+  it('locks a diagonal gesture to the first deliberate swipe axis', () => {
+    const sessions = session(), rpc = transport(connection()), router = { push: vi.fn() }
+    sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+    const workout = training(sessions, rpc, { router })
+    workout.onInit()
+    workout.touchStart({ touches: [{ clientX: 100, clientY: 180 }] })
+    workout.touchMove({ touches: [{ clientX: 130, clientY: 185 }] })
+    workout.touchEnd({ changedTouches: [{ clientX: 180, clientY: 300 }] })
+    expect(router.push).toHaveBeenCalledWith({ uri: '/ExerciseList' })
+    expect(workout.pageIndex).toBe(0)
+  })
 
   it('ignores taps and canceled gestures and keeps changedTouches compatibility', () => {
     const sessions = session(), rpc = transport(connection())

@@ -214,12 +214,19 @@ export default {
     const t = e.touches && e.touches[0]
     this.touch = t ? { x: t.clientX, y: t.clientY } : null
     this.touchLast = this.touch
+    this.touchAxis = null
   },
 
   touchMove(e) {
     if (!this.touch) return
     const t = e.touches && e.touches[0]
-    if (t) this.touchLast = { x: t.clientX, y: t.clientY }
+    if (t) {
+      this.touchLast = { x: t.clientX, y: t.clientY }
+      if (!this.touchAxis) {
+        const dx = Math.abs(t.clientX - this.touch.x), dy = Math.abs(t.clientY - this.touch.y)
+        if (Math.max(dx, dy) >= 24) this.touchAxis = dx > dy ? 'x' : 'y'
+      }
+    }
   },
 
   touchEnd(e) {
@@ -228,6 +235,7 @@ export default {
     const t = e.changedTouches && e.changedTouches[0] || e.touches && e.touches[0]
     const end = t ? { x: t.clientX, y: t.clientY } : this.touchLast
     const start = this.touch
+    const axisAtRelease = this.touchAxis
     this.touchCancel()
     if (!end) return
     const dx = end.x - start.x
@@ -242,7 +250,8 @@ export default {
       if (dy > 60) this.menuOn = false
       return
     }
-    if (Math.abs(dx) > Math.abs(dy)) {
+    const axis = axisAtRelease || (Math.abs(dx) > Math.abs(dy) ? 'x' : 'y')
+    if (axis === 'x') {
       // 右滑打开动作列表，左滑切换训练与操作页。
       if (dx > 60) this.openExercises()
       else if (dx < -60) this.pageIndex = this.pageIndex ? 0 : 1
@@ -253,7 +262,7 @@ export default {
     }
   },
 
-  touchCancel() { this.touch = null; this.touchLast = null },
+  touchCancel() { this.touch = null; this.touchLast = null; this.touchAxis = null },
 
   closeMenu() { this.menuOn = false },
 
@@ -307,7 +316,6 @@ export default {
     }
     if (nx < 0 || nx >= s.workout.rows.length || ni < 0) return
     s.exIdx = nx; s.setIdx = ni
-    save(s)
     s.focusAt = Date.now(); save(s)
     this.emitEvent({ t: 'focus', sid: s.sid, ex: nx, set: ni + 1, at: s.focusAt, source: 'watch' })
     this.refresh()
@@ -691,7 +699,9 @@ export default {
 
   syncClockTimer() {
     if (this.visible === false) return
-    const period = this.state && this.state.restUntil ? 250 : 1000
+    // The UI displays whole seconds; 500ms keeps expiry responsive without rendering the
+    // complete watch page four times per second during every rest interval.
+    const period = this.state && this.state.restUntil ? 500 : 1000
     if (this.timer && this.clockPeriod === period) return
     if (this.timer) clearInterval(this.timer)
     this.clockPeriod = period
@@ -702,12 +712,14 @@ export default {
     const s = this.state
     if (!s || !s.workout) return
     const currentTime = new Date()
-    this.clockLabel = String(currentTime.getHours()).padStart(2, '0') + ':' + String(currentTime.getMinutes()).padStart(2, '0')
+    const clockLabel = String(currentTime.getHours()).padStart(2, '0') + ':' + String(currentTime.getMinutes()).padStart(2, '0')
+    if (this.clockLabel !== clockLabel) this.clockLabel = clockLabel
     if (Date.now() - (s.segmentStartedAt || s.startedAt) >= 21600000) { loadState(); this.onRemoteEnded(); return }
     const elapsed = Math.max(0, (s.pausedAt || Date.now()) - s.startedAt - (s.pausedMs || 0))
     const mins = Math.floor(elapsed / 60000)
     const secs = Math.floor((elapsed % 60000) / 1000)
-    this.elapsedLabel = mins + ':' + String(secs).padStart(2, '0')
+    const elapsedLabel = mins + ':' + String(secs).padStart(2, '0')
+    if (this.elapsedLabel !== elapsedLabel) this.elapsedLabel = elapsedLabel
 
     const left = s.restUntil ? Math.ceil((s.restUntil - Date.now()) / 1000) : 0
     if (s.restUntil && left <= 0) {
@@ -715,7 +727,8 @@ export default {
       this.refresh()
       return
     }
-    this.restLabel = this.mmss(left)
+    const restLabel = this.mmss(left)
+    if (this.restLabel !== restLabel) this.restLabel = restLabel
     if (this.metricSecond === Math.floor(Date.now() / 1000)) return
     this.metricSecond = Math.floor(Date.now() / 1000)
     this.restTotalLabel = this.mmss(Math.round(s.restTargetSec || 0))
