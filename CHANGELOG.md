@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.6.3 / Watch v0.6.9 (2026-10-23)
+
+- **Workout calories**: the workout detail and completion screens share one calories card, and the history list shows compact calories. Missing values read "not recorded", a real zero stays zero, partial data keeps its note, and every value is labelled as a watch estimate.
+- **AI coach debrief**: pick any saved workout, or the latest 3/5/10 sessions of a routine, preview the selected session, then freeze the selection and statistics into a report snapshot. Later workouts cannot change the target, and a modified or deleted session asks for a new selection.
+- **Coach safety**: decisions are bound to identity with an idempotent outbox, credentials are scoped per provider endpoint, device storage keeps two checksummed slots, streaming responses are capped inside a shared deadline, scope/preflight/consent are validated before a request is charged, and revert is refused after later manual edits.
+- **Watch hardening**: stable entry/set identities with tombstones, unit-aware messages, shared runtime with serialized persistence and a send watchdog, 30-day/500-record retention that protects unconfirmed records, and a session-scoped heart-rate subscription. See `docs/watch-0.6.9.md`.
+- Full-suite failures on Windows remain the documented POSIX permission, missing deployment script and shell-dependent cases; the change-related suites pass.
+
 ## v1.5.17 / Watch v0.5.2 (2026-10-19)
 
 - Completed watch sets show a disabled completed state; undo is an explicit group-menu action. Repeated taps during rest cannot complete the next set.
