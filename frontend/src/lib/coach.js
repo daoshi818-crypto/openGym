@@ -19,6 +19,10 @@ import { mergePlan } from './plan-share.js'
 import { deleteRoutine } from './routines.js'
 import { POLICIES } from './progression.js'
 import { t, tn, getLang, exerciseNameFor } from './i18n.js'
+import { hasCoachConsent } from '../../../api/coach/core/consent.js'
+import { fingerprint } from '../../../api/coach/core/debrief-selection.js'
+import { reviewScopeErrors } from '../../../api/coach/core/scope.js'
+import { scheduleHash } from '../../../api/coach/core/context.js'
 
 // Bumping this re-prompts everyone: it means what we share, or who we share it with, changed.
 // 2: the training line names the session notes, which the payload carries and version 1 never
@@ -74,7 +78,7 @@ export const CATEGORY_TEXT = {
   profile: () => [t('What you tell the Coach'), t('Your intake answers, including any limitations or injuries you describe.')],
   prefs: () => [t('A few preferences'), t('Your unit, your language and which effort scale you log.')]
 }
-export const hasConsent = S => !!S?.coach?.consent?.agreedAt && S.coach.consent.version === CONSENT_VERSION
+export const hasConsent = hasCoachConsent
 
 /* ============================ plan fingerprint ============================ */
 
@@ -175,10 +179,13 @@ export function currentValue(S, change) {
  */
 export function markStale(proposal, S) {
   if (!proposal) return proposal
+  const context = proposal.context
+  const contextStale = !!context && (context.unit !== (S.unit || 'kg') || context.profileRevision !== fingerprint(S.coach?.profile || null))
+  const scopeStale = reviewScopeErrors(proposal.changes, proposal.scope || context?.scope).length > 0
   const planMoved = !!proposal.planHash && proposal.planHash !== planHash(S)
   const changes = (proposal.changes || []).map(c => {
     const r = c.target?.routineId ? findRoutine(S, c.target.routineId) : null
-    let stale = false
+    let stale = contextStale || scopeStale
     if (c.type !== 'add-routine' && c.type !== 'week' && !r) stale = true
     else if (c.target?.exId && !findEx(r, c.target.exId)) stale = true
     else if (c.type === 'week') {
@@ -193,9 +200,9 @@ export function markStale(proposal, S) {
       // changed it — applying would silently overwrite their edit with a stale premise.
       if (cur !== undefined && c.before != null && cur !== c.before && cur !== null) stale = true
     }
-    return { ...c, status: stale ? 'stale' : (c.status === 'stale' ? 'proposed' : c.status || 'proposed') }
+    return { ...c, status: stale || c.status === 'stale' ? 'stale' : c.status || 'proposed' }
   })
-  return { ...proposal, planMoved, changes }
+  return { ...proposal, planMoved, contextStale, scopeStale, changes }
 }
 export const applicable = proposal => (proposal?.changes || []).filter(c => c.status !== 'stale')
 
@@ -273,8 +280,10 @@ export function pushSnapshot(s, proposalId, label) {
  */
 export function revertLast(s) {
   const c = coachOf(s)
-  const snap = (c.snapshots || []).pop()
+  const snap = (c.snapshots || []).at(-1)
   if (!snap) return false
+  if (!snap.afterHash || snap.afterHash !== undoHash(s)) throw new Error(t('Your plan changed after the Coach edit. Undo would overwrite those changes.'))
+  c.snapshots.pop()
   s.routines = clone(snap.routines)
   s.week = clone(snap.week)
   // Snapshots taken before this field existed have nothing to put back.
@@ -282,6 +291,8 @@ export function revertLast(s) {
   appendLog(s, { kind: 'revert', at: Date.now(), proposalId: snap.proposalId, summary: t('Reverted the last Coach changes.') })
   return true
 }
+const undoHash = s => fingerprint({ routines: s.routines, unit: s.unit || 'kg', schedule: scheduleHash(s) })
+function sealSnapshot(s) { const snap = coachOf(s).snapshots?.at(-1); if (snap) snap.afterHash = undoHash(s) }
 export const canRevert = S => !!(S?.coach?.snapshots || []).length
 
 /* ============================ the log ============================ */
@@ -303,7 +314,7 @@ export const logEntry = (S, id) => (S?.coach?.log || []).find(e => e.id === id) 
 export function lightBundle(b) {
   if (!b) return null
   return {
-    name: b.name || '', summary: b.summary || '', week: { ...(b.week || {}) },
+    unit: b.unit || null, name: b.name || '', summary: b.summary || '', week: { ...(b.week || {}) },
     routines: (b.routines || []).map(r => ({
       id: r.id, name: r.name, emoji: r.emoji || '', why: r.why || '',
       ex: (r.ex || []).map(e => ({
@@ -342,6 +353,7 @@ function trim(s) {
  *         coach: 'text', 'applied', 'dismissed', 'reverted', 'error', 'nochange'.
  */
 export function appendChat(s, entry) {
+  if (entry.ref && s.coach?.chat?.some(m => m.ref === entry.ref)) return
   const c = coachOf(s)
   c.chat = [...(c.chat || []), { id: entry.id || uid(), at: entry.at || Date.now(), ...entry }].slice(-CHAT_MAX)
   trim(s)
@@ -397,6 +409,11 @@ export function profileLines(p) {
  */
 export function applyCreatedPlan(s, proposal, { schedule } = {}) {
   validateProposal(proposal)
+  const prior = decisionResult(s, proposal.id)
+  if (prior) return { ...prior, alreadyApplied: true }
+  if (proposal.context?.profileRevision && proposal.context.profileRevision !== fingerprint(s.coach?.profile || null)) throw new Error(t('Your Coach answers changed. Ask for a fresh proposal.'))
+  if (proposal.context && !['kg','lb'].includes(proposal.bundle?.unit)) throw new Error(t('This proposal has no reliable weight unit. Ask for a fresh proposal.'))
+  if (schedule && proposal.context?.scheduleHash !== undefined && proposal.context.scheduleHash !== scheduleHash(s)) throw new Error(t('Your schedule changed. Turn off the schedule switch or ask again.'))
   pushSnapshot(s, proposal.id, t('Before the Coach’s plan'))
   const bundle = proposal.bundle
   // The Coach's `why` texts are for the review screen; they have no place in the routine data.
@@ -408,7 +425,7 @@ export function applyCreatedPlan(s, proposal, { schedule } = {}) {
     routines: bundle.routines.map(r => ({ ...r, why: undefined, ex: r.ex.map(e => ({ ...e, why: undefined, name: undefined })) })),
     customEx: (bundle.customEx || []).map(c => { const { url, media, ...rest } = c || {}; return rest })
   }
-  const res = mergePlan(s, stripped, { schedule })
+  const res = mergePlan(s, stripped, { schedule, idFor: (kind, id) => 'coach-' + fingerprint([proposal.id, kind, id]) })
   // Only when the week actually moved — with the switch off the old schedule still stands, and
   // so do the reschedules made against it.
   if (schedule) sweepDayPlan(s, todayISO())
@@ -417,6 +434,8 @@ export function applyCreatedPlan(s, proposal, { schedule } = {}) {
     summary: proposal.summary || '', routines: res.routines, iteration: proposal.iteration || 1,
     bundle: lightBundle(bundle), scheduled: !!schedule
   })
+  sealSnapshot(s)
+  rememberDecision(s, proposal, { accepted: ['plan'] }, res)
   return res
 }
 
@@ -555,8 +574,13 @@ function need(x) { if (!x) throw new Error('missing target'); return x }
  */
 export function applyChangeSet(s, proposal, acceptedIds) {
   validateProposal(proposal)
+  const prior = decisionResult(s, proposal.id)
+  if (prior) return { ...prior, alreadyApplied: true }
+  const marked = markStale(proposal, s)
   const accepted = new Set(acceptedIds || [])
-  const changes = (proposal.changes || []).filter(c => accepted.has(c.id) && c.status !== 'stale')
+  if (reviewScopeErrors(proposal.changes, proposal.scope || proposal.context?.scope).length) throw new Error(t('The proposal exceeds the selected routine. Ask again.'))
+  if (marked.contextStale || marked.changes.some(c => accepted.has(c.id) && c.status === 'stale' && proposal.changes.find(x => x.id === c.id)?.status !== 'stale')) throw new Error(t('Your plan or Coach answers changed. Ask for a fresh proposal.'))
+  const changes = marked.changes.filter(c => accepted.has(c.id) && c.status !== 'stale')
   if (!changes.length) return { applied: 0 }
 
   pushSnapshot(s, proposal.id, t('Before the Coach’s changes'))
@@ -577,11 +601,15 @@ export function applyChangeSet(s, proposal, acceptedIds) {
     notes: proposal.notes || [], decisions: [...applied, ...rejected]
   })
   coachOf(s).lastReview = { at: Date.now() }
-  return { applied: applied.length, rejected: rejected.length, logId }
+  sealSnapshot(s)
+  const result = { applied: applied.length, rejected: rejected.length, logId }
+  rememberDecision(s, proposal, { accepted: applied.map(c => c.id), rejected: rejected.map(c => c.id) }, result)
+  return result
 }
 
 /** Turned down whole, or expired: recorded so a later review knows not to re-propose it. */
 export function recordDismissal(s, proposal) {
+  const prior = decisionResult(s, proposal.id); if (prior) return prior.logId
   const logId = appendLog(s, {
     kind: proposal.kind === 'create' ? 'create' : 'review', at: Date.now(), proposalId: proposal.id,
     summary: proposal.summary || '', dismissed: true,
@@ -589,18 +617,24 @@ export function recordDismissal(s, proposal) {
     ...(proposal.bundle ? { bundle: lightBundle(proposal.bundle), iteration: proposal.iteration || 1 } : {}),
     decisions: (proposal.changes || []).map(c => decisionOf(c, 'rejected'))
   })
-  if (proposal.kind !== 'create') coachOf(s).lastReview = { at: Date.now() }
+  if (!['create','debrief'].includes(proposal.kind)) coachOf(s).lastReview = { at: Date.now() }
+  rememberDecision(s, proposal, { dismissed: true }, { logId })
   return logId
 }
 
 /** A debrief has no decision to make: it is read, kept, and shown again on request. */
 export function recordDebrief(s, proposal) {
-  return appendLog(s, {
+  const prior = decisionResult(s, proposal.id); if (prior) return prior.logId
+  const logId = appendLog(s, {
     kind: 'debrief', at: Date.now(), proposalId: proposal.id,
+    scope: proposal.scope || null, evidenceSnapshot: proposal.evidenceSnapshot || null,
+    trends: proposal.trends || [], dataLimitations: proposal.dataLimitations || [],
     workout: proposal.workout || null,
     summary: proposal.summary || '', score: proposal.score ?? null,
     highlights: proposal.highlights || [], watch: proposal.watch || [], nextTime: proposal.nextTime || []
   })
+  rememberDecision(s, proposal, { accepted: ['debrief'] }, { logId })
+  return logId
 }
 
 /* ============================ display helpers ============================ */
@@ -662,4 +696,19 @@ export function changeValues(c, S) {
   if (['add-exercise', 'add-routine', 'reorder'].includes(c.type)) return null
   if (['remove-exercise', 'remove-routine'].includes(c.type)) return null
   return { before: fmt(c.before), after: fmt(c.after) }
+}
+
+// Decision and acknowledgement share the same state transaction as the plan edit.
+export function decisionResult(s, id) {
+  if (!id) return null
+  return (s.coach?.decisions || []).find(d => d.proposalId === id)?.result || null
+}
+function rememberDecision(s, p, body, result) {
+  const c = coachOf(s), now = Date.now()
+  const requestId = uid()
+  c.decisions = [...(c.decisions || []).filter(d => now - d.at < 21 * 864e5), { proposalId: p.id, requestId, at: now, result }].slice(-100)
+  c.outbox = [...(c.outbox || []).filter(d => d.proposalId !== p.id), { proposalId: p.id, requestId, ...(p.originIdentity ? { originIdentity: p.originIdentity } : {}), origin: p.origin || (String(p.id).startsWith('local-') ? 'local' : String(p.id).startsWith('demo-') ? 'demo' : 'server'), ...body }].slice(-100)
+}
+export function acknowledgeDecision(s, requestId) {
+  if (s.coach) s.coach.outbox = (s.coach.outbox || []).filter(d => d.requestId !== requestId)
 }

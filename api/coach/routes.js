@@ -24,7 +24,7 @@ const USER_ERROR = {
   shared: cfgStore.SHARED_ACCOUNT_REFUSAL,
   unprivileged: 'the Coach is switched off on this instance for safety reasons'
 };
-const HTTP_FOR = { off: 503, busy: 409, cap: 429, consent: 403, shared: 409, unprivileged: 503 };
+const HTTP_FOR = { off: 503, busy: 409, cap: 429, pending_mismatch: 409, selection_stale: 409, noworkout: 409, consent: 403, shared: 409, unprivileged: 503 };
 
 export function coachRoutes({ json, readBody, readSession, requireAdmin }) {
   /** Every user route starts the same way: signed in, feature on, feature reachable. The class
@@ -63,7 +63,7 @@ export function coachRoutes({ json, readBody, readSession, requireAdmin }) {
       const user = guard(req, res); if (!user) return;
       // The chat composer's maxLength rides on this poll rather than a one-off fetch, so an
       // admin raising or lowering the limit reaches an open chat within one poll cycle.
-      json(res, 200, { ...jobs.status(user.id), maxMessageLen: cfgStore.load().maxMessageLen });
+      json(res, 200, { ...jobs.status(user.id), debriefSelectionVersion: 2, decisionVersion: 2, scopeVersion: 2, maxMessageLen: cfgStore.load().maxMessageLen });
     },
 
     'POST /api/coach/plan': async (req, res) => {
@@ -88,7 +88,7 @@ export function coachRoutes({ json, readBody, readSession, requireAdmin }) {
       const body = await readBody(req);
       try {
         const job = jobs.enqueue(user.id, {
-          kind: 'review',
+          kind: 'review', scope: body.scope,
           lang: body.lang,
           note: body.note ? String(body.note).slice(0, cfgStore.MAX_MESSAGE_LEN_CEILING) : null
         });
@@ -101,7 +101,8 @@ export function coachRoutes({ json, readBody, readSession, requireAdmin }) {
       const user = guard(req, res); if (!user) return;
       const body = await readBody(req);
       try {
-        const job = jobs.enqueue(user.id, { kind: 'debrief', lang: body.lang, workoutId: body.workoutId ? String(body.workoutId).slice(0, 40) : null });
+        const selection = body.debriefSelection && typeof body.debriefSelection === 'object' ? body.debriefSelection : null;
+        const job = jobs.enqueue(user.id, { kind: 'debrief', lang: body.lang, workoutId: body.workoutId ? String(body.workoutId).slice(0, 64) : null, debriefSelection: selection });
         json(res, 202, { job });
       } catch (e) { failEnqueue(res, e); }
     },
@@ -123,11 +124,12 @@ export function coachRoutes({ json, readBody, readSession, requireAdmin }) {
     'POST /api/coach/pending/resolve': async (req, res) => {
       const user = guard(req, res); if (!user) return;
       const body = await readBody(req);
-      json(res, 200, jobs.resolvePending(user.id, {
+      try { json(res, 200, jobs.resolvePending(user.id, {
+        proposalId: body.proposalId, requestId: body.requestId,
         accepted: Array.isArray(body.accepted) ? body.accepted : [],
         rejected: Array.isArray(body.rejected) ? body.rejected : [],
         dismissed: !!body.dismissed
-      }));
+      })); } catch (e) { failEnqueue(res, e); }
     },
 
     // Consent withdrawn, or the profile turned the Coach off: drop everything held server-side

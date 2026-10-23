@@ -1,3 +1,5 @@
+import { coachAvailable } from './lib/coach.js'
+import { DEMO } from './lib/demo.js'
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
@@ -68,6 +70,8 @@ import { workoutCardModel, layoutWorkoutCard, drawWorkoutCard, viewAspect, CARD_
 import { copyText } from './lib/clipboard.js'
 import { queueRemaining, pinState } from './lib/queue.js'
 import { DAY_NOTE_TAGS, DAY_NOTE_LABEL, DAY_NOTE_ICON, dayNoteOf, dayNoteLine, canNoteDay, withDayNote } from './lib/day-notes.js'
+import WorkoutCalories from './components/WorkoutCalories.jsx'
+import { workoutRefOf } from './lib/debrief-selection.js'
 
 const S = () => useStore.getState().S
 const update = (...a) => useStore.getState().update(...a)
@@ -2423,9 +2427,11 @@ function WorkoutDurationEdit({ w, onDone, close }) {
 export const workoutDurationSheet = (w, onDone) => ui().openSheet(close => <WorkoutDurationEdit w={w} onDone={onDone} close={close} />)
 
 function WorkoutDetail({ w, close }) {
+  const coachEntry = useStore(s => MOBILE || coachAvailable(s.config, s.user, { demo: DEMO }))
   const noteRef = useRef(null)
   const onNoteFocus = useSheetKeyboard(noteRef)
   const st = useStore(s => s.S)
+  const savedWorkout = st.workouts.find(x => sameWorkout(x, w)) || w
   const update = useStore(s => s.update)
   // The session note is editable here rather than only at the finish sheet: what you want to
   // record about a session is often clearer once you have looked at what you actually did.
@@ -2509,6 +2515,12 @@ function WorkoutDetail({ w, close }) {
   return <>
     <h3>{w.name}</h3>
     <div className="muted small" style={{ marginBottom: 12 }}>{[fmtDate(w.d, true), ...durPart(w.end - w.start), fmtVol(w.vol, st.unit), ...(w.bw ? [fmtNum(w.bw) + ' ' + st.unit] : [])].join(' · ')}</div>
+    <WorkoutCalories workout={savedWorkout} />
+    {coachEntry && <Button icon="sparkles" style={{ marginBottom: 12 }} onClick={() => {
+      saveNote(); initial.current = latest.current.trim().slice(0, NOTE_MAX)
+      useUI.setState({ coachDebriefIntent: workoutRefOf(savedWorkout) })
+      closeThenNav(close, '/coach')
+    }}>{t('Debrief this workout')}</Button>}
     {grouped ? groups.map(g => {
       const r = g.rid ? st.routines.find(x => x.id === g.rid) : null
       const items = g.items.map(i => w.entries[i])
@@ -2538,7 +2550,6 @@ function WorkoutDetail({ w, close }) {
       try { update(s => { resumeCompletedSession(s, w) }); closeThenNav(close, '/workout') }
       catch (error) { toast(t(error.message)) }
     }}>继续本次训练</Button>
-    {w.calorieSource === 'watch_estimate' && <p className="small muted">手表估算热量 {Math.round(w.calories || 0)} 千卡</p>}
     {/* The editor starts from the record as it is, so a note typed here goes in first — the same
         flush the date row does, and the unmount hook then has nothing left to write over it. */}
     <Button icon="pencil" disabled={!!st.active} onClick={() => {
@@ -2746,7 +2757,8 @@ export function WorkoutRow({ w, onClick }) {
   return <div className="item" {...tappable(onClick)}>
     <span className="lrow-i" style={{ width: 34, height: 34, borderRadius: 8, fontSize: 19 }}><Icon name={glyph} /></span>
     <div className="grow"><div className="tt">{w.name}</div>
-      <div className="ss">{[fmtDate(w.d, true), ...durPart(w.end - w.start), tn('{0} set', '{0} sets', setsDone(w)), fmtVol(w.vol, st.unit)].join(' · ')}</div></div>
+      <div className="ss">{[fmtDate(w.d, true), ...durPart(w.end - w.start), tn('{0} set', '{0} sets', setsDone(w)), fmtVol(w.vol, st.unit)].join(' · ')}</div>
+      <WorkoutCalories workout={w} variant="inline" /></div>
     {mediaN > 0 && <span className="wrow-media" title={tn('{0} photo or video', '{0} photos or videos', mediaN)} aria-label={tn('{0} photo or video', '{0} photos or videos', mediaN)}><Icon name="image" />{mediaN}</span>}
     {w.prs && w.prs.length > 0 && <span className="pr"><Icon name="trophy" />{w.prs.length} PR</span>}
     <Icon name="chevronRight" className="chev" />
@@ -3305,6 +3317,7 @@ function CardioDone({ st, w }) {
 }
 
 function FinishSummary({ w, prs, e1prs = [], close }) {
+  const coachEntry = useStore(s => MOBILE || coachAvailable(s.config, s.user, { demo: DEMO }))
   const st = useStore(s => s.S)
   const saved = st.workouts.find(x => sameWorkout(x, w)) || w
   return <div style={{ textAlign: 'center', padding: '8px 0' }}>
@@ -3316,7 +3329,11 @@ function FinishSummary({ w, prs, e1prs = [], close }) {
       <div className="tile"><div className="l">{t('Sets')}</div><div className="v" style={{ fontSize: '1.1rem' }}>{setsWorkCount(setsDone(w), workSetsDone(w))}</div></div>
       <div className="tile"><div className="l">{t('PRs')}</div><div className="v" style={{ fontSize: 20 }}>{prs.length || '–'}</div></div>
     </div>
-    {saved.calorieSource === 'watch_estimate' && <p className="small muted">手表估算热量 {Math.round(saved.calories || 0)} 千卡</p>}
+    <WorkoutCalories workout={saved} />
+    {coachEntry && <Button icon="sparkles" style={{ marginBottom: 12 }} onClick={() => {
+      useUI.setState({ coachDebriefIntent: workoutRefOf(saved) })
+      closeThenNav(close, '/coach')
+    }}>{t('Debrief this workout')}</Button>}
     {(prs.length > 0 || e1prs.length > 0) && <div style={{ textAlign: 'start', marginBottom: 12 }}>
       {prs.map(id => <div key={id} className="small accent row" style={{ gap: 5 }}><Icon name="trophy" style={{ fontSize: 13 }} />{t('New PR:')} <span className={exerciseNameClass(EXIDX[id])}>{EXIDX[id] ? exerciseNameFor(EXIDX[id]) : id}</span></div>)}
       {e1prs.map(p => <div key={p.id} className="small accent row" style={{ gap: 5 }}><Icon name="chartLine" style={{ fontSize: 13 }} />{t('Best estimated 1RM:')} <span className={exerciseNameClass(EXIDX[p.id])}>{EXIDX[p.id] ? exerciseNameFor(EXIDX[p.id]) : p.id}</span> · {fmtNum(p.est)} {st.unit}</div>)}

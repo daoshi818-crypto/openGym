@@ -111,4 +111,11 @@ export const DEBRIEF_SCHEMA = {
   required: ['coach_contract', 'summary', 'score']
 };
 
-export const SCHEMAS = { review: REVIEW_SCHEMA, create: CREATE_SCHEMA, refine: CREATE_SCHEMA, debrief: DEBRIEF_SCHEMA };
+export const PLAN_DEBRIEF_SCHEMA = { type: 'object', properties: {
+  coach_contract: { type: 'integer' }, summary: STR, highlights: STRINGS, watch: STRINGS,
+  nextTime: STRINGS, dataLimitations: STRINGS,
+  trends: { type: 'array', maxItems: 5, items: { type: 'object', properties: {
+    text: STR, sessionRefs: STRINGS, exerciseId: STR
+  }, required: ['text', 'sessionRefs'] } }
+}, required: ['coach_contract', 'summary', 'trends', 'dataLimitations'] };
+export const SCHEMAS = { review: REVIEW_SCHEMA, create: CREATE_SCHEMA, refine: CREATE_SCHEMA, debrief: DEBRIEF_SCHEMA, debriefPlan: PLAN_DEBRIEF_SCHEMA };

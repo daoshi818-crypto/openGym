@@ -64,7 +64,7 @@ describe('coach-demo — the job machine', () => {
   it('answers 2.2 s later, not before — the job is visible for the whole wait', () => {
     const S = state()
     const { job } = demoPlan(S, null)
-    expect(job).toMatchObject({ id: 'demo-create', kind: 'create', state: 'running', startedAt: NOW })
+    expect(job).toMatchObject({ id: expect.stringMatching(/^demo-create-/), kind: 'create', state: 'running', startedAt: NOW })
     expect(demoStatus().job).toBe(job)
 
     vi.advanceTimersByTime(DELAY - 1)
@@ -280,7 +280,7 @@ describe('coach-demo — the debrief', () => {
   it('reads the workout it was named, and the latest one when it was named nothing', () => {
     const S = state({ workouts: [workout({ id: 'old', d: day(9) }), workout({ id: 'new', d: day(1) })] })
     expect(think(() => demoDebrief(S, 'old')).workout.id).toBe('old')
-    expect(think(() => demoDebrief(S, 'nope')).workout.id).toBe('new')
+    expect(() => demoDebrief(S, 'nope')).toThrow('noworkout')
     expect(think(() => demoDebrief(S)).workout.id).toBe('new')
   })
 
@@ -303,9 +303,9 @@ describe('coach-demo — the debrief', () => {
     expect(p.workout.vol).toBe(3 * 60 * 8)                           // the 20×10 warm-up is not in it
   })
 
-  it('trusts a stored volume over recomputing it', () => {
+  it('uses the same reproducible set metrics as the live provider', () => {
     const p = think(() => demoDebrief(state({ workouts: [workout({ vol: 1234.4 })] })))
-    expect(p.workout.vol).toBe(1234)
+    expect(p.workout.vol).toBe(1440)
   })
 
   it('warns about the clock only past eighty minutes, and about missing effort otherwise', () => {

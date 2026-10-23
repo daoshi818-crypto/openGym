@@ -58,18 +58,21 @@ const REMOTE_FILE = 'opengym-remote.json'
 
 // Small JSON files in the app's private data directory, for device facts that must not ride
 // in S (which syncs and exports): the pairing, and how the Coach runs on this phone.
-export async function readJsonFile(name) {
+export async function readJsonFile(name, { strict = false } = {}) {
   try {
     const { Filesystem, Directory, Encoding } = await import('@capacitor/filesystem')
     const r = await Filesystem.readFile({ path: name, directory: Directory.Data, encoding: Encoding.UTF8 })
     return JSON.parse(r.data)
-  } catch (e) { return null }
+  } catch (e) {
+    if (strict && !/does not exist|not found|no such file|ENOENT|OS-PLUG-FILE-0008/i.test(String(e?.message || e))) throw e
+    return null
+  }
 }
-export async function writeJsonFile(name, data) {
+export async function writeJsonFile(name, data, { strict = false } = {}) {
   try {
     const { Filesystem, Directory, Encoding } = await import('@capacitor/filesystem')
     await Filesystem.writeFile({ path: name, directory: Directory.Data, data: JSON.stringify(data), encoding: Encoding.UTF8 })
-  } catch (e) { /* not a Capacitor build, or the write failed — the caller's in-memory copy stands */ }
+  } catch (e) { if (strict) throw e }
 }
 
 export async function loadRemoteFile() {

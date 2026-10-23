@@ -9,11 +9,12 @@ import { applyEdit, restOf, applyRest, applyFocus } from '../../../watch-app/src
 
 function watch() {
   const memory = {}
-  const storage = { getSync: ({ key }) => structuredClone(memory[key]), set: ({ key, value }) => { memory[key] = structuredClone(value) } }
+  const storage = { getSync: ({ key }) => structuredClone(memory[key]), set: ({ key, value, success }) => { memory[key] = structuredClone(value); success?.() } }
   let code = readFileSync(new URL('../../../watch-app/src/lib/session.js', import.meta.url), 'utf8')
     .replace(/^import .*\r?\n/gm, '').replace(/export function /g, 'function ')
   code += '\n;({startSession,loadState,save,applySync,replacePlan,setRowValue,addSet,removeSet,toggleSet,endSession,closeSession})'
-  return { memory, ...vm.runInNewContext(code, { storage, Date, console, applyEdit, applyRest }) }
+  const shared = {}
+  return { memory, ...vm.runInNewContext(code, { storage, Date, console, applyEdit, applyRest, runtime: () => shared, readStored: key => storage.getSync({key}), writeStored: (key,value) => storage.set({key,value}) }) }
 }
 const exercise = name => ({ name, sets: 2, reps: '8', weight: '50', restSec: 90 })
 const phone = () => ({ workouts: [], active: { start: 1000, name: 'Test', cur: 0, entries: [
@@ -86,8 +87,7 @@ describe('watch durable state and navigation', () => {
     expect(w.loadState().active).toBe(false)
     expect(w.loadState().active).toBe(false)
     expect(w.memory.closed_sessions).toContain('expired')
-    expect(w.memory.rpc_outbox).toHaveLength(1)
-    expect(w.memory.rpc_outbox[0].msg.disposition).toBe('abandoned')
+    expect(w.memory.session_state.expiredClose).toMatchObject({ t: 'session_close', disposition: 'abandoned' })
     expect(w.memory.summary_last.calories).toBe(10)
   })
 })
@@ -114,21 +114,22 @@ describe('phone reconciliation outside the workout view', () => {
     const S = phone(), ev = { sid: '1000', t: 'add_set', ex: 0, set: 3, sets: 3, at: 10, eventId: 'a' }
     life(S).receive(ev); life(S).receive(ev)
     expect(S.active.entries[0].sets).toHaveLength(3)
-    applyWatchEvent(S, { sid: '1000', t: 'weight', ex: 0, set: 3, weight: '75', at: 20, eventId: 'b' })
-    applyWatchEvent(S, { sid: '1000', t: 'weight', ex: 0, set: 3, weight: '60', at: 19, eventId: 'c' })
+    const entry = S.active.entries[0], ids = { entryInstanceId: entry.entryInstanceId, setId: entry.sets[2].setId }
+    applyWatchEvent(S, { ...ids, sid: '1000', t: 'weight', ex: 0, set: 3, weight: '75', at: 20, eventId: 'b' })
+    applyWatchEvent(S, { ...ids, sid: '1000', t: 'weight', ex: 0, set: 3, weight: '60', at: 19, eventId: 'c' })
     expect(S.active.entries[0].sets[2].w).toBe(75)
     expect(watchSnapshotOf(S).ackedEvents).toContain('a')
   })
   it('starts an offline cached plan exactly once and refuses to replace another session', () => {
     const S = phone(), plan = { id: 'p', name: 'Plan', entries: structuredClone(S.active.entries) }
-    expect(startFromWatch(S, { sid: 'w1', plan })).toBe('conflict')
+    expect(startFromWatch(S, { sid: 'w1', plan, startedAt: Date.now() })).toBe('conflict')
     S.active = null
-    expect(startFromWatch(S, { sid: 'w1', plan })).toBe('started')
+    expect(startFromWatch(S, { sid: 'w1', plan, startedAt: Date.now() })).toBe('started')
     const first = S.active
-    expect(startFromWatch(S, { sid: 'w1', plan })).toBe('started')
+    expect(startFromWatch(S, { sid: 'w1', plan, startedAt: Date.now() })).toBe('started')
     expect(S.active).toBe(first)
     S.active = null; S.watchClosed = { w1: { disposition: 'discarded' } }
-    expect(startFromWatch(S, { sid: 'w1', plan })).toBe('closed')
+    expect(startFromWatch(S, { sid: 'w1', plan, startedAt: Date.now() })).toBe('closed')
   })
   it.each(['discarded', 'abandoned'])('closes %s without a record or summary', disposition => {
     const S = phone(), app = life(S)

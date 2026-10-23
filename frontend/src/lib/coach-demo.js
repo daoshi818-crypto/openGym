@@ -1,3 +1,7 @@
+import { build as buildPayload } from '../../../api/coach/core/payload.js'
+import { legacySelection, resolveDebriefSelection, sortedWorkouts } from '../../../api/coach/core/debrief-selection.js'
+import { debriefMetadata } from '../../../api/coach/core/debrief-report.js'
+import { coachContext } from '../../../api/coach/core/context.js'
 // The Coach, in the demo build.
 //
 // The GitHub Pages demo has no backend at all, so there is nothing to run a CLI and nothing
@@ -33,8 +37,8 @@ const iso = d => d.toISOString().slice(0, 10)
 const reviewable = S => (S.routines || []).find(r => (r.ex || []).length >= 2)
 
 /** A change-set that reads like a real one, aimed at whatever the demo profile actually has. */
-function buildReview(S) {
-  const routine = reviewable(S)
+function buildReview(S, scope) {
+  const routine = scope ? S.routines.find(r => r.id === scope.routineId) : reviewable(S)
   if (!routine) return null
   const reps = (routine.ex || []).filter(e => modeOf(e) === 'reps')
   const first = reps[0] || routine.ex[0]
@@ -63,14 +67,14 @@ function buildReview(S) {
     before: second.sets ?? 3, after: Math.max(1, (second.sets ?? 3) - 1),
     why: t('Sessions have been running about fifteen minutes over. This is the accessory with the least to lose from one set fewer.')
   })
-  if (other) changes.push({
+  if (other && !scope) changes.push({
     id: 'd3', type: 'week', target: { weekday: 6 }, before: null, after: other.id,
     why: t('You have moved this session to Saturday three weeks running. Better the plan says so than that you keep overriding it.')
   })
 
   return {
     id: 'demo-review', kind: 'review', createdAt: Date.now(), expiresAt: Date.now() + 864e5,
-    planHash: planHash(S), iteration: 1,
+    planHash: planHash(S), context: coachContext(S, planHash(S), scope), scope: scope || null, iteration: 1,
     summary: t('Three things worth changing, and one worth knowing about. Everything else is working: the squat and the pulls are both progressing on schedule.'),
     evidence: { from: sessions[0]?.d || iso(new Date(Date.now() - 28 * 864e5)), to: sessions.at(-1)?.d || iso(new Date()), sessions: sessions.length || 9 },
     changes,
@@ -111,7 +115,7 @@ function buildPlan(S, intake) {
     planHash: planHash(S),
     summary: t('A two-day rotation across three sessions a week, built around the equipment you listed. Compounds first, one pull for every press, and enough overlap between the days that nothing goes two weeks without being trained.'),
     bundle: {
-      opengym_plan: 1, name: t('Coach plan'),
+      opengym_plan: 1, unit: S.unit || 'kg', name: t('Coach plan'),
       summary: t('A two-day rotation across three sessions a week, built around the equipment you listed. Compounds first, one pull for every press, and enough overlap between the days that nothing goes two weeks without being trained.'),
       basedOn: (S.workouts || []).length ? t('Based on the training already in this demo profile.') : t('No training history yet, so starting conservatively.'),
       week, routines, customEx: []
@@ -121,8 +125,8 @@ function buildPlan(S, intake) {
 
 /** One session, read back with its own numbers — no plan changes, just what a coach would say after. */
 function buildDebrief(S, workoutId) {
-  const all = (S.workouts || []).filter(w => w && w.d)
-  const w = all.find(x => x.id === workoutId) || all[all.length - 1]
+  const all = sortedWorkouts(S)
+  const w = workoutId ? all.find(x => x.id === workoutId) : all[all.length - 1]
   if (!w) return null
   // workoutVolume() reads `w.entries` and `e.sets` without a guard; every other line here
   // tolerates both being absent. A workout carrying a date and nothing else therefore threw
@@ -173,7 +177,7 @@ export const demoStatus = () => ({ job, pending, cap: { used: 0, limit: 0 }, las
 
 function start(kind, make) {
   if (job) throw Object.assign(new Error(t('The Coach is already thinking about your training.')), { status: 409 })
-  job = { id: 'demo-' + kind, kind, state: 'running', startedAt: Date.now() }
+  job = { id: 'demo-' + kind + '-' + (globalThis.crypto?.randomUUID?.() || Date.now() + '-' + Math.random().toString(36).slice(2)), kind, state: 'running', startedAt: Date.now() }
   lastError = null
   clearTimeout(timer)
   // A builder that throws still has to end the job: left uncaught, one throw kept `job` at
@@ -182,18 +186,18 @@ function start(kind, make) {
   // job-ended effect writes the same error line it would for them. `nostate` because the only
   // thing a builder can trip over is the shape of the profile's own data.
   timer = setTimeout(() => {
-    try { pending = make() }
+    try { const result = make(); pending = result ? { ...result, id: job.id } : null }
     catch (e) { lastError = { errorClass: 'nostate', detail: String(e && e.message || e) } }
     finally { job = null }
   }, DELAY)
   return { job }
 }
-export const demoReview = S => {
+export const demoReview = (S, scope) => {
   // Refused before the job starts, the way demoDebrief refuses with no workout: without a
   // two-exercise routine buildReview has nothing to aim at, and a job that runs the whole wait
   // and ends with neither a proposal nor an error reads as the Coach ignoring you.
   if (!reviewable(S)) throw Object.assign(new Error(t('There’s no routine to review yet. Build one with at least two exercises first.')), { status: 409, code: 'noroutine' })
-  return start('review', () => buildReview(S))
+  return start('review', () => buildReview(S, scope))
 }
 export const demoPlan = (S, intake) => start('create', () => buildPlan(S, intake))
 // A refine re-reads the saved answers, as the server's payload does when a refine carries no
@@ -203,11 +207,25 @@ export const demoRefine = S => start('create', () => {
   const p = buildPlan(S, S.coach?.profile || null)
   return { ...p, iteration: (pending?.iteration || 1) + 1, summary: t('Revised as you asked. Everything you did not question is exactly as it was.') + ' ' + p.summary }
 })
-export const demoDebrief = (S, workoutId) => {
-  if (!(S.workouts || []).some(w => w && w.d)) throw Object.assign(new Error(t('There’s no workout to look at yet. Log one first.')), { status: 409, code: 'noworkout' })
-  return start('debrief', () => buildDebrief(S, workoutId))
+export const demoDebrief = (S, selectionOrId) => {
+  if (!sortedWorkouts(S).length) throw Object.assign(new Error(t('There’s no workout to look at yet. Log one first.')), { code: 'noworkout', status: 409 })
+  const frozenState = JSON.parse(JSON.stringify(S))
+  const selection = selectionOrId && typeof selectionOrId === 'object' ? selectionOrId : legacySelection(frozenState, selectionOrId)
+  const { records } = resolveDebriefSelection(frozenState, selection)
+  const payload = buildPayload(frozenState, { handle: 'demo', kind: 'debrief', debriefSelection: selection })
+  return start('debrief', () => {
+    const metadata = debriefMetadata(payload)
+    const single = buildDebrief({ ...frozenState, workouts: [records.at(-1)] }, records.at(-1).id)
+    return { ...single, ...metadata, id: 'demo-debrief-' + Date.now(),
+      ...(metadata.scope.mode === 'plan' ? { score: null, trends: [], dataLimitations: [t('This demo summarizes the selected records. It does not infer a training trend.')],
+        summary: t('{0} workouts · {1} to {2}', records.length, metadata.scope.from, metadata.scope.to),
+        highlights: [t('{0} sets logged.', metadata.evidenceSnapshot.totals.sets)], watch: [], nextTime: [] } : {}) }
+  })
 }
-export const demoResolve = () => { pending = null; return { ok: true } }
+export const demoResolve = body => {
+  if (body && pending && body.proposalId !== pending.id) throw Object.assign(new Error('pending_mismatch'), { code: 'pending_mismatch' })
+  pending = null; return { ok: true }
+}
 export const demoDisclosure = () => ({
   provider: 'demo', providerLabel: t('the configured AI provider'),
   categories: ['plan', 'training', 'bodyweight', 'profile', 'prefs'], version: 1

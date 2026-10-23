@@ -1,3 +1,4 @@
+import { isSegmentAtLeast, workoutCaloriesOf } from './workout-calories.js'
 import { legacySyncKey } from './workout-date.js'
 
 export const watchSidOf = active => active?.watchSid || (active?.start ? String(active.start) : '')
@@ -30,11 +31,11 @@ export function saveResumedWorkout(state, active, completed) {
   if (i < 0) throw new Error('Workout deleted')
   const segments = { ...state.workouts[i].watchSegments, ...completed.watchSegments }
   for (const [sid, summary] of Object.entries(state.workouts[i].watchSegments || {})) {
-    if (!segments[sid] || summary.at > segments[sid].at) segments[sid] = summary
+    if (!segments[sid] || isSegmentAtLeast(summary, segments[sid])) segments[sid] = summary
   }
   const record = { ...state.workouts[i], ...completed, id: active.resumeWorkoutId,
     ...(Object.keys(segments).length ? { watchSegments: segments,
-      calories: Object.values(segments).reduce((n, s) => n + s.calories, 0), calorieSource: 'watch_estimate' } : {}) }
+      calories: workoutCaloriesOf({ watchSegments: segments }).kcal, calorieSource: 'watch_estimate' } : {}) }
   state.workouts[i] = record
   return record
 }

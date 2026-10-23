@@ -1,3 +1,4 @@
+import { ensureWatchIdentity } from '../lib/watch-identity.js'
 import { create } from 'zustand'
 import { api, setRemoteAuth } from '../lib/api.js'
 import { localTZ } from '../lib/format.js'
@@ -1317,7 +1318,12 @@ export const useStore = create((set, get) => {
     // provider, model, baseUrl } from lib/coach-device.js. Never the key, never a proposal.
     coachLocal: null,
     async setCoachLocal(patch) {
-      set({ coachLocal: coachDeviceSettings(await saveCoachDevice(patch)) })
+      const before = get().coachLocal
+      if (['mode','provider','baseUrl','model'].some(k => Object.hasOwn(patch, k) && patch[k] !== before?.[k])) {
+        const local = await import('../lib/coach-local.js')
+        await local.cancelLocalJob()
+      }
+      set({ coachLocal: coachDeviceSettings(await saveCoachDevice(patch)), coachStorageError: null })
     },
 
     // Mutate a draft of S via producer fn, then persist + schedule sync. Every routine the change
@@ -1326,6 +1332,11 @@ export const useStore = create((set, get) => {
       const prev = get().S
       const S = clone(prev)
       mut(S)
+      if (S.active && prev.active && watchSidOf(prev.active) === watchSidOf(S.active)) {
+        const live = new Set((S.active.entries || []).flatMap(e => (e.sets || []).map(r => r.setId)).filter(Boolean))
+        S.active.watchRemovedSets = [...new Set([...(S.active.watchRemovedSets || []), ...(prev.active.entries || []).flatMap(e => (e.sets || []).map(r => r.setId)).filter(id => id && !live.has(id))])].slice(-4000)
+      }
+      ensureWatchIdentity(S.active)
       if (prev.active && !prev.active.editingWorkoutId && watchSidOf(prev.active) !== watchSidOf(S.active)) {
         const sid = watchSidOf(prev.active)
         if (sid && !S.watchClosed?.[sid]) {
@@ -1852,7 +1863,8 @@ export const useStore = create((set, get) => {
         const remote = await loadRemote()
         // Before the first request: a server behind Cloudflare Access answers nothing without it.
         await loadCfAccess({ pairedBase: remote?.mode === 'remote' ? remote.base : '' })
-        set({ coachLocal: coachDeviceSettings(await loadCoachDevice()) })
+        try { set({ coachLocal: coachDeviceSettings(await loadCoachDevice()), coachStorageError: null }) }
+        catch (e) { set({ coachLocal: { mode: 'off' }, coachStorageError: String(e?.message || e) }) }
         if (remote?.mode === 'remote') {
           setRemoteAuth(remote.base, remote.token)
           pairedBase = remote.base || null

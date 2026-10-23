@@ -2011,7 +2011,7 @@ function ActiveWorkout() {
     update(s => {
       if (!s.active || !['w', 'r', 'reps'].includes(f)) return
       s.active.watchVersions ||= {}
-      s.active.watchVersions[[idx, set, f === 'w' ? 'weight' : 'reps'].join(':')] = at
+      s.active.watchVersions[[s.active.entries[idx].entryInstanceId || idx, s.active.entries[idx].sets[i].setId || set, f === 'w' ? 'weight' : 'reps'].join(':')] = at
     })
     if (f === 'w') pushWeightToWatch(sid, idx, set, v)
     else if (f === 'r' || f === 'reps') pushRepsToWatch(sid, idx, set, v)

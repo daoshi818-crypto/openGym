@@ -26,7 +26,7 @@ import { MOBILE } from '../lib/mobile.js'
 import {
   coachAvailable, hasConsent, emptyCoach, appendChat, recordTiming, estimateMs, profileLines,
   markStale, applicable, applyChangeSet, applyCreatedPlan, recordDismissal, recordDebrief, logEntry,
-  changeTitle, changeValues, exName, canRevert, revertLast
+  changeTitle, changeValues, exName, canRevert, revertLast, acknowledgeDecision
 } from '../lib/coach.js'
 import { insightsFor, sessionInsights } from '../lib/coach-insights.js'
 import { useCoachStatus, requestReview, requestDebrief, requestPlan, refinePlan, resolvePending, cohortStats, setCohortShare, jobErrorText, awaitedJob, settleAwaited, JOB_ERRORS } from '../lib/coach-api.js'
@@ -35,6 +35,9 @@ import Icon from '../components/Icon.jsx'
 import { glyphOf } from '../lib/glyphs.js'
 import LineChart from '../components/LineChart.jsx'
 import { Button, Check, Switch, Section, Row, SelectRow } from '../components/ui.jsx'
+import CoachDebriefPicker from '../components/CoachDebriefPicker.jsx'
+import { selectionForWorkout, selectionLabel, resolveWorkoutRef, sortedWorkouts, resolveDebriefSelection } from '../lib/debrief-selection.js'
+import { workoutDetailSheet } from '../sheets.jsx'
 import '../coach.css'
 
 export default function CoachChat() {
@@ -47,12 +50,15 @@ export default function CoachChat() {
   const storeReady = useStore(s => s.ready)
   const toast = useUI(s => s.toast)
   const openSheet = useUI(s => s.openSheet)
-  const { job, pending, cap, loading, lastError, last, refresh, maxMessageLen } = useCoachStatus(true)
+  const { job, pending, cap, loading, lastError, last, refresh, maxMessageLen, isStale, lastSuccessfulAt } = useCoachStatus(true)
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const endRef = useRef(null)
   const prevJob = useRef(null)
+  const composing = useRef(false)
+  const compositionEndedAt = useRef(0)
   const coachMode = coachLocal?.mode
+  const debriefIntent = useUI(s => s.coachDebriefIntent)
 
   const ok = coachAvailable(config, user, { demo: DEMO, mobile: MOBILE, coachMode })
   const ready = ok && hasConsent(S) && !!S.coach?.profile
@@ -60,7 +66,7 @@ export default function CoachChat() {
   // empty state, decide there is no consent, and bounce a consenting user into the intake.
   useEffect(() => {
     if (!storeReady) return
-    if (!ok) nav('/home', { replace: true })
+    if (!ok) nav(MOBILE && debriefIntent ? '/coach/setup' : '/home', { replace: true })
     else if (!ready) nav('/coach/intake', { replace: true })
   }, [storeReady, ok, ready])
 
@@ -95,6 +101,20 @@ export default function CoachChat() {
   }, [job, pending, loading, last?.id])
 
   useEffect(() => { if (typeof endRef.current?.scrollIntoView === 'function') endRef.current.scrollIntoView({ block: 'end' }) }, [S.coach?.chat?.length, !!job, !!pending])
+  useEffect(() => {
+    if (!ready || !debriefIntent || job || pending) return
+    useUI.setState({ coachDebriefIntent: null })
+    try {
+      const selected = debriefIntent.version === 2 ? debriefIntent : selectionForWorkout(S, resolveWorkoutRef(S, debriefIntent))
+      openSheet(close => <CoachDebriefPicker S={S} close={close} initialSelection={selected}
+        onConfirm={selection => ask(() => requestDebrief(selection), t('Review {0}', selectionLabel(S, selection)))} />)
+    } catch { toast(t('The selected training changed. Choose it again.')) }
+  }, [ready, debriefIntent, !!job, !!pending])
+
+  useEffect(() => {
+    if (!ready || loading || isStale) return
+    flushDecisions(update, toast, refresh)
+  }, [ready, loading, isStale, lastSuccessfulAt, S.coach?.outbox?.length, coachMode, pending?.id])
 
   if (!ready) return null
   const coach = S.coach || emptyCoach()
@@ -131,13 +151,15 @@ export default function CoachChat() {
     setBusy(false)
   }
   const askReview = () => ask(() => requestReview(''), t('Have a look at my training and tell me what you would change.'))
-  const lastWorkout = (S.workouts || []).filter(w => w && w.d).at(-1) || null
-  const askDebrief = () => ask(() => requestDebrief(lastWorkout?.id || null), lastWorkout?.name
+  const lastWorkout = sortedWorkouts(S).at(-1) || null
+  const askDebrief = () => ask(() => requestDebrief(selectionForWorkout(S, lastWorkout)), lastWorkout?.name
     ? t('How did my {0} session go?', lastWorkout.name)
     : t('How did my last workout go?'))
+  const pickDebrief = () => openSheet(close => <CoachDebriefPicker S={S} close={close}
+    onConfirm={selection => ask(() => requestDebrief(selection), t('Review {0}', selectionLabel(S, selection)))} />)
   const askNewPlan = () => ask(() => requestPlan(coach.profile), t('Build me a fresh plan from my answers.'))
   const askImprove = r => ask(
-    () => requestReview(t('Focus only on my routine “{0}”. Improve it: exercise choice, order, sets and reps, rep ranges, progression. Leave the other routines alone.', r.name)),
+    () => requestReview(t('Focus only on my routine “{0}”. Improve it: exercise choice, order, sets and reps, rep ranges, progression. Leave the other routines alone.', r.name), { kind: 'routine', routineId: r.id }),
     t('Improve my routine “{0}”.', r.name))
 
   const pickRoutine = () => openSheet(close => <div className="chat-menu">
@@ -158,6 +180,7 @@ export default function CoachChat() {
     <div className="sect-b">
       {idle && <Row icon="sparkles" iconTint="var(--acc)" title={t('Ask for a review')} subtitle={t('What would the Coach change after your last sessions?')} accessory="chevron" onClick={() => { close(); askReview() }} />}
       {idle && !!lastWorkout && <Row icon="checkCircle" iconTint="var(--green)" title={t('Review my last workout')} subtitle={t('What went well, what to watch, what to do next time')} accessory="chevron" onClick={() => { close(); askDebrief() }} />}
+      {idle && !!(S.workouts || []).length && <Row icon="list" iconTint="var(--green)" title={t('Choose a workout to review')} subtitle={t('Pick one session or recent sessions from a plan')} accessory="chevron" onClick={() => { close(); pickDebrief() }} />}
       {idle && !!(S.routines || []).length && <Row icon="wrench" iconTint="var(--orange)" title={t('Improve a routine')} subtitle={t('Pick one; the Coach works on just that')} accessory="chevron" onClick={() => { close(); pickRoutine() }} />}
       {community && <Row icon="person" iconTint="var(--teal)" title={t('Compare with others here')} subtitle={t('Anonymous medians from this instance')} accessory="chevron" onClick={() => { close(); showCohort() }} />}
       <Row icon="history" iconTint="var(--blue)" title={t('Everything the Coach proposed')} subtitle={t('Plans, suggestions and debriefs, kept')} accessory="chevron" onClick={() => { close(); showHistory() }} />
@@ -175,12 +198,12 @@ export default function CoachChat() {
     confirmText: t('Undo'),
     onConfirm: () => {
       let ok = false
-      update(s => { ok = revertLast(s); if (ok) appendChat(s, { role: 'coach', kind: 'reverted', text: t('Done! Your plan is back to how it was before my last changes.') }) })
-      toast(ok ? t('Plan restored') : t('Nothing to undo'))
+      try { update(s => { ok = revertLast(s); if (ok) appendChat(s, { role: 'coach', kind: 'reverted', text: t('Done! Your plan is back to how it was before my last changes.') }) })
+      toast(ok ? t('Plan restored') : t('Nothing to undo')) } catch (e) { toast(e.message) }
     }
   })
 
-  const status = job ? t('thinking…') : pending ? t('has a suggestion for you') : t('here when you need it')
+  const status = isStale ? t('Coach status could not be updated. Reconnect to check progress.') : job ? t('thinking…') : pending ? t('has a suggestion for you') : t('here when you need it')
   const placeholder = pending?.kind === 'create'
     ? t('What should change?')
     : job ? t('Coach is thinking…') : t('Message the Coach…')
@@ -196,6 +219,7 @@ export default function CoachChat() {
       <button className="iconbtn" onClick={menu} aria-label={t('More')}><Icon name="more" /></button>
     </div>
 
+    {isStale && <Button onClick={refresh}>{t('Retry')}</Button>}
     <div className="msgs">
       <Bubble role="coach">{t('Hi, I’m your Coach. I build your plan from your answers and adjust it from what you actually log. Nothing changes until you say so.')}</Bubble>
 
@@ -216,13 +240,16 @@ export default function CoachChat() {
       {idle && !busy && <div className="chips-row">
         <button className="qchip" onClick={askReview}><Icon name="sparkles" />{t('Review my training')}</button>
         {!!lastWorkout && <button className="qchip" onClick={askDebrief}><Icon name="checkCircle" />{t('Last workout')}</button>}
+        {!!(S.workouts || []).length && <button className="qchip" onClick={pickDebrief}><Icon name="list" />{t('Choose workout')}</button>}
         {!!(S.routines || []).length && <button className="qchip" onClick={pickRoutine}><Icon name="wrench" />{t('Improve a routine')}</button>}
         {community && <button className="qchip" onClick={showCohort}><Icon name="person" />{t('Compare')}</button>}
       </div>}
       <div className="composer-in">
         <textarea rows={1} value={text} maxLength={maxMessageLen || 1000} placeholder={placeholder} disabled={!!job}
           onChange={e => setText(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }} />
+          onCompositionStart={() => { composing.current = true }}
+          onCompositionEnd={() => { composing.current = false; compositionEndedAt.current = Date.now() }}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent?.isComposing && !composing.current && e.keyCode !== 229 && Date.now() - compositionEndedAt.current > 80) { e.preventDefault(); send() } }} />
         <button className="send" onClick={send} disabled={!text.trim() || busy || !!job} aria-label={t('Send')}><Icon name="arrowUp" /></button>
       </div>
       {cap?.limit > 0 && <div className="composer-cap">{t('{0} of {1} Coach runs used today', cap.used, cap.limit)}</div>}
@@ -289,7 +316,7 @@ function Typing({ S, kind, coachLocal, config }) {
     <div className="typing-eta">
       {doing} {eta}
       {local ? ' ' + t('A local model can take longer.') : ''}
-      {' ' + t('Feel free to leave, it keeps going.')}
+      {' ' + (MOBILE && coachLocal?.mode === 'byok' ? t('Keep the app running until the report is ready.') : t('Feel free to leave, it keeps going.'))}
     </div>
   </div>
 }
@@ -313,7 +340,7 @@ function PlanCard({ p, S, update, toast, nav, refresh }) {
           ? t('Imported! {0} routines are in your plan and your week is set. See you at the next session.', n)
           : t('Imported! {0} routines are in your plan. Your week is unchanged; schedule them whenever you like.', n) })
       })
-      resolvePending({ accepted: ['plan'] }).catch(() => {})
+      flushDecisions(update, toast, refresh)
       toast(t('Your plan is live'))
       refresh()
     } catch (e) { toast(e.message || t('That proposal can’t be read.')) }
@@ -323,7 +350,7 @@ function PlanCard({ p, S, update, toast, nav, refresh }) {
     confirmText: t('Discard'), danger: true,
     onConfirm: () => {
       update(s => { const ref = recordDismissal(s, p); appendChat(s, { role: 'coach', kind: 'dismissed', ref, text: t('Discarded. Tell me what was off and I will build a different one.') }) })
-      resolvePending({ dismissed: true }).catch(() => {})
+      flushDecisions(update, toast, refresh)
       refresh()
     }
   })
@@ -343,7 +370,7 @@ function PlanCard({ p, S, update, toast, nav, refresh }) {
         {b.routines.map((x, i) => <button key={x.id || i} className={'pcard-tab' + (i === tab ? ' on' : '')} onClick={() => setTab(i)}><Icon name={glyphOf(x.emoji)} />{x.name}</button>)}
       </div>}
 
-      {r && <RoutineBlock r={r} S={S} unit={S.unit} speedUnit={speedUnitOf(S)} />}
+      {r && <RoutineBlock r={r} S={S} unit={b.unit || S.unit} speedUnit={speedUnitOf(S)} />}
 
       <div className="pcard-row">
         <span className="lrow-m"><span className="lrow-t">{t('Use this weekly schedule')}</span><span className="lrow-s">{t('Replaces your current week. Days this plan leaves empty become rest days.')}</span></span>
@@ -389,7 +416,7 @@ function ReviewCard({ p, S, update, toast, refresh }) {
         const res = applyChangeSet(s, marked, ids)
         appendChat(s, { role: 'coach', kind: 'applied', ref: res.logId, text: tn('Applied {0} change to your plan.', 'Applied {0} changes to your plan.', ids.length) })
       })
-      resolvePending({ accepted: ids, rejected: marked.changes.filter(c => !ids.includes(c.id)).map(c => c.id) }).catch(() => {})
+      flushDecisions(update, toast, refresh)
       toast(tn('{0} change applied', '{0} changes applied', ids.length))
       refresh()
     } catch (e) { toast(e.message || t('Could not apply those changes')) }
@@ -399,7 +426,7 @@ function ReviewCard({ p, S, update, toast, refresh }) {
     confirmText: t('Dismiss'), danger: true,
     onConfirm: () => {
       update(s => { const ref = recordDismissal(s, marked); appendChat(s, { role: 'coach', kind: 'dismissed', ref, text: t('Got it. I won’t suggest these again without new evidence.') }) })
-      resolvePending({ dismissed: true }).catch(() => {})
+      flushDecisions(update, toast, refresh)
       refresh()
     }
   })
@@ -516,37 +543,38 @@ const kfmt = n => (n >= 10000 ? Math.round(n / 1000) + 'k' : fmtNum(n))
 /* ---------------------------------- a debrief ---------------------------------- */
 
 function DebriefBody({ p, S }) {
-  const w = p.workout || {}
-  const live = useMemo(() => sessionInsights(S, (S.workouts || []).find(x => x.id === w.id) || null), [S, w.id])
+  const w = p.workout || {}, snapshot = p.evidenceSnapshot
+  const openSheet = useUI(s => s.openSheet), toast = useUI(s => s.toast)
   const score = Number.isFinite(p.score) ? Math.max(1, Math.min(10, p.score)) : null
+  let changed = false
+  if (p.scope?.version === 2) {
+    try { resolveDebriefSelection(S, { version: 2, mode: p.scope.requestedMode || p.scope.mode, refs: p.scope.refs, planId: p.scope.planId, limit: p.scope.requested, inputHash: p.scope.inputHash }) }
+    catch { changed = true }
+  }
   return <>
     {score != null && <div className="deb-score">
       <div className="deb-ring" style={{ '--pct': score / 10 }}><span>{score}</span><small>/10</small></div>
       <div className="deb-score-t"><b>{scoreWord(score)}</b><span>{w.name || t('Workout')}{w.d ? ' · ' + fmtDate(w.d) : ''}</span></div>
     </div>}
-    {live && <div className="ins">
+    {snapshot && <div className="ins">
+      <p>{t('{0} workouts · {1} to {2}', p.scope.actual, fmtDate(p.scope.from), fmtDate(p.scope.to))}</p>
       <div className="ins-tiles">
-        <Tile v={live.now.sets} l={t('Sets')} />
-        <Tile v={live.now.minutes != null ? live.now.minutes : '–'} l={t('Minutes')} />
-        <Tile v={live.now.volume ? kfmt(live.now.volume) : '–'} l={t('Volume ({0})', S.unit)} />
-        <Tile v={live.now.prs || '–'} l={t('PRs')} />
+        <Tile v={snapshot.totals.sets} l={t('Sets')} />
+        <Tile v={fmtNum(snapshot.totals.volume)} l={t('Volume ({0})', snapshot.unit)} />
       </div>
-      {live.then && <div className="ins-cmp">
-        {t('vs. last {0} on {1}:', w.name || t('session'), fmtDate(live.prevDate))}{' '}
-        <Delta v={live.now.volume - live.then.volume} unit={S.unit} label={t('volume')} />
-        {live.now.minutes != null && live.then.minutes != null && <Delta v={live.now.minutes - live.then.minutes} unit="min" label={t('time')} />}
-      </div>}
-      {!!live.lifts.length && <div className="ins-block">
-        <div className="ins-h"><span>{t('Best set, estimated 1RM')}</span></div>
-        {live.lifts.slice(0, 6).map(x => <div key={x.id} className="ins-row">
-          <span className="ins-row-n">{x.id ? exName(x.id, S) : x.name} <span className="dim">{fmtNum(x.w)}×{x.r}</span></span>
-          <span className="ins-row-v"><span className="tag acc">{fmtNum(x.est)}</span></span>
-          {x.prev != null && <span className={'ins-delta' + (x.est > x.prev ? ' up' : x.est < x.prev ? ' down' : '')}>{x.est > x.prev ? '▲' : x.est < x.prev ? '▼' : '•'} {fmtNum(Math.abs(x.est - x.prev))}</span>}
-        </div>)}
-      </div>}
+      <h4>{t('Source workouts')}</h4>
+      <div className="sect-b">{snapshot.sessions.map((session, i) => <Row key={session.ref || i} icon="checkCircle"
+        title={session.name || t('Workout')} subtitle={fmtDate(session.d, true)} accessory="chevron" onClick={() => {
+          try { const source = resolveWorkoutRef(S, p.scope.refs[i]); workoutDetailSheet(source) }
+          catch { toast(t('This source workout is no longer available.')) }
+        }} />)}</div>
+      {changed && <p role="status">{t('Source data changed. This report keeps the original metrics; choose the workouts again for a new report.')}</p>}
     </div>}
+    {!snapshot && <p className="small muted">{t('This older report has no saved metric snapshot.')}</p>}
     <DebriefList icon="checkCircle" tint="var(--green)" title={t('What went well')} items={p.highlights} />
+    <DebriefList icon="chartLine" tint="var(--acc)" title={t('Trends')} items={(p.trends || []).map(x => x.text)} />
     <DebriefList icon="warning" tint="var(--yellow)" title={t('Worth watching')} items={p.watch} />
+    <DebriefList icon="info" tint="var(--label)" title={t('Data limitations')} items={[...(snapshot?.limitations || []).map(x => x === 'mixed_session_metrics_not_attributable' ? t('Combined workouts include only this plan’s exercises. Whole-session time and calories are not assigned to this plan.') : x), ...(p.dataLimitations || [])]} />
     <DebriefList icon="arrowUp" tint="var(--acc)" title={t('Next time')} items={p.nextTime} />
   </>
 }
@@ -560,7 +588,7 @@ const scoreWord = s => s >= 9 ? t('Excellent session') : s >= 7 ? t('Good sessio
 function DebriefCard({ p, S, update, toast, refresh }) {
   const done = () => {
     update(s => { const ref = recordDebrief(s, p); appendChat(s, { role: 'coach', kind: 'debrief', ref, text: '' }) })
-    resolvePending({ accepted: ['debrief'] }).catch(() => {})
+    flushDecisions(update, toast, refresh)
     toast(t('Kept in your Coach history'))
     refresh()
   }
@@ -568,7 +596,7 @@ function DebriefCard({ p, S, update, toast, refresh }) {
     <div className="pcard">
       <div className="pcard-hd">
         <div className="pcard-eyebrow">{t('Workout debrief')}</div>
-        <h2 className="pcard-h">{p.workout?.name || t('Your last workout')}</h2>
+        <h2 className="pcard-h">{p.scope?.mode === 'plan' ? t('{0} · {1} workouts', p.scope.planName, p.scope.actual) : p.workout?.name || t('Workout')}</h2>
         {!!p.summary && <p className="pcard-sum">{p.summary}</p>}
       </div>
       <DebriefBody p={p} S={S} />
@@ -595,7 +623,7 @@ function Recap({ entry, S, openSheet }) {
       : kind === 'create' ? { cls: 'yes', text: t('Imported') }
         : rej ? { cls: 'mix', text: t('{0} accepted · {1} declined', acc, rej) } : { cls: 'yes', text: t('{0} accepted', acc) }
   const title = kind === 'create' ? (entry.bundle?.name || t('Coach plan'))
-    : kind === 'debrief' ? (entry.workout?.name || t('Workout')) + (entry.score != null ? ` · ${entry.score}/10` : '')
+    : kind === 'debrief' ? (entry.scope?.mode === 'plan' ? t('{0} · {1} workouts', entry.scope.planName, entry.scope.actual) : entry.workout?.name || t('Workout')) + (entry.score != null ? ` · ${entry.score}/10` : '')
       : tn('{0} suggestion', '{0} suggestions', decisions.length)
   return <button className="recap" onClick={open}>
     <div className="recap-top">
@@ -642,7 +670,7 @@ function ProposalDetail({ entry, S }) {
       {b.routines.length > 1 && <div className="pcard-tabs" style={{ paddingInline: 0 }}>
         {b.routines.map((x, i) => <button key={x.id || i} className={'pcard-tab' + (i === tab ? ' on' : '')} onClick={() => setTab(i)}><Icon name={glyphOf(x.emoji)} />{x.name}</button>)}
       </div>}
-      {r && <RoutineBlock r={r} S={S} unit={S.unit} speedUnit={speedUnitOf(S)} />}
+      {r && <RoutineBlock r={r} S={S} unit={b.unit || S.unit} speedUnit={speedUnitOf(S)} />}
       <p className="pcard-sum" style={{ fontSize: 13 }}>{entry.scheduled ? t('Your week was set to this schedule.') : t('Imported without changing your week.')}</p>
     </>}
     {kind === 'create' && !b && <p className="pcard-sum">{t('This plan was imported before the app kept proposals; only its summary is left.')}</p>}
@@ -746,6 +774,8 @@ function cadenceSheet(openSheet, update) {
   openSheet(close => <CadenceSheet close={close} update={update} />)
 }
 function CadenceSheet({ update }) {
+  const local = useStore(s => s.coachLocal?.mode) === 'byok'
+
   const coach = useStore(s => s.S.coach) || emptyCoach()
   const cadence = coach.cadence && coach.cadence !== 'off' ? coach.cadence : null
   const mode = !cadence ? 'off' : cadence.weekly ? 'weekly' : 'every'
@@ -756,7 +786,7 @@ function CadenceSheet({ update }) {
   const patch = fn => update(s => { const c = (s.coach = s.coach || emptyCoach()); fn(c) })
   return <>
     <h3>{t('Automatic reviews')}</h3>
-    <Section footer={mode === 'off' ? t('Off. The Coach only looks when you ask.') : t('You are only notified when the Coach actually has something to suggest.')}>
+    {MOBILE && local ? <p>{t('Automatic reviews require a paired server. On this phone, ask for a review manually.')}</p> : <Section footer={mode === 'off' ? t('Off. The Coach only looks when you ask.') : t('You are only notified when the Coach actually has something to suggest.')}>
       <SelectRow icon="clock" iconTint="var(--purple)" title={t('When')} value={mode} onChange={setMode}
         options={[
           { value: 'off', label: t('Off') },
@@ -776,6 +806,20 @@ function CadenceSheet({ update }) {
         value={cadence.everyWorkouts || 4}
         onChange={v => patch(c => { c.cadence = { everyWorkouts: v } })}
         options={[3, 4, 5, 6, 8, 10].map(n => ({ value: n, label: tn('{0} workout', '{0} workouts', n) }))} />}
-    </Section>
+    </Section>}
   </>
+}
+
+let deciding = false
+async function flushDecisions(update, toast, refresh) {
+  if (deciding) return
+  deciding = true
+  try {
+    for (const body of useStore.getState().S.coach?.outbox || []) {
+      const result = await resolvePending(body)
+      if (result?.deferred) continue
+      update(s => acknowledgeDecision(s, body.requestId))
+    }
+  } catch { toast(t('Your decision is saved on this device. Confirmation will retry when the Coach reconnects.')) }
+  finally { deciding = false }
 }

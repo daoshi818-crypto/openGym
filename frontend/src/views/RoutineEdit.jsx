@@ -1,3 +1,5 @@
+import { coachAvailable } from '../lib/coach.js'
+import { DEMO } from '../lib/demo.js'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useEffect } from 'react'
 import { useLongPressReorder, REORDER_LONG_PRESS_MS, REORDER_DRAG_SLOP } from '../lib/use-long-press-reorder.js'
@@ -23,6 +25,7 @@ import { markEntryUndone } from '../lib/sync-merge.js'
 import { MOBILE, printHtml } from '../lib/mobile.js'
 import { speedUnitOf } from '../lib/speed.js'
 import { POLICIES_FOR, POLICY_NAME, POLICY_DESC } from '../lib/progression.js'
+import { selectionForPlan } from '../lib/debrief-selection.js'
 import BodyMap from '../components/BodyMap.jsx'
 import { loadOfRoutine, rankOf, MUSCLE_NAME } from '../lib/muscles.js'
 
@@ -105,6 +108,7 @@ export function undoRemoveRoutineExercise({ routineId, i, before, after, base, d
 }
 
 export default function RoutineEdit() {
+  const coachEntry = useStore(s => MOBILE || coachAvailable(s.config, s.user, { demo: DEMO }))
   const nav = useNavigate()
   const { id } = useParams()
   const S = useStore(s => s.S)
@@ -245,6 +249,10 @@ export default function RoutineEdit() {
       </div>
     </div>}
 
+    {coachEntry && <Button icon="sparkles" onClick={() => {
+      try { useUI.setState({ coachDebriefIntent: selectionForPlan(S, id, 5) }); nav('/coach') }
+      catch { useUI.getState().toast(t('No plan has saved workouts yet')) }
+    }}>{t('Review recent workouts from this plan')}</Button>}
     {/* "Add exercise" heads the list (v1.3.11): with it under the last exercise, a long routine
         had to be scrolled to the bottom before anything could be added. */}
     <div className="row between plan-sec-h routine-ex-h">

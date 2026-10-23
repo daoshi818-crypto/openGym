@@ -1,4 +1,5 @@
 <script>
+import { bindRuntime } from '../lib/runtime.js'
 import router from '@blueos.app.appmanager.router'
 import storage from '@blueos.storage.storage'
 import { loadState, startSession, applySync, replacePlan, closeSession, save } from '../lib/session.js'
@@ -9,6 +10,7 @@ export default {
   data: { version: WATCH_VERSION, status: '正在连接手机', plans: [], selected: null, workoutName: '',
     exerciseCount: 0, canResume: false, conflict: null, hasSummary: false },
   onInit(params) {
+    if (this.$app && this.$app.$def) bindRuntime(this.$app.$def)
     this.visible = true
     if (params && params.conflict) { try { this.conflict = JSON.parse(params.conflict) } catch (e) {} }
     this.readLocal()
@@ -56,7 +58,7 @@ export default {
     if (s.active && s.sid !== msg.sid) return { status: 'conflict', activeSid: s.sid, page: 'Index' }
     const retained = !!s.active
     if (retained) replacePlan(s, { name: msg.workout, exercises: msg.exercises })
-    else startSession({ name: msg.workout, sid: msg.sid, exercises: msg.exercises }, msg.profile)
+    else startSession({ ...msg, name: msg.workout, exercises: msg.exercises }, msg.profile)
     this.readLocal()
     this.enterWorkout()
     return { status: retained ? 'retained' : 'applied', page: 'Index', exercises: msg.exercises.length }
@@ -75,7 +77,7 @@ export default {
     if (loadState().active) { this.onResume(); return }
     const p = this.selected
     if (!p || !p.exercises.length) return
-    const s = startSession({ name: p.name, exercises: p.exercises, rows: p.rows }, p.profile)
+    const s = startSession({ ...p, name: p.name, exercises: p.exercises, rows: p.rows }, p.profile)
     s.pendingStart = true; s.planId = p.id; save(s)
     sendEvent({ t: 'watch_start', sid: s.sid, startedAt: s.startedAt, planId: p.id, plan: p })
     this.onResume()

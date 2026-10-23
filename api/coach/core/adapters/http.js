@@ -30,8 +30,9 @@ const DEFAULT_TIMEOUT_MS = 5 * 60000;
 export const RETRY_STATUSES = new Set([429, 500, 502, 503, 504, 529]);
 const RETRY_DELAYS_MS = [2000, 5000];
 const sleep = (ms, signal) => new Promise(resolve => {
-  const t = setTimeout(resolve, ms);
-  if (signal) signal.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true });
+  const done = () => { clearTimeout(timer); signal?.removeEventListener('abort', done); resolve(); };
+  const timer = setTimeout(done, Math.max(0, ms));
+  if (signal?.aborted) done(); else signal?.addEventListener('abort', done, { once: true });
 });
 
 const hostOf = url => { try { return new URL(url).host; } catch { return url; } };
@@ -82,19 +83,38 @@ async function reach(spec, base, path, send) {
 /** A fetch, bounded by AbortController. Never throws for HTTP status; throws for transport. */
 async function call(fetchImpl, url, init, timeoutMs, signal) {
   const ctl = new AbortController();
-  const onOuter = () => ctl.abort();
-  if (signal) signal.addEventListener('abort', onOuter, { once: true });
-  // An abort that already landed (during a retry pause, say) must not let a fresh request leave.
-  if (signal && signal.aborted) ctl.abort();
-  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  const aborted = () => Object.assign(new Error('aborted'), { name: 'AbortError' });
+  let rejectAbort;
+  const onOuter = () => { ctl.abort(); rejectAbort?.(aborted()); };
+  if (signal?.aborted || timeoutMs <= 0) throw aborted();
+  const cancelled = new Promise((_, reject) => { rejectAbort = reject; });
+  signal?.addEventListener('abort', onOuter, { once: true });
+  const timer = setTimeout(onOuter, timeoutMs);
   try {
-    return await fetchImpl(url, { ...init, signal: ctl.signal });
+    return await Promise.race([(async () => {
+      if (ctl.signal.aborted) throw aborted();
+      const res = await fetchImpl(url, { ...init, signal: ctl.signal });
+      const text = await boundedText(res);
+      return { status: res.status, ok: res.ok, text: async () => text };
+    })(), cancelled]);
   } finally {
     clearTimeout(timer);
-    if (signal) signal.removeEventListener('abort', onOuter);
+    signal?.removeEventListener('abort', onOuter);
   }
 }
 
+async function boundedText(res) {
+  const reader = res.body?.getReader?.();
+  if (!reader) { const text = await res.text(); if (text.length > 2_000_000) throw new Error('response body exceeds limit'); return text; }
+  let bytes = 0, text = ''; const decoder = new TextDecoder();
+  try {
+    for (;;) { const part = await reader.read(); if (part.done) break; bytes += part.value.byteLength;
+      if (bytes > 2_000_000) { await reader.cancel(); throw new Error('response body exceeds limit'); }
+      text += decoder.decode(part.value, { stream: true });
+    }
+    return text + decoder.decode();
+  } finally { reader.releaseLock(); }
+}
 async function readJson(res) {
   const text = await res.text();
   try { return { data: JSON.parse(text), text }; } catch { return { data: null, text }; }
@@ -137,9 +157,10 @@ export function httpAdapter(spec) {
       if (!base) return { ok: false, error: 'no endpoint configured', models: [] };
       const key = keyOf(env);
       if (!key && !meta.keyOptional) return { ok: false, error: 'no API key configured', models: [] };
+      const deadlineAt = Date.now() + timeoutMs;
       let res;
       try {
-        res = await reach(spec, base, spec.modelsPath, url => call(fetchImpl, url, { method: 'GET', headers: { ...extraHeadersFor(id, cfg), ...spec.headers(key) } }, timeoutMs, signal));
+        res = await reach(spec, base, spec.modelsPath, url => call(fetchImpl, url, { method: 'GET', headers: { ...extraHeadersFor(id, cfg), ...spec.headers(key) } }, Math.max(0, deadlineAt - Date.now()), signal));
       } catch (e) {
         return { ok: false, error: e.name === 'AbortError' ? 'timed out' : `could not reach ${hostOf(base)}: ${trim(e.message, 120)}`, models: [] };
       }
@@ -165,6 +186,7 @@ export function httpAdapter(spec) {
       const chosen = model || meta.defaultModel;
       if (!chosen) return { code: 1, text: '', stderr: `no model chosen for ${id} (pick one from the list the endpoint serves)` };
 
+      const deadlineAt = opts.deadlineAt || Date.now() + timeoutMs;
       let body = spec.body({ model: chosen, prompt, system: system || null, schema: schema || null, maxTokens });
       let retriedWithoutJsonMode = false;
       let transientRetries = 0;
@@ -175,16 +197,16 @@ export function httpAdapter(spec) {
             method: 'POST',
             headers: { ...extraHeadersFor(id, cfg), 'content-type': 'application/json', ...spec.headers(key) },
             body: JSON.stringify(body)
-          }, timeoutMs, signal));
+          }, Math.max(0, deadlineAt - Date.now()), signal));
         } catch (e) {
-          if (e.name === 'AbortError') return { code: -1, text: '', stderr: 'timed out', timedOut: true };
+          if (e.name === 'AbortError') return signal?.aborted ? { code: -1, text: '', stderr: 'cancelled', cancelled: true } : { code: -1, text: '', stderr: 'timed out', timedOut: true };
           return { code: 1, text: '', stderr: `could not reach ${hostOf(base)}: ${trim(e.message, 200)}` };
         }
         const { data, text } = await readJson(res);
         if (!res.ok) {
           const msg = spec.errorMessage(data) || trim(text, 200);
           if (RETRY_STATUSES.has(res.status) && transientRetries < RETRY_DELAYS_MS.length && !(signal && signal.aborted)) {
-            await sleep(opts.retryDelayMs != null ? opts.retryDelayMs : RETRY_DELAYS_MS[transientRetries], signal);
+            await sleep(Math.min(opts.retryDelayMs != null ? opts.retryDelayMs : RETRY_DELAYS_MS[transientRetries], Math.max(0, deadlineAt - Date.now())), signal);
             transientRetries++;
             continue;
           }

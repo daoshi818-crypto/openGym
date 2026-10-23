@@ -7,6 +7,9 @@
 // to localStorage by its own admission, and in a test there is no platform at all. In both
 // cases the fallback is a process-local map that forgets on reload, which is the honest
 // behaviour for a place that cannot keep a secret.
+import { Capacitor } from '@capacitor/core'
+import { credentialScope } from './coach-credential-scope.js'
+import { loadCoachDevice, saveCoachDevice } from './coach-device.js'
 const KEY = 'coach.apiKey'
 const memory = new Map()
 
@@ -60,6 +63,60 @@ export async function secureRemove(key) {
   memory.delete(key)
 }
 
-export const getApiKey = () => secureGet(KEY)
-export const setApiKey = value => secureSet(KEY, value)
-export const clearApiKey = () => secureRemove(KEY)
+let operations = Promise.resolve()
+function serialized(operation) {
+  const result = operations.then(operation)
+  operations = result.catch(() => {})
+  return result
+}
+async function strictCall(method, key, value) {
+  const { store } = Capacitor.isNativePlatform() ? await plugin() : { store: null }
+  if (!store) {
+    if (Capacitor.isNativePlatform()) throw new Error('Secure storage is unavailable')
+    if (method === 'get') return memory.get(key) || null
+    if (method === 'set') memory.set(key, value); else memory.delete(key)
+    return null
+  }
+  // Timeout informs the UI but does not release serialization: native writes can
+  // finish late, and a remove must not overtake the write it is meant to remove.
+  return store[method](key, ...(method === 'set' ? [value] : []))
+}
+export function getApiKey(settings) {
+  return withTimeout(serialized(async () => {
+    if (!settings) return strictCall('get', KEY)
+    const scope = credentialScope(settings), d = await loadCoachDevice()
+    if (!scope || d.credentialDisabled) return null
+    const value = await strictCall('get', KEY + '.' + scope)
+    if (value) return value
+    if (!d.credentialScope && credentialScope(d) === scope) {
+      const old = await strictCall('get', KEY)
+      if (old) {
+        await strictCall('set', KEY + '.' + scope, old)
+        if (await strictCall('get', KEY + '.' + scope) !== old) throw new Error('Secure storage verification failed')
+        await saveCoachDevice({ credentialScope: scope })
+        await strictCall('remove', KEY)
+        return old
+      }
+    }
+    return null
+  }))
+}
+export function setApiKey(value, settings) {
+  return withTimeout(serialized(async () => {
+    const scope = settings ? credentialScope(settings) : null
+    if (settings && !scope) throw new Error('Invalid credential scope')
+    const key = scope ? KEY + '.' + scope : KEY
+    const v = String(value || '').trim()
+    if (!v) throw new Error('Enter your API key')
+    await strictCall('set', key, v)
+    if (scope && await strictCall('get', key) !== v) throw new Error('Secure storage verification failed')
+  }))
+}
+export async function clearApiKey(settings) {
+  if (settings) await saveCoachDevice({ credentialDisabled: true })
+  await withTimeout(serialized(async () => {
+    const scope = settings ? credentialScope(settings) : null
+    if (scope) await strictCall('remove', KEY + '.' + scope)
+    await strictCall('remove', KEY)
+  }))
+}

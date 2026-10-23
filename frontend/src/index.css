@@ -156,6 +156,21 @@ button,.chip,.tile,.item,.wday,.cal-d,.swatch,.hm-c,.lrow,.seg button,.stp butto
 .small{font-size:13px;line-height:1.38}
 .accent{color:var(--acc)}
 .capitalize{text-transform:capitalize}
+
+.workout-calories{display:flex;align-items:center;gap:10px;min-width:0;border-radius:var(--r-card);background:var(--surface);color:var(--label)}
+.workout-calories-card{padding:14px 16px;margin:10px 0;text-align:start}
+.workout-calories-inline{padding:4px 0;background:transparent;border-radius:0}
+.workout-calories-icon{display:inline-flex;align-items:center;justify-content:center;flex:none;width:30px;height:30px;border-radius:10px;background:color-mix(in srgb,var(--acc) 14%,var(--surface-3));color:var(--acc);font-size:18px}
+.workout-calories-copy{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;min-width:0}
+.workout-calories-label{font-size:.9375rem;font-weight:500;color:color-mix(in srgb,var(--label) 72%,var(--surface))}
+.workout-calories-value{font-size:1.625rem;line-height:1.1;font-weight:600;letter-spacing:-.02em}
+.workout-calories-value small{font-size:.9375rem;font-weight:500;letter-spacing:0;color:color-mix(in srgb,var(--label) 72%,var(--surface))}
+.workout-calories-source{flex-basis:100%;font-size:.875rem;color:color-mix(in srgb,var(--label) 72%,var(--surface))}
+.workout-calories-inline .workout-calories-icon{width:22px;height:22px;border-radius:7px;font-size:14px}
+.workout-calories-inline .workout-calories-label{font-size:.875rem}
+.workout-calories-inline .workout-calories-value{font-size:1rem}
+.workout-calories-inline .workout-calories-value small{font-size:.875rem}
+@media (min-width: 390px){.workout-calories-card{display:flex;align-items:center}.workout-calories-card .workout-calories-copy{flex:1}}
 /* exercise names and body-part/equipment terms arrive lowercase from the dataset,
    so tags and chips capitalise by default. Anything that is a unit or a sentence opts
    back out — blanket-capitalising turned "60 kg" into "60 Kg" and a whole hint into

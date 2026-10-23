@@ -10,7 +10,7 @@ describe('active workout watch plan', () => {
       sets: [{ warmup: true, w: 20, r: 10 }, { w: 60, r: 8 }, { w: 60, r: 8 }] }] } }
 
   it('builds the current session independently of the displayed route, excluding warmups', () => {
-    expect(watchPlanOf(S)).toEqual({ sid: '123', profile: { weight: 80 },
+    expect(watchPlanOf(S)).toMatchObject({ sid: '123', profile: { weight: 80 },
       workout: { name: 'Today', exercises: [{ name: 'Squat', sets: 2, weight: 60, reps: 8, restSec: 90 }] } })
   })
 

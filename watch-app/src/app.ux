@@ -1,10 +1,10 @@
 <script>
-// 应用入口。这里不放逻辑：页面各管各的，启动时各自从本地存储恢复状态
-// （见 pages/Workout 的 onInit —— 闪退后重进会自动接上）。
+// Pages bind shared transport/storage/sensor owners to this application definition.
 export default {
   onCreate() {
     console.log('opengym 启动')
   },
+  onDestroy() { this.openGymRuntime?.hrCapture?.stop() },
 }
 </script>
 

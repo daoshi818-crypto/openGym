@@ -10,7 +10,8 @@ import fs from 'node:fs';
 import { tempData, sampleState } from './helpers.mjs';
 
 tempData();
-const payload = await import('../coach/core/payload.js');
+const core = await import('../coach/core/payload.js');
+const payload = { ...core, build: (S, opts) => core.build(S, { today: '2026-07-21', ...opts }) };
 
 const HUGE = 'x'.repeat(200_000);
 const hugeProfile = () => ({
@@ -153,6 +154,10 @@ test('every plan, log and id field is bounded too, for a create, a review and a 
     const S = sampleState();
     set(S);
     for (const kind of ['create', 'review', 'debrief']) {
+      if (kind === 'debrief' && ['workout id','workout date'].includes(field)) {
+        assert.throws(() => payload.build(S, { handle: 'h'.repeat(16), kind }), e => ['invalid_selection','noworkout'].includes(e.code));
+        continue;
+      }
       const json = JSON.stringify(payload.build(S, { handle: 'h'.repeat(16), kind }));
       assert.ok(json.length < 100_000, `${field}: the ${kind} payload stays small (${json.length})`);
       assert.ok(!json.includes(INJECT.slice(0, payload.ID_MAX + 1)), `${field}: no more of it than an id's length reaches a ${kind}`);
@@ -219,7 +224,7 @@ test('the cohort is bounded where it joins the payload, whoever built it', () =>
     assert.ok(json.length < 100_000, kind + ' payload stays small');
     assert.ok(!json.includes(INJECT.slice(0, payload.NAME_MAX + 1)), kind + ': no more of it than a name\'s length');
     assert.equal(p.cohort.people, null);
-    assert.equal(p.cohort.exercises[1].name, 'Bench');
+    assert.equal(p.cohort.exercises[1].name, '3/4 sit-up');
     assert.equal(p.cohort.exercises[1].median, 60);
   }
 });

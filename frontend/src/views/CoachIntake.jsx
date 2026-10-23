@@ -108,6 +108,7 @@ export default function CoachIntake() {
       // the questionnaire twice.
       if (!(c.chat || []).some(m => m.kind === 'intake')) appendChat(s, { role: 'user', kind: 'intake' })
     })
+    if (useUI.getState().coachDebriefIntent) { nav('/coach', { replace: true }); return }
     if (editing) { toast(t('Saved')); nav('/coach'); return }
     setBusy(true)
     try {

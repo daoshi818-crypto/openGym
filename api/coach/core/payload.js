@@ -10,6 +10,8 @@
  * handle stands in), passkey and credential material, push subscriptions, invite data, theme
  * and appearance settings, and every other profile's everything.
  */
+import { sortedWorkouts, compareWorkouts, sameWorkoutFamily, legacySelection, resolveDebriefSelection, workoutRefOf, refKey } from './debrief-selection.js';
+import { reviewDay, localDay, daysBefore } from './dates.js';
 import { glyphStr } from './glyphs.js';
 import { LIBRARY, LIB_BY_ID, libraryHas, libraryName, libraryDisplayName, librarySlice, isStretch, MAX_LIBRARY } from './library.js';
 
@@ -280,7 +282,7 @@ export { LIBRARY, MAX_LIBRARY, libraryHas, libraryName, libraryDisplayName, libr
 
 const exerciseName = (S, id, lang) => {
   const custom = list(S?.customEx).find(e => e && e.id === id);
-  return libraryDisplayName(id, lang) || (custom && text(custom.n, NAME_MAX)) || id;
+  return libraryDisplayName(id, lang) || (custom && text(custom.n, NAME_MAX)) || ident(id);
 };
 
 /* ---------- effort scale (mirrors history.js effortOf) ---------- */
@@ -292,12 +294,11 @@ const effortOf = S => {
 /* ---------- window + aggregates ---------- */
 const iso = d => d.toISOString().slice(0, 10);
 
-export function reviewWindow(S, since) {
-  const all = (S.workouts || []).filter(w => w && w.d);
-  const cutoffDate = new Date(); cutoffDate.setDate(cutoffDate.getDate() - MAX_WEEKS * 7);
-  const cutoff = iso(cutoffDate);
+export function reviewWindow(S, since, opts = {}) {
+  const today = opts.today || localDay(opts.now ?? Date.now(), opts.timeZone || S.reminder?.tz);
+  const cutoff = daysBefore(today, MAX_WEEKS * 7);
   const from = since && since > cutoff ? since : cutoff;
-  return all.filter(w => w.d >= from).slice(-MAX_SESSIONS);
+  return sortedWorkouts(S).filter(w => w.d >= from && w.d <= today).slice(-MAX_SESSIONS);
 }
 
 function aggregates(S, workouts, lang) {
@@ -451,8 +452,12 @@ function cleanCohort(c, lang) {
 
 /* ---------- one workout, for a debrief ---------- */
 export function findWorkout(S, workoutId) {
-  const all = (S.workouts || []).filter(w => w && w.d);
-  return (workoutId && all.find(w => w.id === workoutId)) || all[all.length - 1] || null;
+  const all = sortedWorkouts(S);
+  // A requested id is an identity assertion. Falling back to the newest workout can
+  // silently turn a chest debrief into an abs debrief when the selected record was
+  // deleted or has not synced yet.
+  if (workoutId != null && workoutId !== '') return all.find(w => w.id === workoutId) || null;
+  return all[all.length - 1] || null;
 }
 /** The little a debrief's card needs to name the session: id, date, name and four numbers. */
 export function workoutMeta(S, workoutId) {
@@ -477,7 +482,7 @@ export function workoutMeta(S, workoutId) {
  * Build a job payload.
  *
  * @param {object} S      the profile's synced state
- * @param {object} opts   { handle, kind, intake?, note?, refine?, previous?, workoutId?, cohort?, lang? }
+ * @param {object} opts   { handle, kind, intake?, note?, refine?, previous?, workoutId?, debriefSelection?, cohort?, lang? }
  *
  * `handle` is the opaque per-profile pseudonym the payload carries instead of a uid. It is
  * supplied rather than derived because the two runtimes mint it differently: the server keys
@@ -500,11 +505,14 @@ export function build(S, opts = {}) {
       lang: requestLang,
       unit: word(S.unit, 8) || 'kg',
       effortScale: effortOf(S),
-      today: iso(new Date())
+      today: opts.today || localDay(opts.now ?? Date.now(), opts.timeZone || S.reminder?.tz)
     },
     coachProfile: profile && typeof profile === 'object' ? cleanProfile(profile) : null,
+    scope: opts.scope || null,
     plan: cleanPlan(S, requestLang)
   };
+  p.scheduleContext = { mode: Array.isArray(S.queue?.ids) && S.queue.ids.length ? 'rotation' : word(S.scheduleMode, 20) || 'week', rotation: list(S.rotation?.sequence).map(ident).slice(0, 30), queue: list(S.queue?.ids).map(ident).slice(0, 30),
+    limitation: S.scheduleMode === 'rotation' || S.queue?.ids?.length ? 'AI proposals only change weekly scheduling when explicitly accepted; current rotation is preserved' : null };
   // Someone who set up a home gym under Settings → Equipment and left the Coach's own equipment
   // question empty was handed the whole catalogue, leverage machines and all. The profile they
   // are filtering the app with is the better answer than "everything".
@@ -525,30 +533,33 @@ export function build(S, opts = {}) {
     // One session, read closely: the workout itself, the last few times the same routine was
     // trained, and the stall picture for the exercises in it. No library — a debrief changes
     // nothing and names nothing new.
-    const w = findWorkout(S, opts.workoutId);
-    if (w) {
-      const all = (S.workouts || []).filter(x => x && x.d);
-      const idx = all.indexOf(w);
-      const previous = all.slice(0, idx).filter(x => x.name && x.name === w.name).slice(-3);
-      p.session = { id: ident(w.id) || null, ...cleanWorkout(S, w, requestLang) };
-      p.previous = previous.map(x => cleanWorkout(S, x, requestLang));
-      const inSession = new Set(entriesOf(w).map(en => ident(en.id)));
-      const agg = aggregates(S, [w], requestLang);
-      p.aggregates = { ...agg, exercises: agg.exercises.filter(e => inSession.has(e.id)) };
-      // The four weeks before the session. A session whose date does not parse has no "before",
-      // and used to throw here instead.
-      const on = day(w.d);
-      const since = new Date(on + 'T12:00:00');
-      since.setDate(since.getDate() - 28);
-      const dated = !!on && Number.isFinite(since.getTime());
-      p.bodyweight = { goal: num(S.targetW) ?? null, series: dated ? weighIns(S, iso(since), on) : [] };
-    } else {
-      p.session = null;
-      p.previous = [];
-    }
+    const selection = opts.debriefSelection || legacySelection(S, opts.workoutId);
+    const { records: selected, originals } = resolveDebriefSelection(S, selection);
+    const w = selected.at(-1);
+    const all = sortedWorkouts(S);
+    const cutoff = originals.at(-1);
+    const before = all.filter(x => compareWorkouts(x, cutoff) < 0);
+    const previous = selection.mode === 'plan' ? [] : before.filter(x => sameWorkoutFamily(x, cutoff)).slice(-3);
+    const plan = selection.mode === 'plan' ? list(S.routines).find(r => r.id === selection.planId) : null;
+    p.debriefScope = {
+      version: 2, mode: selected.length > 1 ? 'plan' : 'single', requestedMode: selection.mode,
+      planId: selection.planId, planName: word(plan?.name, NAME_MAX), requested: selection.limit,
+      actual: selected.length, refs: originals.map(workoutRefOf), inputHash: selection.inputHash,
+      from: day(selected[0].d), to: day(w.d)
+    };
+    p.session = { ref: refKey(workoutRefOf(cutoff)), id: ident(w.id) || null, ...cleanWorkout(S, w, requestLang) };
+    p.previous = previous.map(x => cleanWorkout(S, x, requestLang));
+    p.sessions = selected.map((x, i) => ({ ref: refKey(workoutRefOf(originals[i])), id: ident(x.id) || null, ...cleanWorkout(S, x, requestLang) }));
+    const inSession = new Set(selected.flatMap(x => entriesOf(x).map(en => ident(en.id))));
+    const history = selection.mode === 'plan' ? selected : [...before, cutoff];
+    const agg = aggregates({ ...S, workouts: history }, selected, requestLang);
+    p.aggregates = { ...agg, exercises: agg.exercises.filter(e => inSession.has(e.id)) };
+    p.dataLimitations = selected.some(x => x._mixedProjection) ? ['mixed_session_metrics_not_attributable'] : [];
+    const on = day(w.d);
+    p.bodyweight = { goal: num(S.targetW) ?? null, series: weighIns(S, daysBefore(on, 28), on) };
     if (opts.cohort) p.cohort = cleanCohort(opts.cohort, requestLang);
   } else if (opts.kind === 'review') {
-    const workouts = reviewWindow(S, coach.lastReview?.at ? String(coach.lastReview.at).slice(0, 10) : null);
+    const workouts = reviewWindow(S, reviewDay(coach.lastReview?.at, opts.timeZone || S.reminder?.tz), { now: opts.now, today: opts.today, timeZone: opts.timeZone });
     const detailFrom = Math.max(0, workouts.length - FULL_DETAIL_SESSIONS);
     p.window = {
       from: day(workouts[0]?.d),
@@ -567,15 +578,25 @@ export function build(S, opts = {}) {
     p.library = librarySlice(S, p.coachProfile?.equipment, { keep: trainedIds(S, S.workouts || []), lang: requestLang });
     // Creation for a returning user: what they have actually handled, so proposed baselines
     // start from evidence rather than optimism (B2/FR-20).
-    const best = {};
-    (S.workouts || []).forEach(w => (w.entries || []).forEach(en => en.sets?.forEach(s => {
-      if (s.done && s.w > 0 && !isWarmupSet(s)) best[en.id] = Math.max(best[en.id] || 0, s.w);
-    })));
+    // Latest three sessions per exercise, not a lifetime peak from years ago.
+    const best = {}, seen = {};
+    for (const w of sortedWorkouts(S).reverse()) {
+      const session = {};
+      for (const en of entriesOf(w)) {
+        const weights = list(en.sets).filter(s => s.done && Number.isFinite(Number(s.w)) && s.w > 0 && !isWarmupSet(s)).map(s => Number(s.w));
+        if (weights.length) session[en.id] = Math.max(session[en.id] || 0, ...weights);
+      }
+      for (const [id, weight] of Object.entries(session)) {
+        if ((seen[id] || 0) >= 3) continue;
+        seen[id] = (seen[id] || 0) + 1;
+        best[id] = Math.max(best[id] || 0, weight);
+      }
+    }
     if (Object.keys(best).length) {
       p.history = {
         sessions: (S.workouts || []).length,
         since: day((S.workouts || [])[0]?.d),
-        workingWeights: Object.entries(best).map(([id, w]) => ({ id: ident(id), name: exerciseName(S, id, requestLang), best: w }))
+        workingWeights: Object.entries(best).map(([id, w]) => ({ id: ident(id), name: word(exerciseName(S, id, requestLang), NAME_MAX), best: w }))
       };
     }
     if (opts.refine && opts.previous) {

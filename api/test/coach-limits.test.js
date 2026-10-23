@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { tempData, writeState, sampleState } from './helpers.mjs';
+import { tempData, writeState, recentSampleState as sampleState } from './helpers.mjs';
 
 const DIR = tempData();
 const cfg = await import('../coach/config.js');
@@ -219,7 +219,7 @@ test('a proposal nobody has answered is not replaced by the next scheduled revie
   assert.equal(jobs.status(uid).pending.id, first.pending.id, 'the unread proposal is still the same one');
 
   // Once it is answered, the workout logged since is due.
-  jobs.resolvePending(uid, { dismissed: true });
+  jobs.resolvePending(uid, { proposalId: first.pending.id, requestId: 'dismiss-1', dismissed: true });
   tick();
   assert.ok(jobs.status(uid).job, 'the workout since the last review is due');
   await settle(uid);

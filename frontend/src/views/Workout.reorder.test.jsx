@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Workout from './Workout.jsx'
+import { ensureWatchIdentity } from '../lib/watch-identity.js'
 import { DEF, useStore } from '../store/useStore.js'
 import { useUI, restoreRest, restoreWork } from '../store/useUI.js'
 import { supersetUnits } from '../lib/history.js'
@@ -35,6 +36,7 @@ function mount(entries = [entry('a'), entry('bb'), entry('ccc')], view = 'list',
   S.active = { id: 'reorder-test', d: '2026-10-17', start: Date.now() - 123456, name: 'Reorder',
     routineId: 'r1', entries, cur, workoutView: view, ...extra }
   S.routines = [{ id: 'r1', name: 'Unchanged plan', ex: clone(entries).map(({ occurrenceId, ...e }) => e) }]
+  ensureWatchIdentity(S.active)
   useStore.setState({ S, user: null })
   render()
 }

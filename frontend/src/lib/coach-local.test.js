@@ -18,7 +18,7 @@ const wire = { calls: [], answer: null }
 vi.mock('./capacitor-fetch.js', () => ({
   nativeFetch: async (url, init) => {
     wire.calls.push({ url, init, body: JSON.parse(init.body) })
-    const a = typeof wire.answer === 'function' ? wire.answer(wire.calls.length) : wire.answer
+    const a = await (typeof wire.answer === 'function' ? wire.answer(wire.calls.length) : wire.answer)
     return { ok: a.status < 300, status: a.status, text: async () => JSON.stringify(a.body), json: async () => a.body }
   }
 }))
@@ -26,7 +26,6 @@ vi.mock('./capacitor-fetch.js', () => ({
 const local = await import('./coach-local.js')
 const { _resetCoachDevice, loadCoachDevice, saveCoachDevice } = await import('./coach-device.js')
 const { applyChangeSet, markStale, planHash } = await import('./coach.js')
-const { todayISO } = await import('./format.js')
 const { EXERCISES } = await import('../../../api/coach/core/library-data.js')
 
 const EX = EXERCISES[0].id, EX2 = EXERCISES[1].id
@@ -36,7 +35,7 @@ const state = () => ({
   week: { 1: 'r1' }, dayPlan: {}, customEx: [], bodyweight: [], workouts: [
     { d: '2026-08-20', start: 1, end: 3600001, entries: [{ id: EX, target: { sets: 3, reps: 8 }, sets: [{ done: true, w: 40, r: 8 }, { done: true, w: 40, r: 8 }, { done: true, w: 40, r: 8 }] }] }
   ],
-  coach: { consent: { agreedAt: '2026-08-01T00:00:00Z', version: 1 }, profile: null, cadence: 'off', lastReview: null, log: [], snapshots: [] }
+  coach: { consent: { agreedAt: '2026-08-01T00:00:00Z', version: 2 }, profile: null, cadence: 'off', lastReview: null, log: [], snapshots: [] }
 })
 const chat = content => ({ status: 200, body: { choices: [{ finish_reason: 'stop', message: { content } }] } })
 const review = { coach_contract: 1, summary: 'One tweak.', evidence: { from: '2026-08-01', to: '2026-08-20', sessions: 1 },
@@ -165,7 +164,7 @@ describe('the Coach on a phone with its own key', () => {
     await saveCoachDevice({ pending: { ...device.data.pending, expiresAt: Date.now() - 1 } })
     expect((await local.localStatus()).pending).toBeNull()
     await local.localReview(state()); await settle()
-    await local.localResolve()
+    await local.localResolve({ proposalId: device.data.pending.id, requestId: "resolve-test" })
     expect(device.data.pending).toBeNull()
   })
 
@@ -188,6 +187,35 @@ describe('the Coach on a phone with its own key', () => {
     expect(r.pending.iteration).toBe(2)
     expect(wire.calls[1].body.messages[1].content).toContain('no lunges')
     expect(wire.calls[1].body.messages[1].content).toContain('"previous"')
+  })
+
+  it('locks concurrent starts before the first await and ignores results after forgetting', async () => {
+    let release
+    wire.answer = () => new Promise(r => { release = r })
+    const first = local.localReview(state())
+    await expect(local.localReview(state())).rejects.toMatchObject({ code: 'busy' })
+    await first
+    for (let i = 0; !release && i < 30; i++) await new Promise(r => setTimeout(r, 1))
+    await local.localForget()
+    release(chat(JSON.stringify(review)))
+    await new Promise(r => setTimeout(r, 10))
+    expect((await local.localStatus()).pending).toBeNull()
+    expect((await loadCoachDevice()).handle).toBeNull()
+  })
+
+  it('requires a matching proposal and request identity and makes resolve idempotent', async () => {
+    await local.localReview(state()); const s = await settle()
+    await expect(local.localResolve({ proposalId: 'other', requestId: 'r' })).rejects.toMatchObject({ code: 'pending_mismatch' })
+    expect((await local.localStatus()).pending.id).toBe(s.pending.id)
+    await local.localResolve({ proposalId: s.pending.id, requestId: 'r' })
+    expect((await local.localResolve({ proposalId: s.pending.id, requestId: 'r' })).alreadyResolved).toBe(true)
+  })
+
+  it('reports an interrupted cold start and preserves daily usage', async () => {
+    await saveCoachDevice({ current: { id: 'interrupted', kind: 'review' }, daily: { d: todayISO(), n: 3 } })
+    const s = await local.localStatus()
+    expect(s.last).toMatchObject({ id: 'interrupted', errorClass: 'interrupted' })
+    expect(s.cap.used).toBe(3); expect(s.job).toBeNull()
   })
 
   it('disclosure says who pays and where it goes', async () => {

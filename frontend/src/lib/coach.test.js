@@ -202,7 +202,7 @@ describe('applying changes', () => {
   it('sets, reps, rep floor, rep ceiling, hold time, load step and policies', () => {
     const S = state()
     expect(apply(S, proposal([change({ type: 'sets', after: 4 })]), ['c1']).routines[0].ex[0].sets).toBe(4)
-    expect(apply(S, proposal([change({ type: 'reps', after: 12 })]), ['c1']).routines[0].ex[0].reps).toBe(12)
+    expect(apply(S, proposal([change({ type: 'reps', before: 10, after: 12 })]), ['c1']).routines[0].ex[0].reps).toBe(12)
     expect(apply(S, proposal([change({ type: 'repsMin', after: 8 })]), ['c1']).routines[0].ex[0].repsMin).toBe(8)
     expect(apply(S, proposal([change({ type: 'repsMax', before: null, after: 20 })]), ['c1']).routines[0].ex[0].repsMax).toBe(20)
     expect(apply(S, proposal([change({ type: 'sec', target: { routineId: 'r1', exId: '0007' }, before: 45, after: 60 })]), ['c1']).routines[0].ex[1].sec).toBe(60)
@@ -474,7 +474,7 @@ describe('created plans', () => {
       const s = withOverrides()
       pushSnapshot(s, 'old', 'legacy')
       delete s.coach.snapshots[s.coach.snapshots.length - 1].dayPlanRestore
-      expect(() => revertLast(s)).not.toThrow()
+      expect(() => revertLast(s)).toThrow(/overwrite/)
       expect(s.dayPlan[future]).toBe('rest')
     })
   })
@@ -677,7 +677,7 @@ describe('what the log keeps, so a decision never makes a proposal vanish', () =
     expect(e.dismissed).toBe(true)
     expect(e.bundle.name).toBe('Coach plan')
     expect(s.coach.lastReview).toBeUndefined()
-    const rid = recordDismissal(s, proposal([change()], { evidence: { sessions: 4 }, notes: ['n'] }))
+    const rid = recordDismissal(s, proposal([change()], { id: 'p-review', evidence: { sessions: 4 }, notes: ['n'] }))
     expect(logEntry(s, rid)).toMatchObject({ evidence: { sessions: 4 }, notes: ['n'] })
     expect(logEntry(s, rid).decisions[0]).toMatchObject({ status: 'rejected', before: 3, after: 4 })
   })

@@ -57,7 +57,7 @@ export function writeState(dir, uid, S) {
 export function sampleState(over = {}) {
   return {
     unit: 'kg', lang: 'en', effort: 'rpe', targetW: 80,
-    coach: { consent: { agreedAt: new Date().toISOString(), version: 1 }, profile: { goal: 'muscle', daysPerWeek: 3, equipment: ['dumbbell'] } },
+    coach: { consent: { agreedAt: new Date().toISOString(), version: 2 }, profile: { goal: 'muscle', daysPerWeek: 3, equipment: ['dumbbell'] } },
     routines: [{
       id: 'r1', name: 'Full body A', emoji: '💪', prog: 'linear',
       ex: [
@@ -79,4 +79,12 @@ export function sampleState(over = {}) {
     }],
     ...over
   };
+}
+
+// Queue/cohort integration tests need recent records as the calendar advances.
+// Keep sampleState's historical dates unchanged for payload serialization assertions.
+export function recentSampleState(over = {}) {
+  const S = sampleState(over), end = Date.now();
+  if (!Object.hasOwn(over, 'workouts')) S.workouts = S.workouts.map(w => ({ ...w, d: new Date(end).toISOString().slice(0,10), start: end-45*60000, end }));
+  return S;
 }

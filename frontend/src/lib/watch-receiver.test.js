@@ -8,10 +8,11 @@ import { applyEdit, applyRest, restOf, applyFocus } from '../../../watch-app/src
 const source = path => readFileSync(new URL('../../../watch-app/src/' + path, import.meta.url), 'utf8')
 const imports = /^import[\s\S]*?from ['"][^'"]+['"]\r?$/gm
 function transport(connection, extra = {}) {
-  const memory = new Map()
+  const memory = new Map(), shared = {}
   const context = { interconnect: { instance: () => connection },
-    storage: { getSync: ({ key }) => memory.get(key), set: ({ key, value }) => memory.set(key, structuredClone(value)) }, loadState: () => ({}), save() {},
-    WATCH_VERSION: 'test-watch', console, setTimeout, setInterval: () => 1, clearInterval() {}, ...extra }
+    storage: { getSync: ({ key }) => memory.get(key), set: ({ key, value, success }) => { memory.set(key, structuredClone(value)); success?.() } }, loadState: () => ({}), save() {},
+    runtime: () => shared, retryStorage() {}, readStored: key => context.storage.getSync({key}), writeStored: (key,value) => context.storage.set({key,value}),
+    WATCH_VERSION: 'test-watch', console, setTimeout, clearTimeout, setInterval: () => 1, clearInterval() {}, ...extra }
   runInNewContext(source('lib/rpc.js').replace(imports, '').replace(/export function /g, 'function ')
     + '\nthis.api = { startServer, sendControl, sendEvent }', context)
   return context.api
@@ -23,17 +24,17 @@ function connection() {
 }
 function page(path, deps) {
   const script = source(path).match(/<script>([\s\S]*?)<\/script>/)[1]
-  const context = { console, WATCH_VERSION: 'test-watch', applyEdit, applyRest, restOf, applyFocus,
+  const context = { console, WATCH_VERSION: 'test-watch', applyEdit, applyRest, restOf, applyFocus, persistenceStatus: () => ({}), storageStatus: () => ({}),
     storage: { getSync: () => null, set() {} }, replacePlan() {}, ...deps }
   runInNewContext(script.replace(imports, '').replace('export default', 'this.page ='), context)
   return { ...context.page, ...context.page.data }
 }
 function session() {
-  const values = new Map()
+  const values = new Map(), shared = {}
   const context = { storage: {
     getSync: ({ key }) => values.has(key) ? JSON.parse(JSON.stringify(values.get(key))) : null,
-    set: ({ key, value }) => values.set(key, JSON.parse(JSON.stringify(value))),
-  }, console, applyEdit, applyRest }
+    set: ({ key, value, success }) => { values.set(key, JSON.parse(JSON.stringify(value))); success?.() },
+  }, runtime: () => shared, readStored: key => structuredClone(values.get(key) ?? null), writeStored: (key,value) => context.storage.set({key,value}), console, applyEdit, applyRest }
   runInNewContext(source('lib/session.js').replace(imports, '').replace(/export function /g, 'function ')
     + '\nthis.api = { loadState, startSession, save, replacePlan, applySync, nextUndone, nextUndoneFrom, setRowValue, toggleSet, addSet, removeSet, addRestTime, calories, endSession, closeSession, storage }', context)
   return context.api
@@ -42,7 +43,7 @@ const plan = { t: 'plan', sid: 'today', planId: 'p1', workout: 'Leg day',
   exercises: [{ name: 'Squat', sets: 3, reps: '8', weight: '60' }] }
 function training(sessions, rpc, extra = {}) {
   return page('Workout/index.ux', { ...sessions, ...rpc, router: { push: vi.fn() },
-    startHr() {}, stopHr() {}, restOver() {}, tick() {},
+    startSessionHr() {}, stopSessionHr() {}, startHr() {}, stopHr() {}, restOver() {}, tick() {},
     setTimeout: () => 2, clearTimeout() {},
     setInterval: () => 1, clearInterval() {}, pendingCount: () => 0, isConnected: () => true, ...extra })
 }
@@ -592,7 +593,7 @@ describe('watch business message boundary', () => {
     expect(trainingPage).not.toContain('估算')
     expect(operationPage).toContain('{{ clockLabel }}')
     expect(operationPage).toContain('已用 {{ elapsedLabel }}')
-    expect(operationPage).toContain('{{ volumeLabel }} kg')
+    expect(operationPage).toContain('{{ volumeLabel }} {{ weightUnit }}')
     expect(operationPage).toContain('{{ kcalLabel }} 千卡')
     expect(operationPage).toContain('{{ hrLabel }}')
     expect(operationPage).not.toContain('估算')
@@ -853,7 +854,7 @@ describe('watch business message boundary', () => {
       expect(c.sent.find(m => m.t === 'plan_ack')).toMatchObject({
         sid: 'today', planId: 'p1', status: 'applied', page: 'Index', exercises: 1,
       })
-      expect(startSession).toHaveBeenCalledWith({ name: 'Leg day', sid: 'today', exercises: plan.exercises }, undefined)
+      expect(startSession).toHaveBeenCalledWith(expect.objectContaining({ name: 'Leg day', sid: 'today', exercises: plan.exercises }), undefined)
       expect(router.replace).toHaveBeenCalledExactlyOnceWith({ uri: '/Workout' })
       expect(c.sent.find(m => m.t === 'hello')).toMatchObject({ watchVersion: 'test-watch', receipts: true })
     })
@@ -949,7 +950,7 @@ describe('watch business message boundary', () => {
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises }, null)
     const c = connection(), rpc = transport(c, { loadState: sessions.loadState })
     const workout = page('Workout/index.ux', { ...sessions, startServer: rpc.startServer,
-      router: { push: vi.fn() }, startHr() {}, stopHr() {}, restOver() {},
+      router: { push: vi.fn() }, startSessionHr() {}, stopSessionHr() {}, startHr() {}, stopHr() {}, restOver() {},
       setInterval: () => 1, clearInterval() {}, pendingCount: () => 0, isConnected: () => true })
     workout.onInit()
     c.onMessage({ data: { ...plan, exercises: [{ ...plan.exercises[0], name: 'Bench' }] } })

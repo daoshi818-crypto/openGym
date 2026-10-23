@@ -1,4 +1,5 @@
 <script>
+import { bindRuntime } from '../lib/runtime.js'
 // 计算器输入页：改重量/次数。路由参数直接使用 exIdx、setIdx、field。
 import router from '@blueos.app.appmanager.router'
 import storage from '@blueos.storage.storage'
@@ -15,6 +16,7 @@ export default {
   },
 
   onInit(params) {
+    if (this.$app && this.$app.$def) bindRuntime(this.$app.$def)
     const p = params && typeof params === 'object' ? params : {}
     const s = loadState()
     if (!s.active || !s.workout) { router.back(); return }
@@ -25,12 +27,14 @@ export default {
     const row = s.workout.rows[this.exIdx] && s.workout.rows[this.exIdx][this.setIdx]
     if (!row) { router.back(); return }
 
+    this.entryInstanceId = s.workout.exercises[this.exIdx].entryInstanceId
+    this.setId = row.setId
     this.buffer = ''
     this.changed = false
     const cur = this.field === 'w' ? row.w : row.r
     this.initVal = cur === '' || cur == null ? '' : String(cur)
     this.show = this.initVal || '0'
-    if (this.field === 'w') { this.label = '重量'; this.unit = 'kg' }
+    if (this.field === 'w') { this.label = '重量'; this.unit = s.weightUnit || 'kg' }
     else {
       const ex = s.workout.exercises[this.exIdx]
       const timed = ex && String(ex.reps || '').indexOf('秒') >= 0
@@ -87,7 +91,11 @@ export default {
     // 编辑期间手机仍可能更新其他行，提交时只改最新会话里的目标字段。
     const s = loadState()
     if (!s.active || s.sid !== this.state.sid) { router.back(); return }
-    setRowValue(s, this.exIdx, this.setIdx, this.field, v, true)
+    const ex = this.entryInstanceId ? s.workout.exercises.findIndex(e => e.entryInstanceId === this.entryInstanceId) : this.exIdx
+    const set = this.setId ? s.workout.rows[ex]?.findIndex(r => r.setId === this.setId) : this.setIdx
+    if (!(ex >= 0) || !(set >= 0)) { router.back(); return }
+    const value = this.field === 'w' && this.state.weightUnit !== s.weightUnit && v !== '' ? Math.round(Number(v) * (this.state.weightUnit === 'lb' ? 0.45359237 : 1 / 0.45359237) * 1000) / 1000 : v
+    setRowValue(s, ex, set, this.field, value, true)
     router.back()
   },
 }

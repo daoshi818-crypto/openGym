@@ -8,7 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { tempData, writeState, sampleState } from './helpers.mjs';
+import { tempData, writeState, recentSampleState as sampleState } from './helpers.mjs';
 
 const DIR = tempData();
 const cfg = await import('../coach/config.js');
@@ -290,14 +290,10 @@ test('a payload bigger than any real history is refused before the provider is c
     assert.ok(JSON.stringify(payload.build(S, { handle: 'h'.repeat(16), kind: 'review' })).length > payload.MAX_PAYLOAD_CHARS);
     writeState(DIR, uid, S);
     const before = cfg.load().log.length;
-    jobs.enqueue(uid, { kind: 'review' });
-    await settle(uid);
+    assert.throws(() => jobs.enqueue(uid, { kind: 'review' }), e => e.code === 'toolarge');
     assert.equal(p.seen.length, 0, 'nothing reached the provider');
-    assert.equal(lastOutcome(uid).outcome, 'failed');
-    assert.equal(lastOutcome(uid).errorClass, 'toolarge');
-    // The admin's log says how big, and nothing of what was in it.
-    const line = cfg.load().log.slice(before).find(e => e.uid === uid);
-    assert.match(line.detail, /^payload of \d+k characters$/);
+    assert.equal(jobs.capState(uid).used, 0, 'preflight failure spends no quota');
+    assert.equal(cfg.load().log.length, before, 'no provider job was started');
 
     // The ordinary state next to it still goes out.
     writeState(DIR, 'u-toolarge-ok', sampleState());

@@ -2,6 +2,9 @@ import { watchSidOf } from './session-resume.js'
 import { watchSnapshotOf, watchCatalogOf } from './watch-workout.js'
 import { isWarmupRow } from './workout-model.js'
 import { applyWatchEvent, startFromWatch, rememberClose } from './watch-events.js'
+import { resolveWatchTarget } from './watch-identity.js'
+import { pruneWatchClosed } from './watch-retention.js'
+import { finiteKcal, isSegmentAtLeast, workoutCaloriesOf } from './workout-calories.js'
 
 export function endedWatchSession(S, sid) {
   const saved = S.workouts?.find(w => w.watchSid === sid || String(w.start) === sid || w.watchSids?.includes(sid) || w.watchSegments?.[sid])
@@ -11,19 +14,23 @@ export function endedWatchSession(S, sid) {
 
 // Segment identity prevents an offline summary from ending a resumed training session.
 export function applyWatchSummary(S, ev) {
-  if (!ev?.sid || !Number.isFinite(Number(ev.calories)) || Number(ev.calories) < 0) return false
+  const calories = finiteKcal(ev?.calories)
+  if (!ev?.sid || calories == null) return false
   const active = S.active && watchSidOf(S.active) === ev.sid ? S.active : null
   const target = active || S.workouts?.find(w => w.watchSid === ev.sid || String(w.start) === ev.sid || w.watchSids?.includes(ev.sid) || w.watchSegments?.[ev.sid])
   if (!target) return false
   const segments = target.watchSegments || {}
   const previous = segments[ev.sid]
-  if (previous?.at > ev.at) return true
+  if (previous && !isSegmentAtLeast(ev, previous)) return true
+  const incomingSeq = finiteKcal(ev.seq)
+  const incomingAt = finiteKcal(ev.at)
   target.watchSegments = { ...segments, [ev.sid]: {
-    calories: Math.min(100000, Number(ev.calories)), avgHr: Number(ev.avgHr) || 0,
-    maxHr: Number(ev.maxHr) || 0, at: Number(ev.at) || 0,
+    calories: Math.min(100000, calories), avgHr: Number(ev.avgHr) || 0,
+    maxHr: Number(ev.maxHr) || 0, ...(incomingAt != null ? { at: incomingAt } : {}),
+    ...(incomingSeq != null ? { seq: incomingSeq } : {}),
     source: 'watch_estimate',
   } }
-  target.calories = Object.values(target.watchSegments).reduce((n, s) => n + s.calories, 0)
+  target.calories = workoutCaloriesOf(target).kcal
   target.calorieSource = 'watch_estimate'
   return true
 }
@@ -47,15 +54,19 @@ export function createWatchLifecycle({ getState, update, getTimer, sendEnded, se
       return true
     }
     if (ev.t === 'hello') {
+      update(s => { pruneWatchClosed(s) })
       send(watchCatalogOf(current))
-      for (const close of Object.values(current.watchClosed || {})) send({ t: 'session_close', sid: close.sid,
+      for (const close of Object.values(getState().watchClosed || {}).filter(c => !c.acknowledgedAt || c.sid === ev.sid)) send({ t: 'session_close', sid: close.sid,
         disposition: close.disposition, closedAt: close.closedAt, eventId: close.eventId })
       const snapshot = watchSnapshotOf(current, getTimer())
       if (ev.sid && !ev.pendingStart && (!snapshot || snapshot.sid !== ev.sid)) sendEnded(endedWatchSession(current, ev.sid))
       if (snapshot) sendSync(snapshot)
       return true
     }
-    if (ev.t === 'session_close_ack') return true
+    if (ev.t === 'session_close_ack') {
+      update(s => { const close = s.watchClosed?.[ev.sid]; if (close && (!ev.eventId || close.eventId === ev.eventId)) { close.acknowledgedAt = Date.now(); if (!Object.values(s.watchPendingSaves || {}).some(e => e.sid === ev.sid)) delete close.entries } })
+      return true
+    }
     if (ev.t === 'session_close') {
       const prior = current.watchClosed?.[ev.sid]
       if (prior && prior.eventId === ev.eventId && ev.eventId) { ack(); return true }
@@ -103,12 +114,13 @@ export function createWatchLifecycle({ getState, update, getTimer, sendEnded, se
     }
     if (['weight', 'reps', 'set', 'unset', 'add_set', 'remove_set', 'focus'].includes(ev.t)) {
       let accepted = false
-      const wasDone = current.active?.entries?.[ev.ex]?.sets.filter(r => !isWarmupRow(r))[ev.set - 1]?.done
+      const wasDone = resolveWatchTarget(current.active, ev)?.row?.done
       update(s => { accepted = applyWatchEvent(s, ev) })
       if (accepted) {
         if (ev.t === 'set' && !wasDone && ev.rest) rest(ev.rest)
         ack(); sync()
       } else if (current.watchClosed?.[ev.sid]) ack()
+      else { send({ t: 'event_rejected', eventId: ev.eventId, sid: ev.sid, reason: 'target_changed' }); sync() }
       return true
     }
     if (ev.t !== 'end' && ev.t !== 'summary') return false
@@ -117,13 +129,7 @@ export function createWatchLifecycle({ getState, update, getTimer, sendEnded, se
       accepted = applyWatchSummary(s, ev)
       if (ev.t === 'end' && watchSidOf(s.active) === ev.sid && Array.isArray(ev.completedSets)) {
         for (const set of ev.completedSets) {
-          const entry = s.active.entries[set.ex]
-          const row = entry?.sets.filter(r => !isWarmupRow(r))[set.set - 1]
-          if (!row) continue
-          row.done = true; row.at = Number(set.at) || ev.endedAt || Date.now()
-          const weight = parseFloat(set.weight)
-          if (Number.isFinite(weight) && weight >= 0) row.w = weight
-          if (set.reps != null) { row.r = String(set.reps); row.reps = String(set.reps) }
+          applyWatchEvent(s, { ...set, sid: ev.sid, t: 'set', eventId: (ev.eventId || ev.sid) + ':' + set.ex + ':' + set.set })
         }
       }
     })

@@ -4,6 +4,7 @@
 // 手表应用用手机包名 + 证书指纹创建 interconnect 实例，连接由 SDK 完成。
 // 协议仍是 plan / set / end / rest / weight / unset / ack，只是底层从 GATT 换成 RPC。
 import { MOBILE, isAndroid } from './mobile.js'
+import { isWarmupRow } from './workout-model.js'
 
 let pluginP = null
 const watchPlugin = () => pluginP || (pluginP = (async () => {
@@ -32,7 +33,9 @@ let lastWatchRx = null
 let lastPlanClear = null
 let lastPublishedPlan = null
 let onWatchLifecycle = () => false
-export function bindWatchLifecycle(cb) {
+let trainingStore = null
+export function bindWatchLifecycle(cb, store = null) {
+  trainingStore = store
   onWatchLifecycle = cb
   return () => { if (onWatchLifecycle === cb) onWatchLifecycle = () => false }
 }
@@ -253,13 +256,13 @@ async function flushPendingPlan() {
       pendingPlan = null
       const msg = {
         t: 'plan',
-        v: 2,
+        v: 2, protocolVersion: next.workout.protocolVersion || 1, weightUnit: next.workout.weightUnit || next.profile?.weightUnit || 'kg', structureRevision: next.workout.structureRevision,
         sid: next.sid || '',
         planId: next.planId,
         workout: next.workout.name || '',
         profile: next.profile || null,
         exercises: (next.workout.exercises || []).map(e => ({
-          ...(e.id ? { id: e.id } : {}),
+          ...(e.id ? { id: e.id } : {}), entryInstanceId: e.entryInstanceId, setIds: e.setIds, weightUnit: e.weightUnit,
           name: e.name || '',
           sets: e.sets || 1,
           reps: e.reps != null ? String(e.reps) : '',
@@ -292,6 +295,15 @@ async function flushPendingPlan() {
 
 async function sendWatchEvent(obj) {
   if (!MOBILE || !obj) return false
+  const S = trainingStore?.getState(), A = S?.active
+  if (A && obj.sid === String(A.watchSid || A.start) && Number.isInteger(obj.ex)) {
+    const entry = A.entries[obj.ex], rows = entry?.sets.filter(r => !isWarmupRow(r)) || [], row = rows[obj.set - 1]
+    obj = { ...obj, protocolVersion: 2, entryInstanceId: entry?.entryInstanceId, setId: row?.setId,
+      weightUnit: S.unit || 'kg', structureRevision: A.structureRevision, at: obj.editAt || obj.at || Date.now() }
+    if (['add_set','remove_set'].includes(obj.t)) obj.setIds = rows.map(r => r.setId)
+    const field = obj.t === 'weight' ? 'weight' : obj.t === 'reps' ? 'reps' : ['set','unset'].includes(obj.t) ? 'done' : null
+    if (field && row) trainingStore.update(s => { const a = s.active; if (!a || a.start !== A.start) return; a.watchVersions ||= {}; a.watchVersions[[entry.entryInstanceId || obj.ex, row.setId || obj.set, field].join(':')] = obj.at })
+  }
   await bindNative()
   const p = await watchPlugin()
   if (!p) return false

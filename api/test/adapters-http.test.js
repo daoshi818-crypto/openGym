@@ -253,7 +253,7 @@ test('a transient status (429, 5xx, 529) is retried twice with the same request,
   assert.equal(f.calls.length, 1);
 });
 
-test('an abort that lands during a retry pause sends nothing more and ends as a timeout', async () => {
+test('an abort during a retry pause sends nothing more and ends as cancelled', async () => {
   // A forget mid-backoff: the payload must not go out a second time, and the job must drain
   // now rather than wait for the next attempt to time out.
   const ac = new AbortController();
@@ -263,7 +263,7 @@ test('an abort that lands during a retry pause sends nothing more and ends as a 
   ac.abort();
   const r = await p;
   assert.equal(f.calls.length, 1, 'the payload is not sent again');
-  assert.equal(r.timedOut, true);
+  assert.equal(r.cancelled, true);
 });
 
 test('a body that is not JSON on an error still yields a readable stderr', async () => {

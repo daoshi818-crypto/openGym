@@ -23,6 +23,7 @@ import { libraryHas, libraryName, libraryDisplayName, equipmentAllows } from './
 const offEquipment = (ctx, id) => !!ctx.equipment?.length && libraryHas(id)
   && !(ctx.offered && ctx.offered.has(id)) && !equipmentAllows(ctx.equipment, id);
 const OFF_EQUIPMENT = (where, id) => `${where} "${id}" needs equipment the user does not have — use an exercise from the library provided in the payload`;
+import { reviewScopeErrors } from './scope.js';
 import { glyphStr } from './glyphs.js';
 
 // The closed list (FR-23 / C3). Adding a member here is a deliberate act with an apply
@@ -201,6 +202,14 @@ export function validatePlan(data, ctx = {}) {
     week[day] = rid;
   });
 
+  const preferred = [...new Set(ctx.preferredDays || [])].filter(d => isInt(d, 0, 6));
+  if (preferred.length && preferred.length === ctx.daysPerWeek && JSON.stringify(Object.keys(week).map(Number).sort()) !== JSON.stringify(preferred.sort())) errors.push('week must use the preferredDays supplied by the user');
+  // This is a planning heuristic, not a physiological estimate: include work and rest.
+  if (isNum(ctx.sessionMin) && ctx.sessionMin >= 10) routines.forEach(r => {
+    const estimatedMin = r.ex.reduce((n,e) => n + (e.mode === 'cardio' ? (e.min || 20) : e.sets * ((e.mode === 'time' ? (e.sec || 45) : 40) + 90) / 60), 5);
+    if (estimatedMin > ctx.sessionMin * 1.5) errors.push('routine "' + r.name + '" exceeds the session time heuristic (' + Math.round(estimatedMin) + ' min). Reduce work or split the session');
+  });
+
   // FR-20: never start someone above what they have actually lifted.
   const caps = new Map((ctx.workingWeights || []).map(w => [w.id, w.best]));
   routines.forEach(r => r.ex.forEach(e => {
@@ -242,6 +251,8 @@ export function validatePlan(data, ctx = {}) {
  * aimed at a routine that no longer exists never reaches the review screen.
  */
 export function validateReview(data, plan, ctx = {}) {
+  const scopeErrors = reviewScopeErrors(data?.changes, ctx.scope);
+  if (scopeErrors.length) return fail(scopeErrors);
   if (!data || typeof data !== 'object') return fail(['the answer was not an object']);
   if (data.nochange) {
     return { ok: true, nochange: true, reading: clampStr(data.reading || data.summary || '', 1200) };
@@ -631,15 +642,17 @@ const MAX_DEBRIEF_ITEMS = 5;
  * at all, and one that tries is refused rather than trimmed.
  * Returns { ok, proposal:{ summary, score, highlights, watch, nextTime } } | { ok:false, errors }.
  */
-export function validateDebrief(data) {
+export function validateDebrief(data, ctx = {}) {
   if (!data || typeof data !== 'object') return fail(['the answer was not an object']);
   const errors = [];
   if (data.nochange) errors.push('a debrief was requested — "nochange" is not an answer here; read the session and say what you saw');
   if (Array.isArray(data.changes) && data.changes.length) errors.push('a debrief carries no plan changes — drop "changes" and put advice into "nextTime"');
   if (!isStr(data.summary)) errors.push('summary is required — two or three sentences on how the session went');
   let score = null;
-  if (typeof data.score === 'number' && Number.isFinite(data.score)) score = Math.max(1, Math.min(10, Math.round(data.score)));
-  else errors.push('score must be a whole number from 1 to 10');
+  if (ctx.scope?.mode !== 'plan') {
+    if (typeof data.score === 'number' && Number.isFinite(data.score)) score = Math.max(1, Math.min(10, Math.round(data.score)));
+    else errors.push('score must be a whole number from 1 to 10');
+  }
   const lists = {};
   DEBRIEF_LISTS.forEach(k => {
     const v = data[k];
@@ -647,6 +660,19 @@ export function validateDebrief(data) {
     lists[k] = (v || []).filter(isStr).map(x => clampStr(x.trim(), 300)).slice(0, MAX_DEBRIEF_ITEMS);
   });
   if (!DEBRIEF_LISTS.some(k => lists[k].length)) errors.push('at least one of highlights, watch or nextTime must have an item');
+  const trends = [];
+  const dataLimitations = (Array.isArray(data.dataLimitations) ? data.dataLimitations : []).filter(isStr).slice(0, 5).map(x => clampStr(x, 300));
+  if (ctx.scope?.mode === 'plan') {
+    if (!Array.isArray(data.trends) || !Array.isArray(data.dataLimitations)) errors.push('plan debrief requires trends and dataLimitations arrays');
+    const refs = new Set((ctx.sessions || []).map(w => w.ref));
+    const ids = new Set((ctx.sessions || []).flatMap(w => (w.entries || []).map(e => e.id)));
+    for (const trend of (Array.isArray(data.trends) ? data.trends : []).slice(0, 5)) {
+      if (!isStr(trend?.text) || !Array.isArray(trend.sessionRefs) || new Set(trend.sessionRefs).size < 2 || trend.sessionRefs.some(r => !refs.has(r)) || (trend.exerciseId != null && (!ids.has(trend.exerciseId) || trend.sessionRefs.some(ref => !(ctx.sessions || []).find(w => w.ref === ref)?.entries?.some(e => e.id === trend.exerciseId))))) {
+        errors.push('each trend must cite only supplied session refs and exercise ids'); continue;
+      }
+      trends.push({ text: clampStr(trend.text, 400), sessionRefs: [...new Set(trend.sessionRefs)].slice(0, 10), ...(trend.exerciseId ? { exerciseId: trend.exerciseId } : {}) });
+    }
+  }
   if (errors.length) return fail(errors);
-  return { ok: true, proposal: { summary: clampStr(data.summary.trim(), 600), score, ...lists } };
+  return { ok: true, proposal: { summary: clampStr(data.summary.trim(), 600), score, ...lists, ...(ctx.scope?.mode === 'plan' ? { trends, dataLimitations } : {}) } };
 }

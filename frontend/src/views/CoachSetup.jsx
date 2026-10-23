@@ -16,6 +16,7 @@ import { useUI } from '../store/useUI.js'
 import { t } from '../lib/i18n.js'
 import { MOBILE } from '../lib/mobile.js'
 import { CATEGORY_TEXT } from '../lib/coach.js'
+import { credentialScope } from '../lib/coach-credential-scope.js'
 import { getApiKey, setApiKey, clearApiKey } from '../lib/coach-secrets.js'
 import { HTTP_PROVIDERS, HTTP_PROVIDER_IDS, baseUrlFor, validateBaseUrl } from '../../../api/coach/core/providers.js'
 import { DATA_CATEGORIES } from '../../../api/coach/core/categories.js'
@@ -40,6 +41,7 @@ export default function CoachSetup() {
   const user = useStore(s => s.user)
   const config = useStore(s => s.config)
   const coachLocal = useStore(s => s.coachLocal)
+  const coachStorageError = useStore(s => s.coachStorageError)
   const setCoachLocal = useStore(s => s.setCoachLocal)
   const refreshConfig = useStore(s => s.refreshConfig)
   const toast = useUI(s => s.toast)
@@ -56,10 +58,10 @@ export default function CoachSetup() {
   const [busy, setBusy] = useState(false)
 
   useEffect(() => { if (!MOBILE) nav('/settings', { replace: true }) }, [])
-  useEffect(() => { getApiKey().then(k => setHasKey(!!k)) }, [])
+  useEffect(() => { let alive = true; getApiKey({ provider, baseUrl }).then(k => { if (alive) setHasKey(!!k) }).catch(e => { if (alive) { setHasKey(false); toast(e.message || t('Could not connect')) } }); return () => { alive = false } }, [provider, baseUrl])
   // Ask the paired server afresh: the admin may have switched the Coach on since this phone booted.
   useEffect(() => { if (user) refreshConfig() }, [user])
-  useEffect(() => { setModels(null); setModel(coachLocal?.provider === provider ? (coachLocal?.model || '') : '') }, [provider])
+  useEffect(() => { setModels(null); setModel(coachLocal?.provider === provider ? (coachLocal?.model || '') : '') }, [provider, baseUrl])
 
   const meta = HTTP_PROVIDERS[provider] || {}
   const host = hostOf(baseUrlFor(provider, { providerOptions: { [provider]: { baseUrl } } }))
@@ -85,7 +87,7 @@ export default function CoachSetup() {
     try {
       const local = await import('../lib/coach-local.js')
       setStep(1)
-      const k = key.trim() || await getApiKey()
+      const k = key.trim() || await getApiKey({ provider, baseUrl: v.value })
       const r = await local.localModels({ provider, baseUrl: v.value }, k)
       if (!r.ok) { setStep(-1); toast(t('Could not reach the provider: {0}', r.error)); return }
       setModels(r.models)
@@ -109,11 +111,14 @@ export default function CoachSetup() {
     if (isCleartext(v.value)) return toast(cleartextRefused())
     setBusy(true)
     try {
-      // The mode first, the key second: the settings file is the cheap, reliable write, the
-      // key goes through the platform's secure store, which is the step that can misbehave.
-      // Either way the user hears what happened instead of watching a greyed-out button (#42).
-      await setCoachLocal({ mode: 'byok', provider, model: chosen, baseUrl: meta.baseUrl ? v.value : null })
-      if (key.trim()) { await setApiKey(key.trim()); setHasKey(true); setKey('') }
+      const settings = { mode: 'byok', provider, model: chosen, baseUrl: meta.baseUrl ? v.value : null }
+      const scope = credentialScope(settings)
+      if (key.trim()) { await setApiKey(key.trim(), settings) }
+      else if (!meta.keyOptional && !await getApiKey(settings)) throw new Error(t('Enter your API key'))
+      const local = await import('../lib/coach-local.js')
+      local.cancelLocalJob()
+      await setCoachLocal({ ...settings, credentialScope: scope, credentialDisabled: false })
+      setHasKey(!!key.trim() || hasKey); setKey('')
       toast(t('The Coach is on'))
       nav('/coach')
     } catch (e) {
@@ -122,12 +127,16 @@ export default function CoachSetup() {
   }
 
   const turnOff = async () => {
-    await clearApiKey(); setHasKey(false)
-    await setCoachLocal({ mode: 'off' })
-    const local = await import('../lib/coach-local.js').catch(() => null)
-    if (local) await local.localForget()
-    setChoice(null)
-    toast(t('The Coach is off'))
+    setBusy(true)
+    try {
+      await setCoachLocal({ mode: 'off', credentialDisabled: true })
+      const local = await import('../lib/coach-local.js')
+      await local.localForget()
+      await clearApiKey(coachLocal)
+      setHasKey(false); setChoice(null)
+      toast(t('The Coach is off'))
+    } catch (e) { toast(e.message || t('Could not connect')) }
+    finally { setBusy(false) }
   }
 
   const current = coachLocal?.mode === 'server' ? t('Runs on your openGym server')
@@ -140,6 +149,7 @@ export default function CoachSetup() {
       <div style={{ flex: 1, marginInlineStart: 10 }}><h1>{t('AI Coach')}</h1></div>
     </div>
 
+    {coachStorageError && <p role="alert">{t('Coach storage could not be read. Your training remains available. Reopen settings after checking device storage.')}</p>}
     <Section title={t('How should the Coach run?')} footer={current}>
       <Row icon="rocket" iconTint="var(--indigo)" title={t('Use my self-hosted openGym')}
         subtitle={user ? (serverHasCoach ? t('Your server runs the Coach with whatever provider its admin set up. Nothing new leaves this phone beyond what already syncs.') : config == null ? t('Loading…') : t('Your server has no Coach enabled. Ask its admin, or bring your own key below.')) : t('Connect to my server')}

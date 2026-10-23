@@ -28,6 +28,10 @@ import { loadCoachDevice, saveCoachDevice } from './coach-device.js'
 import { planHash } from './coach.js'
 import { todayISO } from './format.js'
 import { t, getLang } from './i18n.js'
+import { prepareCoachRequest, assertPayloadSize } from '../../../api/coach/core/preflight.js'
+import { debriefMetadata } from '../../../api/coach/core/debrief-report.js'
+import { coachContext } from '../../../api/coach/core/context.js'
+import { fingerprint } from '../../../api/coach/core/debrief-selection.js'
 
 export const ADAPTERS = { anthropic, openai, gemini, compatible }
 export const LOCAL_DAILY_CAP = 10
@@ -40,6 +44,10 @@ const PENDING_DAYS = 14
 const HANDLE_LENGTH = 16
 
 let job = null
+let starting = false
+let generation = 0
+let controller = null
+let recovered = false
 let lastError = null
 let last = null   // how the most recent job ended — the same shape the server's status() reports
 // Reported to the screens through the same status shape the server answers with; a toast is
@@ -59,11 +67,12 @@ function mintHandle() {
   let bin = ''; bytes.forEach(b => { bin += String.fromCharCode(b) })
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '').slice(0, HANDLE_LENGTH)
 }
-async function handle() {
+async function handle(mine) {
   const d = await loadCoachDevice()
   if (d.handle && d.handle.length === HANDLE_LENGTH) return d.handle
   const h = mintHandle()
-  await saveCoachDevice({ handle: h })
+  await saveCoachDevice(() => mine === generation ? { handle: h } : null)
+  if (mine !== generation) throw Object.assign(new Error('cancelled'), { code: 'cancelled' })
   return h
 }
 
@@ -85,19 +94,52 @@ async function bumpDaily() {
 export async function localStatus() {
   const d = await loadCoachDevice()
   if (d.pending && d.pending.expiresAt && d.pending.expiresAt < Date.now()) await saveCoachDevice({ pending: null })
-  return { job, pending: (await loadCoachDevice()).pending || null, cap: await capState(), lastError, last }
+  if (!recovered && !job && !starting) {
+    recovered = true
+    if (d.current) {
+      const ended = { id: d.current.id, kind: d.current.kind, outcome: 'failed', errorClass: 'interrupted', at: Date.now() }
+      await saveCoachDevice({ current: null, last: ended })
+      last = ended
+    } else last = d.last || last
+  }
+  return { job, pending: (await loadCoachDevice()).pending || null, cap: await capState(), lastError, last, debriefSelectionVersion: 2, decisionVersion: 2 }
 }
 
-export const localReview = (S, note) => start(S, 'review', { note: note ? String(note).slice(0, 1000) : null })
+export const localReview = (S, note, scope) => start(S, 'review', { note: note ? String(note).slice(0, 1000) : null, scope })
 export const localPlan = (S, intake) => start(S, 'create', { intake: intake || null })
 export const localRefine = async (S, text) => {
   const d = await loadCoachDevice()
   const pendingCreate = d.pending && d.pending.kind === 'create' ? d.pending : null
   return start(S, 'create', { refine: String(text || '').slice(0, 1000), previous: pendingCreate?.bundle || null, iteration: (pendingCreate?.iteration || 1) + 1 })
 }
-export const localDebrief = (S, workoutId) => start(S, 'debrief', { workoutId: workoutId || null })
-export async function localResolve() { await saveCoachDevice({ pending: null }); return { ok: true } }
-export async function localForget() { job = null; lastError = null; await saveCoachDevice({ pending: null, daily: null }); return { ok: true } }
+export const localDebrief = (S, selection) => start(S, 'debrief', {
+  debriefSelection: selection && typeof selection === 'object' ? selection : null,
+  workoutId: typeof selection === 'string' ? selection : selection?.mode === 'single' ? selection.refs?.[0]?.value || null : null
+})
+export async function localResolve(body = {}) {
+  const d = await loadCoachDevice()
+  if ([body.proposalId, body.requestId].some(id => typeof id !== 'string' || !id.trim() || id.length > 128)) throw Object.assign(new Error('pending_mismatch'), { code: 'pending_mismatch', data: { code: 'pending_mismatch' } })
+  if (Object.hasOwn(d.resolved || {}, body.proposalId)) return { ok: true, alreadyResolved: true }
+  if (d.pending?.id !== body.proposalId) throw Object.assign(new Error('pending_mismatch'), { code: 'pending_mismatch', data: { code: 'pending_mismatch' } })
+  await saveCoachDevice(current => {
+    if (current.resolved?.[body.proposalId]) return null
+    if (current.pending?.id !== body.proposalId) throw Object.assign(new Error('pending_mismatch'), { code: 'pending_mismatch' })
+    return { pending: null, resolved: { ...Object.fromEntries(Object.entries(current.resolved || {}).filter(([, at]) => Date.now() - at < 21 * 864e5)), [body.proposalId]: Date.now() } } })
+  return { ok: true, proposalId: body.proposalId }
+}
+export async function localForget() {
+  generation++; controller?.abort(); controller = null
+  const cancelled = job ? { id: job.id, kind: job.kind, outcome: 'cancelled', at: Date.now() } : null
+  job = null; lastError = null; last = cancelled
+  await saveCoachDevice({ pending: null, current: null, last: cancelled, handle: null, resolved: null })
+  return { ok: true }
+}
+export async function cancelLocalJob() {
+  generation++; controller?.abort(); controller = null
+  const cancelled = job ? { id: job.id, kind: job.kind, outcome: 'cancelled', at: Date.now() } : null
+  job = null
+  await saveCoachDevice(current => current.current ? { current: null, last: cancelled || { ...current.current, outcome: 'cancelled', at: Date.now() } } : null)
+}
 
 export async function localDisclosure() {
   const d = await loadCoachDevice()
@@ -105,7 +147,7 @@ export async function localDisclosure() {
   const base = d.provider ? baseUrlFor(d.provider, cfgOf(d)) : ''
   return {
     provider: d.provider, providerLabel: meta.label || t('the configured AI provider'),
-    categories: payloadLib.DATA_CATEGORIES, version: 1,
+    categories: payloadLib.DATA_CATEGORIES, version: 2,
     // The honest difference from the self-hosted flow: it is the user's own account.
     payer: 'you', host: hostOf(base)
   }
@@ -122,69 +164,80 @@ const hostOf = url => { try { return new URL(url).host } catch { return url || '
 
 /* ---------- running a job ---------- */
 
-async function start(S, kind, opts) {
-  if (job) throw Object.assign(new Error(t('The Coach is already thinking about your training.')), { status: 409, code: 'busy' })
-  if (!S?.coach?.consent?.agreedAt) throw Object.assign(new Error(t('The Coach needs your go-ahead first.')), { status: 403, code: 'consent' })
-  const d = await loadCoachDevice()
-  const adapter = ADAPTERS[d.provider]
-  if (d.mode !== 'byok' || !adapter) throw Object.assign(new Error(t('The Coach isn’t set up on this phone.')), { status: 503, code: 'off' })
-  const cap = await capState()
-  if (cap.used >= cap.limit) throw Object.assign(new Error(t('The Coach is taking a breather. You’ve used today’s {0} runs on this phone.', cap.limit)), { status: 429, code: 'cap' })
-
-  await bumpDaily()
-  job = { id: 'local-' + Date.now().toString(36), kind, state: 'running', startedAt: Date.now() }
-  lastError = null
-  // Not awaited: the screens poll, exactly as they do against a server.
-  run(S, kind, opts, d, adapter).catch(e => { lastError = { errorClass: 'internal', detail: String(e && e.message || e) } }).finally(() => { job = null })
-  return { job }
+async function start(S, kind, options) {
+  if (starting || job) throw Object.assign(new Error(t('The Coach is already thinking about your training.')), { status: 409, code: 'busy' })
+  starting = true
+  const mine = generation
+  try {
+    const snapshot = JSON.parse(JSON.stringify(S))
+    const opts = prepareCoachRequest(snapshot, kind, options)
+    const d = await loadCoachDevice()
+    const adapter = ADAPTERS[d.provider]
+    if (mine !== generation) throw Object.assign(new Error('cancelled'), { code: 'cancelled' })
+    if (d.mode !== 'byok' || !adapter) throw Object.assign(new Error(t('The Coach isn’t set up on this phone.')), { code: 'off' })
+    const payload = assertPayloadSize(payloadLib.build(snapshot, {
+      handle: await handle(mine), kind, ...opts, lang: getLang()
+    }), payloadLib.MAX_PAYLOAD_CHARS)
+    const key = await getApiKey(d)
+    if (!key && !HTTP_PROVIDERS[d.provider].keyOptional) throw Object.assign(new Error('No API key configured'), { code: 'missing' })
+    if (mine !== generation) throw Object.assign(new Error('cancelled'), { code: 'cancelled' })
+    const cap = await capState()
+    if (cap.used >= cap.limit) throw Object.assign(new Error(t('The Coach is taking a breather. You’ve used today’s {0} runs on this phone.', cap.limit)), { status: 429, code: 'cap' })
+    const startedAt = Date.now()
+    const ctx = { id: 'local-' + (globalThis.crypto?.randomUUID?.() || startedAt.toString(36) + Math.random().toString(36).slice(2)), kind, state: 'running', startedAt,
+      generation: mine, modeFingerprint: fingerprint({ mode: d.mode, provider: d.provider, baseUrl: d.baseUrl, model: d.model }), deadlineAt: startedAt + timeoutFor(d.provider) }
+    const ctl = new AbortController()
+    await saveCoachDevice(current => mine === generation ? { daily: { d: todayISO(), n: (current.daily?.d === todayISO() ? current.daily.n : 0) + 1 }, current: ctx } : null)
+    if (mine !== generation) { await saveCoachDevice(current => current.current?.id === ctx.id ? { current: null } : null); throw Object.assign(new Error('cancelled'), { code: 'cancelled' }) }
+    job = ctx; controller = ctl; lastError = null; recovered = true
+    const owns = () => generation === ctx.generation && job?.id === ctx.id
+    run(snapshot, kind, opts, d, adapter, payload, key, ctx, ctl, owns)
+      .catch(async e => {
+        if (!owns()) return
+        lastError = { errorClass: e.code || 'internal', detail: String(e?.message || e).slice(0, 300) }
+        last = { id: ctx.id, kind, outcome: 'failed', errorClass: lastError.errorClass, at: Date.now() }
+        await saveCoachDevice(current => owns() ? { last, current: null } : null)
+      }).catch(() => {}).finally(() => { if (owns()) { job = null; controller = null } })
+    return { job: { ...ctx } }
+  } finally { starting = false }
 }
 
-async function run(S, kind, opts, d, adapter) {
-  const key = await getApiKey()
-  const payload = payloadLib.build(S, {
-    handle: await handle(), kind, intake: opts.intake, note: opts.note, refine: opts.refine, previous: opts.previous, workoutId: opts.workoutId,
-    lang: getLang()   // what the app shows, which a profile that never picked a language does not store (#303)
-  })
+async function run(S, kind, opts, d, adapter, payload, key, ctx, ctl, owns) {
+  const current = await loadCoachDevice()
+  if (!owns()) return
+  if (fingerprint({ mode: current.mode, provider: current.provider, baseUrl: current.baseUrl, model: current.model }) !== ctx.modeFingerprint) throw Object.assign(new Error('Configuration changed'), { code: 'cancelled' })
   const attempt = await runPipeline({
     adapter, cfg: cfgOf(d), kind, payload,
-    model: d.model || HTTP_PROVIDERS[d.provider].defaultModel, timeoutMs: timeoutFor(d.provider),
-    invokeOpts: { env: envOf(d, key), fetch: nativeFetch }
+    model: d.model || HTTP_PROVIDERS[d.provider].defaultModel,
+    timeoutMs: Math.max(1, ctx.deadlineAt - Date.now()), deadlineAt: ctx.deadlineAt,
+    invokeOpts: { env: envOf(d, key), fetch: nativeFetch, signal: ctl.signal }
   })
+  if (!owns()) return
   if (!attempt.ok) {
-    // There is no admin card on a phone, so the reason has to reach the person holding it:
-    // the provider's own words for a refusal, the validator's for an answer that did not fit.
-    const detail = attempt.detail || (Array.isArray(attempt.errors) && attempt.errors.length
-      ? attempt.errors.slice(0, 3).map(String).join(' · ').slice(0, 300)
-      : null)
+    const detail = attempt.detail || (attempt.errors || []).slice(0, 3).map(String).join(' · ').slice(0, 300) || null
     lastError = { errorClass: attempt.errorClass, detail }
-    last = { id: job.id, kind, outcome: 'failed', errorClass: attempt.errorClass, at: Date.now() }
-    if (notify) notify({ kind: 'failed', errorClass: attempt.errorClass, detail })
+    last = { id: ctx.id, kind, outcome: 'failed', errorClass: attempt.errorClass, at: Date.now() }
+    await saveCoachDevice(current => owns() ? { current: null, last } : null)
+    if (owns()) notify?.({ kind: 'failed', errorClass: attempt.errorClass, detail })
     return
   }
   if (attempt.nochange) {
-    last = { id: job.id, kind, outcome: 'nochange', errorClass: null, at: Date.now(), reading: attempt.reading }
-    if (notify) notify({ kind: 'nochange', reading: attempt.reading })
+    last = { id: ctx.id, kind, outcome: 'nochange', errorClass: null, at: Date.now(), reading: attempt.reading }
+    await saveCoachDevice(current => owns() ? { current: null, last, pending: null } : null)
+    if (owns()) notify?.({ kind: 'nochange', reading: attempt.reading })
     return
   }
   const pending = {
-    id: job.id, kind, createdAt: Date.now(), expiresAt: Date.now() + PENDING_DAYS * 86400000,
-    planHash: planHash(S), iteration: opts.iteration || 1,
-    ...(kind === 'debrief' ? { workout: workoutMetaOf(S, opts.workoutId) } : {}),
-    ...attempt.result
+    ...attempt.result, id: ctx.id, kind, createdAt: Date.now(), expiresAt: Date.now() + PENDING_DAYS * 86400000,
+    planHash: planHash(S), context: coachContext(S, planHash(S), opts.scope), scope: opts.scope || null, iteration: opts.iteration || 1,
+    ...(kind === 'debrief' ? debriefMetadata(payload) : {}),
+    ...(kind === 'create' ? { bundle: { ...attempt.result.bundle, unit: payload.meta.unit } } : {})
   }
-  await saveCoachDevice({ pending })
-  last = { id: job.id, kind, outcome: 'ready', errorClass: null, at: Date.now() }
-  if (notify) notify({ kind: 'ready', pending })
+  last = { id: ctx.id, kind, outcome: 'ready', errorClass: null, at: Date.now() }
+  await saveCoachDevice(current => owns() ? { pending, current: null, last } : null)
+  if (owns()) notify?.({ kind: 'ready', pending })
 }
 
-// The session a debrief is about, in the shape the card reads. The core builds it for the
-// server; the fallback covers a core that predates it.
-function workoutMetaOf(S, workoutId) {
-  if (typeof payloadLib.workoutMeta === 'function') return payloadLib.workoutMeta(S, workoutId)
-  const all = (S.workouts || []).filter(w => w && w.d)
-  const w = all.find(x => x.id === workoutId) || all[all.length - 1]
-  return w ? { id: w.id, d: w.d, name: w.name || null } : null
+export function _resetLocal() {
+  generation++; controller?.abort(); controller = null; job = null; starting = false; lastError = null; last = null; recovered = false
 }
-
-// Test seam.
-export function _resetLocal() { job = null; lastError = null; last = null }

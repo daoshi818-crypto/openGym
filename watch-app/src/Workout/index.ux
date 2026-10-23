@@ -1,14 +1,16 @@
 <script>
+import { bindRuntime } from '../lib/runtime.js'
 // 主训练页（单屏 + 手势）：重量/次数保持可见，休息态只保留必要操作。
 import router from '@blueos.app.appmanager.router'
 import brightness from '@blueos.hardware.display.brightness'
 import {
   loadState, save, replacePlan, applySync, toggleSet, nextUndone, nextUndoneFrom,
-  addHr, flushHr, endSession, closeSession, addSet, removeSet, addRestTime, setRowValue, calories,
+  endSession, closeSession, addSet, removeSet, addRestTime, setRowValue, calories,
 } from '../lib/session.js'
-import { startHr, stopHr, tick, restOver } from '../lib/sensors.js'
-import { startServer, sendEvent, sendControl, pendingCount, isConnected } from '../lib/rpc.js'
-import { applyFocus, applyRest, restOf } from '../lib/protocol.js'
+import { startSessionHr, stopSessionHr, tick, restOver } from '../lib/sensors.js'
+import { startServer, sendEvent, sendControl, pendingCount, isConnected, persistenceStatus } from '../lib/rpc.js'
+import { storageStatus } from '../lib/persistence.js'
+import { applyEdit, applyFocus, applyRest, restOf } from '../lib/protocol.js'
 
 export default {
   data: {
@@ -25,7 +27,7 @@ export default {
     restExerciseName: '',
     nextLabel: '',
     nextDetails: '',
-    hrLabel: '♥ --',
+    hrLabel: '♥ --', weightUnit: 'kg',
     syncLabel: '',
     isRest: false,
     menuOn: false,
@@ -41,6 +43,7 @@ export default {
   },
 
   onInit() {
+    if (this.$app && this.$app.$def) bindRuntime(this.$app.$def)
     const s = loadState()
     if (!s.active || !s.workout) { router.push({ uri: '/Index' }); return }
     this.state = s
@@ -69,12 +72,6 @@ export default {
     }
     this.setRestScreenLock(!!s.restUntil)
 
-    this.hrFlush = setInterval(() => {
-      if (this.hrDirty) {
-        flushHr(this.state)
-        this.hrDirty = false
-      }
-    }, 15000)
 
     this.startHrCapture()
     this.refresh()
@@ -138,6 +135,16 @@ export default {
         }
         this.state = latest
       }
+      const msg = args[0], s = this.state
+      if (msg?.entryInstanceId && ['set','unset','weight','reps','add_set','remove_set','focus'].includes(msg.t)) {
+        const ex = s.workout.exercises.findIndex(e => e.entryInstanceId === msg.entryInstanceId)
+        if (ex < 0) return
+        const set = msg.setId ? s.workout.rows[ex].findIndex(r => r.setId === msg.setId) + 1 : msg.set
+        if (msg.setId && !set) return
+        args[0] = { ...msg, ex, set }
+        if (msg.weight != null && msg.weight !== '' && msg.weightUnit && msg.weightUnit !== s.weightUnit) args[0].weight = Math.round(Number(msg.weight) * (msg.weightUnit === 'lb' ? 0.45359237 : 1 / 0.45359237) * 1000) / 1000
+        if (['add_set','remove_set'].includes(msg.t)) { applyEdit(s, msg); save(s); this.refresh(); return }
+      }
       return this[method](...args)
     }
     startServer({
@@ -166,14 +173,11 @@ export default {
     this.setRestScreenLock(false)
     if (this.timer) clearInterval(this.timer)
     this.timer = null
-    this.stopHrCapture()
   },
 
   onDestroy() {
     if (this.timer) clearInterval(this.timer)
     this.flushRestNudge()
-    if (this.hrFlush) clearInterval(this.hrFlush)
-    this.stopHrCapture()
     this.setRestScreenLock(false)
   },
 
@@ -190,25 +194,9 @@ export default {
     } catch (e) { this.screenLocked = null }
   },
 
-  startHrCapture() {
-    if (this.hrActive || !this.state || !this.state.active || this.state.pausedAt) return
-    this.hrActive = true
-    startHr((bpm) => {
-      addHr(this.state, bpm)
-      this.hrLast = bpm
-      this.hrDirty = true
-    })
-  },
+  startHrCapture() { startSessionHr() },
 
-  stopHrCapture() {
-    if (!this.hrActive) return
-    stopHr()
-    this.hrActive = false
-    if (this.hrDirty && this.state) {
-      flushHr(this.state)
-      this.hrDirty = false
-    }
-  },
+  stopHrCapture() { stopSessionHr() },
 
   touchStart(e) {
     const t = e.touches && e.touches[0]
@@ -277,6 +265,7 @@ export default {
 
   onMenuAddSet() {
     const s = this.state
+    this.weightUnit = s.weightUnit || 'kg'
     const ex = s.exIdx
     addSet(s, ex)
     const rows = s.workout.rows[ex]
@@ -293,9 +282,10 @@ export default {
     const rows = s.workout.rows[ex]
     if (!rows || rows.length <= 1 || rows[rows.length - 1].done) { this.menuOn = false; return }
     const removed = rows.length
+    const removedSetIds = [rows[rows.length - 1].setId].filter(Boolean)
     removeSet(s, ex)
     this.menuOn = false
-    this.emitEvent({ t: 'remove_set', sid: s.sid, ex, set: removed, sets: rows.length, at: Date.now() })
+    this.emitEvent({ t: 'remove_set', sid: s.sid, ex, removedSetIds, set: removed, sets: rows.length, at: Date.now() })
     this.refresh()
   },
 
@@ -596,7 +586,7 @@ export default {
       return { status: 'rejected', page: 'Workout', reason: 'empty_exercises' }
     }
     if (msg && msg.profile) s.profile = msg.profile
-    replacePlan(s, { name: msg.workout, exercises: msg.exercises })
+    replacePlan(s, { ...msg, name: msg.workout })
     this.allFinished = s.workout.rows.every(rows => rows.every(row => row.done))
     save(s)
     this.refresh()
@@ -620,6 +610,7 @@ export default {
   },
 
   refresh() {
+    this.weightUnit = this.state?.weightUnit || 'kg'
     const s = this.state
     if (!s || !s.workout) return
     this.reconcileRestClock()
@@ -662,7 +653,7 @@ export default {
     if (next) {
       const ne = s.workout.exercises[next.exIdx]
       const nr = s.workout.rows[next.exIdx][next.setIdx]
-      const w = nr && nr.w !== '' && nr.w != null ? nr.w + 'kg' : ''
+      const w = nr && nr.w !== '' && nr.w != null ? nr.w + (s.weightUnit || 'kg') : ''
       const timed = ne && String(ne.reps || '').indexOf('秒') >= 0
       const r = nr && nr.r !== '' && nr.r != null ? nr.r + (timed ? '秒' : '次') : ''
       this.nextLabel = next.exIdx !== (completed ? completed.exIdx : s.exIdx) ? '下一动作 · ' + ne.name : '下一组'
@@ -732,10 +723,12 @@ export default {
     if (this.metricSecond === Math.floor(Date.now() / 1000)) return
     this.metricSecond = Math.floor(Date.now() / 1000)
     this.restTotalLabel = this.mmss(Math.round(s.restTargetSec || 0))
-    this.hrLabel = this.hrLast ? '♥ ' + this.hrLast : '♥ --'
+    const latest = loadState()
+    if (latest.sid === s.sid) s.hr = latest.hr
+    this.hrLabel = s.hr?.last && Date.now() - (s.hr.sampleAt || 0) < 15000 && !s.pausedAt ? '♥ ' + s.hr.last : '♥ --'
     this.kcalLabel = String((s.baseCalories || 0) + calories(s, s.profile, Math.max(0, ((s.pausedAt || Date.now()) - (s.segmentStartedAt || s.startedAt) - (s.pausedMs || 0)) / 60000)))
     const n = pendingCount()
-    this.syncLabel = n > 0 ? '待上传 ' + n + ' 条' : isConnected() ? '已连接' : '离线记录'
+    this.syncLabel = persistenceStatus().failed || storageStatus().failed ? '存储失败，请保留应用' : n > 0 ? '待上传 ' + n + ' 条' : isConnected() ? '已连接' : '离线记录'
   },
 
   mmss(sec) {
@@ -765,6 +758,7 @@ export default {
       this.startHrCapture()
     }
     s.pauseVersion = at; s.restVersion = at; save(s)
+    if (!paused) this.startHrCapture()
     if (notify) { this.emitEvent({ t: 'pause', sid: s.sid, paused, seq: at, at }); this.emitEvent({ t: 'rest', sid: s.sid, ...restOf(s) }) }
     this.refresh()
   },
@@ -797,7 +791,7 @@ export default {
     const session = reason === 'saved' ? endSession(s, s.profile) : null
     if (!session) closeSession(s.sid)
     if (notifyPhone) sendEvent({ t: 'session_close', sid: s.sid, disposition: reason, closedAt, at: closedAt,
-      ...(session ? { workout: s.workout, startedAt: s.startedAt, summary: { minutes: session.minutes, avgHr: session.avgHr, maxHr: session.maxHr, calories: session.calories, volume: session.volume }, completedSets: session.sets } : {}) })
+      ...(session ? { workout: s.workout, startedAt: s.startedAt, weightUnit: s.weightUnit || 'kg', summary: { minutes: session.minutes, avgHr: session.avgHr, maxHr: session.maxHr, calories: session.calories, volume: session.volume }, completedSets: session.sets } : {}) })
     this.state = loadState()
     if (this.timer) clearInterval(this.timer)
     if (this.hrFlush) clearInterval(this.hrFlush)
@@ -847,7 +841,7 @@ export default {
     <div class="screen operation-screen" if="{{ pageIndex === 1 && !closeMode }}">
     <div class="topline"><text class="status">{{ syncLabel }}</text><text class="clock now">{{ clockLabel }}</text><text class="clock">已用 {{ elapsedLabel }}</text></div>
     <text class="group">{{ setProgressLabel }}</text>
-    <text class="volume-line">已完成容量 {{ volumeLabel }} kg·次</text>
+    <text class="volume-line">已完成容量 {{ volumeLabel }} {{ weightUnit }}·次</text>
     <div class="metrics"><text class="energy">{{ kcalLabel }} 千卡</text><text class="hr">{{ hrLabel }}</text></div>
     <div class="mrow">
       <input class="m" type="button" value="加组" onclick="onMenuAddSet" />

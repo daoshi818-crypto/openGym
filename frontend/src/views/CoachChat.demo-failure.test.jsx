@@ -106,22 +106,16 @@ describe('the demo Coach failing inside its timer', () => {
     await import('../lib/coach-demo.js')
 
     await click(chip(/Last workout/))
-    expect(mocks.toast).not.toHaveBeenCalled()                       // the request was accepted
-    expect(mocks.S.coach.chat.at(-1)).toMatchObject({ role: 'user', kind: 'text', text: 'How did my Push Day session go?' })
-    const lines = mocks.S.coach.chat.length
-
-    await elapse(DELAY)                                              // the builder throws in here
-    await elapse(POLL_MS)                                            // the poll sees the job gone
-    expect(mocks.S.coach.chat).toHaveLength(lines + 1)
-    expect(mocks.S.coach.chat.at(-1)).toMatchObject({
-      role: 'coach', kind: 'error', text: 'The Coach couldn’t read your training data.'
-    })
-    expect(mocks.S.coach.timings).toHaveLength(1)                    // the effect ran once, as for a real job
-
-    // Not bricked: a second ask goes through instead of "already thinking".
+    expect(mocks.toast).toHaveBeenCalled()
+    expect((await import('../lib/coach-demo.js')).demoStatus().job).toBeNull()
+    expect(mocks.S.coach.chat).toHaveLength(1)
+    mocks.S.workouts = [{ id: 'w1', name: 'Push Day', d: '2026-09-01', entries: [] }]
+    mocks.toast.mockClear()
     await click(chip(/Last workout/))
     expect(mocks.toast).not.toHaveBeenCalled()
-    expect(mocks.S.coach.chat.at(-1)).toMatchObject({ role: 'user', kind: 'text' })
-    await elapse(DELAY); await elapse(POLL_MS)                       // drain it, so nothing is left running
+    expect(mocks.S.coach.chat.at(-1)).toMatchObject({ role: 'user', kind: 'text', text: 'How did my Push Day session go?' })
+    await elapse(DELAY); await elapse(POLL_MS)
+    expect((await import('../lib/coach-demo.js')).demoStatus().pending?.kind).toBe('debrief')
+
   })
 })

@@ -278,7 +278,7 @@ export function parsePlan(raw, destinationUnit = 'kg') {
  *  - schedule: optional; when on, the shared week REPLACES yours (days the shared plan
  *    leaves empty become rest days — a half-overwritten week would silently mix two plans)
  */
-export function mergePlan(s, bundle, { schedule } = {}) {
+export function mergePlan(s, bundle, { schedule, idFor } = {}) {
   const destination = planUnit(s.unit == null ? 'kg' : s.unit)
   if (!destination) unitError()
   const source = convertedBundle(bundle, destination)
@@ -287,7 +287,7 @@ export function mergePlan(s, bundle, { schedule } = {}) {
   ;(source.customEx || []).forEach(c => {
     const same = s.customEx.find(x => (x.n || '').toLowerCase() === (c.n || '').toLowerCase() && x.bp === c.bp)
     if (same) { exIdMap[c.id] = same.id; return }
-    const nid = uid()
+    const nid = idFor ? idFor('custom', c.id) : uid()
     exIdMap[c.id] = nid
     // Stored exactly as the form would have created it — `custom: true` is what lets the recipient
     // edit or delete it, and `sm` mirrors the secondaries the way the form writes them.
@@ -296,8 +296,9 @@ export function mergePlan(s, bundle, { schedule } = {}) {
   })
   const ridMap = {}
   source.routines.forEach(r => {
-    const nid = uid()
+    const nid = idFor ? idFor('routine', r.id) : uid()
     ridMap[r.id] = nid
+    if (s.routines.some(existing => existing.id === nid)) return
     s.routines.push({
       id: nid,
       name: r.name || t('Shared routine'),

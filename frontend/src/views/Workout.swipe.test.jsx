@@ -34,7 +34,7 @@ function setActive(entries, { cur = 0, wc, hints = { swipeSets: true }, editing 
   }
   useStore.setState({ S, user: null })
 }
-const sets = (k = 0) => useStore.getState().S.active.entries[k].sets
+const sets = (k = 0) => useStore.getState().S.active.entries[k].sets.map(({ setId, ...row }) => row)
 const toast = () => useUI.getState().toastMsg
 
 function render() {

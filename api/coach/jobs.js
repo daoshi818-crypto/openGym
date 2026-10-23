@@ -19,6 +19,10 @@ import crypto from 'node:crypto';
 import * as cfgStore from './config.js';
 import { adapterFor } from './adapters/index.js';
 import * as payloadLib from './core/payload.js';
+import { prepareCoachRequest, assertPayloadSize } from './core/preflight.js';
+import { hasCoachConsent } from './core/consent.js';
+import { debriefMetadata } from './core/debrief-report.js';
+import { coachContext } from './core/context.js';
 import { runPipeline } from './core/pipeline.js';
 import { extractJSON } from './core/parse.js';
 import { hashPlan } from './core/plan-hash.js';
@@ -201,7 +205,12 @@ export function enqueue(uid, opts) {
   const S = readState(uid);
   // Consent is enforced here, server-side, not by the screen that collects it: a UI-only gate
   // is not a gate (FR-08/13).
-  if (!S?.coach?.consent?.agreedAt) throw new CoachError('consent', 'the Coach needs your go-ahead first');
+  if (!hasCoachConsent(S)) throw new CoachError('consent', 'the Coach needs your go-ahead first');
+
+  try {
+    opts = prepareCoachRequest(S, opts.kind, opts);
+    assertPayloadSize(payloadLib.build(S, { ...opts, handle: handleFor(uid) }));
+  } catch (e) { throw new CoachError(e.code || 'invalid_selection', e.message); }
 
   // Whose account pays. In instance mode the credential binds to the first profile that spends
   // it and every other profile is refused outright — not warned. A warning would move the
@@ -242,12 +251,14 @@ export function enqueue(uid, opts) {
     kind: opts.kind,                                  // 'create' | 'review' | 'debrief'
     trigger: opts.trigger || 'manual',                // 'manual' | 'scheduled'
     workoutId: opts.workoutId ? String(opts.workoutId).slice(0, 40) : null,
+    scope: opts.scope || null,
+    debriefSelection: opts.debriefSelection && typeof opts.debriefSelection === 'object' ? opts.debriefSelection : null,
     intake: opts.intake || null,
     note: clampMessage(opts.note),
     refine: clampMessage(opts.refine),
     lang: payloadLib.langTag(opts.lang),              // the language the app was showing (#303)
     state: 'queued',
-    startedAt: Date.now()
+    startedAt: Date.now(), deadlineAt: Date.now() + TIMEOUT_MS
   };
   inflight.add(uid);
   patchUser(uid, { current: { id: job.id, kind: job.kind, state: 'queued', startedAt: job.startedAt } });
@@ -319,17 +330,17 @@ async function execute(job) {
   if (!S) return finish(job, { outcome: 'failed', errorClass: 'nostate' });
   // Checked again here, not only at enqueue: a job can wait behind two others, and consent
   // withdrawn or the Coach switched off in the meantime means no payload leaves for it.
-  if (!S.coach?.consent?.agreedAt) return finish(job, { outcome: 'failed', errorClass: 'consent' });
+  if (!hasCoachConsent(S)) return finish(job, { outcome: 'failed', errorClass: 'consent' });
   if (!cfgStore.isEnabled()) return finish(job, { outcome: 'failed', errorClass: 'off' });
 
   const cfg = cfgStore.load();
   const adapter = adapterFor(cfg.provider);
   if (!adapter) return finish(job, { outcome: 'failed', errorClass: 'off' });
 
-  if (job.kind === 'debrief' && !payloadLib.findWorkout(S, job.workoutId)) {
-    return finish(job, { outcome: 'failed', errorClass: 'noworkout' });
-  }
+  try { prepareCoachRequest(S, job.kind, job); }
+  catch (e) { return finish(job, { outcome: 'failed', errorClass: e.code || 'invalid_selection' }); }
 
+  if (job.deadlineAt <= Date.now()) return finish(job, { outcome: 'failed', errorClass: 'timeout' });
   const pendingCreate = job.refine ? readUser(job.uid).pending : null;
   const payload = payloadLib.build(S, {
     handle: handleFor(job.uid),
@@ -339,6 +350,7 @@ async function execute(job) {
     refine: job.refine,
     previous: pendingCreate?.bundle || null,
     workoutId: job.workoutId,
+    debriefSelection: job.debriefSelection, scope: job.scope,
     // The app says which language it is in. A scheduled review has no app behind it: a profile
     // that never picked a language then gets the instance's DEFAULT_LANG, like its screens do.
     lang: job.lang || (S.langAuto === true ? payloadLib.langTag(process.env.DEFAULT_LANG) : null),
@@ -364,7 +376,7 @@ async function execute(job) {
     if (ids) shareJobDir(jobDir, ids);
 
     const attempt = await runPipeline({
-      adapter, cfg, kind: job.kind, payload, model: cfgStore.modelFor(cfg), timeoutMs: TIMEOUT_MS,
+      adapter, cfg, kind: job.kind, payload, model: cfgStore.modelFor(cfg), timeoutMs: Math.max(1, job.deadlineAt - Date.now()), deadlineAt: job.deadlineAt,
       // The HTTP adapters take the fetch and the abort signal they are given; the runtime
       // adapters ignore both.
       invokeOpts: { jobDir, env, fetch: fetchFor(TIMEOUT_MS), signal: ctl.signal, maxTokens: cfg.maxOutputTokens }
@@ -383,10 +395,12 @@ async function execute(job) {
       createdAt: Date.now(),
       expiresAt: Date.now() + PENDING_DAYS * 86400000,
       planHash: hashPlan(payloadLib.canonicalPlan(S)),
+      context: coachContext(S, hashPlan(payloadLib.canonicalPlan(S)), job.scope), scope: job.scope || null,
       iteration: job.refine ? (pendingCreate?.iteration || 1) + 1 : 1,
       // A debrief names the session it read, so the card can show it after the fact.
-      ...(job.kind === 'debrief' ? { workout: payloadLib.workoutMeta(S, job.workoutId) } : {}),
-      ...attempt.result
+      ...attempt.result,
+      ...(job.kind === 'debrief' ? debriefMetadata(payload) : {}),
+      ...(job.kind === 'create' ? { bundle: { ...attempt.result.bundle, unit: payload.meta.unit } } : {})
     };
     return finish(job, { outcome: 'ready', pending });
   } finally {
@@ -398,16 +412,18 @@ async function execute(job) {
 /* ---------- decisions ---------- */
 
 /** The client has applied (or discarded) the pending proposal. Record it and clear. */
-export function resolvePending(uid, { accepted = [], rejected = [], dismissed = false } = {}) {
+export function resolvePending(uid, { proposalId, requestId, accepted = [], rejected = [], dismissed = false } = {}) {
   const rec = readUser(uid);
-  if (!rec.pending) return { ok: true };
+  if ([proposalId, requestId].some(id => typeof id !== 'string' || !id.trim() || id.length > 128)) throw new CoachError('pending_mismatch', 'proposalId and requestId are required');
+  if (Object.hasOwn(rec.resolved || {}, proposalId)) return { ok: true, proposalId, alreadyResolved: true };
+  if (rec.pending?.id !== proposalId) throw new CoachError('pending_mismatch', 'pending proposal changed; refresh first');
   const history = [...(rec.history || []), {
-    id: rec.pending.id, kind: rec.pending.kind,
-    outcome: dismissed ? 'dismissed' : 'applied',
+    id: proposalId, kind: rec.pending.kind, outcome: dismissed ? 'dismissed' : 'applied',
     accepted: accepted.length, rejected: rejected.length, at: Date.now()
   }].slice(-HISTORY_MAX);
-  writeUser(uid, { ...rec, pending: null, history });
-  return { ok: true };
+  const resolved = { ...Object.fromEntries(Object.entries(rec.resolved || {}).filter(([, x]) => Date.now() - x.at < 21 * 864e5)), [proposalId]: { requestId, at: Date.now() } };
+  writeUser(uid, { ...rec, pending: null, history, resolved });
+  return { ok: true, proposalId };
 }
 
 /* ---------- admin test + boot recovery ---------- */

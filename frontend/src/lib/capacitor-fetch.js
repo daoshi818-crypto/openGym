@@ -12,8 +12,11 @@
 // Only the subset the adapters use is implemented: method, headers, a JSON body, an abort
 // signal, and a response with ok/status/text()/json().
 export async function nativeFetch(url, init = {}) {
+  const abortError = () => Object.assign(new Error('aborted'), { name: 'AbortError' })
+  if (init.signal?.aborted) throw abortError()
   let cap = null
   try { cap = await import('@capacitor/core') } catch { /* not a Capacitor build */ }
+  if (init.signal?.aborted) throw abortError()
   if (!cap || !cap.Capacitor || !cap.Capacitor.isNativePlatform()) return fetch(url, init)
 
   const headers = { ...(init.headers || {}) }
@@ -32,7 +35,13 @@ export async function nativeFetch(url, init = {}) {
     // job may legitimately run, so a local model on a laptop is never cut off by the transport.
     responseType: 'text', connectTimeout, readTimeout
   })
-  const res = init.signal ? await Promise.race([request, abortOf(init.signal)]) : await request
+  let onAbort
+  const aborted = new Promise((_, reject) => { onAbort = () => reject(abortError()) })
+  if (init.signal?.aborted) onAbort()
+  else init.signal?.addEventListener('abort', onAbort, { once: true })
+  let res
+  try { res = init.signal ? await Promise.race([request, aborted]) : await request }
+  finally { init.signal?.removeEventListener('abort', onAbort) }
   const text = typeof res.data === 'string' ? res.data : res.data == null ? '' : JSON.stringify(res.data)
   return {
     ok: res.status >= 200 && res.status < 300,
@@ -40,12 +49,4 @@ export async function nativeFetch(url, init = {}) {
     text: async () => text,
     json: async () => JSON.parse(text)
   }
-}
-
-function abortOf(signal) {
-  return new Promise((_, reject) => {
-    const err = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
-    if (signal.aborted) return err()
-    signal.addEventListener('abort', err, { once: true })
-  })
 }

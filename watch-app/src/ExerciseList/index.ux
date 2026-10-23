@@ -1,4 +1,5 @@
 <script>
+import { bindRuntime } from '../lib/runtime.js'
 // 动作列表页：查看动作和组，点组返回训练页并切换游标。
 import router from '@blueos.app.appmanager.router'
 import { loadState, save, endSession, closeSession } from '../lib/session.js'
@@ -8,6 +9,7 @@ export default {
   data: { list: [], expanded: -1, endOn: false },
 
   onInit() {
+    if (this.$app && this.$app.$def) bindRuntime(this.$app.$def)
     const s = loadState()
     if (!s.active || !s.workout) { router.back(); return }
     this.state = s
@@ -73,7 +75,7 @@ export default {
   },
 
   rowTxt(row, ex) {
-    const w = row.w === '' || row.w == null ? '' : row.w + 'kg*'
+    const w = row.w === '' || row.w == null ? '' : row.w + (this.state.weightUnit || 'kg') + '*'
     const timed = ex && String(ex.reps || '').indexOf('秒') >= 0
     const r = row.r === '' || row.r == null ? '—' : row.r + (timed ? '秒' : '')
     return (w + r) || '—'
@@ -108,7 +110,7 @@ export default {
     const session = disposition === 'saved' ? endSession(s, s.profile, closedAt) : null
     if (!session) closeSession(s.sid)
     sendEvent({ t: 'session_close', sid: s.sid, disposition, closedAt, at: closedAt,
-      ...(session ? { workout: s.workout, startedAt: s.startedAt, summary: { minutes: session.minutes, avgHr: session.avgHr, maxHr: session.maxHr, calories: session.calories, volume: session.volume }, completedSets: session.sets } : {}) })
+      ...(session ? { workout: s.workout, startedAt: s.startedAt, weightUnit: s.weightUnit || 'kg', summary: { minutes: session.minutes, avgHr: session.avgHr, maxHr: session.maxHr, calories: session.calories, volume: session.volume }, completedSets: session.sets } : {}) })
     router.replace({ uri: disposition === 'saved' ? '/Summary' : '/Index' })
   },
   abandonWorkout() { if (!this.interactionBlocked()) this.closeWorkout('abandoned') },

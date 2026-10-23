@@ -1,4 +1,5 @@
 <script>
+import { bindRuntime } from '../lib/runtime.js'
 // 结束页：本次训练摘要。手机是数据源，这里只展示手表本地结算的紧凑结果。
 import storage from '@blueos.storage.storage'
 import router from '@blueos.app.appmanager.router'
@@ -6,9 +7,10 @@ import { startServer, pendingCount, isConnected } from '../lib/rpc.js'
 import { startSession, applySync } from '../lib/session.js'
 
 export default {
-  data: { minutes: '', sets: '', kcal: '', hr: '', volume: '', syncLabel: '' },
+  data: { minutes: '', sets: '', kcal: '', hr: '', volume: '', syncLabel: '', weightUnit: 'kg' },
 
   onInit() {
+    if (this.$app && this.$app.$def) bindRuntime(this.$app.$def)
     this.bindRpc()
     try {
       const s = storage.getSync({ key: 'summary_last' })
@@ -17,6 +19,7 @@ export default {
         this.sets = String(s.sets || 0)
         this.kcal = String(Math.round(s.totalCalories != null ? s.totalCalories : s.calories || 0))
         this.hr = s.avgHr ? String(s.avgHr) : '--'
+        this.weightUnit = s.weightUnit || 'kg'
         this.volume = s.volume ? String(Math.round(s.volume)) : ''
       }
     } catch (e) {}
@@ -72,7 +75,7 @@ export default {
         <text class="lbl">平均心率</text>
       </div>
     </div>
-    <text class="volume" if="{{ volume }}">训练量 {{ volume }} kg</text>
+    <text class="volume" if="{{ volume }}">训练量 {{ volume }} {{ weightUnit }}</text>
     <text class="volume">{{ syncLabel }}</text>
 
     <input class="btn" type="button" value="完成" onclick="onBack" />

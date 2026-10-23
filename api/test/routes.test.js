@@ -164,7 +164,7 @@ test('the disclosure names the provider and the same five categories the payload
 test('a debrief is enqueued as its own kind, and the cohort routes gate on the admin switch and the opt-in', async () => {
   fresh({ community: false });
   const jobs = await import('../coach/jobs.js');
-  const { writeState, sampleState } = await import('./helpers.mjs');
+  const { writeState, recentSampleState: sampleState } = await import('./helpers.mjs');
   const { forcePrivilegeVerdict } = await import('../coach/adapters/spawn.js');
   forcePrivilegeVerdict({ ok: true, dropped: false, why: 'pinned by the test suite' });
   writeState(process.env.DATA_DIR, 'admin-1', sampleState());
@@ -196,18 +196,22 @@ test('a debrief is enqueued as its own kind, and the cohort routes gate on the a
   while (jobs.status('admin-1').job && Date.now() < until) await new Promise(res => setTimeout(res, 25));
   const s = jobs.status('admin-1');
   assert.equal(s.pending.kind, 'debrief');
-  assert.deepEqual(s.pending.workout, { id: 'w1', d: '2026-07-20', name: 'Full body A', minutes: 45, vol: 600, sets: 3, prs: 0 });
+  assert.equal(s.pending.workout.id, 'w1');
+  assert.equal(s.pending.workout.ref, 'id:w1');
+  assert.equal(s.pending.workout.d, sampleState().workouts[0].d);
+  assert.equal(s.pending.workout.sets, 3);
+  assert.equal(s.pending.evidenceSnapshot.totals.volume, 540);
   assert.equal(s.pending.score, 8);
   assert.ok(s.pending.summary.includes('3 sets'));
   assert.ok(Array.isArray(s.pending.nextTime) && s.pending.nextTime.length);
   assert.equal('changes' in s.pending, false);
 
   // A profile with nothing logged cannot be debriefed.
-  jobs.resolvePending('admin-1', { accepted: ['debrief'] });
+  jobs.resolvePending('admin-1', { proposalId: s.pending.id, requestId: 'keep-debrief', accepted: ['debrief'] });
   writeState(process.env.DATA_DIR, 'admin-1', sampleState({ workouts: [] }));
-  await call('POST /api/coach/debrief', {});
-  while (jobs.status('admin-1').job && Date.now() < until) await new Promise(res => setTimeout(res, 25));
-  assert.equal(jobs.status('admin-1').last.errorClass, 'noworkout');
+  const missing = await call('POST /api/coach/debrief', {});
+  assert.equal(missing.status, 409);
+  assert.equal(missing.body.code, 'noworkout');
 });
 
 /* ---------- configurable max message length (issue #267) ---------- */

@@ -89,7 +89,7 @@ function Shell() {
       send: sendToWatch, rest: ev => useUI.getState().followWatchRest(ev),
       pause: paused => useUI.getState()[paused ? 'pauseRest' : 'resumeRest'](),
       stop: () => { useUI.getState().stopRest(); useUI.getState().stopWork() },
-    }))
+    }), { getState: () => useStore.getState().S, update: fn => useStore.getState().update(fn) })
     watchAvailable().then(result => { if (result.available) connectWatch() })
     return unbind
   }, [])
@@ -97,7 +97,7 @@ function Shell() {
   useEffect(() => {
     if (!MOBILE) return
     const plan = JSON.parse(watchPlan)
-    if (plan) pushPlanToWatch(plan.workout, plan.sid, plan.profile)
+    if (plan) pushPlanToWatch({ ...plan.workout, protocolVersion: plan.protocolVersion, weightUnit: plan.weightUnit, structureRevision: plan.structureRevision }, plan.sid, plan.profile)
     else clearWatchPlan(undefined, S.active?.editingWorkoutId ? 'history_editor' : 'no_active_session')
   }, [watchPlan])
   const watchCatalog = useMemo(() => MOBILE ? JSON.stringify({ ...watchCatalogOf(S), at: 0 }) : 'null', [S.routines, S.week, S.dayPlan, S.watchPlanIds, S.workouts])

@@ -26,6 +26,8 @@ import { isChangeList, changesOntoPlan } from './refine-changes.js';
 export async function attemptOnce({ adapter, cfg, kind, payload, model, timeoutMs, invokeOpts = {} }, repair) {
   // HTTP providers get the rules/payload split (prefix caching, schema-constrained decoding);
   // the runtime-backed CLIs still get one flat prompt — they have no message roles to split over.
+  if (invokeOpts.signal?.aborted) return { ok: false, errorClass: 'cancelled' };
+  if (timeoutMs <= 0) return { ok: false, errorClass: 'timeout' };
   const parts = buildPromptParts(kind, payload, repair);
   const split = adapter.spawns === false;
   const r = await adapter.invoke({
@@ -35,11 +37,12 @@ export async function attemptOnce({ adapter, cfg, kind, payload, model, timeoutM
     model: model || null, timeoutMs, ...invokeOpts
   });
 
+  if (r.cancelled) return { ok: false, errorClass: 'cancelled' };
   if (r.timedOut) return { ok: false, errorClass: 'timeout' };
   if (r.spawnError) return { ok: false, errorClass: 'missing', detail: r.stderr?.slice(0, 300) };
   if (r.code !== 0) {
     const err = (r.stderr || r.text || '').toLowerCase();
-    const authish = /auth|unauthor|api key|credential|token|401|403|login/.test(err);
+    const authish = /unauthor|invalid.?api.?key|invalid.?credential|invalid.?token|authentication|\b401\b|\b403\b|login required/.test(err);
     return { ok: false, errorClass: authish ? 'auth' : 'provider', detail: (r.stderr || r.text || '').slice(0, 300) };
   }
 
@@ -68,14 +71,16 @@ export async function attemptOnce({ adapter, cfg, kind, payload, model, timeoutM
     ? changesOntoPlan(payload.refine?.previous, parsed.value) || parsed.value
     : parsed.value;
   const checked = kind === 'review'
-    ? validateReview(parsed.value, payload.plan, { customIds, equipment, offered, lang: payload.meta?.lang })
+    ? validateReview(parsed.value, payload.plan, { customIds, equipment, offered, lang: payload.meta?.lang, scope: payload.scope })
     : kind === 'debrief'
-      ? validateDebrief(parsed.value)
+      ? validateDebrief(parsed.value, { scope: payload.debriefScope, sessions: payload.sessions })
       : validatePlan(answer, {
       customIds, equipment, offered,
       lang: payload.meta?.lang,
       workingWeights: payload.history?.workingWeights,
-      daysPerWeek: payload.coachProfile?.daysPerWeek
+      daysPerWeek: payload.coachProfile?.daysPerWeek,
+      preferredDays: payload.coachProfile?.preferredDays,
+      sessionMin: payload.coachProfile?.sessionMin
     });
 
   if (!checked.ok) return { ok: false, repairable: !repair, errors: checked.errors, raw: r.text, errorClass: 'unusable' };
@@ -85,11 +90,13 @@ export async function attemptOnce({ adapter, cfg, kind, payload, model, timeoutM
 
 /** The whole loop: one attempt, then one repair round if the answer was fixable (FR-48). */
 export async function runPipeline(opts) {
-  let attempt = await attemptOnce(opts, null);
+  const deadlineAt = opts.deadlineAt || Date.now() + (opts.timeoutMs ?? 300000);
+  const remaining = () => ({ ...opts, timeoutMs: Math.max(0, deadlineAt - Date.now()), invokeOpts: { ...opts.invokeOpts, deadlineAt } });
+  let attempt = await attemptOnce(remaining(), null);
   if (!attempt.ok && attempt.repairable) {
     // One repair round, then done. Two failures is a provider problem, not a prompting
     // problem, and a retry loop against a paid API is a bad way to find out.
-    attempt = await attemptOnce(opts, { previous: attempt.raw, errors: attempt.errors });
+    attempt = await attemptOnce(remaining(), { previous: attempt.raw, errors: attempt.errors });
   }
   return attempt;
 }

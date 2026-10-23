@@ -1,3 +1,4 @@
+import { convertWatchWeight } from './watch-identity.js'
 import { applyWatchSummary } from './watch-session.js'
 import { applyWatchEvent } from './watch-events.js'
 import { buildCompletedWorkout } from './finish-workout.js'
@@ -14,13 +15,12 @@ export function resolveWatchSave(S, key, accept) {
       name: ev.workout?.name || '手表训练', entries: [],
     }))
     const original = S.watchClosed?.[ev.sid]?.entries
-    const source = original || (ev.workout?.exercises?.map((ex, i) => ({ id: ex.id,
-      sets: (ev.workout.rows[i] || []).map(r => ({ w: r.w, ...(String(ex.reps).includes('秒') ? { sec: Number(r.r) || 0 } : { r: String(r.r) }), done: false })) })) || record.entries)
+    const source = original || (ev.workout?.exercises?.map((ex, i) => ({ id: ex.id, entryInstanceId: ex.entryInstanceId,
+      sets: (ev.workout.rows[i] || []).map(r => ({ setId: r.setId, w: convertWatchWeight(r.w, ev.weightUnit || S.unit || 'kg', S.unit || 'kg'), ...(String(ex.reps).includes('秒') ? { sec: Number(r.r) || 0 } : { r: String(r.r) }), done: false })) })) || record.entries)
     if (!source.length || source.some(e => !e.id)) throw new Error('缺少原动作信息，已保留手表待确认记录')
     const used = new Set()
     const entries = source.map(entry => {
-      if (original && !entry.sets.some(hasCompletedWork)) return JSON.parse(JSON.stringify(entry))
-      const match = record.entries.findIndex((e, i) => !used.has(i) && e.id === entry.id)
+      const match = record.entries.findIndex((e, i) => !used.has(i) && (entry.entryInstanceId ? e.entryInstanceId === entry.entryInstanceId : e.id === entry.id))
       if (match < 0) return JSON.parse(JSON.stringify(entry))
       used.add(match)
       return JSON.parse(JSON.stringify(record.entries[match]))
@@ -28,10 +28,10 @@ export function resolveWatchSave(S, key, accept) {
     entries.push(...record.entries.filter((entry, i) => !used.has(i)).map(entry => JSON.parse(JSON.stringify(entry))))
     const draft = { ...S, active: { ...record, entries, watchSid: ev.sid, watchEvents: [], watchVersions: {} } }
     for (const set of ev.completedSets || []) {
-      const entry = entries[set.ex]
+      const entry = set.entryInstanceId ? entries.find(e => e.entryInstanceId === set.entryInstanceId) : entries[set.ex]
       if (!entry) continue
       const rows = entry.sets.filter(r => !isWarmupRow(r))
-      while (rows.length < set.set && rows.length < 100) { const row = { ...(rows.at(-1) || {}), done: false }; entry.sets.push(row); rows.push(row) }
+      while (rows.length < set.set && rows.length < 100) { const row = { ...(rows.at(-1) || {}), setId: set.setId || undefined, done: false }; entry.sets.push(row); rows.push(row) }
     }
     for (const set of ev.completedSets || []) applyWatchEvent(draft, { ...set, t: 'set', sid: ev.sid,
       eventId: key + ':' + set.ex + ':' + set.set, seq: ev.closedAt })

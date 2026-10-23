@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { tempData, sampleState } from './helpers.mjs';
 
 tempData();
-const payload = await import('../coach/core/payload.js');
+const payloadModule = await import('../coach/core/payload.js');
+// Fixture dates are fixed; derive an explicit reference day rather than depending on the runner's calendar.
+const payload = { ...payloadModule, build: (S, options) => payloadModule.build(S, { today: S.workouts?.map(w => w.d).filter(Boolean).sort().at(-1) || '2026-07-27', ...options }) };
 const { handleFor, HANDLE_LENGTH } = await import('../coach/handle.js');
 
 test('the server handle is stable per uid, distinct across uids, and never the uid', () => {
@@ -244,9 +246,8 @@ test('a set taken to failure reaches the coach as failure, a warm-up never does'
   assert.equal(sets[2].failure, true);
 });
 
-test('an unknown workout id falls back to the latest session', () => {
-  const p = payload.build(debriefState(), { handle: handleFor('u'), kind: 'debrief', workoutId: 'nope' });
-  assert.equal(p.session.id, 'w2');
+test('an unknown workout id is rejected and only an omitted id selects the latest session', () => {
+  assert.throws(() => payload.build(debriefState(), { handle: handleFor('u'), kind: 'debrief', workoutId: 'nope' }), /noworkout/);
   const latest = payload.build(debriefState(), { handle: handleFor('u'), kind: 'debrief' });
   assert.equal(latest.session.id, 'w2');
 });
@@ -261,7 +262,7 @@ test('workoutMeta counts done work sets, keeps the stored volume and the PR coun
 });
 
 test('the cohort rides along on a review and a debrief only when handed in', () => {
-  const cohort = { unit: 'kg', people: 4, sessionsPerWeek: { median: 2.5, you: 3 }, exercises: [{ id: '0001', name: 'x', median: 50, you: 55 }] };
+  const cohort = { unit: 'kg', people: 4, sessionsPerWeek: { median: 2.5, you: 3 }, exercises: [{ id: '0001', name: '3/4 sit-up', median: 50, you: 55 }] };
   const review = payload.build(sampleState(), { handle: handleFor('u'), kind: 'review', cohort });
   assert.deepEqual(review.cohort, cohort);
   const debrief = payload.build(debriefState(), { handle: handleFor('u'), kind: 'debrief', cohort });
@@ -344,7 +345,7 @@ test('a custom exercise\'s photo, video and link never reach the payload', () =>
     }
   }
   const slice = payload.librarySlice(S, [], { keep: ['cx1'] }).find(e => e.id === 'cx1');
-  assert.deepEqual(slice, { id: 'cx1', n: 'Sandbag carry', bp: 'back', custom: true }, 'the library slice keeps a custom exercise to four fields');
+  assert.deepEqual(slice, { id: 'cx1', n: 'Sandbag carry', bp: 'back', custom: true, displayName: 'Sandbag carry' }, 'the library slice keeps only coaching fields');
 });
 
 /* #303: a profile that never picked a language has it worked out on each device and never

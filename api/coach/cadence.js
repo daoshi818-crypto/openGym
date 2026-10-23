@@ -1,3 +1,4 @@
+import { hasCoachConsent } from './core/consent.js';
 /* Scheduled reviews (Epic E).
  *
  * A separate tick from the workout reminder's, because the two want different things: the
@@ -28,7 +29,7 @@ export function isDue(coach, S, now, reviewedAt = 0, tz = null) {
   // A workout's `end` is on the same clock as the review's timestamp; its `d` is the phone's
   // local day, which can run ahead of the server's UTC day, so the date only stands in for a
   // workout that has no end.
-  const since = workouts.filter(w => !lastAt || (w.end ? w.end > lastAt : w.d > new Date(lastAt).toISOString().slice(0, 10)));
+  const since = workouts.filter(w => !lastAt || ((w.finishedAt || w.end) ? (w.finishedAt || w.end) > lastAt : w.d > new Date(lastAt).toISOString().slice(0, 10)));
   if (!since.length) return false;
 
   if (cadence.everyWorkouts) {
@@ -108,7 +109,7 @@ export function startCadence(deps) {
       try {
         const S = jobs.readState(user.id);
         const coach = S?.coach;
-        if (!coach?.consent?.agreedAt) continue;         // consent revoked ⇒ cadence stops
+        if (!hasCoachConsent(S)) continue;         // consent revoked ⇒ cadence stops
         // A job still running, or a proposal nobody has answered, is not a reason for another:
         // a second review would only replace the first unread. status() also retires an
         // expired proposal, which a phone that stays closed never polls for.

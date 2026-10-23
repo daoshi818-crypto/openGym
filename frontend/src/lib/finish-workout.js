@@ -1,3 +1,4 @@
+import { workoutCaloriesOf } from './workout-calories.js'
 // The persisted boundary for a finished session. Keep this pure so compatibility tests can
 // exercise the exact shape the UI writes without mounting React or mutating store state.
 import { bestWeightForEntry, cleanupSg } from './history.js'
@@ -126,7 +127,7 @@ export function buildCompletedWorkout(active, { end = Date.now(), prs = [], snap
     ...(active.watchSid ? { watchSid: active.watchSid,
       watchSids: [...new Set([...(active.watchSids || []), String(active.start), active.watchSid])] } : {}),
     ...(active.watchSegments ? { watchSegments: active.watchSegments,
-      calories: active.calories || 0, calorieSource: 'watch_estimate' } : {}),
+      ...(workoutCaloriesOf(active).kcal != null ? { calories: workoutCaloriesOf(active).kcal, calorieSource: 'watch_estimate' } : {}) } : {}),
     routineIds,
     routineId: routineIds[0] ?? null,
     name: active.name,

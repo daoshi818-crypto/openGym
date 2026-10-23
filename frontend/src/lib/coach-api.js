@@ -51,28 +51,59 @@ const local = async () => {
 // seen running, so "running, then gone" cannot be the only way the chat learns a run ended: it
 // also compares the server's last outcome with the id the start request returned. Kept here,
 // at module level, because the plan the intake asks for is started on another screen.
+const runtimeModeKey = () => DEMO ? 'demo' : LOCAL() ? ['byok', ...['provider','baseUrl','model'].map(k => useStore.getState().coachLocal?.[k])].join('|') : 'server|' + decisionIdentity()
 let awaited = null
-const track = r => {
-  if (r?.job?.id) awaited = r.job.id
+let awaitedMode = null
+const track = (r, identity) => {
+  if (r?.job?.id) { awaited = r.job.id; awaitedMode = identity }
   return r
 }
-export const awaitedJob = () => awaited
+export const awaitedJob = () => awaitedMode === runtimeModeKey() ? awaited : null
 export const settleAwaited = id => { if (!id || awaited === id) awaited = null }
 
-export const coachStatus = async () => DEMO ? (await demo()).demoStatus() : LOCAL() ? (await local()).localStatus() : api('/api/coach/status')
-const _requestReview = async note => DEMO ? (await demo()).demoReview(S()) : LOCAL() ? (await local()).localReview(S(), note) : api('/api/coach/review', { method: 'POST', body: JSON.stringify({ note: note || '', lang: getLang() }) })
-export const requestReview = (...a) => _requestReview(...a).then(track)
+const decisionIdentity = () => {
+  const store = useStore.getState()
+  return JSON.stringify([store.sync?.server || globalThis.location?.origin || 'web', store.user?.id || null])
+}
+export const coachStatus = async () => {
+  if (DEMO) return (await demo()).demoStatus()
+  if (LOCAL()) return (await local()).localStatus()
+  const identity = decisionIdentity(), status = await api('/api/coach/status')
+  if (identity !== decisionIdentity()) throw new Error('Coach account changed')
+  return status.pending ? { ...status, pending: { ...status.pending, originIdentity: identity } } : status
+}
+const _requestReview = async (note, scope) => {
+  if (DEMO) return (await demo()).demoReview(S(), scope)
+  if (LOCAL()) return (await local()).localReview(S(), note, scope)
+  if (scope && (await coachStatus()).scopeVersion !== 2) throw new Error(t('Upgrade the server to use this Coach feature.'))
+  return api('/api/coach/review', { method: 'POST', body: JSON.stringify({ note: note || '', scope, lang: getLang() }) })
+}
+export const requestReview = (...a) => { const identity = runtimeModeKey(); return _requestReview(...a).then(r => track(r, identity)) }
 const _requestPlan = async intake => DEMO ? (await demo()).demoPlan(S(), intake) : LOCAL() ? (await local()).localPlan(S(), intake) : api('/api/coach/plan', { method: 'POST', body: JSON.stringify({ intake, lang: getLang() }) })
-export const requestPlan = (...a) => _requestPlan(...a).then(track)
+export const requestPlan = (...a) => { const identity = runtimeModeKey(); return _requestPlan(...a).then(r => track(r, identity)) }
 const _refinePlan = async text => DEMO ? (await demo()).demoRefine(S()) : LOCAL() ? (await local()).localRefine(S(), text) : api('/api/coach/plan', { method: 'POST', body: JSON.stringify({ refine: text, lang: getLang() }) })
-export const refinePlan = (...a) => _refinePlan(...a).then(track)
-const _requestDebrief = async workoutId => DEMO ? (await demo()).demoDebrief(S(), workoutId) : LOCAL() ? (await local()).localDebrief(S(), workoutId) : api('/api/coach/debrief', { method: 'POST', body: JSON.stringify({ workoutId: workoutId || null, lang: getLang() }) })
-export const requestDebrief = (...a) => _requestDebrief(...a).then(track)
+export const refinePlan = (...a) => { const identity = runtimeModeKey(); return _refinePlan(...a).then(r => track(r, identity)) }
+const _requestDebrief = async selection => {
+  const body = selection && typeof selection === 'object'
+    ? { debriefSelection: selection, workoutId: selection.mode === 'single' ? selection.refs?.[0]?.value || null : null, lang: getLang() }
+    : { workoutId: selection || null, lang: getLang() }
+  if (DEMO) return (await demo()).demoDebrief(S(), selection)
+  if (LOCAL()) return (await local()).localDebrief(S(), selection)
+  if (selection && typeof selection === 'object' && (await coachStatus()).debriefSelectionVersion !== 2) {
+    throw new Error(t('Upgrade the server to use this Coach feature.'))
+  }
+  return api('/api/coach/debrief', { method: 'POST', body: JSON.stringify(body) })
+}
+export const requestDebrief = (...a) => { const identity = runtimeModeKey(); return _requestDebrief(...a).then(r => track(r, identity)) }
 // The room: anonymous medians across the profiles on this instance that opted in. Only a
 // server has a room; a phone with its own key and the demo both answer locally.
 export const cohortStats = async () => DEMO ? (await demo()).demoCohort(S()) : LOCAL() ? { ok: false, enabled: false } : api('/api/coach/cohort?lang=' + encodeURIComponent(getLang()))
 export const setCohortShare = async share => (DEMO || LOCAL()) ? { ok: true, sharing: !!share } : api('/api/coach/cohort/share', { method: 'POST', body: JSON.stringify({ share: !!share }) })
-export const resolvePending = async body => DEMO ? (await demo()).demoResolve() : LOCAL() ? (await local()).localResolve(body) : api('/api/coach/pending/resolve', { method: 'POST', body: JSON.stringify(body) })
+export const resolvePending = async body => {
+  const origin = DEMO ? 'demo' : LOCAL() ? 'local' : 'server'
+  if (body?.origin && body.origin !== origin || body?.originIdentity && body.originIdentity !== decisionIdentity()) return { deferred: true }
+  return DEMO ? (await demo()).demoResolve(body) : LOCAL() ? (await local()).localResolve(body) : api('/api/coach/pending/resolve', { method: 'POST', body: JSON.stringify(body) })
+}
 export const forgetCoach = async () => DEMO ? (await demo()).demoResolve() : LOCAL() ? (await local()).localForget() : api('/api/coach/forget', { method: 'POST', body: '{}' })
 export const disclosure = async () => DEMO ? (await demo()).demoDisclosure() : LOCAL() ? (await local()).localDisclosure() : api('/api/coach/disclosure')
 
@@ -102,23 +133,30 @@ export function useCoachStatus(active = true) {
   const timer = useRef(null)
   const loop = useRef(null)   // the running poll loop's `tick`, so a manual refresh can re-pace it
   const seq = useRef(0)       // which status request is the newest one
+  const knownJob = useRef(false)
+  const coachLocal = useStore(s => s.coachLocal)
+  const server = useStore(s => s.sync?.server)
+  const userId = useStore(s => s.user?.id)
+  const modeKey = [coachLocal?.mode, coachLocal?.provider, coachLocal?.baseUrl, coachLocal?.model, server, userId].join('|')
 
   const refresh = useCallback(async () => {
     const mine = ++seq.current
+    const identity = runtimeModeKey()
     try {
       const s = await coachStatus()
       // An answer that arrives after a newer request was sent is older than what that request
       // will bring: the idle poll in flight when a run is started must not land after the
       // refresh that follows the start, putting back the run count and last outcome from before.
-      if (mine !== seq.current) return s
-      setState({ ...s, loading: false })
+      if (mine !== seq.current || identity !== runtimeModeKey()) return null
+      knownJob.current = !!s?.job
+      setState({ ...s, loading: false, statusError: null, isStale: false, lastSuccessfulAt: Date.now() })
       // A refresh that finds a job in flight — the one the caller just started — must not leave
       // the loop asleep on its idle cadence: without this the card shows up to a minute after
       // the job ended, sitting on "thinking…" the whole time.
       if (s?.job && loop.current) { clearTimeout(timer.current); timer.current = setTimeout(loop.current, POLL_MS) }
       return s
-    } catch {
-      if (mine === seq.current) setState(s => ({ ...s, loading: false }))
+    } catch (error) {
+      if (mine === seq.current && identity === runtimeModeKey()) setState(s => ({ ...s, loading: false, isStale: true, statusError: error?.message || 'status_unavailable' }))
       return null
     }
   }, [])
@@ -130,12 +168,14 @@ export function useCoachStatus(active = true) {
       const s = await refresh()
       if (stopped) return
       clearTimeout(timer.current)
-      timer.current = setTimeout(tick, s?.job ? POLL_MS : IDLE_MS)
+      timer.current = setTimeout(tick, s?.job || (!s && knownJob.current) ? POLL_MS : IDLE_MS)
     }
     loop.current = tick
+    knownJob.current = false
+    setState({ job: null, pending: null, cap: null, loading: true })
     tick()
-    return () => { stopped = true; loop.current = null; clearTimeout(timer.current) }
-  }, [active, refresh])
+    return () => { stopped = true; seq.current++; loop.current = null; clearTimeout(timer.current) }
+  }, [active, refresh, modeKey])
 
   return { ...state, refresh }
 }

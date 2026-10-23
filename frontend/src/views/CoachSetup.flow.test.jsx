@@ -56,6 +56,7 @@ vi.mock('../lib/coach-secrets.js', () => ({
 vi.mock('../lib/coach-local.js', () => ({
   localModels: vi.fn(() => Promise.resolve({ ok: true, models: [] })),
   localForget: vi.fn(() => Promise.resolve({ ok: true })),
+  cancelLocalJob: vi.fn(),
 }))
 vi.mock('./MobileOnboarding.jsx', () => ({ ConnectSheet: () => <div className="connect-sheet" /> }))
 
@@ -337,8 +338,8 @@ describe('CoachSetup — saving', () => {
   it('writes the mode, the provider and the chosen model, then stores the key and leaves', async () => {
     await listed(null, ['claude-opus-5'])
     await click(btn('Save and use the Coach')); await settle()
-    expect(mocks.setCoachLocal).toHaveBeenCalledWith({ mode: 'byok', provider: 'anthropic', model: 'claude-opus-5', baseUrl: null })
-    expect(setApiKey).toHaveBeenCalledWith('sk-1')
+    expect(mocks.setCoachLocal).toHaveBeenCalledWith(expect.objectContaining({ mode: 'byok', provider: 'anthropic', model: 'claude-opus-5', baseUrl: null, credentialDisabled: false }))
+    expect(setApiKey).toHaveBeenCalledWith('sk-1', expect.objectContaining({ provider: 'anthropic' }))
     expect(mocks.toast).toHaveBeenCalledWith('The Coach is on')
     expect(mocks.nav).toHaveBeenCalledWith('/coach')
   })
@@ -347,9 +348,9 @@ describe('CoachSetup — saving', () => {
     await listed('compatible', ['qwen3-27b', 'llama-3.3'], { key: null, baseUrl: 'https://ollama.lan:11434//' })
     pickModel('llama-3.3')
     await click(btn('Save and use the Coach')); await settle()
-    expect(mocks.setCoachLocal).toHaveBeenCalledWith({
+    expect(mocks.setCoachLocal).toHaveBeenCalledWith(expect.objectContaining({
       mode: 'byok', provider: 'compatible', model: 'llama-3.3', baseUrl: 'https://ollama.lan:11434'
-    })
+    }))
     expect(setApiKey).not.toHaveBeenCalled()
   })
 
@@ -379,7 +380,7 @@ describe('CoachSetup — saving', () => {
     await listed('compatible', ['qwen3-27b'], { key: null, baseUrl: 'https://ollama.lan:11434' })
     pickModel('qwen3-27b')
     typeIn(field('text'), 'ollama.lan')
-    await click(btn('Save and use the Coach')); await settle()
+    await settle(); await click(btn('List models')); await settle()
     expect(mocks.toast).toHaveBeenCalledWith('not a valid URL')
     expect(mocks.setCoachLocal).not.toHaveBeenCalled()
     expect(mocks.nav).not.toHaveBeenCalled()
@@ -391,28 +392,28 @@ describe('CoachSetup — saving', () => {
     await listed('compatible', ['qwen3-27b'], { key: null, baseUrl: 'https://ollama.lan:11434' })
     pickModel('qwen3-27b')
     typeIn(field('text'), '')
-    await click(btn('Save and use the Coach')); await settle()
+    await settle(); await click(btn('List models')); await settle()
     expect(mocks.toast).toHaveBeenCalledWith('Enter the endpoint URL')
     expect(mocks.setCoachLocal).not.toHaveBeenCalled()
     expect(mocks.nav).not.toHaveBeenCalled()
   })
 
   // Issue #42: both of these used to leave the button greyed out for ever with no explanation.
-  it('a settings write that fails says so, keeps you here and never stores the key', async () => {
+  it('a settings write failure keeps the mode inactive even after the scoped key was saved', async () => {
     await listed(null, ['claude-opus-5'])
     mocks.setCoachLocal.mockRejectedValueOnce(new Error('could not write the settings file'))
     await click(btn('Save and use the Coach')); await settle()
     expect(mocks.toast).toHaveBeenCalledWith('could not write the settings file')
-    expect(setApiKey).not.toHaveBeenCalled()
+    expect(setApiKey).toHaveBeenCalled()
     expect(mocks.nav).not.toHaveBeenCalled()
     expect(btn('Save and use the Coach').disabled).toBe(false)
   })
 
-  it('a secure-store write that fails says so — but the mode is already on, by design', async () => {
+  it('a secure-store write failure never enables the mode', async () => {
     await listed(null, ['claude-opus-5'])
     vi.mocked(setApiKey).mockRejectedValueOnce(new Error('secure storage timed out'))
     await click(btn('Save and use the Coach')); await settle()
-    expect(mocks.setCoachLocal).toHaveBeenCalledWith(expect.objectContaining({ mode: 'byok' }))
+    expect(mocks.setCoachLocal).not.toHaveBeenCalled()
     expect(mocks.toast).toHaveBeenCalledWith('secure storage timed out')
     expect(mocks.nav).not.toHaveBeenCalled()
     expect(btn('Save and use the Coach').disabled).toBe(false)
@@ -440,7 +441,7 @@ describe('CoachSetup — turning it off', () => {
 
     await click(rowTitled('Turn the Coach off on this phone')); await settle()
     expect(clearApiKey).toHaveBeenCalledTimes(1)
-    expect(mocks.setCoachLocal).toHaveBeenCalledWith({ mode: 'off' })
+    expect(mocks.setCoachLocal).toHaveBeenCalledWith({ mode: 'off', credentialDisabled: true })
     expect(localForget).toHaveBeenCalledTimes(1)
     expect(mocks.toast).toHaveBeenCalledWith('The Coach is off')
     expect(mocks.nav).not.toHaveBeenCalled()                          // you stay on the screen
