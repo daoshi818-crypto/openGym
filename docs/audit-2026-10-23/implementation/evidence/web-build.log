@@ -1,0 +1,109 @@
+
+> opengym-frontend@1.6.2 build
+> vite build
+
+vite v8.1.5 building client environment for production...
+[2K
+transforming...✓ 338 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                               2.53 kB │ gzip:   1.10 kB
+dist/assets/index-B0S3qqaa.css              115.97 kB │ gzip:  22.70 kB
+dist/assets/web-CVo-P44V.js                   0.36 kB │ gzip:   0.24 kB
+dist/assets/esm-Bp9wfl3p.js                   0.38 kB │ gzip:   0.27 kB
+dist/assets/esm-CcgIgLMD.js                   0.38 kB │ gzip:   0.27 kB
+dist/assets/esm-O3sAURXY.js                   0.63 kB │ gzip:   0.38 kB
+dist/assets/rolldown-runtime-QTnfLwEv.js      0.69 kB │ gzip:   0.42 kB
+dist/assets/native-Bojv20kQ.js                0.72 kB │ gzip:   0.33 kB
+dist/assets/web-BMOg7ckC.js                   0.75 kB │ gzip:   0.35 kB
+dist/assets/web-__4wQBi9.js                   0.76 kB │ gzip:   0.38 kB
+dist/assets/preload-helper-HclGiUj8.js        1.21 kB │ gzip:   0.67 kB
+dist/assets/esm-DyR102YF.js                   1.31 kB │ gzip:   0.57 kB
+dist/assets/esm-CF9WcXgQ.js                   1.43 kB │ gzip:   0.75 kB
+dist/assets/esm-C4GIxxcg.js                   1.86 kB │ gzip:   0.93 kB
+dist/assets/base-BT3hK_uG.js                  2.57 kB │ gzip:   0.93 kB
+dist/assets/web-D5kjH6Am.js                   2.94 kB │ gzip:   1.01 kB
+dist/assets/demoSeed-1Yj1jg1s.js              3.27 kB │ gzip:   1.68 kB
+dist/assets/web-CqI9blK5.js                   3.33 kB │ gzip:   1.03 kB
+dist/assets/media-refs-CBisMdU5.js            3.78 kB │ gzip:   1.55 kB
+dist/assets/media-ingest-BGAFPnEd.js          6.23 kB │ gzip:   2.48 kB
+dist/assets/backup-media-BmcT6x1q.js          6.58 kB │ gzip:   2.88 kB
+dist/assets/lean-qr-BHx9WpGV.js               6.77 kB │ gzip:   3.55 kB
+dist/assets/dist-Cawi-vbT.js                  7.57 kB │ gzip:   3.08 kB
+dist/assets/coach-demo-TqxfTrJP.js            8.15 kB │ gzip:   3.75 kB
+dist/assets/web-BPKYW0VN.js                   8.49 kB │ gzip:   2.84 kB
+dist/assets/mobile-B16aT6F8.js               11.36 kB │ gzip:   4.00 kB
+dist/assets/media-store-fs-B3YuXyoC.js       16.71 kB │ gzip:   7.11 kB
+dist/assets/i18n-B2x3v01Z.js                 19.59 kB │ gzip:   6.91 kB
+dist/assets/history-DL3VMYyZ.js              36.55 kB │ gzip:  13.57 kB
+dist/assets/coach-local-AweRMUi6.js          63.29 kB │ gzip:  22.62 kB
+dist/assets/body-paths-D_5SR19s.js           93.27 kB │ gzip:  40.92 kB
+dist/assets/jsQR-dbrgLl2D.js                129.99 kB │ gzip:  47.50 kB
+dist/assets/pt-BR-BEl4QVYx.js               135.34 kB │ gzip:  45.56 kB
+dist/assets/zh-CUdK-84d.js                  161.25 kB │ gzip:  61.81 kB
+dist/assets/zh-TW-BQqdRfZK.js               166.19 kB │ gzip:  65.20 kB
+dist/assets/tr-CUJw1aTU.js                  170.71 kB │ gzip:  58.56 kB
+dist/assets/it-BRIfY5hN.js                  172.56 kB │ gzip:  58.22 kB
+dist/assets/es-CRvgh4ZZ.js                  173.20 kB │ gzip:  58.81 kB
+dist/assets/pt-CK_wdlt6.js                  173.40 kB │ gzip:  58.70 kB
+dist/assets/zh-TW-gJyRH2og.js               174.70 kB │ gzip:  51.57 kB
+dist/assets/de-Bzp3jYTR.js                  175.14 kB │ gzip:  60.21 kB
+dist/assets/zh-Dmtv3Y8b.js                  175.91 kB │ gzip:  52.05 kB
+dist/assets/hu-CdPLLn2k.js                  177.09 kB │ gzip:  61.93 kB
+dist/assets/fr-FkgJRmbq.js                  178.30 kB │ gzip:  60.01 kB
+dist/assets/ko-kq_ZZiRh.js                  180.01 kB │ gzip:  61.43 kB
+dist/assets/pl-DuRJFJEq.js                  180.46 kB │ gzip:  62.21 kB
+dist/assets/ar-CeDesSLL.js                  207.53 kB │ gzip:  64.14 kB
+dist/assets/tr-CuUXuDyG.js                  216.49 kB │ gzip:  54.28 kB
+dist/assets/uk-uBwsDN5H.js                  231.50 kB │ gzip:  68.70 kB
+dist/assets/de-DbupmURr.js                  233.29 kB │ gzip:  54.03 kB
+dist/assets/ru-Btx9dcX0.js                  237.00 kB │ gzip:  68.92 kB
+dist/assets/hu-BDFI_6DQ.js                  238.66 kB │ gzip:  57.52 kB
+dist/assets/ko-BiHHFyVv.js                  242.21 kB │ gzip:  57.04 kB
+dist/assets/fr-D242Edp0.js                  258.25 kB │ gzip:  56.17 kB
+dist/assets/it-DpET-TTv.js                  259.66 kB │ gzip:  56.65 kB
+dist/assets/pt-BR-D7F6PAO5.js               261.14 kB │ gzip:  56.60 kB
+dist/assets/es-CNc7YUxL.js                  263.93 kB │ gzip:  56.03 kB
+dist/assets/pl-DoQ8nLJv.js                  270.36 kB │ gzip:  60.34 kB
+dist/assets/hi-DvKYq6kn.js                  271.88 kB │ gzip:  67.49 kB
+dist/assets/bn-BD0bn5vK.js                  277.82 kB │ gzip:  65.85 kB
+dist/assets/th-CZpeugj9.js                  279.90 kB │ gzip:  65.94 kB
+dist/assets/ar-DvfPMlav.js                  345.16 kB │ gzip:  59.84 kB
+dist/assets/zh-TW-BoIpVgvz.js               379.79 kB │ gzip:  81.03 kB
+dist/assets/ru-C24N-88-.js                  417.94 kB │ gzip:  68.86 kB
+dist/assets/uk-C1EdUHet.js                  421.09 kB │ gzip:  68.23 kB
+dist/assets/hi-vjGVjzW8.js                  444.09 kB │ gzip:  63.38 kB
+dist/assets/th-DSHshUpp.js                  449.35 kB │ gzip:  65.83 kB
+dist/assets/zh-C4IVErko.js                  480.28 kB │ gzip:  76.24 kB
+dist/assets/bn-DxRw-WJm.js                  484.60 kB │ gzip:  64.29 kB
+dist/assets/en-B_U-spcQ.js                  606.59 kB │ gzip: 152.68 kB
+dist/assets/pl-CN1mt9xI.js                  654.08 kB │ gzip:  92.24 kB
+dist/assets/ko-D76Mo-yz.js                  656.93 kB │ gzip:  99.53 kB
+dist/assets/hu-Ctj33n__.js                  677.83 kB │ gzip:  97.97 kB
+dist/assets/debrief-report-IjC3gfKo.js      678.70 kB │ gzip: 127.02 kB
+dist/assets/it-BiF9wkKN.js                  681.50 kB │ gzip:  88.46 kB
+dist/assets/pt-BR-C5Cg0dTF.js               694.87 kB │ gzip:  85.40 kB
+dist/assets/fr-BqEtMMxL.js                  712.56 kB │ gzip:  86.50 kB
+dist/assets/es-CjB87s1m.js                  717.70 kB │ gzip:  87.21 kB
+dist/assets/tr-Df3OgaMv.js                  731.25 kB │ gzip:  90.47 kB
+dist/assets/ar-ByyTYuE6.js                  825.97 kB │ gzip:  82.44 kB
+dist/assets/ru-CJgiV3Kp.js                1,055.67 kB │ gzip: 106.36 kB
+dist/assets/exercises-BbZgNHC5.js         1,101.56 kB │ gzip: 154.65 kB
+dist/assets/index-BnddTy9N.js             1,154.84 kB │ gzip: 357.04 kB
+dist/assets/hi-CV4Q9l9S.js                1,583.74 kB │ gzip: 122.00 kB
+dist/assets/en-BZEO-2l9.js                1,785.44 kB │ gzip: 312.33 kB
+
+[INEFFECTIVE_DYNAMIC_IMPORT] src/store/useUI.js is dynamically imported by src/lib/media-sync.js, src/store/useStore.js but also statically imported by src/App.jsx, src/components/BackupFolderRow.jsx, src/components/CustomMediaField.jsx, src/components/DurationWheel.jsx, src/components/Modals.jsx, ..., dynamic import will not move module into another chunk.
+
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 1500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+[INEFFECTIVE_DYNAMIC_IMPORT] src/lib/media-prefetch.js is dynamically imported by src/main.jsx but also statically imported by src/components/CustomMedia.jsx, src/lib/media-sync.js, dynamic import will not move module into another chunk.
+
+[INEFFECTIVE_DYNAMIC_IMPORT] src/sheets.jsx is dynamically imported by src/store/useStore.js but also statically imported by src/App.jsx, src/components/Passkeys.jsx, src/components/PasswordAuth.jsx, src/components/ServerSync.jsx, src/components/TrainingCalendar.jsx, ..., dynamic import will not move module into another chunk.
+
+[INEFFECTIVE_DYNAMIC_IMPORT] src/lib/scan-web.js is dynamically imported by src/lib/scan.js but also statically imported by src/components/CameraScan.jsx, dynamic import will not move module into another chunk.
+
+✓ built in 3.03s

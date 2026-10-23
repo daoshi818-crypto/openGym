@@ -1,0 +1,597 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 04f705d..3d5ba8f 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,10 @@
+ # Changelog
+ 
++## v1.5.2 (2026-10-18)
++
++- **Stats training calendar** now shows the selected routine topics instead of muscles inferred from exercises.
++- **Calendar cells** use a compact, aligned row height and summarize multiple topics without expanding the month grid.
++
+ ## v1.5.1 (2026-10-17)
+ 
+ - **Rest overlay card** now matches openGym's app style with a neutral dark surface, accent status
+diff --git a/frontend/android/app/build.gradle b/frontend/android/app/build.gradle
+index 88140b1..a6007d5 100644
+--- a/frontend/android/app/build.gradle
++++ b/frontend/android/app/build.gradle
+@@ -7,8 +7,8 @@ android {
+         applicationId "ch.duartesantos.opengym"
+         minSdkVersion rootProject.ext.minSdkVersion
+         targetSdkVersion rootProject.ext.targetSdkVersion
+-        versionCode 28
+-        versionName "1.5.1"
++        versionCode 29
++        versionName "1.5.2"
+         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+         aaptOptions {
+              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+diff --git a/frontend/package-lock.json b/frontend/package-lock.json
+index 375c90b..0bdfa5a 100644
+--- a/frontend/package-lock.json
++++ b/frontend/package-lock.json
+@@ -1,12 +1,12 @@
+ {
+   "name": "opengym-frontend",
+-  "version": "1.5.1",
++  "version": "1.5.2",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "opengym-frontend",
+-      "version": "1.5.1",
++      "version": "1.5.2",
+       "license": "AGPL-3.0-or-later",
+       "dependencies": {
+         "@aparajita/capacitor-secure-storage": "^7.1.6",
+diff --git a/frontend/package.json b/frontend/package.json
+index 4112a0b..2fe91ab 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "opengym-frontend",
+   "private": true,
+-  "version": "1.5.1",
++  "version": "1.5.2",
+   "type": "module",
+   "scripts": {
+     "dev": "vite",
+diff --git a/frontend/src/components/TrainingCalendar.integration.test.jsx b/frontend/src/components/TrainingCalendar.integration.test.jsx
+index 54cb5f0..5faf96f 100644
+--- a/frontend/src/components/TrainingCalendar.integration.test.jsx
++++ b/frontend/src/components/TrainingCalendar.integration.test.jsx
+@@ -21,7 +21,7 @@ beforeEach(() => {
+ })
+ afterEach(() => { act(() => root.unmount()); host.remove(); useUI.setState({ sheets: [] }); vi.useRealTimers() })
+ 
+-it('refreshes real WorkoutRows via the same store.update used by history edit/delete', () => {
++it('keeps the saved training topic while refreshing real WorkoutRows via store.update', () => {
+   act(() => root.render(<CalendarFromStore />))
+   clickDay('2026-10-08')
+   expect(summary()).toEqual(['1', '2', '2'])
+@@ -30,8 +30,8 @@ it('refreshes real WorkoutRows via the same store.update used by history edit/de
+     s.workouts[0].entries[0].muscleWeights = { triceps: 1 }
+     s.workouts[0].entries[0].sets[0].w = 40
+   }, false))
+-  expect(host.querySelector('.training-calendar-chips').textContent).toContain('Triceps')
+-  expect(host.querySelector('.training-calendar-chips').textContent).not.toContain('Chest')
++  expect(host.querySelector('.training-calendar-chips').textContent).toContain('Morning')
++  expect(host.querySelector('.training-calendar-chips').textContent).not.toContain('Triceps')
+   expect(host.querySelector('.training-calendar-details').textContent).toContain('600 kg')
+   act(() => useStore.getState().update(s => { s.workouts = s.workouts.filter(w => w.id !== 'Morning') }, false))
+   expect(summary()).toEqual(['1', '1', '1'])
+@@ -47,7 +47,7 @@ it('renders a date-only legacy record using the real shared row', () => {
+   clickDay('2026-10-08')
+   expect(host.querySelector('.training-calendar-details').textContent).toContain('Imported legacy')
+   expect(host.querySelector('.training-calendar-details').textContent).toContain('150 kg')
+-  expect(summary()).toEqual(['1', '1', '0'])
++  expect(summary()).toEqual(['1', '1', '1'])
+   act(() => host.querySelector('.training-calendar-details .item').click())
+   const sheet = useUI.getState().sheets.at(-1)
+   expect(sheet).toBeTruthy()
+diff --git a/frontend/src/components/TrainingCalendar.jsx b/frontend/src/components/TrainingCalendar.jsx
+index 7fb80bb..8343aeb 100644
+--- a/frontend/src/components/TrainingCalendar.jsx
++++ b/frontend/src/components/TrainingCalendar.jsx
+@@ -1,7 +1,7 @@
+ import { useMemo, useState } from 'react'
+ import { t, tn, dateLocale } from '../lib/i18n.js'
+ import { DAYS, fmtDate, fmtDur, fmtVol, todayISO, weekStartOf } from '../lib/format.js'
+-import { dayLabelOf, monthCellsOf, monthDataOf, monthLabelOf } from '../lib/training-calendar.js'
++import { monthCellsOf, monthDataOf, monthLabelOf } from '../lib/training-calendar.js'
+ import { Button } from './ui.jsx'
+ import Icon from './Icon.jsx'
+ import { WorkoutRow, workoutDetailSheet } from '../sheets.jsx'
+@@ -15,7 +15,7 @@ export default function TrainingCalendar({ S, onWorkout }) {
+   const year = month.getFullYear()
+   const monthIndex = month.getMonth()
+   const weekStart = weekStartOf(S)
+-  const data = useMemo(() => monthDataOf(S.workouts, year, monthIndex), [S.workouts, year, monthIndex])
++  const data = useMemo(() => monthDataOf(S.workouts, year, monthIndex, S.routines), [S.workouts, S.routines, year, monthIndex])
+   const cells = useMemo(() => monthCellsOf(year, monthIndex, weekStart), [year, monthIndex, weekStart])
+   const today = todayISO()
+   const selectedDay = selected ? data.days.get(selected) : null
+@@ -42,7 +42,7 @@ export default function TrainingCalendar({ S, onWorkout }) {
+     <div className="training-calendar-summary" aria-label={t('This month')}>
+       <div><strong>{data.trainingDays}</strong><span>{t('Training days')}</span></div>
+       <div><strong>{data.trainingSessions}</strong><span>{t('Sessions')}</span></div>
+-      <div><strong>{data.muscles.length}</strong><span>{t('Muscle groups')}</span></div>
++      <div><strong>{data.topics.length}</strong><span>{t('Training topics')}</span></div>
+     </div>
+ 
+     <div className="training-calendar-grid">
+@@ -50,8 +50,8 @@ export default function TrainingCalendar({ S, onWorkout }) {
+       {cells.map(cell => {
+         const day = data.days.get(cell.iso)
+         const active = selected === cell.iso
+-        const label = day?.muscles.length
+-          ? day.muscles.map(slug => t(dayLabelOf(slug))).join(', ')
++        const label = day?.topics.length
++          ? day.topics.join(', ')
+           : day ? t('Workouts') : ''
+         return <button key={cell.iso} className={'training-calendar-day' + (!cell.inMonth ? ' outside' : '') + (day ? ' trained' : '') + (active ? ' selected' : '') + (cell.iso === today ? ' today' : '')}
+           disabled={!cell.inMonth}
+@@ -60,7 +60,7 @@ export default function TrainingCalendar({ S, onWorkout }) {
+           onClick={() => cell.inMonth && setSelected(cell.iso)}>
+           <span className="training-calendar-number">{cell.day}</span>
+           {day && <span className="training-calendar-mark" aria-hidden="true" />}
+-          {day?.muscles.length ? <span className="training-calendar-muscles">{day.muscles.slice(0, 2).map(slug => t(dayLabelOf(slug))).join(' · ')}{day.muscles.length > 2 ? ' +' + (day.muscles.length - 2) : ''}</span> : day ? <span className="training-calendar-muscles">{t('Workouts')}</span> : null}
++          {day?.topics.length ? <span className="training-calendar-topics">{day.topics.slice(0, 1).join(' · ')}{day.topics.length > 1 ? ' +' + (day.topics.length - 1) : ''}</span> : day ? <span className="training-calendar-topics">{t('Workouts')}</span> : null}
+         </button>
+       })}
+     </div>
+@@ -70,7 +70,7 @@ export default function TrainingCalendar({ S, onWorkout }) {
+         <div><h3>{fmtDate(selectedDay.iso, true, true)}</h3><div className="muted small">{tn('{0} session', '{0} sessions', selectedDay.sessions.length)} · {fmtDur(selectedDay.duration)} · {fmtVol(selectedDay.volume, S.unit)}</div></div>
+         <Button size="sm" variant="ghost" icon="x" aria-label={t('Close')} onClick={() => setSelected(null)} />
+       </div>
+-      {selectedDay.muscles.length ? <div className="mchips training-calendar-chips">{selectedDay.muscles.map(slug => <span className="mchip" key={slug}>{t(dayLabelOf(slug))}</span>)}</div> : <div className="muted small" style={{ marginBottom: 8 }}>{t('Workouts')}</div>}
++      {selectedDay.topics.length ? <div className="mchips training-calendar-chips">{selectedDay.topics.map(topic => <span className="mchip" key={topic}>{topic}</span>)}</div> : <div className="muted small" style={{ marginBottom: 8 }}>{t('Workouts')}</div>}
+       <div className="list">{selectedDay.sessions.map(session => {
+         const workout = { ...session.workout, d: session.day, entries: session.workout.entries || [], vol: session.volume }
+         return <WorkoutRow key={session.workout.id || `${session.day}-${session.index}`} w={workout} onClick={() => onWorkout ? onWorkout(session.workout) : workoutDetailSheet(workout)} />
+diff --git a/frontend/src/components/TrainingCalendar.test.jsx b/frontend/src/components/TrainingCalendar.test.jsx
+index 19c07b6..a15d339 100644
+--- a/frontend/src/components/TrainingCalendar.test.jsx
++++ b/frontend/src/components/TrainingCalendar.test.jsx
+@@ -12,12 +12,17 @@ vi.mock('../sheets.jsx', () => ({
+ const at = (day, hour) => new Date(`${day}T${hour}:00:00`).getTime()
+ const workout = (id, day, hour, name, muscle) => ({
+   id, d: day, start: at(day, hour), end: at(day, hour) + 3600000,
+-  name, entries: [{ id, exercise: { primaries: [muscle] }, sets: [{ w: 20, r: 10, done: true }] }],
++  name, routineIds: [muscle === 'chest' ? 'chest-routine' : muscle === 'upper-back' ? 'back-routine' : `${muscle}-routine`],
++  entries: [{ id, exercise: { primaries: [muscle, 'shoulders', 'triceps'] }, sets: [{ w: 20, r: 10, done: true }] }],
+ })
+ const workouts = [
+   workout('chest', '2026-10-08', '08', 'Morning chest', 'chest'),
+   workout('back', '2026-10-08', '18', 'Evening back', 'upper-back'),
+ ]
++const routines = [
++  { id: 'chest-routine', name: 'Chest' },
++  { id: 'back-routine', name: 'Back' },
++]
+ let host, root
+ 
+ beforeEach(() => {
+@@ -26,7 +31,7 @@ beforeEach(() => {
+   host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host)
+ })
+ afterEach(() => { act(() => root.unmount()); host.remove(); vi.useRealTimers() })
+-const render = (S, onWorkout = vi.fn()) => { act(() => root.render(<TrainingCalendar S={S} onWorkout={onWorkout} />)); return onWorkout }
++const render = (S, onWorkout = vi.fn()) => { act(() => root.render(<TrainingCalendar S={{ routines, ...S }} onWorkout={onWorkout} />)); return onWorkout }
+ const dayButton = day => host.querySelector(`button[aria-label^="${day}"]`)
+ const press = label => act(() => host.querySelector(`button[aria-label="${label}"]`).click())
+ 
+@@ -102,14 +107,22 @@ it('navigates December and January without losing or double-counting boundary wo
+   expect(host.querySelector('h2').textContent).toContain('December')
+ })
+ 
+-it('translates muscle names in both compact cells and accessible labels', async () => {
+-  const { setLang } = await import('../lib/i18n.js')
+-  await setLang('zh')
+-  try {
+-    render({ workouts, unit: 'kg', weekStart: 1 })
+-    const cell = dayButton('2026-10-08')
+-    expect(cell.textContent).toContain('胸')
+-    expect(cell.getAttribute('aria-label')).toContain('胸')
+-    expect(cell.textContent).not.toContain('Chest')
+-  } finally { await setLang('en') }
++it('shows the scheduled routine topic instead of exercise muscles', () => {
++  render({ workouts, unit: 'kg', weekStart: 1 })
++  const cell = dayButton('2026-10-08')
++  expect(cell.textContent).toContain('Chest')
++  expect(cell.getAttribute('aria-label')).toContain('Chest')
++  expect(cell.textContent).not.toContain('Shoulders')
++  expect(cell.textContent).not.toContain('Triceps')
++})
++
++it('keeps multiple routine topics compact in the cell and complete in details', () => {
++  const combined = { ...workouts[0], id: 'combined', name: 'Combined', routineIds: ['chest-routine', 'back-routine'] }
++  render({ workouts: [combined], unit: 'kg', weekStart: 1 })
++  const cell = dayButton('2026-10-08')
++  expect(cell.querySelector('.training-calendar-topics').textContent).toBe('Chest +1')
++  expect(cell.getAttribute('aria-label')).toContain('Chest, Back')
++  act(() => cell.click())
++  expect(host.querySelector('.training-calendar-chips').textContent).toContain('Chest')
++  expect(host.querySelector('.training-calendar-chips').textContent).toContain('Back')
+ })
+diff --git a/frontend/src/index.css b/frontend/src/index.css
+index e3642e1..b13b8a2 100644
+--- a/frontend/src/index.css
++++ b/frontend/src/index.css
+@@ -1717,9 +1717,9 @@ body.no-tabbar.resting #toast{bottom:calc(100px + var(--sab))}
+ .training-calendar-summary>div{min-width:0;background:var(--surface-2);border-radius:12px;padding:10px 8px;text-align:center}
+ .training-calendar-summary strong{display:block;font-size:21px;line-height:1.1}
+ .training-calendar-summary span{display:block;color:var(--label-2);font-size:11px;margin-top:4px;overflow-wrap:anywhere}
+-.training-calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px}
++.training-calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;align-items:stretch}
+ .training-calendar-weekday{text-align:center;font-size:11px;color:var(--label-3);padding:2px 0}
+-.training-calendar-day{min-width:0;min-height:70px;position:relative;display:flex;flex-direction:column;align-items:center;gap:3px;padding:7px 3px;border-radius:10px;background:var(--surface-2);color:var(--label);text-align:center;cursor:pointer}
++.training-calendar-day{min-width:0;block-size:clamp(56px,12vw,64px);position:relative;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:2px;padding:5px 3px;border-radius:10px;background:var(--surface-2);color:var(--label);text-align:center;cursor:pointer;overflow:hidden}
+ .training-calendar-day.outside{opacity:.3;cursor:default}
+ .training-calendar-day.trained{background:var(--acc-soft)}
+ .training-calendar-day.selected{box-shadow:inset 0 0 0 2px var(--acc)}
+@@ -1727,12 +1727,12 @@ body.no-tabbar.resting #toast{bottom:calc(100px + var(--sab))}
+ .training-calendar-day:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+ .training-calendar-number{font-size:14px;font-weight:600}
+ .training-calendar-mark{width:5px;height:5px;border-radius:50%;background:var(--acc);flex:none}
+-.training-calendar-muscles{max-width:100%;font-size:10px;line-height:1.2;color:var(--label-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
++.training-calendar-topics{display:block;max-width:100%;font-size:10px;line-height:1.2;color:var(--label-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ .training-calendar-details{margin-top:16px;padding-top:15px;border-top:var(--hair) solid var(--sep)}
+ .training-calendar-details h3{margin:0 0 3px;font-size:17px}
+ .training-calendar-chips{margin-bottom:10px}
+ .training-calendar-hint{text-align:center;padding:18px 5px 3px}
+-@media(max-width:520px){.training-calendar-grid{gap:3px}.training-calendar-day{min-height:61px;padding:5px 2px}.training-calendar-muscles{font-size:9px}.training-calendar-summary strong{font-size:19px}}
++@media(max-width:520px){.training-calendar-grid{gap:3px}.training-calendar-day{block-size:56px;padding:4px 2px}.training-calendar-topics{font-size:9px}.training-calendar-summary strong{font-size:19px}}
+ [dir="rtl"] .training-calendar-grid{direction:rtl}
+ 
+ /* --- accent swatches --- */
+diff --git a/frontend/src/lib/pt-br-locale.test.js b/frontend/src/lib/pt-br-locale.test.js
+index 1296f4b..49c8495 100644
+--- a/frontend/src/lib/pt-br-locale.test.js
++++ b/frontend/src/lib/pt-br-locale.test.js
+@@ -41,7 +41,7 @@ describe('Brazilian Portuguese locale', () => {
+     // has to be taught is a number nobody reads. What the numbers stood for is asserted above.
+     // If the hash fails, review the changed keys and wording before accepting a new one. From
+     // frontend/: node scripts/pt-br-inheritance-fingerprint.mjs --list
+-    expect(fingerprint, 'pt-PT inheritance changed; review the inherited pt-BR wording').toBe('f79bd947e3f2ea583746d07df8225b5f00ceaef3654edaaed6cf6bf2bfe3ef9c')
++    expect(fingerprint, 'pt-PT inheritance changed; review the inherited pt-BR wording').toBe('b4cf7eb0dd1b9164208d006541451da52536c7fad0dc35aa798a897e3c52e7fd')
+   })
+ 
+   // pt-PT labelled Unpair 'Desfazer': Undo, in Portuguese (it is pt-BR's Undo), on the button that
+diff --git a/frontend/src/lib/training-calendar.js b/frontend/src/lib/training-calendar.js
+index 6a6be2c..456b03d 100644
+--- a/frontend/src/lib/training-calendar.js
++++ b/frontend/src/lib/training-calendar.js
+@@ -52,24 +52,47 @@ export function musclesOfWorkout(workout) {
+   return MUSCLES.filter(slug => muscles.has(slug))
+ }
+ 
+-function sessionOf(workout, index, day) {
++const routineIdsOf = workout => {
++  if (Array.isArray(workout?.routineIds)) return workout.routineIds
++  return workout?.routineId ? [workout.routineId] : []
++}
++
++// The calendar label is the routine the user selected for the session. Exercise muscles remain
++// available for analysis elsewhere, but they are not a training-day topic and must not be shown as
++// one (a chest routine can contain shoulder and triceps assistance work).
++export function trainingTopicsOf(workout, routines = []) {
++  const byId = routines instanceof Map ? routines : new Map((Array.isArray(routines) ? routines : []).map(r => [r.id, r]))
++  const topics = []
++  const add = value => {
++    const name = String(value || '').trim()
++    if (name && !topics.includes(name)) topics.push(name)
++  }
++  routineIdsOf(workout).forEach(id => add(byId.get(id)?.name))
++  if (!topics.length) add(workout?.name)
++  return topics
++}
++
++function sessionOf(workout, index, day, routines) {
+   const volume = Array.isArray(workout?.entries) ? workoutVolume(workout) : Number(workout?.vol) || 0
+   return {
+     workout,
+     index,
+     day,
++    topics: trainingTopicsOf(workout, routines),
++    // Keep this field for callers that use the calendar data for analysis; the UI renders topics.
+     muscles: musclesOfWorkout(workout),
+     duration: workoutDuration(workout),
+     volume: Math.max(0, volume),
+   }
+ }
+ 
+-export function monthDataOf(workouts, year, month) {
++export function monthDataOf(workouts, year, month, routines = []) {
++  const routineMap = routines instanceof Map ? routines : new Map((Array.isArray(routines) ? routines : []).map(r => [r.id, r]))
+   const prefix = `${year}-${String(month + 1).padStart(2, '0')}-`
+   const sessions = (Array.isArray(workouts) ? workouts : [])
+     .flatMap((workout, index) => {
+       const day = workoutDay(workout)
+-      return day?.startsWith(prefix) ? [sessionOf(workout, index, day)] : []
++      return day?.startsWith(prefix) ? [sessionOf(workout, index, day, routineMap)] : []
+     })
+   const byDay = new Map()
+   for (const session of sessions) {
+@@ -83,14 +106,23 @@ export function monthDataOf(workouts, year, month) {
+   const dayData = new Map()
+   for (const [day, list] of byDay) {
+     const muscles = new Set(list.flatMap(session => session.muscles))
++    const topics = []
++    list.flatMap(session => session.topics).forEach(topic => {
++      if (!topics.includes(topic)) topics.push(topic)
++    })
+     dayData.set(day, {
+       iso: day,
+       sessions: list,
++      topics,
++      // Keep muscle data in the model for existing analysis consumers; the calendar presentation
++      // deliberately uses topics above.
+       muscles: MUSCLES.filter(slug => muscles.has(slug)),
+       duration: list.reduce((sum, session) => sum + session.duration, 0),
+       volume: list.reduce((sum, session) => sum + session.volume, 0),
+     })
+   }
++  const topics = []
++  for (const day of dayData.values()) day.topics.forEach(topic => { if (!topics.includes(topic)) topics.push(topic) })
+   return {
+     year,
+     month,
+@@ -98,6 +130,7 @@ export function monthDataOf(workouts, year, month) {
+     sessions,
+     trainingDays: dayData.size,
+     trainingSessions: sessions.length,
++    topics,
+     muscles: MUSCLES.filter(slug => [...dayData.values()].some(day => day.muscles.includes(slug))),
+   }
+ }
+diff --git a/frontend/src/lib/training-calendar.test.js b/frontend/src/lib/training-calendar.test.js
+index 1e39db2..3eab99f 100644
+--- a/frontend/src/lib/training-calendar.test.js
++++ b/frontend/src/lib/training-calendar.test.js
+@@ -1,5 +1,5 @@
+ import { describe, expect, it } from 'vitest'
+-import { monthCellsOf, monthDataOf, primaryMusclesOf } from './training-calendar.js'
++import { monthCellsOf, monthDataOf, primaryMusclesOf, trainingTopicsOf } from './training-calendar.js'
+ 
+ const workout = (id, d, start, entry = {}) => ({
+   id,
+@@ -24,6 +24,18 @@ describe('monthCellsOf', () => {
+   })
+ })
+ 
++it('uses the selected routine topic and keeps supporting muscles out of the label', () => {
++  const routines = [{ id: 'chest-day', name: 'Chest' }]
++  const record = {
++    id: 'push', d: '2026-10-08', name: 'Chest session', routineIds: ['chest-day'],
++    entries: [{ id: '0025', exercise: { primaries: ['chest', 'delts', 'triceps'] }, sets: [{ done: true, w: 60, r: 8 }] }],
++  }
++  expect(trainingTopicsOf(record, routines)).toEqual(['Chest'])
++  const day = monthDataOf([record], 2026, 9, routines).days.get('2026-10-08')
++  expect(day.topics).toEqual(['Chest'])
++  expect(day.muscles).toEqual(['chest'])
++})
++
+ describe('monthDataOf', () => {
+   it('counts unique days separately from saved sessions', () => {
+     const data = monthDataOf([
+diff --git a/frontend/src/locales/ar.js b/frontend/src/locales/ar.js
+index ea54292..5eda00d 100644
+--- a/frontend/src/locales/ar.js
++++ b/frontend/src/locales/ar.js
+@@ -4,6 +4,7 @@ export default {
+   'Trends': 'الاتجاهات',
+   'Training days': 'أيام التدريب',
+   'Muscle groups': 'مجموعات العضلات',
++  'Training topics': 'مواضيع التدريب',
+   'No workouts on this day.': 'لا توجد تمارين في هذا اليوم.',
+   'Confirm': 'تأكيد',
+   'Cancel': 'إلغاء',
+diff --git a/frontend/src/locales/bn.js b/frontend/src/locales/bn.js
+index 5d02291..9a794ad 100644
+--- a/frontend/src/locales/bn.js
++++ b/frontend/src/locales/bn.js
+@@ -4,6 +4,7 @@ export default {
+   'Trends': 'প্রবণতা',
+   'Training days': 'প্রশিক্ষণের দিন',
+   'Muscle groups': 'পেশিগোষ্ঠী',
++  'Training topics': 'প্রশিক্ষণের বিষয়',
+   'No workouts on this day.': 'এই দিনে কোনো ওয়ার্কআউট নেই।',
+   'Confirm': 'নিশ্চিত করুন',
+   'Cancel': 'বাতিল',
+diff --git a/frontend/src/locales/de.js b/frontend/src/locales/de.js
+index 11a5f22..87630e3 100644
+--- a/frontend/src/locales/de.js
++++ b/frontend/src/locales/de.js
+@@ -4,6 +4,7 @@ export default {
+   'Trends': 'Trends',
+   'Training days': 'Trainingstage',
+   'Muscle groups': 'Muskelgruppen',
++  'Training topics': 'Trainingsthemen',
+   'No workouts on this day.': 'An diesem Tag gibt es keine Trainings.',
+   // --- generic ---
+   'Confirm': 'Bestätigen',
+diff --git a/frontend/src/locales/es.js b/frontend/src/locales/es.js
+index 5f575b2..2987e76 100644
+--- a/frontend/src/locales/es.js
++++ b/frontend/src/locales/es.js
+@@ -4,6 +4,7 @@ export default {
+   'Trends': 'Tendencias',
+   'Training days': 'Días de entrenamiento',
+   'Muscle groups': 'Grupos musculares',
++  'Training topics': 'Temas de entrenamiento',
+   'No workouts on this day.': 'No hay entrenamientos este día.',
+   'Confirm': 'Confirmar',
+   'Cancel': 'Cancelar',
+diff --git a/frontend/src/locales/fr.js b/frontend/src/locales/fr.js
+index 6e60be1..e390808 100644
+--- a/frontend/src/locales/fr.js
++++ b/frontend/src/locales/fr.js
+@@ -4,6 +4,7 @@ export default {
+   'Trends': 'Tendances',
+   'Training days': 'Jours d’entraînement',
+   'Muscle groups': 'Groupes musculaires',
++  'Training topics': 'Thèmes d’entraînement',
+   'No workouts on this day.': 'Aucune séance ce jour-là.',
+   'Confirm': 'Confirmer',
+   'Cancel': 'Annuler',
+diff --git a/frontend/src/locales/hi.js b/frontend/src/locales/hi.js
+index 3253d57..8c1b46e 100644
+--- a/frontend/src/locales/hi.js
++++ b/frontend/src/locales/hi.js
+@@ -4,6 +4,7 @@ export default {
+   'Trends': 'रुझान',
+   'Training days': 'प्रशिक्षण के दिन',
+   'Muscle groups': 'मांसपेशी समूह',
++  'Training topics': 'प्रशिक्षण विषय',
+   'No workouts on this day.': 'इस दिन कोई वर्कआउट नहीं है।',
+   'Confirm': 'पुष्टि करें',
+   'Cancel': 'रद्द करें',
+diff --git a/frontend/src/locales/hu.js b/frontend/src/locales/hu.js
+index e988b4b..0bb9a22 100644
+--- a/frontend/src/locales/hu.js
++++ b/frontend/src/locales/hu.js
+@@ -4,6 +4,7 @@ export default {
+   'Trends': 'Trendek',
+   'Training days': 'Edzésnapok',
+   'Muscle groups': 'Izomcsoportok',
++  'Training topics': 'Edzéstémák',
+   'No workouts on this day.': 'Ezen a napon nincs edzés.',
+   // --- generic ---
+   'Confirm': 'Megerősítés',
+diff --git a/frontend/src/locales/it.js b/frontend/src/locales/it.js
+index 2ea921e..7998c50 100644
+--- a/frontend/src/locales/it.js
++++ b/frontend/src/locales/it.js
+@@ -4,6 +4,7 @@ export default {
+   'Trends': 'Andamento',
+   'Training days': 'Giorni di allenamento',
+   'Muscle groups': 'Gruppi muscolari',
++  'Training topics': 'Temi di allenamento',
+   'No workouts on this day.': 'Nessun allenamento in questo giorno.',
+   'Confirm': 'Conferma',
+   'Cancel': 'Annulla',
+diff --git a/frontend/src/locales/ko.js b/frontend/src/locales/ko.js
+index 2045cb9..bdf2253 100644
+--- a/frontend/src/locales/ko.js
++++ b/frontend/src/locales/ko.js
+@@ -4,6 +4,7 @@ export default {
+   'Trends': '추세',
+   'Training days': '운동한 날',
+   'Muscle groups': '근육군',
++  'Training topics': '운동 주제',
+   'No workouts on this day.': '이날에는 운동 기록이 없습니다.',
+   'Confirm': '확인',
+   'Cancel': '취소',
+diff --git a/frontend/src/locales/pl.js b/frontend/src/locales/pl.js
+index bc2284f..8c914c8 100644
+--- a/frontend/src/locales/pl.js
++++ b/frontend/src/locales/pl.js
+@@ -4,6 +4,7 @@ export default {
+   'Trends': 'Trendy',
+   'Training days': 'Dni treningowe',
+   'Muscle groups': 'Grupy mięśniowe',
++  'Training topics': 'Tematy treningowe',
+   'No workouts on this day.': 'Brak treningów w tym dniu.',
+   'Confirm': 'Potwierdź',
+   'Cancel': 'Anuluj',
+diff --git a/frontend/src/locales/pt-BR.js b/frontend/src/locales/pt-BR.js
+index 9e2d832..52f0643 100644
+--- a/frontend/src/locales/pt-BR.js
++++ b/frontend/src/locales/pt-BR.js
+@@ -8,6 +8,7 @@ export const PT_BR_OVERRIDES = {
+   'Trends': 'Tendências',
+   'Training days': 'Dias de treino',
+   'Muscle groups': 'Grupos musculares',
++  'Training topics': 'Temas de treino',
+   'No workouts on this day.': 'Nenhum treino neste dia.',
+   '{0} set brings an {1} with it. Switch on Effort per set in Settings to see it.': '{0} série traz um {1} junto. Ative “Esforço por série” nas Configurações para ver.',
+   'Add to this set': 'Adicionar a esta série',
+diff --git a/frontend/src/locales/pt.js b/frontend/src/locales/pt.js
+index ac7e828..1882cfe 100644
+--- a/frontend/src/locales/pt.js
++++ b/frontend/src/locales/pt.js
+@@ -4,6 +4,7 @@ export default {
+   'Trends': 'Tendências',
+   'Training days': 'Dias de treino',
+   'Muscle groups': 'Grupos musculares',
++  'Training topics': 'Temas de treino',
+   'No workouts on this day.': 'Sem treinos neste dia.',
+   'Confirm': 'Confirmar',
+   'Cancel': 'Cancelar',
+diff --git a/frontend/src/locales/ru.js b/frontend/src/locales/ru.js
+index 4db40ad..8f29fbf 100644
+--- a/frontend/src/locales/ru.js
++++ b/frontend/src/locales/ru.js
+@@ -4,6 +4,7 @@ export default {
+   'Trends': 'Тенденции',
+   'Training days': 'Дни тренировок',
+   'Muscle groups': 'Группы мышц',
++  'Training topics': 'Темы тренировок',
+   'No workouts on this day.': 'В этот день тренировок нет.',
+   'Confirm': 'Подтвердить',
+   'Cancel': 'Отмена',
+diff --git a/frontend/src/locales/th.js b/frontend/src/locales/th.js
+index f65ee33..242f1b1 100644
+--- a/frontend/src/locales/th.js
++++ b/frontend/src/locales/th.js
+@@ -4,6 +4,7 @@ export default {
+   'Trends': 'แนวโน้ม',
+   'Training days': 'วันที่ออกกำลังกาย',
+   'Muscle groups': 'กลุ่มกล้ามเนื้อ',
++  'Training topics': 'หัวข้อการฝึก',
+   'No workouts on this day.': 'ไม่มีการออกกำลังกายในวันนี้',
+   // --- generic ---
+   'Confirm': 'ยืนยัน',
+diff --git a/frontend/src/locales/tr.js b/frontend/src/locales/tr.js
+index 0379dc4..63879d6 100644
+--- a/frontend/src/locales/tr.js
++++ b/frontend/src/locales/tr.js
+@@ -4,6 +4,7 @@ export default {
+   'Trends': 'Eğilimler',
+   'Training days': 'Antrenman günleri',
+   'Muscle groups': 'Kas grupları',
++  'Training topics': 'Antrenman konuları',
+   'No workouts on this day.': 'Bu gün antrenman yok.',
+   'Confirm': 'Onayla',
+   'Cancel': 'İptal',
+diff --git a/frontend/src/locales/uk.js b/frontend/src/locales/uk.js
+index b00186a..b2ed994 100644
+--- a/frontend/src/locales/uk.js
++++ b/frontend/src/locales/uk.js
+@@ -4,6 +4,7 @@ export default {
+   'Trends': 'Тенденції',
+   'Training days': 'Дні тренувань',
+   'Muscle groups': 'Групи м’язів',
++  'Training topics': 'Теми тренувань',
+   'No workouts on this day.': 'Цього дня тренувань немає.',
+   'Confirm': 'Підтвердити',
+   'Cancel': 'Скасувати',
+diff --git a/frontend/src/locales/zh-TW.js b/frontend/src/locales/zh-TW.js
+index a88315a..c711b39 100644
+--- a/frontend/src/locales/zh-TW.js
++++ b/frontend/src/locales/zh-TW.js
+@@ -3,6 +3,7 @@ export default {
+   'Trends': '趨勢統計',
+   'Training days': '訓練天數',
+   'Muscle groups': '肌群數量',
++  'Training topics': '訓練主題',
+   'No workouts on this day.': '這一天沒有訓練紀錄。',
+   'Confirm': '確認',
+   'Cancel': '取消',
+diff --git a/frontend/src/locales/zh.js b/frontend/src/locales/zh.js
+index 3a0c44d..1b1c789 100644
+--- a/frontend/src/locales/zh.js
++++ b/frontend/src/locales/zh.js
+@@ -4,6 +4,7 @@ export default {
+   'Trends': '趋势统计',
+   'Training days': '训练天数',
+   'Muscle groups': '肌群数量',
++  'Training topics': '训练主题',
+   'No workouts on this day.': '这一天没有训练记录。',
+   'Confirm': '确认',
+   'Cancel': '取消',

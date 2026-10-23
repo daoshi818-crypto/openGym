@@ -1,0 +1,32 @@
+[INFO] blueos-pack: 1.0.12-beta.13; vite: 5.4.21; node: 24.18.0; commit: 7a50283d
+缓存失效，清除缓存. cached: undefined
+[INFO] NODE_PLATFORM: cli; NODE_PHASE: dev; NODE_ENV: production; PLATFORM: win32
+[INFO] clean output: 0.069s
+[INFO] compile rest pages: 0s
+
+warn - As of Tailwind CSS v2.2, `lightBlue` has been renamed to `sky`.
+warn - Update your configuration file to silence this warning.
+
+warn - As of Tailwind CSS v3.0, `warmGray` has been renamed to `stone`.
+warn - Update your configuration file to silence this warning.
+
+warn - As of Tailwind CSS v3.0, `trueGray` has been renamed to `neutral`.
+warn - Update your configuration file to silence this warning.
+
+warn - As of Tailwind CSS v3.0, `coolGray` has been renamed to `gray`.
+warn - Update your configuration file to silence this warning.
+
+warn - As of Tailwind CSS v3.0, `blueGray` has been renamed to `slate`.
+warn - Update your configuration file to silence this warning.
+
+warn - The `purge`/`content` options have changed in Tailwind CSS v3.0.
+warn - Update your configuration file to eliminate this warning.
+warn - https://tailwindcss.com/docs/upgrade-guide#configure-content-sources
+
+warn - The `darkMode` option in your Tailwind CSS configuration is set to `false`, which now behaves the same as `media`.
+warn - Change `darkMode` to `media` or remove it entirely.
+warn - https://tailwindcss.com/docs/upgrade-guide#remove-dark-mode-configuration
+[INFO] compile rest pages: 4.177s
+[INFO] copy resources: 0.177s
+[INFO] generate dist file: 0.321s
+[INFO] finish compile in 7.067s

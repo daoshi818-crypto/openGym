@@ -1,0 +1,150 @@
+ M api/coach/adapters/index.js
+ M api/coach/cadence.js
+ M api/coach/core/adapters/http.js
+ M api/coach/core/library-data.js
+ M api/coach/core/payload.js
+ M api/coach/core/pipeline.js
+ M api/coach/core/prompt.js
+ M api/coach/core/prompts.js
+ M api/coach/core/schemas.js
+ M api/coach/core/validate.js
+ M api/coach/jobs.js
+ M api/coach/routes.js
+ M api/openapi.yaml
+ M api/test/adapters-http.test.js
+ M api/test/coach-limits.test.js
+ M api/test/helpers.mjs
+ M api/test/jobs.test.js
+ M api/test/payload-bounds.test.js
+ M api/test/payload.test.js
+ M api/test/routes.test.js
+ M frontend/src/App.jsx
+ M frontend/src/components/WorkoutChips.jsx
+ M frontend/src/components/WorkoutMedia.jsx
+ M frontend/src/components/WorkoutScrollAnchor.jsx
+ M frontend/src/components/WorkoutScrollAnchor.test.jsx
+ M frontend/src/components/WorkoutSettingsSheet.jsx
+ M frontend/src/components/WorkoutSettingsSheet.test.jsx
+ M frontend/src/components/WorkoutThumb.jsx
+ M frontend/src/index.css
+ M frontend/src/lib/capacitor-fetch.js
+ M frontend/src/lib/coach-api.i18n.test.js
+ M frontend/src/lib/coach-api.js
+ M frontend/src/lib/coach-demo.js
+ M frontend/src/lib/coach-demo.test.js
+ M frontend/src/lib/coach-device.js
+ M frontend/src/lib/coach-insights.js
+ M frontend/src/lib/coach-insights.test.js
+ M frontend/src/lib/coach-local.js
+ M frontend/src/lib/coach-local.test.js
+ M frontend/src/lib/coach-parity.test.js
+ M frontend/src/lib/coach-secrets.js
+ M frontend/src/lib/coach-secrets.test.js
+ M frontend/src/lib/coach.js
+ M frontend/src/lib/coach.test.js
+ M frontend/src/lib/finish-workout.js
+ M frontend/src/lib/history.js
+ M frontend/src/lib/mobile.js
+ M frontend/src/lib/plan-share.js
+ M frontend/src/lib/pt-br-locale.test.js
+ M frontend/src/lib/session-resume.js
+ M frontend/src/lib/watch-events.js
+ M frontend/src/lib/watch-link.js
+ M frontend/src/lib/watch-next.test.js
+ M frontend/src/lib/watch-receiver.test.js
+ M frontend/src/lib/watch-recovery.js
+ M frontend/src/lib/watch-session.js
+ M frontend/src/lib/watch-workout.js
+ M frontend/src/lib/watch-workout.test.js
+ M frontend/src/locales/ar.js
+ M frontend/src/locales/bn.js
+ M frontend/src/locales/de.js
+ M frontend/src/locales/es.js
+ M frontend/src/locales/fr.js
+ M frontend/src/locales/hi.js
+ M frontend/src/locales/hu.js
+ M frontend/src/locales/it.js
+ M frontend/src/locales/ko.js
+ M frontend/src/locales/pl.js
+ M frontend/src/locales/pt-BR.js
+ M frontend/src/locales/pt.js
+ M frontend/src/locales/ru.js
+ M frontend/src/locales/th.js
+ M frontend/src/locales/tr.js
+ M frontend/src/locales/uk.js
+ M frontend/src/locales/zh-TW.js
+ M frontend/src/locales/zh.js
+ M frontend/src/sheets.jsx
+ M frontend/src/sheets.swap.test.jsx
+ M frontend/src/store/useStore.js
+ M frontend/src/views/AdminCoach.config.test.jsx
+ M frontend/src/views/AdminCoach.jsx
+ M frontend/src/views/AdminCoach.test.jsx
+ M frontend/src/views/CoachChat.demo-failure.test.jsx
+ M frontend/src/views/CoachChat.fast-failure.test.jsx
+ M frontend/src/views/CoachChat.jsx
+ M frontend/src/views/CoachChat.refusal.test.jsx
+ M frontend/src/views/CoachChat.test.jsx
+ M frontend/src/views/CoachIntake.jsx
+ M frontend/src/views/CoachIntake.test.jsx
+ M frontend/src/views/CoachSetup.cleartext.test.jsx
+ M frontend/src/views/CoachSetup.flow.test.jsx
+ M frontend/src/views/CoachSetup.jsx
+ M frontend/src/views/CoachSetup.test.jsx
+ M frontend/src/views/RoutineEdit.jsx
+ M frontend/src/views/Workout.dumbbells.test.jsx
+ M frontend/src/views/Workout.edit-empty.test.jsx
+ M frontend/src/views/Workout.hold.test.jsx
+ M frontend/src/views/Workout.incline.test.jsx
+ M frontend/src/views/Workout.jsx
+ M frontend/src/views/Workout.keys.test.jsx
+ M frontend/src/views/Workout.noprog-session.test.jsx
+ M frontend/src/views/Workout.noprog.test.jsx
+ M frontend/src/views/Workout.plates.test.jsx
+ M frontend/src/views/Workout.remove.test.jsx
+ M frontend/src/views/Workout.reorder.test.jsx
+ M frontend/src/views/Workout.sheet-scroll.test.jsx
+ M frontend/src/views/Workout.speed.test.jsx
+ M frontend/src/views/Workout.stepper.test.jsx
+ M frontend/src/views/Workout.superset-scroll.test.jsx
+ M frontend/src/views/Workout.swipe.test.jsx
+ M frontend/src/views/Workout.test.jsx
+ M watch-app/src/ExerciseList/index.ux
+ M watch-app/src/Index/index.ux
+ M watch-app/src/Keypad/index.ux
+ M watch-app/src/Summary/index.ux
+ M watch-app/src/Workout/index.ux
+ M watch-app/src/app.ux
+ M watch-app/src/lib/protocol.js
+ M watch-app/src/lib/rpc.js
+ M watch-app/src/lib/sensors.js
+ M watch-app/src/lib/session.js
+?? api/coach/core/consent.js
+?? api/coach/core/context.js
+?? api/coach/core/dates.js
+?? api/coach/core/debrief-report.js
+?? api/coach/core/debrief-selection.js
+?? api/coach/core/preflight.js
+?? api/coach/core/scope.js
+?? api/coach/prompts/debriefPlan.md
+?? api/test/coach-safety-core.test.js
+?? api/test/coach-selection-jobs.test.js
+?? frontend/src/components/CoachDebriefPicker.jsx
+?? frontend/src/components/WorkoutCalories.jsx
+?? frontend/src/lib/coach-api.identity.test.js
+?? frontend/src/lib/coach-credential-scope.js
+?? frontend/src/lib/coach-dates.test.js
+?? frontend/src/lib/coach-device.test.js
+?? frontend/src/lib/coach-safety.test.js
+?? frontend/src/lib/debrief-selection.js
+?? frontend/src/lib/debrief-selection.test.js
+?? frontend/src/lib/watch-durability.test.js
+?? frontend/src/lib/watch-hr-session.test.js
+?? frontend/src/lib/watch-identity.js
+?? frontend/src/lib/watch-identity.test.js
+?? frontend/src/lib/watch-retention.js
+?? frontend/src/lib/watch-retention.test.js
+?? frontend/src/lib/workout-calories.js
+?? frontend/src/lib/workout-calories.test.js
+?? watch-app/src/lib/persistence.js
+?? watch-app/src/lib/runtime.js

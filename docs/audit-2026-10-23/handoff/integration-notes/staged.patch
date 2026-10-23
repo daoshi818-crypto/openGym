@@ -1,0 +1,1601 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 9c1c74d..04f705d 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,10 +1,14 @@
+ # Changelog
+ 
+-## v1.5.1 (2026-10-16)
++## v1.5.1 (2026-10-17)
+ 
+ - **Rest overlay card** now matches openGym's app style with a neutral dark surface, accent status
+   pill, large readable countdown, and rounded progress bar.
+ - **Training calendar** is available from Home and Stats with monthly workout details and trends.
++- **Activity cells** keep a fixed compact size and aligned rows; topic summaries never participate
++  in grid sizing.
++- **Training topics** come from the scheduled or saved routine names, so a chest day does not
++  expand into every supporting muscle used by its exercises.
+ 
+ ## v1.5.0 (2026-10-16)
+ 
+@@ -2306,3 +2310,4 @@ First public release. A complete, self-hostable gym & body-weight tracker.
+ **Notes**
+ - Exercise media (~140 MB) is fetched from [hasaneyldrm/exercises-dataset](https://github.com/hasaneyldrm/exercises-dataset) on first run.
+ - Licensed under GNU AGPL v3.0.
++
+diff --git a/frontend/src/components/Heatmap.jsx b/frontend/src/components/Heatmap.jsx
+index 45ba995..5007b91 100644
+--- a/frontend/src/components/Heatmap.jsx
++++ b/frontend/src/components/Heatmap.jsx
+@@ -1,6 +1,6 @@
+ import { useEffect, useRef, useState } from 'react'
+ import { fmtVol, isoOf, todayISO, MONTHS, weekStartOf, weekDayOffset } from '../lib/format.js'
+-import { workoutDay, workoutDuration, workoutVolume } from '../lib/history.js'
++import { effectiveRoutineIds, workoutDay, workoutDuration, workoutVolume } from '../lib/history.js'
+ import { t, tn } from '../lib/i18n.js'
+ import { tappable } from '../lib/use-sheet-keyboard.js'
+ import { Segmented } from './ui.jsx'
+@@ -8,6 +8,48 @@ import { dayNoteOf, dayNoteLine } from '../lib/day-notes.js'
+ 
+ const normalizeMetric = value => value === 'vol' ? 'vol' : 'time'
+ 
++// A session's topic is the routine the user chose (or the saved session name for freestyle and
++// legacy records). Exercise entries and their muscle snapshots are deliberately ignored here:
++// those describe analysis for Muscle Balance, not the user's training-day label.
++export function trainingThemesForDay(S, iso, dayWorkouts = []) {
++  const sessions = Array.isArray(dayWorkouts) ? dayWorkouts : []
++  const savedRoutines = Array.isArray(S?.routines) ? S.routines : []
++  const routines = new Map(savedRoutines.map(r => [r.id, r]))
++  const names = []
++  const add = value => {
++    const name = String(value || '').trim()
++    if (name && !names.includes(name)) names.push(name)
++  }
++  const routineIdsOf = workout => {
++    if (Array.isArray(workout?.routineIds)) return workout.routineIds
++    return workout?.routineId ? [workout.routineId] : []
++  }
++
++  if (sessions.length) {
++    sessions.forEach(workout => {
++      const routineNames = routineIdsOf(workout).map(id => routines.get(id)?.name).filter(Boolean)
++      if (routineNames.length) routineNames.forEach(add)
++      else add(workout?.name)
++    })
++  } else {
++    const planState = {
++      ...S,
++      routines: savedRoutines,
++      workouts: Array.isArray(S?.workouts) ? S.workouts : [],
++      week: S?.week && typeof S.week === 'object' ? S.week : {},
++      dayPlan: S?.dayPlan && typeof S.dayPlan === 'object' ? S.dayPlan : {},
++    }
++    effectiveRoutineIds(planState, iso).forEach(id => add(routines.get(id)?.name))
++  }
++  return names
++}
++
++export function compactTrainingTheme(names = []) {
++  const topics = Array.isArray(names) ? names : []
++  if (!topics.length) return ''
++  return topics.length === 1 ? topics[0] : `${topics[0]} +${topics.length - 1}`
++}
++
+ // Legacy records without entries only have the cached volume available. Current records are
+ // always recomputed from their completed sets so unit changes and warm-up/per-side rules stay
+ // authoritative.
+@@ -32,6 +74,7 @@ export default function Heatmap({ S, onDay, metric: selectedMetric, onMetricChan
+   }
+ 
+   const agg = {}
++  const byDay = {}
+   ;(S.workouts || []).forEach(w => {
+     const day = workoutDay(w)
+     if (!day) return
+@@ -39,6 +82,7 @@ export default function Heatmap({ S, onDay, metric: selectedMetric, onMetricChan
+     a.n++
+     a.vol += volumeOf(w)
+     a.min += Math.max(0, Math.round(workoutDuration(w) / 60000))
++    ;(byDay[day] ||= []).push(w)
+   })
+   const values = Object.values(agg).map(a => a[metricValue]).filter(v => v > 0).sort((a, b) => a - b)
+   const q = p => (values.length ? values[Math.min(values.length - 1, Math.floor(p * values.length))] : 0)
+@@ -68,12 +112,18 @@ export default function Heatmap({ S, onDay, metric: selectedMetric, onMetricChan
+       const day = new Date(colStart); day.setDate(colStart.getDate() + d)
+       const key = isoOf(day)
+       const a = agg[key]
++      const themeNames = trainingThemesForDay(S, key, byDay[key] || [])
++      const theme = compactTrainingTheme(themeNames)
+       // A day off with a note (#261): outlined, its note in the tooltip, and tappable like a
+       // trained day so the note can be read (and changed) on a phone too.
+       const note = !a && dayNoteOf(S, key)
+       const cls = 'hm-c l' + level(a) + (note ? ' noted' : '') + (key === todayISO() ? ' today' : '') + (day > today ? ' future' : '')
++      const details = note
++        ? [dayNoteLine(note, t)]
++        : [theme, a ? `${tn('{0} workout', '{0} workouts', a.n)} · ${t('{0} min', a.min)} · ${fmtVol(a.vol, S.unit)}` : ''].filter(Boolean)
++      const label = key + (details.length ? ` · ${details.join(' · ')}` : '')
+       cells.push(<div key={d} className={cls}
+-        title={key + (a ? ` · ${tn('{0} workout', '{0} workouts', a.n)} · ${t('{0} min', a.min)} · ${fmtVol(a.vol, S.unit)}` : note ? ` · ${dayNoteLine(note, t)}` : '')}
++        title={label} aria-label={label} data-theme={!note && theme ? theme : undefined}
+         {...tappable(a || note ? () => onDay?.(key) : undefined)} />)
+     }
+     cols.push(<div key={wk} className="hm-col">{cells}</div>)
+diff --git a/frontend/src/components/Heatmap.test.jsx b/frontend/src/components/Heatmap.test.jsx
+index 4485f97..92b4452 100644
+--- a/frontend/src/components/Heatmap.test.jsx
++++ b/frontend/src/components/Heatmap.test.jsx
+@@ -2,7 +2,7 @@
+ import React, { act } from 'react'
+ import { createRoot } from 'react-dom/client'
+ import { afterEach, describe, expect, it, vi } from 'vitest'
+-import Heatmap from './Heatmap.jsx'
++import Heatmap, { compactTrainingTheme, trainingThemesForDay } from './Heatmap.jsx'
+ import { isoOf } from '../lib/format.js'
+ import { workoutDay } from '../lib/history.js'
+ 
+@@ -112,3 +112,37 @@ it.each([0, 1])('retains week start %i when switching the activity metric', week
+   expect(dayLabels()).toEqual(labels)
+   expect(host.textContent).toContain('More volume')
+ })
++
++describe('Heatmap training themes', () => {
++  it('uses the saved routine topic instead of exercise muscle snapshots', () => {
++    const S = {
++      routines: [{ id: 'chest', name: 'Chest' }],
++      workouts: [{ d: '2026-09-15', routineIds: ['chest'], name: 'Chest', entries: [{ muscleSnapshot: { muscleWeights: { shoulders: 0.4, triceps: 0.4 } } }] }],
++    }
++    expect(trainingThemesForDay(S, '2026-09-15', S.workouts)).toEqual(['Chest'])
++    expect(compactTrainingTheme(['Chest'])).toBe('Chest')
++  })
++
++  it('keeps combined routine topics compact', () => {
++    const themes = trainingThemesForDay({ routines: [{ id: 'a', name: 'Chest' }, { id: 'b', name: 'Back' }] }, '2026-09-15', [{ routineIds: ['a', 'b'] }])
++    expect(themes).toEqual(['Chest', 'Back'])
++    expect(compactTrainingTheme(themes)).toBe('Chest +1')
++  })
++
++  it('reads a planned routine topic when that date has no saved workout', () => {
++    const S = { routines: [{ id: 'chest', name: 'Chest' }], workouts: [], week: { 2: ['chest'] }, dayPlan: {} }
++    expect(trainingThemesForDay(S, '2026-09-15')).toEqual(['Chest'])
++  })
++
++  it('renders the topic in the day label without changing activity metrics', () => {
++    const now = new Date(); now.setDate(now.getDate() - 1); now.setHours(12, 0, 0, 0)
++    const day = isoOf(now)
++    const S = { unit: 'kg', routines: [{ id: 'chest', name: 'Chest' }], workouts: [{ d: day, start: +now, end: +now + 30 * 60000, routineIds: ['chest'], name: 'Chest', vol: 100, entries: [{ muscleSnapshot: { muscleWeights: { shoulders: 1 } } }] }] }
++    host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host)
++    act(() => root.render(<Heatmap S={S} />))
++    const cell = [...host.querySelectorAll('.hm-c[title]')].find(node => node.title.startsWith(day))
++    expect(cell.dataset.theme).toBe('Chest')
++    expect(cell.getAttribute('aria-label')).toContain('Chest')
++    expect(cell.getAttribute('aria-label')).not.toContain('shoulders')
++  })
++})
+diff --git a/frontend/src/components/SwipeCards.jsx b/frontend/src/components/SwipeCards.jsx
+index 24f7aa8..ed23eb3 100644
+--- a/frontend/src/components/SwipeCards.jsx
++++ b/frontend/src/components/SwipeCards.jsx
+@@ -47,7 +47,7 @@ export function cardCommits(dx, dy, v = 0) {
+ // (+1 next, -1 previous) and only the pixels are multiplied by this.
+ const nextSide = () => (typeof document !== 'undefined' && document.documentElement.dir === 'rtl' ? -1 : 1)
+ 
+-export default function SwipeCards({ children, renderPreview, onNavigate, index, count, revision, timerKey, workKey }) {
++export default function SwipeCards({ children, renderPreview, onNavigate, index, count, revision, timerKey, workKey, unitKey }) {
+   const surface = useRef(null)
+   const card = useRef(null)
+   const preview = useRef(null)
+@@ -219,6 +219,6 @@ export default function SwipeCards({ children, renderPreview, onNavigate, index,
+       if (event.target === event.currentTarget && !pending.current && gesture.current?.id === event.pointerId) reset()
+     }}>
+     {direction != null && <div ref={preview} className="workout-swipe-preview" aria-hidden="true" inert>{renderPreview(direction)}</div>}
+-    <div ref={card} className="workout-swipe-card">{children}</div>
++    <div ref={card} className="workout-swipe-card" data-workout-unit={unitKey}>{children}</div>
+   </div>
+ }
+diff --git a/frontend/src/components/WorkoutScrollAnchor.jsx b/frontend/src/components/WorkoutScrollAnchor.jsx
+index 7627668..e4e34ac 100644
+--- a/frontend/src/components/WorkoutScrollAnchor.jsx
++++ b/frontend/src/components/WorkoutScrollAnchor.jsx
+@@ -4,7 +4,6 @@ import { Component, createRef } from 'react'
+ // brackets the collapse itself, including changes made while the Layout sheet locks the body.
+ export default class WorkoutScrollAnchor extends Component {
+   root = createRef()
+-  leadingSpace = null
+ 
+   getSnapshotBeforeUpdate(prev) {
+     if (prev.collapsed === this.props.collapsed) return null
+@@ -23,29 +22,19 @@ export default class WorkoutScrollAnchor extends Component {
+ 
+   componentDidUpdate(prev, state, snapshot) {
+     if (!snapshot) return
+-    const root = this.root.current
+-    if (this.leadingSpace) this.leadingSpace.style.marginTop = ''
+-    this.leadingSpace = null
+-    if (!snapshot.anchor.isConnected) { root.style.paddingBottom = ''; return }
++    if (!snapshot.anchor.isConnected) return
+     const body = document.body
+     const locked = body.style.position === 'fixed'
+     const delta = snapshot.anchor.getBoundingClientRect().top - snapshot.top
+     const y = locked ? -(parseFloat(body.style.top) || 0) : window.scrollY
+-    const target = Math.max(0, y + delta)
+-    // At the page start we cannot scroll to a negative offset. Keep the minimum gap
+-    // before the surviving tile instead; a later expansion reclaims it.
+-    if (y + delta < 0) {
+-      snapshot.anchor.style.marginTop = `${-(y + delta)}px`
+-      this.leadingSpace = snapshot.anchor
+-    }
+-    // Collapsing near the page end can clamp scrollY before we restore it. Keep only the
+-    // trailing space needed to hold this viewport; a later expansion can reclaim it.
+-    const oldSpace = parseFloat(root.style.paddingBottom) || 0
+-    const height = Math.max(body.scrollHeight, document.documentElement.scrollHeight) - oldSpace
+-    const space = Math.max(0, target + window.innerHeight - height)
+-    root.style.paddingBottom = space ? `${space}px` : ''
++    // Anchor only within the remaining page's scroll range. At either boundary the next
++    // tile must move with the content: adding a margin or trailing padding to pin it would
++    // keep the collapsed height in the layout until another collapse/expansion.
++    const height = Math.max(body.scrollHeight, document.documentElement.scrollHeight)
++    const maxY = Math.max(0, height - window.innerHeight)
++    const target = Math.min(maxY, Math.max(0, y + delta))
+     if (locked) body.style.top = `${-target}px`
+-    else if (delta || oldSpace !== space) {
++    else if (target !== y) {
+       // Cancel a sheet's delayed keyboard correction before it can undo this newer anchor.
+       window.dispatchEvent(new Event('workout-scroll-anchor'))
+       window.scrollTo({ top: target, left: window.scrollX, behavior: 'instant' })
+diff --git a/frontend/src/components/WorkoutScrollAnchor.test.jsx b/frontend/src/components/WorkoutScrollAnchor.test.jsx
+index 3afba9d..cf14a41 100644
+--- a/frontend/src/components/WorkoutScrollAnchor.test.jsx
++++ b/frontend/src/components/WorkoutScrollAnchor.test.jsx
+@@ -61,29 +61,53 @@ it('keeps a partly visible next tile still when the topmost tile itself is colla
+   expect(tileTop('1')).toBe(top)
+ })
+ 
+-it('reserves only enough space to avoid a page-end clamp, then reclaims it on expansion', async () => {
++it('clamps at the page end without padding and restores natural layout on expansion', async () => {
+   await render('', [['0', 100, 700], ['1', 800, 400]], 1400)
+   const top = tileTop('1')
+   await render('0', [['0', 100, 100], ['1', 200, 400]], 700)
+-  expect(tileTop('1')).toBe(top)
+-  expect(container.firstChild.style.paddingBottom).toBe('100px')
++  expect(tileTop('1')).toBe(100)
++  expect(window.scrollY).toBe(100)
++  expect(container.firstChild.style.paddingBottom || '').toBe('')
+   await render('', [['0', 100, 700], ['1', 800, 400]], 1400)
+-  expect(tileTop('1')).toBe(top)
+-  expect(container.firstChild.style.paddingBottom).toBe('')
++  expect(tileTop('1')).toBe(700)
++  expect(container.firstChild.style.paddingBottom || '').toBe('')
+ })
+ 
+-it('holds the next tile at the page start when shrinking would require a negative scroll offset', async () => {
++it('lets the next tile move up at the page start instead of reserving the collapsed height', async () => {
+   scrollY = 400
+   await render('', [['0', 100, 700], ['1', 800, 650]])
+   const top = tileTop('1')
+   await render('0', [['0', 100, 100], ['1', 200, 650]])
+-  expect(tileTop('1')).toBe(top)
++  expect(tileTop('1')).toBe(200)
+   expect(window.scrollY).toBe(0)
+-  expect(container.querySelector('[data-unit-key="1"]').style.marginTop).toBe('200px')
++  expect(container.querySelector('[data-unit-key="1"]').style.marginTop || '').toBe('')
+   const firstTop = tileTop('0')
+   await render('', [['0', 100, 700], ['1', 800, 650]])
+   expect(tileTop('0')).toBe(firstTop)
+-  expect(container.querySelector('[data-unit-key="1"]').style.marginTop).toBe('')
++  expect(container.querySelector('[data-unit-key="1"]').style.marginTop || '').toBe('')
++})
++
++it('does not accumulate blank space after consecutive collapses and reopening', async () => {
++  scrollY = 0
++  await render('', [['0', 100, 700], ['1', 800, 650], ['2', 1450, 650]])
++  await render('0', [['0', 100, 100], ['1', 200, 650], ['2', 850, 650]])
++  expect(tileTop('1')).toBe(200)
++  await render('0,1', [['0', 100, 100], ['1', 200, 100], ['2', 300, 650]])
++  expect(tileTop('2')).toBe(300)
++  await render('1', [['0', 100, 700], ['1', 800, 100], ['2', 900, 650]])
++  expect(tileTop('0')).toBe(100)
++  for (const tile of container.querySelectorAll('.wl-unit')) expect(tile.style.marginTop || '').toBe('')
++  expect(container.firstChild.style.paddingBottom || '').toBe('')
++})
++
++it('clamps a locked sheet offset to the remaining content without inserting gaps', async () => {
++  document.body.style.position = 'fixed'; document.body.style.top = '-400px'
++  await render('', [['0', 100, 700], ['1', 800, 650]])
++  await render('0', [['0', 100, 100], ['1', 200, 650]])
++  expect(document.body.style.top).toBe('0px')
++  expect(tileTop('1')).toBe(200)
++  expect(container.querySelector('[data-unit-key="1"]').style.marginTop || '').toBe('')
++  expect(container.firstChild.style.paddingBottom || '').toBe('')
+ })
+ 
+ it('updates the locked body offset while the Layout sheet is open', async () => {
+diff --git a/frontend/src/index.css b/frontend/src/index.css
+index 0d0b39a..e3642e1 100644
+--- a/frontend/src/index.css
++++ b/frontend/src/index.css
+@@ -1055,9 +1055,6 @@ body.chips-dragging *{cursor:inherit}
+    than number + two floors, so the row's flex hands a starving cell width from the others
+    instead of clipping its buttons. */
+ .setrow .stp button{width:32px;height:40px}
+-/* Only the weight/reps buttons: `.effcell-stp` is a `.stp` too, and its value is a `<button>`,
+-   so a rule on `.setrow .stp button` would outrank `.effcell-stp .val` and stop the value from
+-   filling the cell (it bunched left with dead space next to it at desktop widths). */
+ .setrow .stp.w button,.setrow .stp.r button{flex:0 1 auto;min-width:var(--btn-floor)}
+ .setrow .stp.w,.sethead .w-sp{--num:48px}
+ .setrow .stp.r,.sethead .r-sp{--num:39px}
+@@ -1081,11 +1078,8 @@ body.chips-dragging *{cursor:inherit}
+    the generic `.empty` (which is a full-page empty-state with 44px padding — sharing that name
+    inflated the cell to ~90px). */
+ .setrow .effcell,.sethead .eff-sp{flex:.8 1 0;min-width:0}
+-/* The whole effort column — empty cell, logged cell and header label alike, so the row does not
+-   jump when a rating is added and the label does not drift — never goes below what the logged
+-   stepper needs at its floor: 28 px value + two 16 px buttons + the 1.5 px borders. The row's
+-   flex hands the difference back to weight and reps, whose own buttons shrink for it. */
+-.setrow .effcell,.setrow .effcell-stp,.setrow.eff3 .effcell-stp,.sethead .eff-sp{min-width:64px}
++/* Empty/logged cells and the header share a value-only floor, without +/- slots. */
++.setrow .effcell,.sethead .eff-sp{min-width:34px}
+ .effcell{
+   box-sizing:border-box;height:44px;border-radius:10px;
+   background:var(--surface-2);border:1.5px solid transparent;
+@@ -1096,30 +1090,14 @@ body.chips-dragging *{cursor:inherit}
+ }
+ .effcell:active{transform:scale(.94)}
+ .effcell.is-empty{color:var(--label-2);font-weight:500;font-size:12px;letter-spacing:.02em}
+-/* a logged rating becomes a −/value/+ stepper, tinted by its effort band: the band colour
+-   fills the cell at low opacity (set inline via color-mix), borders it, and colours the value.
+-   the +/− buttons step 0.5 on the profile's scale; the value opens the picker. it carries the
+-   same column flex as the plain .effcell so the row does not jump when a rating is added. */
+-.setrow .effcell-stp,.setrow.eff3 .effcell-stp{
+-  height:44px;border-radius:10px;border:1.5px solid transparent;
+-  transition:background var(--fast),border-color var(--fast);
+-}
+-.effcell-stp button{color:inherit}
+-.effcell-stp>button[aria-label="Decrease"],
+-.effcell-stp>button[aria-label="Increase"]{width:26px;height:44px;font-size:15px;opacity:.85;flex:0 1 auto;min-width:16px}
+-/* the value is the tap target for the picker, so it keeps a 28 px finger's width for "8.5" and
+-   the −/+ shrink first — on a 368 px phone it had collapsed to 4 px under its own digits, and a
+-   tap on the number stepped the rating instead of opening the picker (QA C22) */
+-.effcell-stp .val{
++/* Only the picker retains an exact-value stepper; workout rows use .effcell. */
++.effpick .effcell-stp button{color:inherit}
++.effpick .effcell-stp>button{width:26px;height:44px;font-size:15px;opacity:.85;flex:0 1 auto;min-width:16px}
++.effpick .effcell-stp .val{
+   flex:1;min-width:28px;display:flex;align-items:center;justify-content:center;
+   font-size:15px;font-weight:600;letter-spacing:-.01em;
+   font-variant-numeric:tabular-nums;line-height:1;align-self:stretch;color:inherit;
+ }
+-.effcell-stp .val:active{background:var(--surface-3)}
+-/* the effort cell needs less room now (one short value, no +/- buttons), so weight/reps keep
+-   more of the row on narrow phones than they did when three steppers had to share it */
+-.setrow .effcell-stp,.setrow.eff3 .effcell-stp{flex:.8 1 0}
+-.setrow.eff3 .effcell-stp{flex:.7 1 0}
+ .setrow.eff3,.sethead.eff3{gap:6px}
+ .setrow.eff3 .stp.w,.sethead.eff3 .w-sp{flex:1.4}
+ .setrow.eff3 .stp.r,.sethead.eff3 .r-sp{flex:1.1}
+@@ -1129,12 +1107,9 @@ body.chips-dragging *{cursor:inherit}
+ /* the same reserved widths as a plain row's, at the smaller font */
+ .setrow.eff3 .stp.w,.sethead.eff3 .w-sp{--num:41px}
+ .setrow.eff3 .stp.r,.sethead.eff3 .r-sp{--num:30px}
+-.setrow.eff3 .effcell-stp>button[aria-label="Decrease"],
+-.setrow.eff3 .effcell-stp>button[aria-label="Increase"]{width:22px}
+-.setrow.eff3 .effcell-stp .val{font-size:14px}
+ /* effort quick picker sheet: colour-coded preset buttons, hardest (purple) first */
+ /* effort picker: the ⋯-menu list with the value in the icon square, tinted per band; the
+-   exact-value row carries the same stepper as the logged cell in the set row. */
++   exact-value row keeps its stepper for half-step adjustments. */
+ .effpick.menu-list .menu-item .effpick-n{
+   background:var(--bc);color:#fff;font-size:13px;font-weight:700;letter-spacing:-.02em;
+   font-variant-numeric:tabular-nums;
+@@ -1210,7 +1185,7 @@ body.chips-dragging *{cursor:inherit}
+    buttons here: slimmer buttons, tighter gaps, and reps gets the same share as the weight. */
+ .setrow-side .setrow.side.eff3{gap:4px}
+ .setrow-side .setrow.side.eff3 .stp.r{flex:1.4}
+-.setrow-side .setrow.side.eff3 .effcell,.setrow-side .setrow.side.eff3 .effcell-stp{flex:.6 1 0}
++.setrow-side .setrow.side.eff3 .effcell{flex:.6 1 0}
+ .setrow-side .setrow.side.eff3 .stp.w button,.setrow-side .setrow.side.eff3 .stp.r button{width:20px}
+ /* The header is laid out like a straight row, but in front of an L/R row's weight cell sit the
+    set number, its gap AND the side badge, so over per-side rows the labels stood 17–23 px left
+@@ -1238,50 +1213,17 @@ body.chips-dragging *{cursor:inherit}
+   .sethead.per-side{gap:4px}
+   .sethead.per-side .n-sp{width:49px}
+ }
+-/* The effort column steps down twice on the way to a narrow screen, not once. Its −/+ are gone
+-   below 360 px (see the 359 px query), and from 366 px an L/R row carries them at full size in a
+-   sets card two insets deep — in a list unit, or in a superset card. In between it could do
+-   neither: the 64 px the pill needs for a 28 px value and two 16 px button floors left the row
+-   6, 5, 4, 3, 2 and 1 px wider than its card's content box at 360–365 px, so its done tick sat
+-   in the card's side padding. The −/+ give way there too, to a 12 px floor — they are what the
+-   cell sheds first, a pixel further down they go altogether — and the row keeps everything that
+-   carries meaning: the rating stays a 28 px tap target, the weight and reps columns keep their
+-   numbers, their buttons and their floors, and the header keeps its single line ("WEIGHT (KG)"
+-   has 1.5 px to spare in a 77 px column and would wrap if the weight column paid instead).
+-   An L/R row in a superset in the list view has no −/+ to shrink below 430 px; the rule for it
+-   below is more specific and keeps the cell at 34 px. */
+-@media (min-width:360px) and (max-width:365px){
+-  .setrow.side .effcell,.setrow.side .effcell-stp,.sethead.per-side .eff-sp{min-width:56px}
+-  .setrow.side .effcell-stp>button[aria-label="Decrease"],
+-  .setrow.side .effcell-stp>button[aria-label="Increase"]{min-width:12px}
+-}
+-/* An L/R row with an effort column inside a superset in the list view sits behind three insets
+-   (unit, superset card, sets card). It used to drop the RIR −/+ here and hand the width to an
+-   oversized weight cell — but the rating is the field you reach for most on a unilateral set, so
+-   it keeps the same −/+ stepper a normal row has, just shrunk, and the weight cell pays for it
+-   instead. The effort cell reserves its 28 px value plus two 12 px button floors (≈54 px); the
+-   weight column gives up the matching width (a per-side weight is one limb's load, so its 48 px
+-   reserve was generous), so the row's total is unchanged and everything still fits at 412 px. */
++/* Nested list supersets keep their compact weight-column rules; the effort button
++   uses the shared value-only floor, including on unilateral rows. */
+ @media (max-width:429px){
+-  .wl-unit .ss-card .setrow.side .effcell-stp>button[aria-label="Decrease"],
+-  .wl-unit .ss-card .setrow.side .effcell-stp>button[aria-label="Increase"]{min-width:12px}
+-  .wl-unit .ss-card .setrow.side .effcell,.wl-unit .ss-card .setrow.side .effcell-stp,.wl-unit .ss-card .sethead.per-side .eff-sp{min-width:54px}
+-  /* reclaim the +/-'s room from the weight column: a slimmer number reserve and tighter button
+-     floors, the same shape the 320 px step-down below already gives weight on these rows */
+   .wl-unit .ss-card .setrow.side.eff3 .stp.w:not(.plain),.wl-unit .ss-card .sethead.per-side.eff3:not(.plain) .w-sp{--btn-floor:12px}
+   .wl-unit .ss-card .setrow.side.eff3 .stp.w,.wl-unit .ss-card .sethead.per-side.eff3 .w-sp{--num:33px}
+   .wl-unit .ss-card .setrow.side.eff3 .stp.w button{width:18px}
+ }
+-/* Below 360 px a row with an effort column cannot hold three numbers and six buttons: with the
+-   set number, tick and gaps gone a card leaves ~178 px, and 102.5 / 12 / 8.5 at their floors need
+-   ~197. The effort −/+ give way there on every row — the value stays (26 px for "8.5" plus the
+-   border), still opens the picker on tap, and the picker's exact row steps in halves as before;
+-   weight and reps keep their buttons. */
++/* On the narrowest phones tighten the value-only floor alongside the existing
++   per-side weight/reps floors. There are no hidden effort-button placeholders. */
+ @media (max-width:359px){
+-  .setrow .effcell-stp>button[aria-label="Decrease"],.setrow .effcell-stp>button[aria-label="Increase"]{display:none}
+-  .setrow .effcell,.setrow .effcell-stp,.setrow.eff3 .effcell-stp,.sethead .eff-sp,
+-  .wl-unit .ss-card .setrow.side .effcell,.wl-unit .ss-card .setrow.side .effcell-stp,.wl-unit .ss-card .sethead.per-side .eff-sp{min-width:29px}
+-  .setrow .effcell-stp .val{min-width:26px}
++  .setrow .effcell,.sethead .eff-sp{min-width:29px}
+   /* an L/R row with an effort column is still over by 14 px in a card at 320 px (badge 20, 77 + 66 +
+      29 for the three cells, tick 30, four gaps): one notch further there — 16 px button floors
+      and a 13 px number — and it fits with two pixels to spare. Not with the buttons off (`plain`),
+@@ -1616,12 +1558,18 @@ body.no-tabbar #timer.working{box-shadow:inset 0 var(--hair) 0 var(--acc),0 -10p
+ .hm-wrap::-webkit-scrollbar{display:none}
+ .hm-months{display:flex;margin-inline-start:28px;margin-bottom:5px}
+ .hm-months span{flex:none;width:14px;font-size:11px;color:var(--label-3);white-space:nowrap;overflow:visible}
+-.hm-body{display:flex}
++.hm-body{display:flex;align-items:flex-start}
+ .hm-days{display:flex;flex-direction:column;gap:3px;flex:none;width:28px}
+ .hm-days span{height:11px;font-size:10px;color:var(--label-2);line-height:11px}
+-.hm-grid{display:flex;gap:3px}
+-.hm-col{display:flex;flex-direction:column;gap:3px}
+-.hm-c{width:11px;height:11px;border-radius:3px;background:var(--surface-2);flex:none}
++.hm-grid{display:flex;gap:3px;align-items:flex-start;align-self:flex-start}
++.hm-col{display:flex;flex-direction:column;gap:3px;align-items:flex-start;align-self:flex-start;flex:none}
++.hm-c{width:11px;height:11px;min-width:11px;min-height:11px;max-width:11px;max-height:11px;border-radius:3px;background:var(--surface-2);flex:none;position:relative}
++.hm-c[data-theme]:hover::after,.hm-c[data-theme]:focus-visible::after{
++  content:attr(data-theme);position:absolute;z-index:4;inset-block-start:calc(100% + 5px);inset-inline-start:0;
++  max-width:160px;padding:4px 7px;border-radius:6px;background:var(--surface-3);color:var(--label);
++  box-shadow:0 3px 12px rgba(0,0,0,.25);font-size:11px;line-height:1.2;white-space:nowrap;
++  overflow:hidden;text-overflow:ellipsis;pointer-events:none;
++}
+ .hm-c.l1{background:color-mix(in srgb,var(--acc) 30%,var(--surface-2))}
+ .hm-c.l2{background:color-mix(in srgb,var(--acc) 55%,var(--surface-2))}
+ .hm-c.l3{background:color-mix(in srgb,var(--acc) 78%,var(--surface-2))}
+@@ -1633,7 +1581,7 @@ body.no-tabbar #timer.working{box-shadow:inset 0 var(--hair) 0 var(--acc),0 -10p
+   display:flex;align-items:center;gap:4px;justify-content:flex-end;margin-top:9px;
+   font-size:11px;color:var(--label-3);
+ }
+-.hm-legend .hm-c{width:10px;height:10px}
++.hm-legend .hm-c{width:10px;height:10px;min-width:10px;min-height:10px;max-width:10px;max-height:10px}
+ 
+ /* "Share as image" (#453): the card as it will be sent, at the sheet's width. The placeholder
+    holds a portrait card's shape so nothing below it jumps when the picture lands. */
+@@ -1870,6 +1818,16 @@ body.no-tabbar.resting #toast{bottom:calc(100px + var(--sab))}
+    row whose cells have floors (see .setrow .stp) would widen the whole unit past the screen and
+    push the ticks off it. Capped, a row that does not fit overflows its own card instead. */
+ .workout-list{display:grid;grid-template-columns:minmax(0,1fr);gap:14px}
++.workout-reorder{position:relative}
++.workout-reorder.card-reorder{touch-action:none}
++.workout-reorder-toolbar{margin-bottom:12px}
++.workout-reorder.is-reordering{user-select:none;-webkit-user-select:none}
++.workout-reorder.is-reordering{touch-action:none}
++.workout-reorder.is-reordering .wl-unit{transition:none}
++.workout-list .wl-unit[data-workout-unit]{touch-action:pan-y;-webkit-touch-callout:none;position:relative;transition:transform var(--fast) var(--ease)}
++.workout-reorder .wl-unit.is-dragging{z-index:2;box-shadow:0 10px 28px rgba(0,0,0,.22)}
++.workout-reorder.is-reordering,.workout-reorder.is-reordering *{cursor:grabbing}
++.workout-drop-indicator{position:absolute;left:6px;right:6px;height:3px;border-radius:99px;background:var(--acc);transform:translateY(-50%);pointer-events:none;z-index:3}
+ .wl-unit{
+   border-radius:var(--r-lg);padding:14px 14px 4px;
+   background:var(--surface-2);
+diff --git a/frontend/src/lib/active-workout-order.js b/frontend/src/lib/active-workout-order.js
+index a774375..bf9b472 100644
+--- a/frontend/src/lib/active-workout-order.js
++++ b/frontend/src/lib/active-workout-order.js
+@@ -1,4 +1,82 @@
+ import { supersetUnits } from './history.js'
++import { uid } from './format.js'
++
++// A routine can contain the same exercise more than once. `id` is the exercise definition id,
++// so it cannot identify one live slot after a reorder. Active sessions keep this opaque id on the
++// entry; it is persisted with the in-progress session and is deliberately omitted by
++// finish-workout.js when the session becomes history.
++export function activeWorkoutEntryKey(entry) {
++  return entry?.occurrenceId
++}
++
++export function needsActiveWorkoutOccurrenceIds(active) {
++  if (!Array.isArray(active?.entries)) return false
++  const seen = new Set()
++  return active.entries.some(entry => {
++    const id = entry?.occurrenceId
++    if (!id || seen.has(id)) return true
++    seen.add(id)
++    return false
++  })
++}
++
++/** Add stable ids to old or newly inserted live entries without changing exercise ids. */
++export function ensureActiveWorkoutOccurrenceIds(active) {
++  if (!Array.isArray(active?.entries)) return false
++  const used = new Set(active.entries.map(entry => entry?.occurrenceId).filter(Boolean))
++  const seen = new Set()
++  let changed = false
++  active.entries.forEach(entry => {
++    if (!entry) return
++    let id = entry.occurrenceId
++    if (!id || seen.has(id)) {
++      do { id = `occ-${uid()}` } while (used.has(id) || seen.has(id))
++      entry.occurrenceId = id
++      used.add(id)
++      changed = true
++    }
++    seen.add(id)
++  })
++  return changed
++}
++
++// Move one whole superset unit to a slot in the list after the source unit is removed. The source
++// is addressed by occurrence id, never by the transient array index used for rendering. This is
++// the drag counterpart to moveActiveWorkoutUnit's one-step arrow action.
++export function moveActiveWorkoutUnitTo(active, sourceKey, targetSlot) {
++  if (!active || !Array.isArray(active.entries) || !active.entries.length) return null
++  if (!sourceKey || needsActiveWorkoutOccurrenceIds(active)) return null
++  const sourceIndex = active.entries.findIndex(entry => entry.occurrenceId === sourceKey)
++  if (sourceIndex < 0) return null
++  const units = supersetUnits(active.entries)
++  const sourcePosition = units.findIndex(unit => unit.includes(sourceIndex))
++  if (sourcePosition < 0) return null
++  const remaining = units.filter((_, position) => position !== sourcePosition)
++  const slot = Math.max(0, Math.min(remaining.length,
++    Number.isFinite(targetSlot) ? Math.trunc(targetSlot) : sourcePosition))
++  if (slot === sourcePosition) return null
++
++  const currentEntry = active.entries[active.cur]
++  const source = units[sourcePosition]
++  const movedEntries = source.map(index => active.entries[index])
++  const reorderedUnits = [...remaining]
++  const insertAt = remaining.slice(0, slot).reduce((count, unit) => count + unit.length, 0)
++  const reorderedEntries = reorderedUnits.flatMap(unit => unit.map(index => active.entries[index]))
++  reorderedEntries.splice(insertAt, 0, ...movedEntries)
++  // Legacy sessions can contain separated runs with the same sg id. Never join those runs
++  // by moving their separator, or by putting one run beside the other. Those slots are illegal.
++  const expectedUnits = [...remaining]
++  expectedUnits.splice(slot, 0, source)
++  if (supersetUnits(reorderedEntries).some((unit, i) => unit.length !== expectedUnits[i]?.length)) return null
++  const before = [...active.entries]
++  active.entries.splice(0, active.entries.length, ...reorderedEntries)
++  active.cur = Math.max(0, active.entries.indexOf(currentEntry))
++  return {
++    indices: reorderedEntries.map(entry => before.indexOf(entry)),
++    sourcePosition,
++    targetSlot: slot,
++  }
++}
+ 
+ function moveTarget(active, index, direction) {
+   if (!active || !Array.isArray(active.entries) || (direction !== -1 && direction !== 1)) return null
+diff --git a/frontend/src/lib/active-workout-order.test.js b/frontend/src/lib/active-workout-order.test.js
+index 8e7f8e4..e26ff62 100644
+--- a/frontend/src/lib/active-workout-order.test.js
++++ b/frontend/src/lib/active-workout-order.test.js
+@@ -1,5 +1,5 @@
+ import { describe, expect, it } from 'vitest'
+-import { canMoveActiveWorkoutUnit, moveActiveWorkoutUnit, canMoveActiveWorkoutEntry, moveActiveWorkoutEntry } from './active-workout-order.js'
++import { canMoveActiveWorkoutUnit, moveActiveWorkoutUnit, canMoveActiveWorkoutEntry, moveActiveWorkoutEntry, moveActiveWorkoutUnitTo, activeWorkoutEntryKey, ensureActiveWorkoutOccurrenceIds, needsActiveWorkoutOccurrenceIds } from './active-workout-order.js'
+ import { supersetFlowStep } from './supersetFlow.js'
+ import { supersetUnits } from './history.js'
+ import { LANGS, DERIVED_LOCALES } from './i18n-core.js'
+@@ -13,6 +13,47 @@ const entry = (id, extra = {}) => ({
+ })
+ 
+ describe('active workout whole-unit order', () => {
++  it('refuses slots that would join separate legacy superset runs', () => {
++    const active = { cur: 0, entries: [entry('a', { sg: 'same' }), entry('b', { sg: 'same' }), entry('separator'), entry('c', { sg: 'same' }), entry('d', { sg: 'same' })] }
++    ensureActiveWorkoutOccurrenceIds(active)
++    const before = structuredClone(active)
++    expect(moveActiveWorkoutUnitTo(active, active.entries[2].occurrenceId, 0)).toBeNull()
++    expect(active).toEqual(before)
++    expect(moveActiveWorkoutUnitTo(active, active.entries[0].occurrenceId, 2)).toBeNull()
++    expect(active).toEqual(before)
++  })
++  it('moves a stable occurrence to any unit slot without relabelling its data', () => {
++    const first = entry('same', { occurrenceId: 'same#1', sets: [{ w: 10, r: 5, done: true }] })
++    const grouped = entry('same', { occurrenceId: 'same#2', sg: 'pair', sets: [{ w: 20, r: 4, done: false }] })
++    const partner = entry('row', { occurrenceId: 'row#1', sg: 'pair', sets: [{ w: 30, r: 3, done: true }] })
++    const last = entry('last', { occurrenceId: 'last#1', sets: [{ w: 40, r: 2, done: false }] })
++    const active = { cur: 2, entries: [first, grouped, partner, last] }
++    const beforeRest = active.entries[active.cur]
++
++    expect(moveActiveWorkoutUnitTo(active, 'same#1', 1)?.targetSlot).toBe(1)
++    expect(active.entries.map(item => item.occurrenceId)).toEqual(['same#2', 'row#1', 'same#1', 'last#1'])
++    expect(active.entries[2]).toBe(first)
++    expect(active.entries[0]).toBe(grouped)
++    expect(active.entries[1]).toBe(partner)
++    expect(active.entries[active.cur]).toBe(beforeRest)
++  })
++
++  it('upgrades missing or duplicate occurrence ids once and never sorts by a legacy array index', () => {
++    const active = { cur: 0, entries: [entry('bench'), entry('bench', { occurrenceId: 'kept' }), entry('row', { occurrenceId: 'kept' })] }
++    expect(moveActiveWorkoutUnitTo(active, 'kept', 0)).toBeNull()
++    expect(needsActiveWorkoutOccurrenceIds(active)).toBe(true)
++    expect(ensureActiveWorkoutOccurrenceIds(active)).toBe(true)
++    expect(new Set(active.entries.map(activeWorkoutEntryKey)).size).toBe(3)
++    expect(active.entries[1].occurrenceId).toBe('kept')
++    const before = structuredClone(active)
++    expect(ensureActiveWorkoutOccurrenceIds(active)).toBe(false)
++    expect(active).toEqual(before)
++    const key = activeWorkoutEntryKey(active.entries[2])
++    expect(moveActiveWorkoutUnitTo(active, key, 0)).not.toBeNull()
++    expect(active.entries.map(item => item.id)).toEqual(['row', 'bench', 'bench'])
++    expect(active.entries.every(item => item.occurrenceId)).toBe(true)
++  })
++
+   it('moves one standalone occurrence without conflating duplicate exercise ids', () => {
+     const duplicateA = entry('duplicate', { occurrenceId: 'duplicate#1' })
+     const selected = entry('duplicate', {
+diff --git a/frontend/src/lib/workout-controls.js b/frontend/src/lib/workout-controls.js
+index 86f5a34..ca16490 100644
+--- a/frontend/src/lib/workout-controls.js
++++ b/frontend/src/lib/workout-controls.js
+@@ -4,7 +4,7 @@
+ // Lives in its own module so views can read it without the store — the store's DEF only
+ // references it.
+ export const WC_DEFAULT = Object.freeze({
+-  steppers: true,         // +/- buttons on every weight/reps/effort field
++  steppers: true,         // +/- buttons on weight/reps fields; effort always opens its picker
+   setShortcuts: false,    // "+ Drop" / "+ Burst" chips on every set and the warm-up/remove/add row
+   pairButtons: false,     // "Make superset with previous/next" in the exercise header
+   exerciseButtons: false, // Move up/down, Swap, Remove exercise below the exercise
+diff --git a/frontend/src/sheets.effort-picker.test.jsx b/frontend/src/sheets.effort-picker.test.jsx
+index 4551104..cdb5d22 100644
+--- a/frontend/src/sheets.effort-picker.test.jsx
++++ b/frontend/src/sheets.effort-picker.test.jsx
+@@ -3,8 +3,8 @@
+ // the set (issue #64): it ticks the set, beeps and starts the rest. So typing the `1` of `10`,
+ // or one tap of `+` (stepEffort returns the band minimum from null), logged a rating under the
+ // sheet you were still typing into — and on the last set of the last exercise, stacked the
+-// workout-complete dialog on top of it. Every earlier test mocked the sheet away and called
+-// onPick directly, so nothing rendered the real component. This does.
++// workout-complete dialog on top of it. Exercise the real picker and its explicit commits;
++// dismissing an exact draft must leave the original rating alone.
+ import React, { act } from 'react'
+ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+ import { createRoot } from 'react-dom/client'
+@@ -64,7 +64,7 @@ describe('the effort picker commits once', () => {
+     expect(onPick).toHaveBeenCalledTimes(1)      // the unmount must not log a second time
+   })
+ 
+-  it('typing an exact value logs nothing until the sheet goes away', () => {
++  it('dismissing an exact draft never logs it', () => {
+     const onPick = vi.fn()
+     const p = openPicker('rpe', null, onPick)
+     type(p.host, '1')
+@@ -73,8 +73,7 @@ describe('the effort picker commits once', () => {
+     expect(onPick).not.toHaveBeenCalled()
+     expect(p.closed()).toBe(false)
+     p.dismiss()
+-    expect(onPick).toHaveBeenCalledTimes(1)
+-    expect(onPick).toHaveBeenCalledWith(10)
++    expect(onPick).not.toHaveBeenCalled()
+   })
+ 
+   it('one tap of + logs nothing', () => {
+@@ -125,4 +124,29 @@ describe('the effort picker commits once', () => {
+     p.dismiss()
+     expect(onPick).not.toHaveBeenCalled()
+   })
++
++  it.each(['rir', 'rpe'])('dismisses changes to an existing %s rating without saving', kind => {
++    const onPick = vi.fn()
++    const p = openPicker(kind, kind === 'rir' ? 2 : 8, onPick)
++    type(p.host, '9')
++    p.dismiss()
++    expect(onPick).not.toHaveBeenCalled()
++  })
++
++  it('clearing an existing exact draft and closing does not clear the rating', () => {
++    const onPick = vi.fn()
++    const p = openPicker('rir', 2, onPick)
++    type(p.host, '')
++    p.dismiss()
++    expect(onPick).not.toHaveBeenCalled()
++  })
++
++  it.each(['rir', 'rpe'])('an invalid %s draft cannot be saved as a rating', kind => {
++    const onPick = vi.fn()
++    const p = openPicker(kind, kind === 'rir' ? 2 : 8, onPick)
++    type(p.host, '.')
++    expect(buttonSaying(p.host, 'Done')).toBeUndefined()
++    p.dismiss()
++    expect(onPick).not.toHaveBeenCalled()
++  })
+ })
+diff --git a/frontend/src/sheets.jsx b/frontend/src/sheets.jsx
+index be03e49..da13f89 100644
+--- a/frontend/src/sheets.jsx
++++ b/frontend/src/sheets.jsx
+@@ -2054,31 +2054,21 @@ export const glyphPicker = (current, onPick) => {
+ function EffortPicker({ kind, value, onPick, close }) {
+   // Local mirror so the ticked preset and the exact field track typing live.
+   const [v, setV] = useState(value ?? null)
+-  // The exact field used to write through on every change, and onPick concludes the set (issue
+-  // #64): it ticks the set, beeps and starts the rest. Since stepEffort(kind, null, 1) returns
+-  // the band's minimum, one tap of + — or typing the `1` of `10` — was a committed rating, fired
+-  // under the sheet you were still typing into, and on the last set of the last exercise it
+-  // stacked workoutCompleteSheet on top of the picker. So typing moves the mirror only, and the
+-  // rating is written once, when the sheet goes away: Done, the backdrop, a swipe or Escape all
+-  // unmount this. A preset row still commits on the spot, which is what makes it one tap.
+-  const typed = useRef(value ?? null)
+-  const done = useRef(false)
+-  const set = nv => { typed.current = nv; setV(nv) }
+-  useEffect(() => () => {
+-    if (done.current) return
+-    if (typed.current !== (value ?? null)) onPick(typed.current)
+-  }, [])
++  // Exact edits stay local until Done. Backdrop, swipe, Escape and unmount discard the draft;
++  // presets and Clear rating remain explicit one-tap commits. onPick can conclude the set,
++  // so dismissing a draft must never call it.
++  const set = setV
+   // `v` is in the profile's own scale (whatever sits on the set: s.rir or s.rpe). Compare in
+   // RIR so the tick lands on the right preset on either scale, and so a typed RPE colours the
+   // same as the RIR it equals.
+   const curRir = rirOf(kind === 'rpe' ? { rpe: v } : { rir: v })
+   const curColor = effortColor(curRir)
+-  const commit = nv => { done.current = true; close(); onPick(nv) }
++  const commit = nv => { close(); onPick(nv) }
+   const pick = rir => commit(toScale(kind, rir))
+   const hd = EFFORT[kind].hd
+   // Same list the ⋯ menus use: a tinted square with the value where the icon goes, the sentence
+   // as the row title, a tick on the current one. The exact field is the app's own stepper,
+-  // tinted like the logged cell in the set row, so the sheet and the row read as one thing.
++  // tinted with the same effort colours as the single button in the workout row.
+   return <>
+     <h3 style={{ marginBottom: 2 }}>{t('How hard was that set?')}</h3>
+     <div className="muted small" style={{ marginBottom: 10 }}>{t('Tap how many reps you had left, or type an exact {0}.', hd)}</div>
+diff --git a/frontend/src/superset-side-effort.test.js b/frontend/src/superset-side-effort.test.js
+index 2de32ff..29b83cf 100644
+--- a/frontend/src/superset-side-effort.test.js
++++ b/frontend/src/superset-side-effort.test.js
+@@ -1,65 +1,29 @@
+-// The RIR stepper on a unilateral row inside a superset (issue #60 / 1.2). happy-dom and
+-// linkedom apply neither media queries nor layout, so — like list-columns.test.js and
+-// android-system-bars.test.js — this reads the rule out of index.css as text.
+-//
+-// The regression: at the narrow widths where a superset nests three insets deep, the effort
+-// cell used to DROP its −/+ buttons (display:none) and hand the freed width to an already
+-// oversized weight column. A unilateral set is logged per side, so the rating is the field you
+-// reach for most; it must keep the same +/- stepper a normal exercise row has, with the weight
+-// column paying for it instead.
++// DOM test environments do not lay out flex rows or apply media queries. Guard the shared
++// value-only floor here; real viewport checks also need a browser.
+ import { describe, expect, it } from 'vitest'
+ import { readFileSync } from 'node:fs'
+ import { resolve } from 'node:path'
+ 
+-const css = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8')
++const css = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
++const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+ 
+-// The inside of one @media block, by brace depth (same helper shape as list-columns.test.js).
+-function mediaBody(query) {
+-  const at = css.indexOf(`@media ${query}{`)
+-  expect(at, query).toBeGreaterThanOrEqual(0)
+-  let depth = 0
+-  const open = css.indexOf('{', at)
+-  for (let i = open; i < css.length; i++) {
+-    if (css[i] === '{') depth++
+-    else if (css[i] === '}' && --depth === 0) return css.slice(open + 1, i)
+-  }
+-  throw new Error('unclosed ' + query)
+-}
+-
+-// The block that governs an L/R row in a superset in the list view: wide enough that the row's
+-// three insets still leave room to shuffle width between columns (below 360px every row, normal
+-// ones included, drops its effort +/- — that is the shared narrow-screen behaviour, not this bug).
+-const body = mediaBody('(max-width:429px)')
+-
+-// A declaration block for one of the superset per-side selectors, by the text that targets it.
+-const declsFor = needle => {
+-  const rules = [...body.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+-  const hit = rules.find(m => m[1].includes(needle) && m[1].includes('.ss-card') && m[1].includes('.setrow.side'))
+-  return hit ? hit[2] : null
+-}
+-
+-describe('a superset L/R row keeps its RIR +/- stepper', () => {
+-  it('does not hide the effort +/- buttons the way it used to', () => {
+-    const effortButtons = declsFor('effcell-stp>button')
+-    expect(effortButtons, 'the effort +/- rule for a superset L/R row should exist').toBeTruthy()
+-    // the bug was `display:none` on these buttons; now they stay, just shrunk to a floor
+-    expect(effortButtons).not.toMatch(/display\s*:\s*none/)
+-    expect(effortButtons).toMatch(/min-width\s*:\s*\d+px/)
++describe('workout effort buttons use a value-only column', () => {
++  it('shares one compact floor between the empty/logged button and header', () => {
++    const floors = rules.filter(m => m[1].includes('.setrow .effcell') && /min-width:/.test(m[2]))
++    expect(floors).toHaveLength(3)
++    expect(floors.every(m => m[1].includes('.sethead .eff-sp'))).toBe(true)
++    expect(floors.map(m => Number(m[2].match(/min-width:(\d+)/)?.[1]))).toEqual([0, 34, 29])
+   })
+ 
+-  it('gives the effort cell room for the value plus both buttons, not a bare value', () => {
+-    const cell = declsFor('.effcell-stp,') || declsFor('.effcell,')
+-    expect(cell, 'the effort cell min-width rule should exist').toBeTruthy()
+-    const min = Number(cell.match(/min-width\s*:\s*(\d+)px/)?.[1])
+-    // 28px value + two button floors + borders; the old collapsed value-only floor was 34px
+-    expect(min).toBeGreaterThanOrEqual(50)
++  it('has no workout effort-stepper selectors or breakpoint button placeholders', () => {
++    expect(rules.some(m => m[1].includes('.setrow') && m[1].includes('.effcell-stp'))).toBe(false)
++    expect(rules.some(m => m[1].includes('.effcell') && /aria-label|>button/.test(m[1]) && !m[1].includes('.effpick'))).toBe(false)
+   })
+ 
+-  it('reclaims that width from the weight column instead', () => {
+-    // the weight cell for these rows gives up reserve (--num) and/or button floor inside the
+-    // same media block, so the row total is unchanged and still fits
+-    const weight = [...body.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+-      .find(m => m[1].includes('.ss-card') && m[1].includes('.stp.w') && /--num|--btn-floor/.test(m[2]))
+-    expect(weight, 'the weight column should shrink to pay for the effort stepper').toBeTruthy()
++  it('keeps the exact-value stepper styles scoped to the existing picker', () => {
++    const stepperRules = rules.filter(m => m[1].includes('.effcell-stp'))
++    expect(stepperRules.length).toBeGreaterThan(0)
++    expect(stepperRules.every(m => m[1].trim().startsWith('.effpick '))).toBe(true)
++    expect(css).toContain('.effpick .effpick-free .stp{flex:none;width:148px}')
+   })
+ })
+diff --git a/frontend/src/views/RoutineEdit.jsx b/frontend/src/views/RoutineEdit.jsx
+index dd54f4d..b748973 100644
+--- a/frontend/src/views/RoutineEdit.jsx
++++ b/frontend/src/views/RoutineEdit.jsx
+@@ -1,5 +1,6 @@
+ import { useNavigate, useParams } from 'react-router-dom'
+-import { useEffect, useRef, useState } from 'react'
++import { useEffect } from 'react'
++import { useLongPressReorder, REORDER_LONG_PRESS_MS, REORDER_DRAG_SLOP } from '../lib/use-long-press-reorder.js'
+ import { useStore } from '../store/useStore.js'
+ import { useUI } from '../store/useUI.js'
+ import { exOr } from '../lib/exercises.js'
+@@ -25,8 +26,8 @@ import { POLICIES_FOR, POLICY_NAME, POLICY_DESC } from '../lib/progression.js'
+ import BodyMap from '../components/BodyMap.jsx'
+ import { loadOfRoutine, rankOf, MUSCLE_NAME } from '../lib/muscles.js'
+ 
+-export const ROUTINE_LONG_PRESS_MS = 380
+-export const ROUTINE_DRAG_SLOP = 8
++export const ROUTINE_LONG_PRESS_MS = REORDER_LONG_PRESS_MS
++export const ROUTINE_DRAG_SLOP = REORDER_DRAG_SLOP
+ 
+ const clamp = (value, low, high) => Math.max(low, Math.min(high, value))
+ 
+@@ -61,265 +62,6 @@ function unitGeometry(list, exercises) {
+   return geometry.every(Boolean) ? geometry : null
+ }
+ 
+-function scrollHostFor(node) {
+-  for (let parent = node.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
+-    const overflowY = window.getComputedStyle(parent).overflowY
+-    if (/(auto|scroll)/.test(overflowY) && parent.scrollHeight > parent.clientHeight) return parent
+-  }
+-  return window
+-}
+-
+-function autoScrollStep(host, clientY) {
+-  const edge = 64
+-  const maxStep = 14
+-  let top, bottom, scrollTop, maxScroll
+-  if (host === window) {
+-    const root = document.scrollingElement || document.documentElement
+-    top = window.visualViewport?.offsetTop || 0
+-    bottom = top + (window.visualViewport?.height || window.innerHeight || root.clientHeight)
+-    scrollTop = window.scrollY || root.scrollTop || 0
+-    maxScroll = Math.max(root.scrollHeight, document.body?.scrollHeight || 0) - (bottom - top)
+-  } else {
+-    const rect = host.getBoundingClientRect()
+-    top = rect.top; bottom = rect.bottom
+-    scrollTop = host.scrollTop; maxScroll = host.scrollHeight - host.clientHeight
+-  }
+-  if (clientY < top + edge && scrollTop > 0) return -Math.ceil(maxStep * clamp((top + edge - clientY) / edge, 0, 1))
+-  if (clientY > bottom - edge && scrollTop < maxScroll) return Math.ceil(maxStep * clamp((clientY - bottom + edge) / edge, 0, 1))
+-  return 0
+-}
+-
+-function useRoutineReorder(routineIdentity, exercises, onDrop) {
+-  const listRef = useRef(null)
+-  const gestureRef = useRef(null)
+-  const exercisesRef = useRef(exercises)
+-  const routineIdentityRef = useRef(routineIdentity)
+-  const onDropRef = useRef(onDrop)
+-  const suppressClickRef = useRef(false)
+-  const suppressTimerRef = useRef(null)
+-  const [drag, setDrag] = useState(null)
+-  exercisesRef.current = exercises
+-  routineIdentityRef.current = routineIdentity
+-  onDropRef.current = onDrop
+-  const hasRows = exercises.length > 0
+-
+-  useEffect(() => () => {
+-    suppressClickRef.current = false
+-    window.clearTimeout(suppressTimerRef.current)
+-  }, [])
+-
+-  useEffect(() => {
+-    const list = listRef.current
+-    if (!list) return undefined
+-    let frame = null
+-    setDrag(current => current ? null : current)
+-
+-    const clearFrame = () => {
+-      if (frame != null) window.cancelAnimationFrame(frame)
+-      frame = null
+-    }
+-    const clearTimer = gesture => {
+-      if (gesture?.timer != null) window.clearTimeout(gesture.timer)
+-      if (gesture) gesture.timer = null
+-    }
+-    const matchesSnapshot = gesture => routineIdentityRef.current === gesture.routineIdentity
+-      && exercisesRef.current === gesture.listIdentity
+-      && JSON.stringify(exercisesRef.current) === gesture.snapshot
+-    const releaseCapture = gesture => {
+-      const target = gesture?.captureTarget
+-      if (!target?.releasePointerCapture) return
+-      try { target.releasePointerCapture(gesture.pointerId) } catch { /* already released */ }
+-    }
+-    const finish = (gesture, commit, x = gesture?.lastX, y = gesture?.lastY) => {
+-      if (!gesture || gestureRef.current !== gesture) return
+-      clearTimer(gesture)
+-      clearFrame()
+-      gestureRef.current = null
+-      if (!gesture.active) return
+-      releaseCapture(gesture)
+-      suppressClickRef.current = true
+-      window.clearTimeout(suppressTimerRef.current)
+-      // The compatibility click lands synchronously after pointerup; anything
+-      // later is a real tap, so the guard only needs to outlive that one event.
+-      suppressTimerRef.current = window.setTimeout(() => { suppressClickRef.current = false }, 150)
+-      setDrag(null)
+-      const rect = list.getBoundingClientRect()
+-      const inside = x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+-      const geometry = unitGeometry(list, exercisesRef.current)
+-      if (commit && inside && geometry && matchesSnapshot(gesture) && gesture.targetSlot !== gesture.sourcePosition) {
+-        onDropRef.current(gesture.sourceIndex, gesture.targetSlot)
+-      }
+-    }
+-    const indicatorTop = (geometry, gesture, slot, listRect) => {
+-      if (slot === gesture.sourcePosition) return clamp(gesture.sourceTop - listRect.top, 0, listRect.height)
+-      const remaining = geometry.filter(unit => unit.position !== gesture.sourcePosition)
+-      let top
+-      if (slot <= 0) top = remaining[0]?.top ?? gesture.sourceTop
+-      else if (slot >= remaining.length) top = remaining.at(-1)?.bottom ?? gesture.sourceBottom
+-      else top = (remaining[slot - 1].bottom + remaining[slot].top) / 2
+-      return clamp(top - listRect.top, 0, listRect.height)
+-    }
+-    const updateDrag = (gesture, x, y, schedule = true) => {
+-      if (gestureRef.current !== gesture || !gesture.active || !matchesSnapshot(gesture)) {
+-        if (gestureRef.current === gesture) finish(gesture, false)
+-        return
+-      }
+-      const geometry = unitGeometry(list, exercisesRef.current)
+-      if (!geometry) { finish(gesture, false); return }
+-      const listRect = list.getBoundingClientRect()
+-      const remaining = geometry.filter(unit => unit.position !== gesture.sourcePosition)
+-      const probeY = clamp(y, listRect.top, listRect.bottom)
+-      const moved = Math.hypot(x - gesture.startX, y - gesture.startY) > ROUTINE_DRAG_SLOP
+-      const slot = moved ? remaining.reduce((count, unit) => count + (probeY > unit.center ? 1 : 0), 0) : gesture.sourcePosition
+-      const rawDelta = y - gesture.grabOffset - gesture.sourceTop
+-      const deltaY = clamp(rawDelta, listRect.top - gesture.sourceTop, listRect.bottom - gesture.sourceBottom)
+-      gesture.lastX = x; gesture.lastY = y; gesture.targetSlot = slot
+-      setDrag({ first: gesture.sourceUnit[0], last: gesture.sourceUnit.at(-1), deltaY, indicatorTop: indicatorTop(geometry, gesture, slot, listRect) })
+-      if (schedule && frame == null) frame = window.requestAnimationFrame(runAutoScroll)
+-    }
+-    function runAutoScroll() {
+-      frame = null
+-      const gesture = gestureRef.current
+-      if (!gesture?.active) return
+-      const step = autoScrollStep(gesture.scrollHost, gesture.lastY)
+-      if (!step) return
+-      if (gesture.scrollHost === window) window.scrollBy(0, step)
+-      else gesture.scrollHost.scrollTop += step
+-      updateDrag(gesture, gesture.lastX, gesture.lastY, false)
+-      if (gestureRef.current === gesture) frame = window.requestAnimationFrame(runAutoScroll)
+-    }
+-    const lift = gesture => {
+-      if (gestureRef.current !== gesture) return
+-      if (!matchesSnapshot(gesture)) { finish(gesture, false); return }
+-      const geometry = unitGeometry(list, exercisesRef.current)
+-      const source = geometry?.find(unit => unit.unit.includes(gesture.sourceIndex))
+-      if (!source) { finish(gesture, false); return }
+-      gesture.active = true; gesture.timer = null
+-      gesture.sourcePosition = source.position; gesture.sourceUnit = source.unit
+-      gesture.sourceTop = source.top; gesture.sourceBottom = source.bottom
+-      gesture.grabOffset = gesture.lastY - source.top; gesture.targetSlot = source.position
+-      gesture.scrollHost = scrollHostFor(list)
+-      gesture.captureTarget = gesture.downTarget
+-      try { gesture.captureTarget.setPointerCapture?.(gesture.pointerId) } catch { /* unsupported */ }
+-      suppressClickRef.current = true
+-      window.clearTimeout(suppressTimerRef.current)
+-      updateDrag(gesture, gesture.lastX, gesture.lastY)
+-    }
+-    const onPointerDown = event => {
+-      // a new touch is intentional — never let the post-drop guard eat its click
+-      suppressClickRef.current = false
+-      window.clearTimeout(suppressTimerRef.current)
+-      const current = gestureRef.current
+-      if (current) {
+-        if (event.pointerId !== current.pointerId) finish(current, false)
+-        return
+-      }
+-      if (event.isPrimary === false || (event.pointerType === 'mouse' && event.button !== 0)) return
+-      const target = event.target
+-      if (!target?.closest || target.closest('button:not([data-row-open]),a,input,textarea,select,[data-nodrag]')) return
+-      const row = target.closest('[data-routine-row]')
+-      if (!row || !list.contains(row)) return
+-      const sourceIndex = Number(row.dataset.exIndex)
+-      if (!Number.isInteger(sourceIndex)) return
+-      const gesture = {
+-        pointerId: event.pointerId, sourceIndex, downTarget: target,
+-        startX: event.clientX, startY: event.clientY, lastX: event.clientX, lastY: event.clientY,
+-        routineIdentity: routineIdentityRef.current,
+-        listIdentity: exercisesRef.current,
+-        snapshot: JSON.stringify(exercisesRef.current), active: false, timer: null,
+-      }
+-      gestureRef.current = gesture
+-      // The grip, pressed with a mouse, picks the row up at once (#277): the hold exists so a
+-      // finger can still scroll the list, and a mouse scrolls with its wheel. preventDefault
+-      // keeps the press from starting a text selection or the row's swipe-to-delete, which
+-      // listen to the mouse events a pointerdown would otherwise go on to fire.
+-      if (event.pointerType === 'mouse' && target.closest('[data-drag-handle]')) {
+-        event.preventDefault()
+-        lift(gesture)
+-        return
+-      }
+-      gesture.timer = window.setTimeout(() => lift(gesture), ROUTINE_LONG_PRESS_MS)
+-    }
+-    const onPointerMove = event => {
+-      const gesture = gestureRef.current
+-      if (!gesture || event.pointerId !== gesture.pointerId) return
+-      if (!gesture.active) {
+-        if (Math.hypot(event.clientX - gesture.startX, event.clientY - gesture.startY) > ROUTINE_DRAG_SLOP) {
+-          clearTimer(gesture); gestureRef.current = null
+-        } else { gesture.lastX = event.clientX; gesture.lastY = event.clientY }
+-        return
+-      }
+-      event.preventDefault()
+-      updateDrag(gesture, event.clientX, event.clientY)
+-    }
+-    const onPointerUp = event => {
+-      const gesture = gestureRef.current
+-      if (!gesture || event.pointerId !== gesture.pointerId) return
+-      if (gesture.active) event.preventDefault()
+-      finish(gesture, gesture.active, event.clientX, event.clientY)
+-    }
+-    const onPointerCancel = event => {
+-      const gesture = gestureRef.current
+-      if (gesture && event.pointerId === gesture.pointerId) finish(gesture, false)
+-    }
+-    const onLostCapture = event => {
+-      const gesture = gestureRef.current
+-      if (gesture && event.pointerId === gesture.pointerId) finish(gesture, false)
+-    }
+-    const cancelActive = () => finish(gestureRef.current, false)
+-    const onKeyDown = event => {
+-      if (event.key !== 'Escape' || !gestureRef.current) return
+-      event.preventDefault(); cancelActive()
+-    }
+-    const onVisibility = () => { if (document.visibilityState === 'hidden') cancelActive() }
+-    const onContextMenu = event => { if (gestureRef.current?.active && event.target.closest?.('[data-routine-row]')) event.preventDefault() }
+-    const onDragStart = event => { if (event.target.closest?.('[data-routine-row]')) event.preventDefault() }
+-
+-    // Touch: the rows keep `touch-action: pan-y` so the list still scrolls with a finger, but once
+-    // a long-press has lifted a row the browser must not claim the vertical drag as a pan — it
+-    // would fire pointercancel and scroll instead. preventDefault on a pointer event cannot stop
+-    // that; only a non-passive touchmove listener can, and only while a drag is actually active.
+-    const onTouchMove = event => { if (gestureRef.current?.active) event.preventDefault() }
+-
+-    document.addEventListener('pointerdown', onPointerDown)
+-    document.addEventListener('touchmove', onTouchMove, { passive: false })
+-    document.addEventListener('pointermove', onPointerMove, { passive: false })
+-    document.addEventListener('pointerup', onPointerUp, { passive: false })
+-    document.addEventListener('pointercancel', onPointerCancel)
+-    document.addEventListener('lostpointercapture', onLostCapture)
+-    document.addEventListener('keydown', onKeyDown)
+-    document.addEventListener('visibilitychange', onVisibility)
+-    list.addEventListener('contextmenu', onContextMenu)
+-    list.addEventListener('dragstart', onDragStart)
+-    window.addEventListener('blur', cancelActive)
+-    return () => {
+-      const gesture = gestureRef.current
+-      clearTimer(gesture); clearFrame(); gestureRef.current = null
+-      releaseCapture(gesture)
+-      document.removeEventListener('pointerdown', onPointerDown)
+-      document.removeEventListener('touchmove', onTouchMove)
+-      document.removeEventListener('pointermove', onPointerMove)
+-      document.removeEventListener('pointerup', onPointerUp)
+-      document.removeEventListener('pointercancel', onPointerCancel)
+-      document.removeEventListener('lostpointercapture', onLostCapture)
+-      document.removeEventListener('keydown', onKeyDown)
+-      document.removeEventListener('visibilitychange', onVisibility)
+-      list.removeEventListener('contextmenu', onContextMenu)
+-      list.removeEventListener('dragstart', onDragStart)
+-      window.removeEventListener('blur', cancelActive)
+-    }
+-  }, [hasRows, routineIdentity, exercises])
+-
+-  const onClickCapture = event => {
+-    if (!suppressClickRef.current) return
+-    suppressClickRef.current = false
+-    window.clearTimeout(suppressTimerRef.current)
+-    event.preventDefault(); event.stopPropagation()
+-  }
+-  // Whether a long press has picked a row up: the row's swipe stays out of the way while it has.
+-  const lifted = () => !!gestureRef.current?.active
+-  return { listRef, drag, onClickCapture, lifted }
+-}
+ 
+ /**
+  * Takes exercise `i` out of routine `routineId` with an Undo (v1.3.11: the row's swipe and the
+@@ -375,9 +117,9 @@ export default function RoutineEdit() {
+   // included: this still unmounts after the delete button navigates away.
+   useEffect(() => () => useStore.getState().autoBackupNow(), [])
+   const edit = fn => update(s => { fn(s.routines.find(x => x.id === id).ex) })
+-  const reorder = useRoutineReorder(r, r?.ex || [], (sourceIndex, targetSlot) => {
++  const reorder = useLongPressReorder(r, r?.ex || [], (sourceIndex, targetSlot) => {
+     edit(exercises => { reorderRoutineUnit(exercises, sourceIndex, targetSlot) })
+-  })
++  }, { geometry: unitGeometry, rowSelector: '[data-routine-row]', sourceOf: row => Number(row.dataset.exIndex) })
+   if (!r) return null
+   // The arrows move one exercise (#377): inside its superset, out of it at the edge, and past a
+   // whole neighbouring unit otherwise (lib/history.js moveRoutineEntry). Drag moves supersets whole.
+diff --git a/frontend/src/views/Workout.jsx b/frontend/src/views/Workout.jsx
+index 2eac3c8..eec3125 100644
+--- a/frontend/src/views/Workout.jsx
++++ b/frontend/src/views/Workout.jsx
+@@ -9,7 +9,7 @@ import { pushPlanToWatch, bindWatchSync, pushRestToWatch, pushWeightToWatch, pus
+ import { exOr, betterWeight } from '../lib/exercises.js'
+ import { usesBar } from '../lib/bar.js'
+ import { loadKindFor, baseWeightFor, inventoryFor, rowLoad, sameLoad, plateDelta, dropGrid } from '../lib/plates.js'
+-import { effectiveRoutines, effectiveRoutineIds, lastEntryFor, bestWeightFor, bestWeightForEntry, buildSets, freestyleConfig, defaultConfig, setsDoneActive, setUnitsTotal, supersetUnits, unitOf, setLabel, modeOf, isBw, isPerSide, repStep, EFFORT, effortOf, stepEffort, capEffort, cascadeWeight, insertWarmupRow, barFloor, makeWarmupAt, canBeWarmup, makeWorkAt, removeRowAt, removeLastSet, setSpanAt, copyRowAt, copySpanAt, insertRowAt, pairAdjacent, unpairSuperset, cleanupSg, applyIntensifierPlan, pinnedNoteFor, exNoteFor, setsRepsOf } from '../lib/history.js'
++import { effectiveRoutines, effectiveRoutineIds, lastEntryFor, bestWeightFor, bestWeightForEntry, buildSets, freestyleConfig, defaultConfig, setsDoneActive, setUnitsTotal, supersetUnits, unitOf, setLabel, modeOf, isBw, isPerSide, repStep, EFFORT, effortOf, capEffort, cascadeWeight, insertWarmupRow, barFloor, makeWarmupAt, canBeWarmup, makeWorkAt, removeRowAt, removeLastSet, setSpanAt, copyRowAt, copySpanAt, insertRowAt, pairAdjacent, unpairSuperset, cleanupSg, applyIntensifierPlan, pinnedNoteFor, exNoteFor, setsRepsOf } from '../lib/history.js'
+ import { fmtNum, fmtPlate, exerciseNameText, fmtDate, fmtDaysAgo, todayISO, exCount, DAYN } from '../lib/format.js'
+ import { speedUnitOf, toSpeed, fromSpeed } from '../lib/speed.js'
+ import { clampIncline, hasIncline, inclineFits, inclineFrom, INCLINE_STEP } from '../lib/incline.js'
+@@ -42,7 +42,8 @@ import { glyphOf } from '../lib/glyphs.js'
+ import { markAllSetsDone, sessionHistory } from '../lib/backfill.js'
+ import { bestSetFor } from '../lib/exercise-history.js'
+ import { isWarmupRow, isFailureSet, toggleFailure, isDropSet, isRestPauseSet, dropsOf, clustersOf, addDrop, addCluster, removeDropAt, removeClusterAt, setDropAt, setClusterAt, nextDropWeight, nextBurstReps, isSideSet, makeSideSet, setSideField, toggleSide, addSideDrop, removeSideDropAt, setSideDropAt, addSideCluster, removeSideClusterAt, setSideClusterAt, WEIGHT_ORIGIN_MANUAL } from '../lib/workout-model.js'
+-import { canMoveActiveWorkoutUnit, moveActiveWorkoutUnit, canMoveActiveWorkoutEntry, moveActiveWorkoutEntry } from '../lib/active-workout-order.js'
++import { canMoveActiveWorkoutUnit, moveActiveWorkoutUnit, canMoveActiveWorkoutEntry, moveActiveWorkoutEntry, activeWorkoutEntryKey, moveActiveWorkoutUnitTo, needsActiveWorkoutOccurrenceIds, ensureActiveWorkoutOccurrenceIds } from '../lib/active-workout-order.js'
++import { useWorkoutReorder } from '../lib/use-workout-reorder.js'
+ import { nextOpenSet, workoutKeyAction } from '../lib/workout-keys.js'
+ import { MUSCLE_NAME } from '../lib/muscles.js'
+ import FocusView from './FocusView.jsx'
+@@ -290,7 +291,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
+     view: v => toSpeed(v, speedUnit), store: v => fromSpeed(v, speedUnit) }
+     : timed ? loadCol : repCol
+   // Effort (RIR or RPE, whichever the profile logs) only makes sense for weighted rep sets,
+-  // not cardio/timed holds, and is opt-in since it adds a third stepper to every row. `opt`
++  // not cardio/timed holds, and is opt-in since it adds a third control to every row. `opt`
+   // because an unlogged effort is not the same as 0 — RIR 0 says the set went to failure.
+   const kind = effortOf(S)
+   const eff = EFFORT[kind]
+@@ -302,8 +303,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
+   const inclineCol = cardio && (inclineFits(ex) || entry.sets.some(hasIncline))
+     ? { f: 'incline', step: INCLINE_STEP, dec: true, opt: true, hd: t('Incline (%)'), store: clampIncline } : null
+   const col3 = cardio ? inclineCol : mode === 'reps' && eff ? { f: eff.f, eff: kind, hd: t(eff.hd) } : null
+-  // The effort column walks its own scale — see stepEffort. Weight and reps step up from 0
+-  // with no ceiling, as they always did.
++  // Weight and reps step up from 0 with no ceiling. Effort uses its own picker.
+   const bump = (s, i, col, dir) => {
+     // Read the current value directly from the store rather than from the render-time snapshot.
+     // In a superset both ExerciseBlock instances share the same store subscription, so when one
+@@ -465,8 +465,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
+   // The effort cell is a single button, not a stepper: it shows the rating in the profile's
+   // scale, tinted by how close to failure it was, and opens the picker on tap — to set a
+   // rating or change one. rirOf-via-effortColor keeps the colour identical whether the value
+-  // is logged as RIR or RPE. With the +/- buttons switched off (Workout controls) a logged
+-  // rating is just the tinted value, which still opens the picker.
++  // is logged as RIR or RPE. The whole button opens the picker in either controls setting.
+   const effortCell = (s, i, col) => {
+     const v = s[col.f] ?? null
+     const rir = col.eff === 'rpe' ? (v == null ? null : 10 - v) : v
+@@ -483,17 +482,12 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
+       if (fresh && !fresh.done) onToggle(i)
+     }
+     const open = () => effortPickerSheet(col.eff, v, pickEffort)
+-    if (v == null) return (
+-      <button className="effcell is-empty" aria-label={col.hd} onClick={open}>{col.hd}</button>
+-    )
+-    const step = dir => onField(i, col.f, stepEffort(col.eff, v, dir))
+     return (
+-      <div className={'stp effcell-stp' + (wc.steppers ? '' : ' plain')}
++      <button type="button" className={'effcell' + (v == null ? ' is-empty' : '')}
++        aria-label={col.hd} onClick={open}
+         style={color ? { color, borderColor: color, background: `color-mix(in srgb, ${color} 20%, var(--surface-2))` } : undefined}>
+-        {wc.steppers && <button aria-label={t('Decrease')} onClick={() => step(-1)}><Icon name="minus" /></button>}
+-        <button className="val" aria-label={col.hd} onClick={open}>{fmtNum(v)}</button>
+-        {wc.steppers && <button aria-label={t('Increase')} onClick={() => step(1)}><Icon name="plus" /></button>}
+-      </div>
++        {v == null ? col.hd : fmtNum(v)}
++      </button>
+     )
+   }
+   // Per-side versions of the weight/reps stepper and the effort picker. Same markup and stepping
+@@ -526,15 +520,12 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
+       const fresh = useStore.getState().S.active?.entries[entryIdx]?.sets[i]?.sides?.[side]
+       if (nv != null && fresh && !fresh.done) onToggleSide(i, side)
+     })
+-    if (v == null) return <button className="effcell is-empty" aria-label={col.hd} onClick={open}>{col.hd}</button>
+-    const step = dir => setSide(i, side, col.f, stepEffort(col.eff, v, dir))
+     return (
+-      <div className={'stp effcell-stp' + (wc.steppers ? '' : ' plain')}
++      <button type="button" className={'effcell' + (v == null ? ' is-empty' : '')}
++        aria-label={col.hd} onClick={open}
+         style={color ? { color, borderColor: color, background: `color-mix(in srgb, ${color} 20%, var(--surface-2))` } : undefined}>
+-        {wc.steppers && <button aria-label={t('Decrease')} onClick={() => step(-1)}><Icon name="minus" /></button>}
+-        <button className="val" aria-label={col.hd} onClick={open}>{fmtNum(v)}</button>
+-        {wc.steppers && <button aria-label={t('Increase')} onClick={() => step(1)}><Icon name="plus" /></button>}
+-      </div>
++        {v == null ? col.hd : fmtNum(v)}
++      </button>
+     )
+   }
+   // One side's row: the L or R badge, then the same weight/reps/effort controls as a straight
+@@ -944,9 +935,16 @@ function ActiveWorkout() {
+   // pre-existing profile (and a session started before this field) as it was.
+   const requestedView = A.workoutView || S.workoutView
+   const workoutView = ['list', 'compact', 'focus'].includes(requestedView) ? requestedView : 'cards'
+-  const listMode = workoutView === 'list' || workoutView === 'compact'
++  const [reorderOverview, setReorderOverview] = useState(false)
++  const listMode = reorderOverview || workoutView === 'list' || workoutView === 'compact'
+   const focusMode = workoutView === 'focus'
+-  const dense = workoutView === 'compact'
++  const dense = reorderOverview || workoutView === 'compact'
++  const workoutUnitKey = u => activeWorkoutEntryKey(A.entries[u[0]]) || 'pending-' + u[0]
++  const idsReady = !needsActiveWorkoutOccurrenceIds(A)
++  useEffect(() => {
++    if (editing || idsReady) return
++    update(s => { if (s.active?.id === A.id) ensureActiveWorkoutOccurrenceIds(s.active) }, false)
++  }, [A.id, A.entries, editing, idsReady, update])
+   // A superset's heading: its own name and rest between rounds when it has them (#292).
+   const ssTitle = u => {
+     const m = supersetMeta(A.entries, u, { onTarget: true })
+@@ -961,12 +959,12 @@ function ActiveWorkout() {
+   const collapseOn = listMode && !!(A.collapseCompleted ?? S.collapseCompleted)
+   // A finished unit you tapped open again to look at or fix (Discord: "minimize completed exercises
+   // so I view only what I have yet to do"). This screen's own memory: a reload folds it back.
+-  // Keyed by index like the units, so a different number of exercises starts over.
++  // Stable occurrence keys keep expanded summaries with their exercises after a reorder.
+   const [openedState, setOpenedState] = useState(() => ({ len: A.entries.length, keys: new Set() }))
+   const opened = openedState.len === A.entries.length ? openedState.keys : new Set()
+   const finished = u => u.every(idx => A.entries[idx].sets.length > 0 && A.entries[idx].sets.every(s => s.done))
+   const collapsed = new Set(collapseOn ? units.filter(u =>
+-    !u.includes(cur) && !opened.has(u.join('-')) && finished(u),
++    !u.includes(cur) && !opened.has(workoutUnitKey(u)) && finished(u),
+   ).map(u => u.join('-')) : [])
+   const setUnitOpen = (key, open) => setOpenedState(prev => {
+     const keys = new Set(prev.len === A.entries.length ? prev.keys : [])
+@@ -1216,6 +1214,38 @@ function ActiveWorkout() {
+ 
+   const moveCurrentUnit = direction => moveUnitAt(cur, direction)
+ 
++  const moveWorkoutUnitToSlot = (sourceKey, targetSlot) => {
++    const active = useStore.getState().S.active
++    if (!active || active.id !== A.id) return
++    if (!moveActiveWorkoutUnitTo({ ...active, entries: [...active.entries] }, sourceKey, targetSlot)) return
++    focusPointerEpoch.current++
++    update(s => {
++      const moved = moveActiveWorkoutUnitTo(s.active, sourceKey, targetSlot)
++      if (!moved) return
++      const remap = index => moved.indices.indexOf(index)
++      lastCur.current = s.active.cur
++      progressHighWater.current = moved.indices.map(index => progressHighWater.current[index])
++      lastCounts.current = moved.indices.map(index => lastCounts.current[index])
++      const ui = useUI.getState()
++      const patch = {}
++      if (ui.timer?.forIdx != null) patch.timer = { ...ui.timer, forIdx: remap(ui.timer.forIdx) }
++      if (ui.work?.owner) patch.work = { ...ui.work, owner: { ...ui.work.owner, idx: remap(ui.work.owner.idx) } }
++      if (ui.work && holdAt) {
++        holdAt.idx = remap(holdAt.idx)
++        holdAt.owner.idx = holdAt.idx
++      }
++      for (const key of ['swipeHint', 'setFlash']) {
++        if (ui[key]) patch[key] = { ...ui[key], idx: remap(ui[key].idx) }
++      }
++      useUI.setState(patch)
++    }, false)
++  }
++
++  const reorder = useWorkoutReorder(A.id, A.entries, moveWorkoutUnitToSlot, {
++    enabled: !editing && idsReady && units.length > 1,
++    onLift: () => { if (!listMode) setReorderOverview(true) },
++  })
++
+   // "Don't count for progression" from an exercise's ⋯ menu (Discord, asierlama: an injury day).
+   // It stamps the entry's `noProg`, the flag a deload routine freezes onto its entries: the saved
+   // workout keeps it (finish-workout.js), and the next prescription and "last time" read past
+@@ -1887,7 +1917,7 @@ function ActiveWorkout() {
+   const pickChip = chip => {
+     if (listMode) {
+       // A folded unit opens as you jump to it: you tapped it to see it.
+-      if (collapsed.has(chip.key)) setUnitOpen(chip.key, true)
++      if (collapsed.has(chip.key)) setUnitOpen(workoutUnitKey(chip.unit), true)
+       const go = () => scrollToUnit(listRef.current?.querySelector(`.wl-unit[data-unit-key="${chip.key}"]`), true)
+       if (window.requestAnimationFrame) window.requestAnimationFrame(go)
+       else window.setTimeout(go, 0)
+@@ -2038,30 +2068,42 @@ function ActiveWorkout() {
+     {editing && <p className="muted small">{t('Editing a saved workout. Date and duration stay unchanged.')}</p>}
+     {A.backfill && <div className="muted small" style={{ marginBottom: 8 }}>{t('Logging a past workout, so no rest timers.')}</div>}
+ 
++    {reorderOverview && <div className="row between workout-reorder-toolbar">
++      <span className="small dim">{t('Long-press a card to reorder')}</span>
++      <Button size="sm" onClick={() => setReorderOverview(false)}>{t('Done')}</Button>
++    </div>}
++    <div className={'workout-reorder' + (!listMode ? ' card-reorder' : '') + (reorder.drag ? ' is-reordering' : '')}
++      ref={reorder.listRef} onClickCapture={reorder.onClickCapture}>
+     {A.entries.length ? (listMode ? (
+-      <div className="workout-list" data-testid="workout-list" ref={listRef}>
++      <div className={'workout-list' + (reorder.drag ? ' is-reordering' : '')} data-testid="workout-list"
++        ref={listRef}>
+         {units.map((u, ui) => {
+           const multi = u.length > 1
+           const isCur = u.includes(cur)
+-          const isCollapsed = collapsed.has(u.join('-'))
++          const unitKey = workoutUnitKey(u)
++          const layoutKey = u.join('-')
++          const isCollapsed = collapsed.has(layoutKey)
+           // Finished and tapped open again: it says it can fold back, and does on a tap.
+-          const reopened = collapseOn && !isCur && !isCollapsed && opened.has(u.join('-')) && finished(u)
+-          return <section key={u.join('-')} className={'wl-unit' + (isCur ? ' cur' : '')} data-exidx={u[0]} data-unit-key={u.join('-')}>
++          const reopened = collapseOn && !isCur && !isCollapsed && opened.has(unitKey) && finished(u)
++          const dragging = reorder.drag?.first === unitKey
++          return <section key={unitKey} className={'wl-unit' + (isCur ? ' cur' : '') + (dragging ? ' is-dragging' : '')} data-exidx={u[0]} data-unit-key={u.join('-')}
++            data-workout-unit={unitKey}
++            style={dragging ? { transform: `translate3d(0, ${reorder.drag.deltaY}px, 0)` } : undefined}>
+             <div className="wl-hd">
+               <span className="muted small">{multi ? t('Superset {0} / {1}', ui + 1, units.length) : t('Exercise {0} / {1}', ui + 1, units.length)}</span>
+               <span className="row" style={{ gap: 6 }}>
+-                {reopened && <button className="chip" aria-expanded="true" aria-controls={'workout-unit-' + u.join('-')}
+-                  onClick={() => setUnitOpen(u.join('-'), false)}>{t('Fold away')}</button>}
++                {reopened && <button className="chip" aria-expanded="true" aria-controls={'workout-unit-' + unitKey}
++                  onClick={() => setUnitOpen(unitKey, false)}>{t('Fold away')}</button>}
+                 {isCur
+                   ? <span className="tag acc">{t('Current')}</span>
+                   : <button className="chip" onClick={() => focusUnit(u[0])}>{t('Set current')}</button>}
+               </span>
+             </div>
+-            <div id={'workout-unit-' + u.join('-')}>
++            <div id={'workout-unit-' + unitKey}>
+             {/* One line per exercise, and the line is the way back in: a tap opens the sets again
+                 to fix a number, without making it the current exercise. */}
+             {isCollapsed ? <button type="button" className="wl-summary" aria-expanded="false" title={t('Show the sets')}
+-              onClick={() => setUnitOpen(u.join('-'), true)}>
++              onClick={() => setUnitOpen(unitKey, true)}>
+               {u.map(idx => <span key={idx} className="row between" style={{ gap: 8 }}>
+                 <span style={{ fontWeight: 600, textTransform: 'capitalize' }}>{exerciseNameFor(exOr(A.entries[idx].id))}</span>
+                 <span className="tag acc nocap"><Icon name="check" />{t('{0} sets', A.entries[idx].sets.length)}</span>
+@@ -2074,7 +2116,7 @@ function ActiveWorkout() {
+                 </div>
+                 {u.map((idx, k) => {
+                   const entry = A.entries[idx]
+-                  return <div key={idx} ref={el => bindExRef(entry, el)} className="ss-ex" data-exidx={idx}>
++                  return <div key={activeWorkoutEntryKey(entry) || idx} ref={el => bindExRef(entry, el)} className="ss-ex" data-exidx={idx}>
+                     {k > 0 && <div className="ss-amp">+</div>}
+                     <ExerciseBlock entryIdx={idx} compact dense={dense} onSetRowRef={(setIdx, el) => bindSetRef(entry, setIdx, el)}
+                       {...blockProps(idx)} />
+@@ -2095,7 +2137,7 @@ function ActiveWorkout() {
+       {/* The chips stand in for "Exercise 2 / 5": the number is on the current chip, and the
+           others say what is done and what is waiting (#323). */}
+       {chipRow || <div className="muted small" style={{ marginBottom: 6 }}>{isSuperset ? t('Superset {0} / {1}', unitIdx + 1, units.length) : t('Exercise {0} / {1}', unitIdx + 1, units.length)}</div>}
+-      <SwipeCards index={unitIdx} count={units.length} revision={A}
++      <SwipeCards index={unitIdx} count={units.length} revision={A} unitKey={workoutUnitKey(unit)}
+         timerKey={timer && `${timer.endsAt}:${timer.forIdx ?? ''}`} workKey={work?.endsAt}
+         onNavigate={navigateUnit} renderPreview={direction => {
+           // The card slid in shows what the card itself will: in the editor, no hold to start
+@@ -2148,6 +2190,9 @@ function ActiveWorkout() {
+       </SwipeCards>
+     </>) : <div className="empty"><div className="ico"><Icon name="shuffle" /></div>{t('Freestyle workout. Add your first exercise and off you go.')}</div>}
+ 
++    {reorder.drag && <div className="workout-drop-indicator" data-testid="workout-drop-indicator"
++      aria-hidden="true" style={{ top: `${reorder.drag.indicatorTop}px` }} />}
++    </div>
+     <div style={{ height: 12 }} />
+     {!listMode && <div className="row">
+       <Button icon="chevronLeft" disabled={unitIdx <= 0} onClick={() => navigateUnit(-1)}>{t('Prev')}</Button>
+diff --git a/frontend/src/views/Workout.sheet-scroll.test.jsx b/frontend/src/views/Workout.sheet-scroll.test.jsx
+index 5dc417a..c283938 100644
+--- a/frontend/src/views/Workout.sheet-scroll.test.jsx
++++ b/frontend/src/views/Workout.sheet-scroll.test.jsx
+@@ -85,6 +85,71 @@ const runFrames = async () => {
+   await act(async () => { queued.forEach(fn => fn()) })
+ }
+ 
++const typeExact = async value => {
++  await act(async () => {
++    const input = document.querySelector('.effpick input')
++    Object.getOwnPropertyDescriptor(input.constructor.prototype, 'value').set.call(input, value)
++    input.dispatchEvent(new Event('input', { bubbles: true }))
++  })
++}
++
++describe('single effort entry with the real picker and persisted store', () => {
++  it.each(['cards', 'list'].flatMap(view => ['rir', 'rpe'].flatMap(kind =>
++    [false, true].flatMap(side => [false, true].map(steppers => ({ view, kind, side, steppers }))))))
++   ('$view $kind side=$side steppers=$steppers reopens, updates and persists only a selected rating', async ({ view, kind, side, steppers }) => {
++      const initial = kind === 'rir' ? 0 : 8.5
++      const S = structuredClone(useStore.getState().S)
++      S.workoutView = view
++      S.effort = kind
++      S.wc = { ...S.wc, steppers }
++      S.active.entries[0].target.side = side
++      if (side) {
++        S.active.entries[0].sets[0].sides = { L: { w: 20, r: 5, done: true, [kind]: initial }, R: { w: 20, r: 5, done: false } }
++      } else {
++        S.active.entries[0].sets[0][kind] = initial
++        S.active.entries[0].sets[0].done = true
++      }
++      useStore.setState({ S })
++      const cell = () => host.querySelector('[data-exidx="0"] .setrow .effcell')
++      const rating = state => side ? state.active.entries[0].sets[0].sides.L[kind] : state.active.entries[0].sets[0][kind]
++      await mount()
++      expect(cell().tagName).toBe('BUTTON')
++      expect(cell().textContent).toBe(String(initial))
++      expect(host.querySelectorAll('.setrow .effcell-stp')).toHaveLength(0)
++      for (const close of ['escape', 'backdrop', 'swipe']) {
++        await click(cell())
++        expect(document.querySelector('.effpick')).toBeTruthy()
++        await typeExact('9')
++        if (close === 'escape') {
++          await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })) })
++        } else if (close === 'swipe') {
++          await act(async () => {
++            const sheet = document.querySelector('.sheet')
++            sheet.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, clientX: 100, clientY: 100 }))
++            sheet.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 100, clientY: 220 }))
++            sheet.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 100, clientY: 220 }))
++            vi.advanceTimersByTime(180)
++          })
++        } else await click(document.querySelector('.mback'))
++        expect(useUI.getState().sheets).toHaveLength(0)
++        expect(rating(useStore.getState().S)).toBe(initial)
++        expect(useUI.getState().timer).toBeNull()
++      }
++      await click(cell())
++      await typeExact('3.5')
++      await click([...document.querySelectorAll('.sheet button')].find(b => b.textContent.trim() === 'Done'))
++      expect(rating(useStore.getState().S)).toBe(3.5)
++      expect(rating(JSON.parse(localStorage.getItem('gym_state_v1')))).toBe(3.5)
++      expect(cell().textContent).toBe('3.5')
++      await click(cell())
++      expect(document.querySelector('.effpick input').value).toBe('3.5')
++      await click(document.querySelector('.effpick .item.menu-item'))
++      expect(rating(useStore.getState().S)).toBe(kind === 'rir' ? 0 : 10)
++      expect(rating(JSON.parse(localStorage.getItem('gym_state_v1')))).toBe(kind === 'rir' ? 0 : 10)
++      if (side) expect(useStore.getState().S.active.entries[0].sets[0].sides.R[kind]).toBeUndefined()
++    })
++})
++
+ describe('rating a superset set closes a sheet and moves the marker in one tap', () => {
+   it('scrolls to the partner row after the sheet has finished putting the page back', async () => {
+     await mount()
+diff --git a/frontend/src/views/Workout.test.jsx b/frontend/src/views/Workout.test.jsx
+index b26bf94..5b04fed 100644
+--- a/frontend/src/views/Workout.test.jsx
++++ b/frontend/src/views/Workout.test.jsx
+@@ -171,6 +171,8 @@ async function mount(entries, cur = 0, overrides = {}) {
+   mocks.S = workout(entries, cur, overrides)
+   installDom()
+   await act(async () => { root.render(React.createElement(Workout)) })
++  // This mock store has no subscription; show the occurrence-id migration's saved snapshot.
++  await act(async () => { root.render(React.createElement(Workout)) })
+ }
+ 
+ async function unmount() {
+@@ -1270,14 +1272,9 @@ describe('effort cell (colour-coded RIR/RPE quick picker)', () => {
+     target: { mode: 'reps', reps: 5, weight: 60, bodyweight: false },
+     sets: rirs.map(rir => ({ w: 60, r: 5, done: false, ...(rir == null ? {} : { rir }) })),
+   })
+-  // A cell is one of two shapes: an empty `.effcell` button (label, opens picker) or, once a
+-  // rating is logged, a `.effcell-stp` −/value/+ group. `.effcell-list` returns the outer
+-  // element of each (carrying the colour on the logged one); `effCells` normalises them to the
+-  // value-bearing, picker-opening element so the existing assertions read the same either way:
+-  // for the empty button that is the button itself, for the stepper it is the `.val` button.
+-  const effCellList = () => [...container.querySelectorAll('.effcell,.effcell-stp')]
+-  const effCells = () => effCellList().map(el =>
+-    el.classList.contains('effcell-stp') ? el.querySelector('.val') : el)
++  // Empty and logged ratings share a single, fully clickable button.
++  const effCellList = () => [...container.querySelectorAll('.setrow .effcell')]
++  const effCells = effCellList
+ 
+   async function mountEffort(rirs, scale = 'rir') {
+     mocks.S = workout([effExercise(rirs)])
+@@ -1313,9 +1310,9 @@ describe('effort cell (colour-coded RIR/RPE quick picker)', () => {
+     const cells = effCells()
+     const outer = effCellList()
+     expect(cells[0].textContent).toBe('0')
+-    expect(outer[0].className).toContain('effcell-stp')   // logged: the stepper, not the label
++    expect(outer[0].tagName).toBe('BUTTON')
+     // 0 RIR = to failure = purple; 2 RIR = yellow (the colours effortColor assigns) — the
+-    // colour rides the outer stepper (border + tinted background), not the inner value button
++    // colour rides the whole button (border + tinted background)
+     expect(outer[0].getAttribute('style')).toContain('--purple')
+     expect(cells[1].textContent).toBe('2')
+     expect(outer[1].getAttribute('style')).toContain('--yellow')
+@@ -1354,35 +1351,25 @@ describe('effort cell (colour-coded RIR/RPE quick picker)', () => {
+     expect('rir' in mocks.S.active.entries[0].sets[0]).toBe(false)
+   })
+ 
+-  // The mock store is a plain snapshot with no subscription, so a click updates mocks.S but
+-  // does not re-render on its own; each step is checked from its own mount rather than chained.
+-  const clickStep = async label => {
+-    await act(async () => {
+-      effCellList()[0].querySelector(`button[aria-label="${label}"]`)
+-        .dispatchEvent(new dom.Event('click', { bubbles: true }))
+-    })
+-  }
+-
+-  it('steps a logged rating up 0.5 on the scale with the + button, not through the picker', async () => {
+-    await mountEffort([2])
+-    expect(effCellList()[0].querySelectorAll('button[aria-label="Increase"],button[aria-label="Decrease"]')).toHaveLength(2)
+-    await clickStep('Increase')
+-    expect(mocks.S.active.entries[0].sets[0].rir).toBe(2.5)
+-    expect(mocks.effortPickerSheet).not.toHaveBeenCalled()
+-  })
+-
+-  it('steps a logged rating down 0.5 with the − button', async () => {
+-    await mountEffort([2])
+-    await clickStep('Decrease')
+-    expect(mocks.S.active.entries[0].sets[0].rir).toBe(1.5)
++  it('has no effort stepper buttons and preserves the weight/reps steppers', async () => {
++    await mountEffort([0, 2, 8.5])
++    expect(container.querySelectorAll('.setrow .effcell-stp')).toHaveLength(0)
++    for (const cell of effCells()) {
++      expect(cell.tagName).toBe('BUTTON')
++      expect(cell.querySelectorAll('button, .icn')).toHaveLength(0)
++    }
++    expect(container.querySelectorAll('.setrow .stp.w button')).toHaveLength(6)
++    expect(container.querySelectorAll('.setrow .stp.r button')).toHaveLength(6)
+   })
+ 
+-  it('clears the rating when stepped down off the floor', async () => {
+-    // RIR 0 is the bottom of the scale — one more − is a mistap-undo, dropping the key rather
+-    // than sticking at 0 (which reads as "went to failure")
++  it('reopens the picker on every tap, including a logged zero', async () => {
+     await mountEffort([0])
+-    await clickStep('Decrease')
+-    expect('rir' in mocks.S.active.entries[0].sets[0]).toBe(false)
++    for (let i = 1; i <= 2; i++) {
++      await act(async () => { effCells()[0].dispatchEvent(new dom.Event('click', { bubbles: true })) })
++      expect(mocks.effortPickerSheet).toHaveBeenCalledTimes(i)
++      expect(mocks.effortPickerSheet).toHaveBeenLastCalledWith('rir', 0, expect.any(Function))
++      expect(mocks.S.active.entries[0].sets[0].rir).toBe(0)
++    }
+   })
+ })
+ 
+@@ -1499,7 +1486,8 @@ describe('active workout whole-unit move controls', () => {
+     expect(action('Move down')?.textContent.trim()).toBe('Move down')
+     await act(async () => { action('Move up').dispatchEvent(new dom.Event('click', { bubbles: true })) })
+ 
+-    expect(mocks.S.active.entries.map(entry => entry.occurrenceId || entry.id)).toEqual(['duplicate#1', 'duplicate#2', 'middle'])
++    expect(mocks.S.active.entries.map(entry => entry.id)).toEqual(['duplicate', 'duplicate', 'middle'])
++    expect(mocks.S.active.entries.slice(0, 2).map(entry => entry.occurrenceId)).toEqual(['duplicate#1', 'duplicate#2'])
+     expect(mocks.S.active.entries[1]).toEqual(selected)
+     expect(mocks.S.active.entries[1].target).toEqual({ mode: 'reps', reps: 7, weight: 82.5, notes: 'Keep this target' })
+     expect(mocks.S.active.entries[1].sets).toEqual([{ w: 77.5, r: 6, done: true, rir: 2 }])
+@@ -2926,7 +2914,7 @@ describe('workout controls: the more menu and the set menu', () => {
+ describe('effort rating auto-ends the set', () => {
+   // Open the effort picker for set `index` and return the onPick callback the cell handed it.
+   async function openEffortPicker(index = 0) {
+-    const cell = container.querySelectorAll('.setrow .effcell.is-empty, .setrow .effcell-stp .val')[index]
++    const cell = container.querySelectorAll('.setrow .effcell')[index]
+     expect(cell).toBeTruthy()
+     await act(async () => { cell.dispatchEvent(new dom.Event('click', { bubbles: true })) })
+     const call = mocks.effortPickerSheet.mock.calls.at(-1)

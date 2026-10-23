@@ -1,0 +1,16 @@
+✔ the request deadline covers a body which never finishes after headers (36.5643ms)
+✔ a pre-aborted request never invokes the transport (0.7872ms)
+✔ streamed oversized responses are cancelled before reading more chunks (1.8843ms)
+✔ repair receives only the remaining job budget and token limits are not authentication failures (27.7799ms)
+✔ historical single debriefs and plan debriefs share exact frozen records (28.6594ms)
+✔ a plan trend cites two supplied sessions which actually contain the claimed exercise (0.6041ms)
+✔ duplicate exercises in one workout consume one recent-session slot (1.5751ms)
+✔ created plans honor complete preferred weekdays and reject implausible session workloads (1.1374ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 234.0058

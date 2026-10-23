@@ -1,0 +1,4 @@
+# Progress
+2026-10-23: Loaded systematic-debugging, planning-with-files and verification-before-completion. Read prior project records as memory fallback.
+2026-10-23 follow-up: completed static audit and executable Chinese technical specification for GPT-6.1-sol. Source remains at 162a916f with clean git status. Inspected document structure; implementation/test/build commands are future instructions, not executed results.
+2026-10-23 A14 supplement: added arbitrary saved workout debrief and per-routine latest 3/5/10 debrief (default 5). Spec includes user chest/abs scenario, selectors, stable IDs, combined-session projection, frozen selection/API v2, report snapshots, B2a/B5a implementation batches, and acceptance matrix. Only planning document updated; source unchanged, no tests/builds executed.

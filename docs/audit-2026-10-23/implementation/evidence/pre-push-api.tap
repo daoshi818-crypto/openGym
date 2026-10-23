@@ -1,0 +1,1063 @@
+TAP version 13
+# Subtest: the four HTTP adapters spawn nothing and need no runtime
+ok 1 - the four HTTP adapters spawn nothing and need no runtime
+  ---
+  duration_ms: 3.5683
+  type: 'test'
+  ...
+# Subtest: Anthropic: /v1/messages with the key in a header, the shared system prompt, and the text joined back
+ok 2 - Anthropic: /v1/messages with the key in a header, the shared system prompt, and the text joined back
+  ---
+  duration_ms: 9.0934
+  type: 'test'
+  ...
+# Subtest: OpenAI: chat completions in JSON mode, bearer auth, max_completion_tokens
+ok 3 - OpenAI: chat completions in JSON mode, bearer auth, max_completion_tokens
+  ---
+  duration_ms: 2.8645
+  type: 'test'
+  ...
+# Subtest: Gemini: generateContent with the key as a header — never ?key= — and JSON output requested
+ok 4 - Gemini: generateContent with the key as a header — never ?key= — and JSON output requested
+  ---
+  duration_ms: 0.987
+  type: 'test'
+  ...
+# Subtest: compatible: the configured base URL, max_tokens, and no Authorization header when there is no key
+ok 5 - compatible: the configured base URL, max_tokens, and no Authorization header when there is no key
+  ---
+  duration_ms: 1.4819
+  type: 'test'
+  ...
+# Subtest: compatible: a base that already names its API version is used as the full prefix (\#437)
+ok 6 - compatible: a base that already names its API version is used as the full prefix (\#437)
+  ---
+  duration_ms: 4.4995
+  type: 'test'
+  ...
+# Subtest: compatible: a mount whose API has no version segment is reached on the 404 fallback and remembered (\#508)
+ok 7 - compatible: a mount whose API has no version segment is reached on the 404 fallback and remembered (\#508)
+  ---
+  duration_ms: 225.8118
+  type: 'test'
+  ...
+# Subtest: compatible: the 404 fallback keeps the first error when neither form answers, and never touches other providers (\#508)
+ok 8 - compatible: the 404 fallback keeps the first error when neither form answers, and never touches other providers (\#508)
+  ---
+  duration_ms: 3.0873
+  type: 'test'
+  ...
+# Subtest: compatible: no endpoint configured, or no model chosen, is a clean failure rather than a request
+ok 9 - compatible: no endpoint configured, or no model chosen, is a clean failure rather than a request
+  ---
+  duration_ms: 0.5461
+  type: 'test'
+  ...
+# Subtest: compatible: a server that rejects JSON mode gets the same request once more without it
+ok 10 - compatible: a server that rejects JSON mode gets the same request once more without it
+  ---
+  duration_ms: 1.2318
+  type: 'test'
+  ...
+# Subtest: a missing key is "missing", like an absent CLI — no request is made
+ok 11 - a missing key is "missing", like an absent CLI — no request is made
+  ---
+  duration_ms: 1.2113
+  type: 'test'
+  ...
+# Subtest: 401 and 403 reach the pipeline as "auth"; other statuses as "provider"
+ok 12 - 401 and 403 reach the pipeline as "auth"; other statuses as "provider"
+  ---
+  duration_ms: 87.5472
+  type: 'test'
+  ...
+# Subtest: a transient status (429, 5xx, 529) is retried twice with the same request, then given up on
+ok 13 - a transient status (429, 5xx, 529) is retried twice with the same request, then given up on
+  ---
+  duration_ms: 46.0335
+  type: 'test'
+  ...
+# Subtest: an abort during a retry pause sends nothing more and ends as cancelled
+ok 14 - an abort during a retry pause sends nothing more and ends as cancelled
+  ---
+  duration_ms: 31.0389
+  type: 'test'
+  ...
+# Subtest: a body that is not JSON on an error still yields a readable stderr
+ok 15 - a body that is not JSON on an error still yields a readable stderr
+  ---
+  duration_ms: 7012.1984
+  type: 'test'
+  ...
+# Subtest: an answer cut off at the output limit fails as "provider", not as a half-parsed proposal
+ok 16 - an answer cut off at the output limit fails as "provider", not as a half-parsed proposal
+  ---
+  duration_ms: 1.4745
+  type: 'test'
+  ...
+# Subtest: a refusal, and a Gemini safety stop, are provider errors with the reason in stderr
+ok 17 - a refusal, and a Gemini safety stop, are provider errors with the reason in stderr
+  ---
+  duration_ms: 0.6929
+  type: 'test'
+  ...
+# Subtest: a fetch that throws names the host; an abort is a timeout
+ok 18 - a fetch that throws names the host; an abort is a timeout
+  ---
+  duration_ms: 57.8643
+  type: 'test'
+  ...
+# Subtest: models(): each list shape is read, sorted, and Gemini is filtered to generateContent
+ok 19 - models(): each list shape is read, sorted, and Gemini is filtered to generateContent
+  ---
+  duration_ms: 1.0478
+  type: 'test'
+  ...
+# Subtest: check(): without a key the runtime is ready and the key is what is missing; with one it lists models
+ok 20 - check(): without a key the runtime is ready and the key is what is missing; with one it lists models
+  ---
+  duration_ms: 0.3161
+  type: 'test'
+  ...
+# Subtest: check(): the Runtime line names the scheme the endpoint is really called with
+ok 21 - check(): the Runtime line names the scheme the endpoint is really called with
+  ---
+  duration_ms: 0.4626
+  type: 'test'
+  ...
+# Subtest: validateBaseUrl: http(s) only, no credentials, no query, trailing slash dropped
+ok 22 - validateBaseUrl: http(s) only, no credentials, no query, trailing slash dropped
+  ---
+  duration_ms: 0.2746
+  type: 'test'
+  ...
+# Subtest: models(): OpenAI’s list is cut to what Chat Completions can use; a compatible endpoint is not filtered
+ok 23 - models(): OpenAI’s list is cut to what Chat Completions can use; a compatible endpoint is not filtered
+  ---
+  duration_ms: 0.7394
+  type: 'test'
+  ...
+# Subtest: invoke sends the configured maxTokens override, and the adapter default when none is given
+ok 24 - invoke sends the configured maxTokens override, and the adapter default when none is given
+  ---
+  duration_ms: 0.861
+  type: 'test'
+  ...
+# Subtest: compatible: configured extra headers ride on models, check and jobs — auth framing always wins
+ok 25 - compatible: configured extra headers ride on models, check and jobs — auth framing always wins
+  ---
+  duration_ms: 0.5019
+  type: 'test'
+  ...
+# Subtest: validateHeaders: small maps pass, framing names and junk do not
+ok 26 - validateHeaders: small maps pass, framing names and junk do not
+  ---
+  duration_ms: 0.5321
+  type: 'test'
+  ...
+# Subtest: forgetting a profile does not hand it a fresh daily cap
+ok 27 - forgetting a profile does not hand it a fresh daily cap
+  ---
+  duration_ms: 162.3765
+  type: 'test'
+  ...
+# Subtest: with nothing spent today, forget leaves no file at all
+ok 28 - with nothing spent today, forget leaves no file at all
+  ---
+  duration_ms: 6.4614
+  type: 'test'
+  ...
+# Subtest: the instance cap is reserved at enqueue, so a job still running already counts
+ok 29 - the instance cap is reserved at enqueue, so a job still running already counts
+  ---
+  duration_ms: 116.5142
+  type: 'test'
+  ...
+# coach: scheduled review queued for u-cadence
+# Subtest: the instance count is not bounded by the length of the job log
+ok 30 - the instance count is not bounded by the length of the job log
+  ---
+  duration_ms: 106.1594
+  type: 'test'
+  ...
+# coach: scheduled review queued for u-cadence
+# coach: scheduled review queued for u-cadence-tz
+# Subtest: a scheduled review reads a batch of workouts once, not once per tick
+ok 31 - a scheduled review reads a batch of workouts once, not once per tick
+  ---
+  duration_ms: 217.9849
+  type: 'test'
+  ...
+# coach: scheduled review queued for u-cadence-unusable
+# Subtest: a workout the phone dated tomorrow is not re-read once the review has covered it
+ok 32 - a workout the phone dated tomorrow is not re-read once the review has covered it
+  ---
+  duration_ms: 125.9404
+  type: 'test'
+  ...
+# coach: scheduled review queued for u-cadence-unusable
+# coach: scheduled review queued for u-cadence-unusable
+# coach: scheduled review queued for u-cadence-pending
+# Subtest: an answer the model was paid for counts as the review, even when it was unusable
+ok 33 - an answer the model was paid for counts as the review, even when it was unusable
+  ---
+  duration_ms: 568.5131
+  type: 'test'
+  ...
+# coach: scheduled review queued for u-cadence-pending
+# Subtest: a proposal nobody has answered is not replaced by the next scheduled review
+ok 34 - a proposal nobody has answered is not replaced by the next scheduled review
+  ---
+  duration_ms: 270.2316
+  type: 'test'
+  ...
+# Subtest: a rejected answer tells the admin which rule broke, without quoting the plan
+ok 35 - a rejected answer tells the admin which rule broke, without quoting the plan
+  ---
+  duration_ms: 0.7636
+  type: 'test'
+  ...
+# Subtest: the request deadline covers a body which never finishes after headers
+ok 36 - the request deadline covers a body which never finishes after headers
+  ---
+  duration_ms: 42.4585
+  type: 'test'
+  ...
+# Subtest: a pre-aborted request never invokes the transport
+ok 37 - a pre-aborted request never invokes the transport
+  ---
+  duration_ms: 0.7262
+  type: 'test'
+  ...
+# Subtest: streamed oversized responses are cancelled before reading more chunks
+ok 38 - streamed oversized responses are cancelled before reading more chunks
+  ---
+  duration_ms: 1.418
+  type: 'test'
+  ...
+# Subtest: repair receives only the remaining job budget and token limits are not authentication failures
+ok 39 - repair receives only the remaining job budget and token limits are not authentication failures
+  ---
+  duration_ms: 26.8092
+  type: 'test'
+  ...
+# Subtest: historical single debriefs and plan debriefs share exact frozen records
+ok 40 - historical single debriefs and plan debriefs share exact frozen records
+  ---
+  duration_ms: 36.8983
+  type: 'test'
+  ...
+# Subtest: a plan trend cites two supplied sessions which actually contain the claimed exercise
+ok 41 - a plan trend cites two supplied sessions which actually contain the claimed exercise
+  ---
+  duration_ms: 0.66
+  type: 'test'
+  ...
+# Subtest: duplicate exercises in one workout consume one recent-session slot
+ok 42 - duplicate exercises in one workout consume one recent-session slot
+  ---
+  duration_ms: 1.5766
+  type: 'test'
+  ...
+# Subtest: created plans honor complete preferred weekdays and reject implausible session workloads
+ok 43 - created plans honor complete preferred weekdays and reject implausible session workloads
+  ---
+  duration_ms: 1.6502
+  type: 'test'
+  ...
+# Subtest: real queue preserves frozen session selection, report evidence, scope and decision identity
+ok 44 - real queue preserves frozen session selection, report evidence, scope and decision identity
+  ---
+  duration_ms: 353.3394
+  type: 'test'
+  ...
+# Subtest: no consent, no job — the gate is on the server, not the screen
+ok 45 - no consent, no job — the gate is on the server, not the screen
+  ---
+  duration_ms: 9.8692
+  type: 'test'
+  ...
+# Subtest: one job per profile at a time
+ok 46 - one job per profile at a time
+  ---
+  duration_ms: 191.1809
+  type: 'test'
+  ...
+# Subtest: the daily cap is enforced and reported as its own failure
+ok 47 - the daily cap is enforced and reported as its own failure
+  ---
+  duration_ms: 138.7423
+  type: 'test'
+  ...
+# Subtest: an answer that stays unusable fails cleanly and applies nothing
+ok 48 - an answer that stays unusable fails cleanly and applies nothing
+  ---
+  duration_ms: 311.2595
+  type: 'test'
+  ...
+# Subtest: a provider that crashes is reported, not retried behind the user's back
+ok 49 - a provider that crashes is reported, not retried behind the user's back
+  ---
+  duration_ms: 138.64
+  type: 'test'
+  ...
+# Subtest: an expired proposal disappears on read rather than lingering forever
+ok 50 - an expired proposal disappears on read rather than lingering forever
+  ---
+  duration_ms: 190.9061
+  type: 'test'
+  ...
+# Subtest: forgetting a profile leaves no server-side residue
+ok 51 - forgetting a profile leaves no server-side residue
+  ---
+  duration_ms: 154.8763
+  type: 'test'
+  ...
+# Subtest: forgetting a profile mid-job cancels the call and frees its slot at once
+ok 52 - forgetting a profile mid-job cancels the call and frees its slot at once
+  ---
+  duration_ms: 272.4384
+  type: 'test'
+  ...
+# Subtest: a runtime that cannot be cancelled still has its late answer discarded after a forget
+ok 53 - a runtime that cannot be cancelled still has its late answer discarded after a forget
+  ---
+  duration_ms: 151.4115
+  type: 'test'
+  ...
+# Subtest: forgetting a profile whose job is still queued drops it before anything leaves
+ok 54 - forgetting a profile whose job is still queued drops it before anything leaves
+  ---
+  duration_ms: 533.8956
+  type: 'test'
+  ...
+# Subtest: consent withdrawn, or the Coach switched off, while a job waits: no payload leaves
+ok 55 - consent withdrawn, or the Coach switched off, while a job waits: no payload leaves
+  ---
+  duration_ms: 168.5152
+  type: 'test'
+  ...
+# coach: cleared 1 job(s) interrupted by restart
+# Subtest: a payload bigger than any real history is refused before the provider is called
+ok 56 - a payload bigger than any real history is refused before the provider is called
+  ---
+  duration_ms: 186.6022
+  type: 'test'
+  ...
+# Subtest: a job interrupted by a restart is reported as failed, not left spinning
+ok 57 - a job interrupted by a restart is reported as failed, not left spinning
+  ---
+  duration_ms: 37.7636
+  type: 'test'
+  ...
+# Subtest: the plan fingerprint moves when the plan does, and only then
+ok 58 - the plan fingerprint moves when the plan does, and only then
+  ---
+  duration_ms: 0.6167
+  type: 'test'
+  ...
+# Subtest: the fingerprint covers every field canonicalPlan reports, including the v1.2.4 three
+ok 59 - the fingerprint covers every field canonicalPlan reports, including the v1.2.4 three
+  ---
+  duration_ms: 0.7579
+  type: 'test'
+  ...
+# Subtest: a review job produces a checked change-set, and nothing is left unvalidated
+ok 60 - a review job produces a checked change-set, and nothing is left unvalidated
+  ---
+  duration_ms: 141.722
+  type: 'test'
+  ...
+# Subtest: a create job produces a bundle the client can merge unchanged
+ok 61 - a create job produces a bundle the client can merge unchanged
+  ---
+  duration_ms: 138.9614
+  type: 'test'
+  ...
+# Subtest: a well-formed answer naming an exercise nobody has is refused, twice, and applies nothing
+ok 62 - a well-formed answer naming an exercise nobody has is refused, twice, and applies nothing
+  ---
+  duration_ms: 183.6973
+  type: 'test'
+  ...
+# Subtest: the one repair round rescues an answer the validator rejected
+ok 63 - the one repair round rescues an answer the validator rejected
+  ---
+  duration_ms: 189.6966
+  type: 'test'
+  ...
+# Subtest: "nothing to change" keeps the reason it gave, and proposes nothing
+ok 64 - "nothing to change" keeps the reason it gave, and proposes nothing
+  ---
+  duration_ms: 125.062
+  type: 'test'
+  ...
+# Subtest: a refine carries the plan it is refining, and counts as the next iteration
+ok 65 - a refine carries the plan it is refining, and counts as the next iteration
+  ---
+  duration_ms: 242.1298
+  type: 'test'
+  ...
+# Subtest: the admin test-run completes a round trip without a user to spend
+ok 66 - the admin test-run completes a round trip without a user to spend
+  ---
+  duration_ms: 73.1514
+  type: 'test'
+  ...
+# Subtest: a job is refused outright when the privilege drop cannot be performed
+ok 67 - a job is refused outright when the privilege drop cannot be performed
+  ---
+  duration_ms: 5.7114
+  type: 'test'
+  ...
+# Subtest: an HTTPS provider is not refused for lacking a privilege drop, and runs end to end through the queue
+ok 68 - an HTTPS provider is not refused for lacking a privilege drop, and runs end to end through the queue
+  ---
+  duration_ms: 71.3868
+  type: 'test'
+  ...
+# Subtest: a note is truncated to the admin's configured max, not clipped to the old 1000-char default (issue \#267)
+ok 69 - a note is truncated to the admin's configured max, not clipped to the old 1000-char default (issue \#267)
+  ---
+  duration_ms: 54.1873
+  type: 'test'
+  ...
+# Subtest: a job sends the admin's configured output cap, so a reasoning model is not cut off
+ok 70 - a job sends the admin's configured output cap, so a reasoning model is not cut off
+  ---
+  duration_ms: 63.9928
+  type: 'test'
+  ...
+# Subtest: an intake posted with megabytes of text is cut to what the intake screen allows
+ok 71 - an intake posted with megabytes of text is cut to what the intake screen allows
+  ---
+  duration_ms: 30.4821
+  type: 'test'
+  ...
+# Subtest: a profile synced into the state is cut the same way, for a review and a debrief too
+ok 72 - a profile synced into the state is cut the same way, for a review and a debrief too
+  ---
+  duration_ms: 81.167
+  type: 'test'
+  ...
+# Subtest: a profile of the wrong shape reads as absent instead of crashing or leaking an object
+ok 73 - a profile of the wrong shape reads as absent instead of crashing or leaking an object
+  ---
+  duration_ms: 2.5588
+  type: 'test'
+  ...
+# Subtest: weekdays are read as weekdays: nothing becomes Sunday, and zero days or minutes read as unset
+ok 74 - weekdays are read as weekdays: nothing becomes Sunday, and zero days or minutes read as unset
+  ---
+  duration_ms: 1.6825
+  type: 'test'
+  ...
+# Subtest: a real intake passes through unchanged
+ok 75 - a real intake passes through unchanged
+  ---
+  duration_ms: 2.1046
+  type: 'test'
+  ...
+# Subtest: names, the declined log and the meta codes are bounded too, since the state is the client's
+ok 76 - names, the declined log and the meta codes are bounded too, since the state is the client's
+  ---
+  duration_ms: 6.5697
+  type: 'test'
+  ...
+# Subtest: the limits match the intake screen
+ok 77 - the limits match the intake screen
+  ---
+  duration_ms: 1.5837
+  type: 'test'
+  ...
+# Subtest: every plan, log and id field is bounded too, for a create, a review and a debrief
+ok 78 - every plan, log and id field is bounded too, for a create, a review and a debrief
+  ---
+  duration_ms: 119.3823
+  type: 'test'
+  ...
+# Subtest: an id is cut, a policy outside the engine's five and a number that is not one read as absent
+ok 79 - an id is cut, a policy outside the engine's five and a number that is not one read as absent
+  ---
+  duration_ms: 1.9612
+  type: 'test'
+  ...
+# Subtest: the plan and the log a real app writes pass through exactly as before
+ok 80 - the plan and the log a real app writes pass through exactly as before
+  ---
+  duration_ms: 4.1333
+  type: 'test'
+  ...
+# Subtest: the cohort is bounded where it joins the payload, whoever built it
+ok 81 - the cohort is bounded where it joins the payload, whoever built it
+  ---
+  duration_ms: 2.5811
+  type: 'test'
+  ...
+# Subtest: the server handle is stable per uid, distinct across uids, and never the uid
+ok 82 - the server handle is stable per uid, distinct across uids, and never the uid
+  ---
+  duration_ms: 9.9009
+  type: 'test'
+  ...
+# Subtest: build refuses to run without a handle — a payload must never fall back to the uid
+ok 83 - build refuses to run without a handle — a payload must never fall back to the uid
+  ---
+  duration_ms: 2.1623
+  type: 'test'
+  ...
+# Subtest: payload never carries identity, credentials or device data
+ok 84 - payload never carries identity, credentials or device data
+  ---
+  duration_ms: 7.9292
+  type: 'test'
+  ...
+# Subtest: the same profile always gets the same handle, and two profiles never share one
+ok 85 - the same profile always gets the same handle, and two profiles never share one
+  ---
+  duration_ms: 9.8571
+  type: 'test'
+  ...
+# Subtest: review payload carries the plan, the window, effort and aggregates
+ok 86 - review payload carries the plan, the window, effort and aggregates
+  ---
+  duration_ms: 3.6373
+  type: 'test'
+  ...
+# Subtest: a stalling exercise shows up in the aggregates the way the engine counts it
+ok 87 - a stalling exercise shows up in the aggregates the way the engine counts it
+  ---
+  duration_ms: 16.63
+  type: 'test'
+  ...
+# Subtest: a set that was never ticked off is a miss, not a gap
+ok 88 - a set that was never ticked off is a miss, not a gap
+  ---
+  duration_ms: 2.6595
+  type: 'test'
+  ...
+# Subtest: the review window is bounded even for someone with years of history
+ok 89 - the review window is bounded even for someone with years of history
+  ---
+  duration_ms: 4.504
+  type: 'test'
+  ...
+# Subtest: creation payload carries working weights so baselines start from evidence
+ok 90 - creation payload carries working weights so baselines start from evidence
+  ---
+  duration_ms: 3.4139
+  type: 'test'
+  ...
+# Subtest: the library is filtered to the equipment someone actually has
+ok 91 - the library is filtered to the equipment someone actually has
+  ---
+  duration_ms: 8.1007
+  type: 'test'
+  ...
+# Subtest: the library slice is capped, balanced across body parts, deterministic, and keeps what the user trains
+ok 92 - the library slice is capped, balanced across body parts, deterministic, and keeps what the user trains
+  ---
+  duration_ms: 6.2215
+  type: 'test'
+  ...
+# Subtest: the lanes are weighted by what a plan is actually built from
+ok 93 - the lanes are weighted by what a plan is actually built from
+  ---
+  duration_ms: 0.9438
+  type: 'test'
+  ...
+# Subtest: stretches are dropped from the candidate pool but not from the catalogue
+ok 94 - stretches are dropped from the candidate pool but not from the catalogue
+  ---
+  duration_ms: 3.4099
+  type: 'test'
+  ...
+# Subtest: a first plan for someone who stated no equipment reaches the staple lifts
+ok 95 - a first plan for someone who stated no equipment reaches the staple lifts
+  ---
+  duration_ms: 1.5295
+  type: 'test'
+  ...
+# Subtest: equipment nobody in the library has still yields a usable library
+ok 96 - equipment nobody in the library has still yields a usable library
+  ---
+  duration_ms: 2.2305
+  type: 'test'
+  ...
+# Subtest: declined changes are carried forward so the Coach does not nag
+ok 97 - declined changes are carried forward so the Coach does not nag
+  ---
+  duration_ms: 2.9186
+  type: 'test'
+  ...
+# Subtest: a debrief payload carries one session, its predecessors of the same routine, and no library
+ok 98 - a debrief payload carries one session, its predecessors of the same routine, and no library
+  ---
+  duration_ms: 2.7177
+  type: 'test'
+  ...
+# Subtest: a set taken to failure reaches the coach as failure, a warm-up never does
+ok 99 - a set taken to failure reaches the coach as failure, a warm-up never does
+  ---
+  duration_ms: 1.6221
+  type: 'test'
+  ...
+# Subtest: an unknown workout id is rejected and only an omitted id selects the latest session
+ok 100 - an unknown workout id is rejected and only an omitted id selects the latest session
+  ---
+  duration_ms: 2.4714
+  type: 'test'
+  ...
+# Subtest: workoutMeta counts done work sets, keeps the stored volume and the PR count
+ok 101 - workoutMeta counts done work sets, keeps the stored volume and the PR count
+  ---
+  duration_ms: 0.3814
+  type: 'test'
+  ...
+# Subtest: the cohort rides along on a review and a debrief only when handed in
+ok 102 - the cohort rides along on a review and a debrief only when handed in
+  ---
+  duration_ms: 11.056
+  type: 'test'
+  ...
+# Subtest: a refine with no plan to refine is a fresh plan with a note, never refine.previous = null
+ok 103 - a refine with no plan to refine is a fresh plan with a note, never refine.previous = null
+  ---
+  duration_ms: 5.6121
+  type: 'test'
+  ...
+# Subtest: a note/refine is capped at MAX_NOTE_CHARS, not the old 1000-char literal (issue \#267)
+ok 104 - a note/refine is capped at MAX_NOTE_CHARS, not the old 1000-char literal (issue \#267)
+  ---
+  duration_ms: 8.5344
+  type: 'test'
+  ...
+# Subtest: the last few chat lines travel as conversation — user text and Coach verdicts only, never the message being sent
+ok 105 - the last few chat lines travel as conversation — user text and Coach verdicts only, never the message being sent
+  ---
+  duration_ms: 6.6354
+  type: 'test'
+  ...
+# Subtest: a custom exercise's photo, video and link never reach the payload
+ok 106 - a custom exercise's photo, video and link never reach the payload
+  ---
+  duration_ms: 8.4304
+  type: 'test'
+  ...
+# Subtest: meta.lang is the language the app asked in, else the stored one
+ok 107 - meta.lang is the language the app asked in, else the stored one
+  ---
+  duration_ms: 7.1122
+  type: 'test'
+  ...
+# Subtest: a routine icon in the payload is an icon key or an emoji, never text
+ok 108 - a routine icon in the payload is an icon key or an emoji, never text
+  ---
+  duration_ms: 12.8302
+  type: 'test'
+  ...
+# Subtest: a workout's photos and videos never reach the payload
+ok 109 - a workout's photos and videos never reach the payload
+  ---
+  duration_ms: 8.0969
+  type: 'test'
+  ...
+# Subtest: a session note reaches the model whole, bounded only at the app's own cap
+ok 110 - a session note reaches the model whole, bounded only at the app's own cap
+  ---
+  duration_ms: 2.8828
+  type: 'test'
+  ...
+# Subtest: the app's active equipment profile stands in when the Coach was told no equipment
+ok 111 - the app's active equipment profile stands in when the Coach was told no equipment
+  ---
+  duration_ms: 10.935
+  type: 'test'
+  ...
+# Subtest: the admin card is told which providers hold a key, and switching never drops one
+ok 112 - the admin card is told which providers hold a key, and switching never drops one
+  ---
+  duration_ms: 95.0147
+  type: 'test'
+  ...
+# Subtest: a key filed for a provider that does not take one, or an unknown provider, is refused
+ok 113 - a key filed for a provider that does not take one, or an unknown provider, is refused
+  ---
+  duration_ms: 3.8533
+  type: 'test'
+  ...
+# Subtest: the compatible endpoint: base URL is validated, a keyless endpoint counts as connected, and models come from it
+ok 114 - the compatible endpoint: base URL is validated, a keyless endpoint counts as connected, and models come from it
+  ---
+  duration_ms: 33.258
+  type: 'test'
+  ...
+# Subtest: the disclosure names the provider and the same five categories the payload builds from
+ok 115 - the disclosure names the provider and the same five categories the payload builds from
+  ---
+  duration_ms: 4.0893
+  type: 'test'
+  ...
+# Subtest: a debrief is enqueued as its own kind, and the cohort routes gate on the admin switch and the opt-in
+ok 116 - a debrief is enqueued as its own kind, and the cohort routes gate on the admin switch and the opt-in
+  ---
+  duration_ms: 229.4694
+  type: 'test'
+  ...
+# Subtest: an admin can raise the Coach message length past the old 1000-char default, clamped to a sane range
+ok 117 - an admin can raise the Coach message length past the old 1000-char default, clamped to a sane range
+  ---
+  duration_ms: 10.3271
+  type: 'test'
+  ...
+# Subtest: the Coach-off guard names its class beside the words, on every guarded user route
+ok 118 - the Coach-off guard names its class beside the words, on every guarded user route
+  ---
+  duration_ms: 6.631
+  type: 'test'
+  ...
+# Subtest: an admin can raise the Coach output cap for a reasoning model, clamped to a sane range
+ok 119 - an admin can raise the Coach output cap for a reasoning model, clamped to a sane range
+  ---
+  duration_ms: 7.0645
+  type: 'test'
+  ...
+# Subtest: an admin can store extra headers for the compatible endpoint; framing names are refused
+ok 120 - an admin can store extra headers for the compatible endpoint; framing names are refused
+  ---
+  duration_ms: 7.2533
+  type: 'test'
+  ...
+# Subtest: a plan referencing an unknown exercise is rejected, not quietly trimmed
+ok 121 - a plan referencing an unknown exercise is rejected, not quietly trimmed
+  ---
+  duration_ms: 2.9043
+  type: 'test'
+  ...
+# Subtest: a plan naming a machine the person does not have goes back for repair
+ok 122 - a plan naming a machine the person does not have goes back for repair
+  ---
+  duration_ms: 2.0545
+  type: 'test'
+  ...
+# Subtest: a plan may reference a custom exercise it defines in the same answer
+ok 123 - a plan may reference a custom exercise it defines in the same answer
+  ---
+  duration_ms: 0.2969
+  type: 'test'
+  ...
+# Subtest: a routine icon key survives whole, in a created plan and in an added routine
+ok 124 - a routine icon key survives whole, in a created plan and in an added routine
+  ---
+  duration_ms: 0.7194
+  type: 'test'
+  ...
+# Subtest: a flag is one pair of regional indicators, not a run of them spelling a word; legacy icon keys survive (\#311)
+ok 125 - a flag is one pair of regional indicators, not a run of them spelling a word; legacy icon keys survive (\#311)
+  ---
+  duration_ms: 0.969
+  type: 'test'
+  ...
+# Subtest: the week may only point at routines the plan actually defines
+ok 126 - the week may only point at routines the plan actually defines
+  ---
+  duration_ms: 0.4021
+  type: 'test'
+  ...
+# Subtest: proposed baselines are capped at what the lifter has actually handled
+ok 127 - proposed baselines are capped at what the lifter has actually handled
+  ---
+  duration_ms: 0.2659
+  type: 'test'
+  ...
+# Subtest: a plan that ignores the requested number of training days is rejected
+ok 128 - a plan that ignores the requested number of training days is rejected
+  ---
+  duration_ms: 0.3437
+  type: 'test'
+  ...
+# Subtest: an unknown progression policy is rejected
+ok 129 - an unknown progression policy is rejected
+  ---
+  duration_ms: 0.373
+  type: 'test'
+  ...
+# Subtest: a created plan carries the rep ceiling and the two flags through unchanged
+ok 130 - a created plan carries the rep ceiling and the two flags through unchanged
+  ---
+  duration_ms: 0.5412
+  type: 'test'
+  ...
+# Subtest: triple progression and its set ceiling survive a created plan
+ok 131 - triple progression and its set ceiling survive a created plan
+  ---
+  duration_ms: 0.309
+  type: 'test'
+  ...
+# Subtest: unilateral reps are a total across both sides, so an odd one is refused
+ok 132 - unilateral reps are a total across both sides, so an odd one is refused
+  ---
+  duration_ms: 0.2711
+  type: 'test'
+  ...
+# Subtest: a rep ceiling below its own floor is refused at both ends
+ok 133 - a rep ceiling below its own floor is refused at both ends
+  ---
+  duration_ms: 0.4533
+  type: 'test'
+  ...
+# Subtest: a review cannot prescribe an odd total on a per-side exercise
+ok 134 - a review cannot prescribe an odd total on a per-side exercise
+  ---
+  duration_ms: 0.2812
+  type: 'test'
+  ...
+# Subtest: an invented change type does nothing at all
+ok 135 - an invented change type does nothing at all
+  ---
+  duration_ms: 0.1463
+  type: 'test'
+  ...
+# Subtest: every change must target something that exists
+ok 136 - every change must target something that exists
+  ---
+  duration_ms: 0.2538
+  type: 'test'
+  ...
+# Subtest: a change without a rationale is rejected
+ok 137 - a change without a rationale is rejected
+  ---
+  duration_ms: 0.1479
+  type: 'test'
+  ...
+# Subtest: values are type-checked per change type
+ok 138 - values are type-checked per change type
+  ---
+  duration_ms: 0.3892
+  type: 'test'
+  ...
+# Subtest: adding an exercise requires a real library id
+ok 139 - adding an exercise requires a real library id
+  ---
+  duration_ms: 0.3933
+  type: 'test'
+  ...
+# Subtest: an added exercise may declare itself bodyweight, per-side and capped
+ok 140 - an added exercise may declare itself bodyweight, per-side and capped
+  ---
+  duration_ms: 1.0506
+  type: 'test'
+  ...
+# Subtest: a reorder must be a permutation of what is already there
+ok 141 - a reorder must be a permutation of what is already there
+  ---
+  duration_ms: 0.3534
+  type: 'test'
+  ...
+# Subtest: a superset needs a partner that is not itself
+ok 142 - a superset needs a partner that is not itself
+  ---
+  duration_ms: 0.2558
+  type: 'test'
+  ...
+# Subtest: a new routine is refused whole when it names an exercise nobody has
+ok 143 - a new routine is refused whole when it names an exercise nobody has
+  ---
+  duration_ms: 0.2806
+  type: 'test'
+  ...
+# Subtest: before is read off the plan, never taken from the answer
+ok 144 - before is read off the plan, never taken from the answer
+  ---
+  duration_ms: 0.1808
+  type: 'test'
+  ...
+# Subtest: a week change may only schedule a routine that exists, rest, or nothing
+ok 145 - a week change may only schedule a routine that exists, rest, or nothing
+  ---
+  duration_ms: 0.1628
+  type: 'test'
+  ...
+# Subtest: "nothing to change" is a first-class answer, and so is an empty change list
+ok 146 - "nothing to change" is a first-class answer, and so is an empty change list
+  ---
+  duration_ms: 0.5916
+  type: 'test'
+  ...
+# Subtest: advice-only notes survive but carry no change
+ok 147 - advice-only notes survive but carry no change
+  ---
+  duration_ms: 0.214
+  type: 'test'
+  ...
+# Subtest: one bad change fails the whole set — nothing is ever half-applied
+ok 148 - one bad change fails the whole set — nothing is ever half-applied
+  ---
+  duration_ms: 0.1083
+  type: 'test'
+  ...
+# Subtest: every allowed change type has a validator that accepts a well-formed instance
+ok 149 - every allowed change type has a validator that accepts a well-formed instance
+  ---
+  duration_ms: 0.6465
+  type: 'test'
+  ...
+# Subtest: two routines cannot answer to the same id
+ok 150 - two routines cannot answer to the same id
+  ---
+  duration_ms: 1.3118
+  type: 'test'
+  ...
+# Subtest: an auto-assigned routine id cannot collide with an explicit one
+ok 151 - an auto-assigned routine id cannot collide with an explicit one
+  ---
+  duration_ms: 0.1964
+  type: 'test'
+  ...
+# Subtest: one exercise cannot appear twice in the same routine
+ok 152 - one exercise cannot appear twice in the same routine
+  ---
+  duration_ms: 0.1601
+  type: 'test'
+  ...
+# Subtest: a plan with no week at all does not satisfy a requested day count
+ok 153 - a plan with no week at all does not satisfy a requested day count
+  ---
+  duration_ms: 0.107
+  type: 'test'
+  ...
+# Subtest: a starting weight is dropped when there is nothing logged to justify it
+ok 154 - a starting weight is dropped when there is nothing logged to justify it
+  ---
+  duration_ms: 0.1049
+  type: 'test'
+  ...
+# Subtest: a starting weight survives only where that exercise has actually been lifted
+ok 155 - a starting weight survives only where that exercise has actually been lifted
+  ---
+  duration_ms: 0.1411
+  type: 'test'
+  ...
+# Subtest: a starting weight above what they have handled is pulled back down to it
+ok 156 - a starting weight above what they have handled is pulled back down to it
+  ---
+  duration_ms: 0.1274
+  type: 'test'
+  ...
+# Subtest: a custom exercise may not claim a library id
+ok 157 - a custom exercise may not claim a library id
+  ---
+  duration_ms: 0.1255
+  type: 'test'
+  ...
+# Subtest: ids that are prototype keys are refused
+ok 158 - ids that are prototype keys are refused
+  ---
+  duration_ms: 0.1031
+  type: 'test'
+  ...
+# Subtest: a load step has an upper bound
+ok 159 - a load step has an upper bound
+  ---
+  duration_ms: 0.0885
+  type: 'test'
+  ...
+# Subtest: a debrief keeps summary, a clamped whole-number score and the three short lists
+ok 160 - a debrief keeps summary, a clamped whole-number score and the three short lists
+  ---
+  duration_ms: 0.3963
+  type: 'test'
+  ...
+# Subtest: a debrief without a score, or with every list empty, is refused
+ok 161 - a debrief without a score, or with every list empty, is refused
+  ---
+  duration_ms: 0.1403
+  type: 'test'
+  ...
+# Subtest: a debrief carrying changes, or answering "nochange", is refused rather than trimmed
+ok 162 - a debrief carrying changes, or answering "nochange", is refused rather than trimmed
+  ---
+  duration_ms: 0.1435
+  type: 'test'
+  ...
+# Subtest: a debrief score outside 1-10 is clamped, not refused
+ok 163 - a debrief score outside 1-10 is clamped, not refused
+  ---
+  duration_ms: 0.0927
+  type: 'test'
+  ...
+# Subtest: a plan's custom exercises lose any media or link the model put on them
+ok 164 - a plan's custom exercises lose any media or link the model put on them
+  ---
+  duration_ms: 0.1494
+  type: 'test'
+  ...
+# Subtest: \#313: a swap onto an exercise already in the routine, alone, goes back for repair naming the rule and the id
+ok 165 - \#313: a swap onto an exercise already in the routine, alone, goes back for repair naming the rule and the id
+  ---
+  duration_ms: 0.3462
+  type: 'test'
+  ...
+# Subtest: \#313: alongside sound changes, the duplicate is dropped and the rest reaches the screen
+ok 166 - \#313: alongside sound changes, the duplicate is dropped and the rest reaches the screen
+  ---
+  duration_ms: 0.4527
+  type: 'test'
+  ...
+# Subtest: \#313: a duplicate is not dropped when another change in the routine names what it swapped out or brought in
+ok 167 - \#313: a duplicate is not dropped when another change in the routine names what it swapped out or brought in
+  ---
+  duration_ms: 0.7252
+  type: 'test'
+  ...
+# Subtest: \#313: a duplicate next to a change that is wrong for another reason is reported with it, not dropped
+ok 168 - \#313: a duplicate next to a change that is wrong for another reason is reported with it, not dropped
+  ---
+  duration_ms: 0.1803
+  type: 'test'
+  ...
+# Subtest: \#313: a duplicate beside only restatements of the plan is not passed off as "no change"
+ok 169 - \#313: a duplicate beside only restatements of the plan is not passed off as "no change"
+  ---
+  duration_ms: 0.1988
+  type: 'test'
+  ...
+# Subtest: \#313: a duplicate is still reported when another change fails only in company
+ok 170 - \#313: a duplicate is still reported when another change fails only in company
+  ---
+  duration_ms: 0.2221
+  type: 'test'
+  ...
+# Subtest: \#313: two changes bringing the same exercise into one routine are refused together
+ok 171 - \#313: two changes bringing the same exercise into one routine are refused together
+  ---
+  duration_ms: 0.1697
+  type: 'test'
+  ...
+# Subtest: \#313: an exId from another routine is refused with that routine's own ids
+ok 172 - \#313: an exId from another routine is refused with that routine's own ids
+  ---
+  duration_ms: 0.0994
+  type: 'test'
+  ...
+# Subtest: a routine glyph is an icon key or an emoji, never words the next prompt would carry (\#311)
+ok 173 - a routine glyph is an icon key or an emoji, never words the next prompt would carry (\#311)
+  ---
+  duration_ms: 0.4922
+  type: 'test'
+  ...
+# Subtest: a flag is one pair of regional indicators, not a run of them spelling a word; legacy icon keys survive (\#311)
+ok 174 - a flag is one pair of regional indicators, not a run of them spelling a word; legacy icon keys survive (\#311)
+  ---
+  duration_ms: 0.3038
+  type: 'test'
+  ...
+1..174
+# tests 174
+# suites 0
+# pass 174
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 16836.7197

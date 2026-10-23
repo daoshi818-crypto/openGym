@@ -1,0 +1,349 @@
+TAP version 13
+# Subtest: forgetting a profile does not hand it a fresh daily cap
+ok 1 - forgetting a profile does not hand it a fresh daily cap
+  ---
+  duration_ms: 245.1392
+  type: 'test'
+  ...
+# Subtest: with nothing spent today, forget leaves no file at all
+ok 2 - with nothing spent today, forget leaves no file at all
+  ---
+  duration_ms: 10.6255
+  type: 'test'
+  ...
+# Subtest: the instance cap is reserved at enqueue, so a job still running already counts
+ok 3 - the instance cap is reserved at enqueue, so a job still running already counts
+  ---
+  duration_ms: 151.2319
+  type: 'test'
+  ...
+# coach: scheduled review queued for u-cadence
+# Subtest: the instance count is not bounded by the length of the job log
+ok 4 - the instance count is not bounded by the length of the job log
+  ---
+  duration_ms: 126.2141
+  type: 'test'
+  ...
+# coach: scheduled review queued for u-cadence
+# coach: scheduled review queued for u-cadence-tz
+# Subtest: a scheduled review reads a batch of workouts once, not once per tick
+ok 5 - a scheduled review reads a batch of workouts once, not once per tick
+  ---
+  duration_ms: 395.5541
+  type: 'test'
+  ...
+# coach: scheduled review queued for u-cadence-unusable
+# Subtest: a workout the phone dated tomorrow is not re-read once the review has covered it
+ok 6 - a workout the phone dated tomorrow is not re-read once the review has covered it
+  ---
+  duration_ms: 134.4837
+  type: 'test'
+  ...
+# coach: scheduled review queued for u-cadence-unusable
+# coach: scheduled review queued for u-cadence-unusable
+# coach: scheduled review queued for u-cadence-pending
+# Subtest: an answer the model was paid for counts as the review, even when it was unusable
+ok 7 - an answer the model was paid for counts as the review, even when it was unusable
+  ---
+  duration_ms: 434.8233
+  type: 'test'
+  ...
+# coach: scheduled review queued for u-cadence-pending
+# Subtest: a proposal nobody has answered is not replaced by the next scheduled review
+ok 8 - a proposal nobody has answered is not replaced by the next scheduled review
+  ---
+  duration_ms: 229.1845
+  type: 'test'
+  ...
+# Subtest: a rejected answer tells the admin which rule broke, without quoting the plan
+ok 9 - a rejected answer tells the admin which rule broke, without quoting the plan
+  ---
+  duration_ms: 0.455
+  type: 'test'
+  ...
+# Subtest: no consent, no job — the gate is on the server, not the screen
+ok 10 - no consent, no job — the gate is on the server, not the screen
+  ---
+  duration_ms: 7.199
+  type: 'test'
+  ...
+# Subtest: one job per profile at a time
+ok 11 - one job per profile at a time
+  ---
+  duration_ms: 240.7974
+  type: 'test'
+  ...
+# Subtest: the daily cap is enforced and reported as its own failure
+ok 12 - the daily cap is enforced and reported as its own failure
+  ---
+  duration_ms: 147.852
+  type: 'test'
+  ...
+# Subtest: an answer that stays unusable fails cleanly and applies nothing
+ok 13 - an answer that stays unusable fails cleanly and applies nothing
+  ---
+  duration_ms: 205.4663
+  type: 'test'
+  ...
+# Subtest: a provider that crashes is reported, not retried behind the user's back
+ok 14 - a provider that crashes is reported, not retried behind the user's back
+  ---
+  duration_ms: 131.0232
+  type: 'test'
+  ...
+# Subtest: an expired proposal disappears on read rather than lingering forever
+ok 15 - an expired proposal disappears on read rather than lingering forever
+  ---
+  duration_ms: 266.4576
+  type: 'test'
+  ...
+# Subtest: forgetting a profile leaves no server-side residue
+ok 16 - forgetting a profile leaves no server-side residue
+  ---
+  duration_ms: 125.1302
+  type: 'test'
+  ...
+# Subtest: forgetting a profile mid-job cancels the call and frees its slot at once
+ok 17 - forgetting a profile mid-job cancels the call and frees its slot at once
+  ---
+  duration_ms: 229.5612
+  type: 'test'
+  ...
+# Subtest: a runtime that cannot be cancelled still has its late answer discarded after a forget
+ok 18 - a runtime that cannot be cancelled still has its late answer discarded after a forget
+  ---
+  duration_ms: 121.7027
+  type: 'test'
+  ...
+# Subtest: forgetting a profile whose job is still queued drops it before anything leaves
+ok 19 - forgetting a profile whose job is still queued drops it before anything leaves
+  ---
+  duration_ms: 431.307
+  type: 'test'
+  ...
+# Subtest: consent withdrawn, or the Coach switched off, while a job waits: no payload leaves
+ok 20 - consent withdrawn, or the Coach switched off, while a job waits: no payload leaves
+  ---
+  duration_ms: 161.5247
+  type: 'test'
+  ...
+# coach: cleared 1 job(s) interrupted by restart
+# Subtest: a payload bigger than any real history is refused before the provider is called
+ok 21 - a payload bigger than any real history is refused before the provider is called
+  ---
+  duration_ms: 153.742
+  type: 'test'
+  ...
+# Subtest: a job interrupted by a restart is reported as failed, not left spinning
+ok 22 - a job interrupted by a restart is reported as failed, not left spinning
+  ---
+  duration_ms: 27.4311
+  type: 'test'
+  ...
+# Subtest: the plan fingerprint moves when the plan does, and only then
+ok 23 - the plan fingerprint moves when the plan does, and only then
+  ---
+  duration_ms: 0.3829
+  type: 'test'
+  ...
+# Subtest: the fingerprint covers every field canonicalPlan reports, including the v1.2.4 three
+ok 24 - the fingerprint covers every field canonicalPlan reports, including the v1.2.4 three
+  ---
+  duration_ms: 0.3319
+  type: 'test'
+  ...
+# Subtest: a review job produces a checked change-set, and nothing is left unvalidated
+ok 25 - a review job produces a checked change-set, and nothing is left unvalidated
+  ---
+  duration_ms: 94.9887
+  type: 'test'
+  ...
+# Subtest: a create job produces a bundle the client can merge unchanged
+ok 26 - a create job produces a bundle the client can merge unchanged
+  ---
+  duration_ms: 123.3425
+  type: 'test'
+  ...
+# Subtest: a well-formed answer naming an exercise nobody has is refused, twice, and applies nothing
+ok 27 - a well-formed answer naming an exercise nobody has is refused, twice, and applies nothing
+  ---
+  duration_ms: 183.0941
+  type: 'test'
+  ...
+# Subtest: the one repair round rescues an answer the validator rejected
+ok 28 - the one repair round rescues an answer the validator rejected
+  ---
+  duration_ms: 157.9548
+  type: 'test'
+  ...
+# Subtest: "nothing to change" keeps the reason it gave, and proposes nothing
+ok 29 - "nothing to change" keeps the reason it gave, and proposes nothing
+  ---
+  duration_ms: 92.8176
+  type: 'test'
+  ...
+# Subtest: a refine carries the plan it is refining, and counts as the next iteration
+ok 30 - a refine carries the plan it is refining, and counts as the next iteration
+  ---
+  duration_ms: 197.2515
+  type: 'test'
+  ...
+# Subtest: the admin test-run completes a round trip without a user to spend
+ok 31 - the admin test-run completes a round trip without a user to spend
+  ---
+  duration_ms: 57.566
+  type: 'test'
+  ...
+# Subtest: a job is refused outright when the privilege drop cannot be performed
+ok 32 - a job is refused outright when the privilege drop cannot be performed
+  ---
+  duration_ms: 4.2777
+  type: 'test'
+  ...
+# Subtest: an HTTPS provider is not refused for lacking a privilege drop, and runs end to end through the queue
+ok 33 - an HTTPS provider is not refused for lacking a privilege drop, and runs end to end through the queue
+  ---
+  duration_ms: 58.9796
+  type: 'test'
+  ...
+# Subtest: a note is truncated to the admin's configured max, not clipped to the old 1000-char default (issue \#267)
+ok 34 - a note is truncated to the admin's configured max, not clipped to the old 1000-char default (issue \#267)
+  ---
+  duration_ms: 56.8549
+  type: 'test'
+  ...
+# Subtest: a job sends the admin's configured output cap, so a reasoning model is not cut off
+ok 35 - a job sends the admin's configured output cap, so a reasoning model is not cut off
+  ---
+  duration_ms: 62.0022
+  type: 'test'
+  ...
+# Subtest: an intake posted with megabytes of text is cut to what the intake screen allows
+ok 36 - an intake posted with megabytes of text is cut to what the intake screen allows
+  ---
+  duration_ms: 33.5252
+  type: 'test'
+  ...
+# Subtest: a profile synced into the state is cut the same way, for a review and a debrief too
+ok 37 - a profile synced into the state is cut the same way, for a review and a debrief too
+  ---
+  duration_ms: 101.9875
+  type: 'test'
+  ...
+# Subtest: a profile of the wrong shape reads as absent instead of crashing or leaking an object
+ok 38 - a profile of the wrong shape reads as absent instead of crashing or leaking an object
+  ---
+  duration_ms: 4.1912
+  type: 'test'
+  ...
+# Subtest: weekdays are read as weekdays: nothing becomes Sunday, and zero days or minutes read as unset
+ok 39 - weekdays are read as weekdays: nothing becomes Sunday, and zero days or minutes read as unset
+  ---
+  duration_ms: 3.5374
+  type: 'test'
+  ...
+# Subtest: a real intake passes through unchanged
+ok 40 - a real intake passes through unchanged
+  ---
+  duration_ms: 4.3496
+  type: 'test'
+  ...
+# Subtest: names, the declined log and the meta codes are bounded too, since the state is the client's
+ok 41 - names, the declined log and the meta codes are bounded too, since the state is the client's
+  ---
+  duration_ms: 11.294
+  type: 'test'
+  ...
+# Subtest: the limits match the intake screen
+ok 42 - the limits match the intake screen
+  ---
+  duration_ms: 1.7645
+  type: 'test'
+  ...
+# Subtest: every plan, log and id field is bounded too, for a create, a review and a debrief
+ok 43 - every plan, log and id field is bounded too, for a create, a review and a debrief
+  ---
+  duration_ms: 195.3334
+  type: 'test'
+  ...
+# Subtest: an id is cut, a policy outside the engine's five and a number that is not one read as absent
+ok 44 - an id is cut, a policy outside the engine's five and a number that is not one read as absent
+  ---
+  duration_ms: 2.1122
+  type: 'test'
+  ...
+# Subtest: the plan and the log a real app writes pass through exactly as before
+ok 45 - the plan and the log a real app writes pass through exactly as before
+  ---
+  duration_ms: 4.1067
+  type: 'test'
+  ...
+# Subtest: the cohort is bounded where it joins the payload, whoever built it
+ok 46 - the cohort is bounded where it joins the payload, whoever built it
+  ---
+  duration_ms: 4.1015
+  type: 'test'
+  ...
+# Subtest: the admin card is told which providers hold a key, and switching never drops one
+ok 47 - the admin card is told which providers hold a key, and switching never drops one
+  ---
+  duration_ms: 112.112
+  type: 'test'
+  ...
+# Subtest: a key filed for a provider that does not take one, or an unknown provider, is refused
+ok 48 - a key filed for a provider that does not take one, or an unknown provider, is refused
+  ---
+  duration_ms: 3.9761
+  type: 'test'
+  ...
+# Subtest: the compatible endpoint: base URL is validated, a keyless endpoint counts as connected, and models come from it
+ok 49 - the compatible endpoint: base URL is validated, a keyless endpoint counts as connected, and models come from it
+  ---
+  duration_ms: 33.1116
+  type: 'test'
+  ...
+# Subtest: the disclosure names the provider and the same five categories the payload builds from
+ok 50 - the disclosure names the provider and the same five categories the payload builds from
+  ---
+  duration_ms: 8.595
+  type: 'test'
+  ...
+# Subtest: a debrief is enqueued as its own kind, and the cohort routes gate on the admin switch and the opt-in
+ok 51 - a debrief is enqueued as its own kind, and the cohort routes gate on the admin switch and the opt-in
+  ---
+  duration_ms: 239.4017
+  type: 'test'
+  ...
+# Subtest: an admin can raise the Coach message length past the old 1000-char default, clamped to a sane range
+ok 52 - an admin can raise the Coach message length past the old 1000-char default, clamped to a sane range
+  ---
+  duration_ms: 14.9772
+  type: 'test'
+  ...
+# Subtest: the Coach-off guard names its class beside the words, on every guarded user route
+ok 53 - the Coach-off guard names its class beside the words, on every guarded user route
+  ---
+  duration_ms: 9.752
+  type: 'test'
+  ...
+# Subtest: an admin can raise the Coach output cap for a reasoning model, clamped to a sane range
+ok 54 - an admin can raise the Coach output cap for a reasoning model, clamped to a sane range
+  ---
+  duration_ms: 10.3926
+  type: 'test'
+  ...
+# Subtest: an admin can store extra headers for the compatible endpoint; framing names are refused
+ok 55 - an admin can store extra headers for the compatible endpoint; framing names are refused
+  ---
+  duration_ms: 8.6599
+  type: 'test'
+  ...
+1..55
+# tests 55
+# suites 0
+# pass 55
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3739.2728
