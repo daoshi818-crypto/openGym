@@ -210,4 +210,24 @@ describe('watch connection state', () => {
     expect(link.watchState()).toBe('ready')
     expect(link.watchDevice()?.connected).not.toBe(true)
   })
+
+  it('retries listener registration instead of staying half-bound and deaf to the watch', async () => {
+    native.addListener.mockImplementationOnce(() => { throw new Error('bridge not ready') })
+    expect(await link.connectWatch()).toBe(true)
+    expect(native.events.watchEvent).toBeUndefined()      // nothing was silently "bound"
+    expect(link.watchLastError()).toContain('bridge not ready')
+    expect(await link.connectWatch()).toBe(true)
+    expect(native.events.watchEvent).toBeTypeOf('function')
+    expect(native.events.watchState).toBeTypeOf('function')
+  })
+
+  it('keeps delivering other messages when one lifecycle handler throws', async () => {
+    await link.connectWatch()
+    link.bindWatchLifecycle(() => { throw new Error('boom') })
+    const seen = []
+    link.bindWatchSync(ev => seen.push(ev.t))
+    native.events.watchEvent({ t: 'focus', sid: 'today', ex: 1, set: 2, at: 10 })
+    expect(seen).toEqual(['focus'])
+    expect(link.watchLastError()).toContain('boom')
+  })
 })

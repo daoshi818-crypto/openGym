@@ -127,14 +127,14 @@ export default {
 
 <style>
 .page { flex-direction: column; align-items: center; justify-content: flex-start; width: 100%; height: 100%; background-color: #000000; }
-.label { height: 26px; font-size: 21px; color: #8e8e93; margin-top: 18px; }
-.show { height: 52px; font-size: 44px; color: #30d158; margin: 3px 0 8px; }
+.label { height: 26px; font-size: 21px; color: #8b9497; margin-top: 18px; }
+.show { height: 52px; font-size: 46px; color: #ffffff; margin: 3px 0 8px; }
 .grid { flex-direction: row; flex-wrap: wrap; justify-content: center; width: 350px; }
-.k { width: 112px; height: 58px; font-size: 26px; border-radius: 8px; background-color: #191d1f; color: #ffffff; margin: 2px; }
+.k { width: 112px; height: 58px; font-size: 26px; border-radius: 12px; background-color: #1c2226; color: #ffffff; margin: 2px; }
 .c { color: #ff453a; }
 .actions { width: 350px; height: 52px; flex-direction: row; justify-content: space-between; margin-top: 8px; }
-.ok { width: 232px; height: 52px; font-size: 23px; border-radius: 8px; background-color: #63dfb1; color: #001b12; }
-.cancel { width: 110px; height: 52px; font-size: 21px; border-radius: 8px; background-color: #191d1f; color: #ffffff; }
+.ok { width: 232px; height: 52px; font-size: 23px; border-radius: 12px; background-color: #63dfb1; color: #001b12; }
+.cancel { width: 110px; height: 52px; font-size: 21px; border-radius: 12px; background-color: #12171a; border: 1px solid #232b2f; color: #ffffff; }
 @media screen and (min-width: 450px) {
   .label { margin-top: 14px; font-size: 18px; }
   .show { height: 44px; font-size: 38px; margin: 2px 0 6px; }

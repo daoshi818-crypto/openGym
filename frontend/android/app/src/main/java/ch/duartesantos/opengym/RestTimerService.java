@@ -27,9 +27,13 @@ public class RestTimerService extends Service {
     private String plusLabel = "+ 15s";
     private String skipLabel = "Skip";
     private String overlayTitle = "Rest";
+    private String restId = "";
+    private String contextJson = "";
     private int accent = 0xFF30D158;
     private int ink = 0xFF000000;
     private PowerManager.WakeLock cpu;
+    private static Snapshot snapshot = new Snapshot(false, "", 0, 0, 0, false, 0);
+    private final java.util.ArrayDeque<String> seenRequests = new java.util.ArrayDeque<>();
     private final Runnable tick = new Runnable() {
         @Override
         public void run() {
@@ -65,25 +69,35 @@ public class RestTimerService extends Service {
             show();
             return START_NOT_STICKY;
         }
+        if (RestAlert.ACTION_CONTEXT.equals(action)) {
+            // 只更新训练摘要：不碰 endsAt、totalMs、闹钟与暂停状态。
+            if (running && matchesRest(intent)) {
+                contextJson = intent.getStringExtra("context") == null ? contextJson : intent.getStringExtra("context");
+                publish();
+                show();
+            }
+            return START_NOT_STICKY;
+        }
         if (RestAlert.ACTION_HOLD.equals(action)) {
             if (running) hold(intent.getLongExtra("leftMs", 0), intent.getLongExtra("totalMs", 0));
             else stopSelf(startId);
             return START_NOT_STICKY;
         }
         if (RestAlert.ACTION_SKIP.equals(action)) {
+            if (running && !acceptCommand(intent)) return START_NOT_STICKY;
             finishSkip();
             return START_NOT_STICKY;
         }
         if (RestAlert.ACTION_PAUSE.equals(action)) {
-            if (running) togglePause();
+            if (running && acceptCommand(intent)) togglePause();
             return START_NOT_STICKY;
         }
         if (RestAlert.ACTION_MINUS.equals(action)) {
-            if (running) nudge(-15_000);
+            if (running && acceptCommand(intent)) nudge(-15_000);
             return START_NOT_STICKY;
         }
         if (RestAlert.ACTION_PLUS.equals(action)) {
-            if (running) nudge(15_000);
+            if (running && acceptCommand(intent)) nudge(15_000);
             return START_NOT_STICKY;
         }
         long nextEnd = intent == null ? 0 : intent.getLongExtra("endsAt", 0);
@@ -104,9 +118,12 @@ public class RestTimerService extends Service {
         plusLabel = text(intent, "plus", plusLabel);
         skipLabel = text(intent, "skip", skipLabel);
         overlayTitle = text(intent, "title", overlayTitle);
+        restId = text(intent, "restId", restId);
+        contextJson = text(intent, "context", contextJson);
         if (intent != null && intent.hasExtra("accent")) accent = intent.getIntExtra("accent", accent);
         if (intent != null && intent.hasExtra("ink")) ink = intent.getIntExtra("ink", ink);
         handler.removeCallbacks(tick);
+        publish();
         tick.run();
         return START_NOT_STICKY;
     }
@@ -114,6 +131,7 @@ public class RestTimerService extends Service {
     @Override
     public void onDestroy() {
         running = false;
+        snapshot = new Snapshot(false, restId, 0, 0, 0, false, System.currentTimeMillis());
         handler.removeCallbacks(tick);
         releaseCpu();
         endsAt = 0;
@@ -187,6 +205,7 @@ public class RestTimerService extends Service {
      */
     private void reachEnd() {
         running = false;
+        snapshot = new Snapshot(false, restId, endsAt, totalMs, 0, false, System.currentTimeMillis());
         RestOverlay.hide();
         RestAlert.fireFromCountdown(getApplicationContext(), endsAt);
     }
@@ -216,6 +235,7 @@ public class RestTimerService extends Service {
 
     private void finishSkip() {
         running = false;
+        snapshot = new Snapshot(false, restId, endsAt, totalMs, 0, false, System.currentTimeMillis());
         RestOverlay.hide();
         handler.removeCallbacks(tick);
         releaseCpu();
@@ -228,6 +248,46 @@ public class RestTimerService extends Service {
     private void emit(String type) {
         long left = paused ? pausedLeft : Math.max(0, endsAt - System.currentTimeMillis());
         RestAlertPlugin.emit(type, endsAt, totalMs, left, paused);
+        publish();
+    }
+
+    /** 命令属于当前这轮休息，且这条 requestId 没执行过；空 restId/requestId 兼容旧调用。 */
+    private boolean acceptCommand(Intent intent) {
+        if (!matchesRest(intent)) return false;
+        String rid = intent == null ? null : intent.getStringExtra("requestId");
+        if (rid == null || rid.isEmpty()) return true;
+        if (seenRequests.contains(rid)) return false;
+        seenRequests.addLast(rid);
+        while (seenRequests.size() > 32) seenRequests.removeFirst();
+        return true;
+    }
+
+    /** 命令是否属于当前这一轮休息；空 restId 兼容旧调用。 */
+    private boolean matchesRest(Intent intent) {
+        String want = intent == null ? null : intent.getStringExtra("restId");
+        return want == null || want.isEmpty() || want.equals(restId);
+    }
+
+    /** 当前/最近一轮休息的原生状态，供 APP 回前台时裁决旧 WebView 计时。 */
+    private void publish() {
+        long left = paused ? pausedLeft : Math.max(0, endsAt - System.currentTimeMillis());
+        snapshot = new Snapshot(running && (paused || left > 0), restId, endsAt, totalMs, left, paused, System.currentTimeMillis());
+    }
+
+    public static Snapshot snapshot() { return snapshot; }
+
+    public static final class Snapshot {
+        public final boolean active;
+        public final String restId;
+        public final long endsAt;
+        public final long totalMs;
+        public final long leftMs;
+        public final boolean paused;
+        public final long at;
+        Snapshot(boolean active, String restId, long endsAt, long totalMs, long leftMs, boolean paused, long at) {
+            this.active = active; this.restId = restId; this.endsAt = endsAt; this.totalMs = totalMs;
+            this.leftMs = leftMs; this.paused = paused; this.at = at;
+        }
     }
 
     private void show() {
@@ -241,7 +301,7 @@ public class RestTimerService extends Service {
                 startForeground(RestAlert.COUNTDOWN_ID, n);
             }
             // 悬浮窗倒计时：授权了才出现，没授权这里静默跳过（通知栏那条照旧）
-            RestOverlay.show(this, overlayTitle, left, totalMs, accent, ink);
+            RestOverlay.show(this, overlayTitle, left, totalMs, accent, ink, restId, contextJson);
         } catch (Exception e) {
             stopSelf();
         }

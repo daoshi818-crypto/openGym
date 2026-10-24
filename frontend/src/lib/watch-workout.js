@@ -5,8 +5,9 @@ import { exOr } from './exercises.js'
 import { exerciseNameFor } from './i18n-core.js'
 import { watchSidOf, elapsedMsOf } from './session-resume.js'
 import { buildSessionEntries } from './session-start.js'
-import { effectiveRoutineIds } from './history.js'
+import { effectiveRoutineIds, effortOf } from './history.js'
 import { todayISO } from './format.js'
+import { EFFORT_CAPABILITY } from '../../../watch-app/src/lib/effort-scale.js'
 
 /** 活动条目只存 id；计划与重连快照必须和手机界面解析出相同名称。 */
 export function watchExercisesOf(S, entries) {
@@ -26,6 +27,8 @@ export function watchPlanOf(S) {
   const profile = watchProfileOf(S)
   return {
     sid: watchSidOf(A), protocolVersion: 2, weightUnit: S.unit || 'kg', structureRevision: A.structureRevision,
+    // 强度量表跟随手机设置；手表只显示这一种，关闭（'none'）时隐藏入口。
+    effortScale: effortOf(S), capabilities: { setEffort: EFFORT_CAPABILITY },
     profile,
     workout: { name: A.name, exercises: watchExercisesOf(S, A.entries) },
   }
@@ -37,6 +40,9 @@ export function watchSnapshotOf(S, timer, now = Date.now()) {
   const ex = Number.isInteger(A.watchFocus?.ex) ? A.watchFocus.ex : (A.cur || 0)
   const rows = A.entries.map(e => e.sets.filter(r => !isWarmupRow(r)).map(r => ({
     setId: r.setId, w: r.w ?? '', r: r.sec ?? r.reps ?? r.r ?? '', done: !!r.done, at: r.at || 0,
+    // 评分与它的独立版本一起进快照：缺字段 ≠ 清除，清除由版本号表达。
+    ...(r.rpe != null ? { rpe: r.rpe } : {}), ...(r.rir != null ? { rir: r.rir } : {}),
+    ...(r.effortVersion != null ? { effortVersion: r.effortVersion } : {}),
   })))
   const first = (rows[ex] || []).findIndex(r => !r.done)
   return { ...plan, workout: A.name, exercises: plan.workout.exercises, rows,
@@ -63,7 +69,8 @@ export function watchCatalogOf(S, date = todayISO()) {
     const entries = buildSessionEntries(S, routine)
     ensureWatchIdentity({ entries }, 'catalog:' + routine.id + ':' + fingerprint(routine.ex || []))
     const exercises = watchExercisesOf(S, entries)
-    return { protocolVersion: 2, weightUnit: S.unit || 'kg', id: routine.id, name: routine.name, today: today.includes(id), available: exercises.length > 0,
+    return { protocolVersion: 2, weightUnit: S.unit || 'kg', effortScale: effortOf(S), capabilities: { setEffort: EFFORT_CAPABILITY },
+      id: routine.id, name: routine.name, today: today.includes(id), available: exercises.length > 0,
       exercises, entries, profile, rows: entries.map(e => e.sets.filter(r => !isWarmupRow(r)).map(r => ({ setId: r.setId, w: r.w ?? '', r: r.sec ?? r.r ?? '', done: false, at: 0 }))) }
   }).filter(Boolean) }
 }

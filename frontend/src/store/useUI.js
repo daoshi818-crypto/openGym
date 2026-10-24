@@ -6,7 +6,8 @@ import { api } from '../lib/api.js'
 import { t } from '../lib/i18n.js'
 import { deviceId } from '../lib/push.js'
 import { MOBILE } from '../lib/mobile.js'
-import { armRestAlert, bindNativeRest, disarmRestAlert, holdRestAlert, toneNative } from '../lib/rest-alert.js'
+import { armRestAlert, bindNativeRest, disarmRestAlert, holdRestAlert, toneNative, setRestContext, setOverlayStyle } from '../lib/rest-alert.js'
+import { restContextOf, restContextWire } from '../lib/rest-context.js'
 import { useStore } from './useStore.js'
 import { REST_MAX } from '../lib/duration.js'
 import { accentValue } from '../lib/accent.js'
@@ -30,7 +31,12 @@ const bookRestEnd = (endsAt, totalSec, kind) => {
   const switching = kind === 'switch'
   if (!MOBILE) { if (!switching) pushRestTimer(Math.max(1, Math.round((endsAt - Date.now()) / 1000))); return }
   const { S } = useStore.getState()
-  armRestAlert(endsAt, { title: switching ? t('Switch sides') : t('Rest’s over. Next set!'), countdownTitle: switching ? t('Switch sides') : t('Rest'), totalSec, accent: accentValue(S), sound: !!S.sound, classic: restSoundOf(S) === 'classic', tone: restSoundOf(S), vibrate: S.vibrate !== false, alarmBuzz: S.vibrate !== false && !!S.vibrateOnSilent })
+  const tm = useUI.getState().timer
+  // 结构化摘要随闹钟一起下发；之后的内容更新走 setOverlayContext，不会重排闹钟。
+  const context = restContextWire(restContextOf(S, tm))
+  // 进程重启后原生默认是卡片样式：每次开始休息前把用户选择的样式重新下发一次。
+  setOverlayStyle(S.overlayStyle === 'ring' ? 'ring' : 'card')
+  armRestAlert(endsAt, { title: switching ? t('Switch sides') : t('Rest’s over. Next set!'), countdownTitle: switching ? t('Switch sides') : t('Rest'), totalSec, accent: accentValue(S), sound: !!S.sound, classic: restSoundOf(S) === 'classic', tone: restSoundOf(S), vibrate: S.vibrate !== false, alarmBuzz: S.vibrate !== false && !!S.vibrateOnSilent, restId: tm?.restId || '', context })
     .then(ok => {
       // Only for the rest that asked: one skipped or moved since then has booked its own end.
       const tm = useUI.getState().timer
@@ -383,6 +389,23 @@ export const useUI = create((set, get) => ({
       endsAt: ev.endsAt || Date.now() + left * 1000, seq: ev.seq, source: 'watch', paused: !!ev.paused } })
     if (ev.paused) { stopRestTicking(); holdRestAlert(left, total) }
     else bookRestEnd(get().timer.endsAt, total)
+  },
+  /** 训练/手表状态变化后刷新悬浮窗摘要：只改内容，不动截止时间与闹钟。 */
+  syncRestContext() {
+    const tm = get().timer
+    if (!MOBILE || !tm || tm.ready) return
+    const ctx = restContextOf(useStore.getState().S, tm)
+    if (ctx) setRestContext(tm.restId, restContextWire(ctx))
+  },
+  /** APP 回前台：以原生状态裁决旧 WebView 计时，已跳过/已结束的休息不复活。 */
+  reconcileNativeRest(native) {
+    const tm = get().timer
+    if (native == null) return
+    if (!native.active) { if (tm && !tm.ready) get().stopRest(); return }
+    const left = Math.ceil((Number(native.leftMs) || 0) / 1000)
+    if (!left && !native.paused) { get().stopRest(); return }
+    get().followNativeRest({ endsAt: Number(native.endsAt) || Date.now() + left * 1000, left,
+      total: Math.round((Number(native.totalMs) || left * 1000) / 1000), paused: !!native.paused })
   },
   stopRest() {
     stopRestTicking()

@@ -9,7 +9,7 @@ import { sendToWatch } from '../lib/watch-link.js'
 import { useStore } from '../store/useStore.js'
 import { workoutControls } from '../lib/workout-controls.js'
 import { useUI } from '../store/useUI.js'
-import { bindWatchSync, bindWatchEvents, pushRestToWatch, pushWeightToWatch, pushRepsToWatch, pushSetToWatch, pushUnsetToWatch, pushAddSetToWatch, pushRemoveSetToWatch, pushFocusToWatch, pushAckToWatch, pushSyncToWatch } from '../lib/watch-link.js'
+import { bindWatchSync, bindWatchEvents, pushRestToWatch, pushWeightToWatch, pushRepsToWatch, pushEffortToWatch, pushSetToWatch, pushUnsetToWatch, pushAddSetToWatch, pushRemoveSetToWatch, pushFocusToWatch, pushAckToWatch, pushSyncToWatch } from '../lib/watch-link.js'
 import { exOr, betterWeight } from '../lib/exercises.js'
 import { watchExercisesOf } from '../lib/watch-workout.js'
 import { usesBar } from '../lib/bar.js'
@@ -1473,7 +1473,7 @@ function ActiveWorkout() {
     else exConfigSheet(ex, null, commit, null, routine, seed, null, t('Add to this workout'))
   })
   // Ending the session without saving it. The ⋯ menu's last item since the header's ✕ became the
-  // ⌄ that only leaves the screen (v1.3.11).
+  // collapse control that only leaves the screen (v1.3.11).
   const discardWorkout = () => confirmSheet({
     title: t('Discard workout?'), message: t('The sets you logged in this session will be lost.'), confirmText: t('Discard'), danger: true,
     onConfirm: () => { update(s => { s.active = null }); stopRest(); stopWork(); nav('/home') },
@@ -2001,12 +2001,24 @@ function ActiveWorkout() {
     }
   }, [editing, sid])
 
-  // 重量编辑 → 手表：setField 走这里（onField），只对活动会话的组行下发。
+  // 重量/次数/强度编辑 → 手表：setField 走这里（onField），只对活动会话的组行下发。
   const watchField = (idx, i, f, v) => {
     setField(idx, i, f, v)
     if (!sid) return
     const set = workSetOrdinal(A.entries[idx], i)
     if (!set) return
+    if (f === 'rpe' || f === 'rir') {
+      // 强度有独立版本域：每次手机编辑都推进 effortVersion，并清掉另一量表。
+      const at = Date.now()
+      update(s => {
+        const row = s.active?.entries?.[idx]?.sets?.[i]
+        if (!row) return
+        row.effortVersion = at
+        delete row[f === 'rpe' ? 'rir' : 'rpe']
+      })
+      pushEffortToWatch(sid, idx, set, f, v, at)
+      return
+    }
     const at = Date.now()
     update(s => {
       if (!s.active || !['w', 'r', 'reps'].includes(f)) return
@@ -2194,7 +2206,7 @@ function ActiveWorkout() {
         set counter, discard/finish, progress) stays pinned — the one thing you want in view
         while you are somewhere in the middle of a long stack. Cards mode never scrolls far. */}
     <div className={'whdr' + (listMode ? ' stick' : '')} ref={hdrRef}>
-    {/* ⌄ leaves the screen and keeps the session running (the tab bar's Resume brings it back);
+    {/* The collapse control leaves the screen and keeps the session running (the tab bar's Resume brings it back);
         in the editor of a saved workout it is the ✕ that closes the editor. Discard is in the ⋯
         menu now, and Finish is a labelled pill rather than a check that looked like a set tick: it
         opens the Finish sheet (Finish and save, Discard), the editor's Save saves at once. */}

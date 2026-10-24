@@ -36,6 +36,7 @@ public final class RestAlert {
     static final String ACTION_SKIP = "ch.duartesantos.opengym.rest.SKIP";
     static final String ACTION_ACCENT = "ch.duartesantos.opengym.rest.ACCENT";
     static final String ACTION_HOLD = "ch.duartesantos.opengym.rest.HOLD";
+    static final String ACTION_CONTEXT = "ch.duartesantos.opengym.rest.CONTEXT";
     static final String CHANNEL_ID = "rest-over";
     /**
      * Settings → Vibrate off. Android keeps a channel's vibration as it was when the channel was
@@ -58,6 +59,8 @@ public final class RestAlert {
     private static int lastInk = 0xFF000000;
     static final int COUNTDOWN_ID = 41;
     static final int NOTIFICATION_ID = 42;
+    private static String lastRestId = "";
+    private static String lastContext = "";
     static final String COUNTDOWN_CHANNEL_ID = "rest-countdown";
     private static final int FLAGS = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
     private static final int RATE = RestTone.RATE;
@@ -75,7 +78,10 @@ public final class RestAlert {
      */
     public static void schedule(Context ctx, long at, int id, String title, boolean sound, String tone, boolean vibrate,
                                 boolean alarmBuzz, String channelId, String visibility, String importance,
-                                boolean localOnly, String countdownTitle, long totalMs) {
+                                boolean localOnly, String countdownTitle, long totalMs,
+                                String restId, String contextJson) {
+        lastRestId = restId == null ? "" : restId;
+        lastContext = contextJson == null ? "" : contextJson;
         alarmBuzz = vibrate && alarmBuzz;
         channelId = channelFor(channelId, vibrate);
         Intent intent = alarmIntent(ctx);
@@ -112,7 +118,24 @@ public final class RestAlert {
         lastVibrate = vibrate;
         lastAlarmBuzz = alarmBuzz;
         lastChannel = channelId;
-        startCountdown(ctx, at, totalMs, countdownTitle);
+        startCountdown(ctx, at, totalMs, countdownTitle, lastRestId, lastContext);
+    }
+
+    /**
+     * 训练摘要更新：只把新的 context 交给正在运行的服务，不改 deadline、不重排闹钟。
+     * restId 与当前休息不一致时忽略（旧休息的摘要不能盖到新一轮）。
+     */
+    public static void setContext(Context ctx, String restId, String contextJson) {
+        if (restId == null || restId.isEmpty() || contextJson == null) return;
+        if (lastRestId != null && !lastRestId.isEmpty() && !lastRestId.equals(restId)) return;
+        lastContext = contextJson;
+        try {
+            Intent i = new Intent(ctx, RestTimerService.class);
+            i.setAction(ACTION_CONTEXT);
+            i.putExtra("restId", restId);
+            i.putExtra("context", contextJson);
+            ctx.startService(i);
+        } catch (Exception ignored) { /* 没有在跑的休息 */ }
     }
 
     public static void setAccentColor(int accent, int ink) {
@@ -389,11 +412,13 @@ public final class RestAlert {
         am.cancel(pi);
     }
 
-    static void startCountdown(Context ctx, long endsAt, long totalMs, String title) {
+    static void startCountdown(Context ctx, long endsAt, long totalMs, String title, String restId, String contextJson) {
         Intent i = new Intent(ctx, RestTimerService.class);
         i.putExtra("endsAt", endsAt);
         i.putExtra("totalMs", totalMs);
         i.putExtra("title", title == null || title.isEmpty() ? "Rest" : title);
+        i.putExtra("restId", restId == null ? "" : restId);
+        i.putExtra("context", contextJson == null ? "" : contextJson);
         i.putExtra("pause", labPause);
         i.putExtra("resume", labResume);
         i.putExtra("minus", labMinus);

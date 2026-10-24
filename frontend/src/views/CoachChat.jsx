@@ -31,6 +31,7 @@ import {
 import { insightsFor, sessionInsights } from '../lib/coach-insights.js'
 import { useCoachStatus, requestReview, requestDebrief, requestPlan, refinePlan, resolvePending, cohortStats, setCohortShare, jobErrorText, awaitedJob, settleAwaited, JOB_ERRORS } from '../lib/coach-api.js'
 import { confirmSheet } from '../sheets.jsx'
+import { NATIVE_KEYBOARD_EVENT, viewportBox, boxBelow } from '../lib/native-keyboard.js'
 import Icon from '../components/Icon.jsx'
 import { glyphOf } from '../lib/glyphs.js'
 import LineChart from '../components/LineChart.jsx'
@@ -53,7 +54,8 @@ export default function CoachChat() {
   const { job, pending, cap, loading, lastError, last, refresh, maxMessageLen, isStale, lastSuccessfulAt } = useCoachStatus(true)
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
-  const endRef = useRef(null)
+  const chatRef = useRef(null)
+  const msgsRef = useRef(null)
   const prevJob = useRef(null)
   const composing = useRef(false)
   const compositionEndedAt = useRef(0)
@@ -100,7 +102,94 @@ export default function CoachChat() {
     })
   }, [job, pending, loading, last?.id])
 
-  useEffect(() => { if (typeof endRef.current?.scrollIntoView === 'function') endRef.current.scrollIntoView({ block: 'end' }) }, [S.coach?.chat?.length, !!job, !!pending])
+  // ---- layout: the thread owns its own scroll area whenever the keyboard covers the bottom --
+  //
+  // The composer used to be `position:fixed;bottom:0` on a page that scrolled as a whole, and
+  // the end of the thread was revealed with scrollIntoView. With the keyboard up that meant
+  // three things fighting over the same scroll: the field was fixed to the layout viewport
+  // (i.e. under the keys), scrollIntoView plus the native reveal scrolled the page by a
+  // keyboard's height, and what was left on screen was the empty bottom padding of #app.
+  // Instead: while something covers the bottom, the thread becomes one column of a known
+  // height — header, scroller, composer — and the page itself never moves.
+  const [chatBox, setChatBox] = useState(null)   // { height } while the keyboard is up
+  const boxHeight = useRef(0)
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    let frame = 0
+    const measure = () => {
+      frame = 0
+      const el = chatRef.current
+      const view = viewportBox(window)
+      const inner = window.innerHeight || 0
+      const covered = inner > 0 && view.bottom < inner - 1
+      if (!el || !covered) { boxHeight.current = 0; setChatBox(null); return }
+      // `top` is only meaningful while the page is not scrolled; entering this mode pins it,
+      // so measure the page offset of the thread rather than its offset inside a scrolled page.
+      const pageTop = (el.getBoundingClientRect().top || 0) + (window.scrollY || 0)
+      const next = boxBelow(Math.max(0, pageTop), view, 160)
+      if (Math.abs(next.height - boxHeight.current) < 1) return
+      boxHeight.current = next.height
+      setChatBox({ height: next.height })
+    }
+    const schedule = () => { if (!frame) frame = (window.requestAnimationFrame || (f => setTimeout(f, 16)))(measure) }
+    const vv = window.visualViewport
+    window.addEventListener('resize', schedule)
+    window.addEventListener(NATIVE_KEYBOARD_EVENT, schedule)
+    vv?.addEventListener?.('resize', schedule)
+    vv?.addEventListener?.('scroll', schedule)
+    schedule()
+    return () => {
+      if (frame) { (window.cancelAnimationFrame || clearTimeout)(frame); frame = 0 }
+      window.removeEventListener('resize', schedule)
+      window.removeEventListener(NATIVE_KEYBOARD_EVENT, schedule)
+      vv?.removeEventListener?.('resize', schedule)
+      vv?.removeEventListener?.('scroll', schedule)
+      boxHeight.current = 0
+    }
+  }, [])
+  // A shell marker so #app drops its keyboard padding on this route only: the thread scrolls
+  // inside itself, so extra page scroll is exactly the blank screen this replaces.
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    const on = !!chatBox
+    document.body.classList.toggle('chat-kb', on)
+    if (on) window.scrollTo?.(0, 0)
+    return () => document.body.classList.remove('chat-kb')
+  }, [!!chatBox])
+
+  // Following new messages is a scroll of the thread, never of the page, and only when the
+  // reader was already at the bottom (or just sent something).
+  const stick = useRef(true)
+  const atBottom = () => {
+    const el = msgsRef.current
+    if (chatBox && el) return el.scrollHeight - el.clientHeight - (el.scrollTop || 0) <= 48
+    const se = typeof document !== 'undefined' ? (document.scrollingElement || document.documentElement) : null
+    return !se || se.scrollHeight - se.clientHeight - (window.scrollY || 0) <= 48
+  }
+  const followMsgs = () => {
+    if (!stick.current) return
+    const el = msgsRef.current
+    if (chatBox) { if (el) el.scrollTop = el.scrollHeight; return }
+    const se = typeof document !== 'undefined' ? (document.scrollingElement || document.documentElement) : null
+    if (se) window.scrollTo?.(0, se.scrollHeight)
+  }
+  useEffect(() => { followMsgs() }, [S.coach?.chat?.length, !!job, !!pending])
+  // The keyboard opening makes the thread the scroller: land on the same place it was showing
+  // (the end, unless the reader had gone up), without touching the page.
+  useEffect(() => {
+    if (!chatBox) return
+    const el = msgsRef.current
+    if (el && stick.current) el.scrollTop = el.scrollHeight
+  }, [!!chatBox])
+  // Reading history on the whole-page scroll (no keyboard): note where the reader left the
+  // thread, so a reply that lands while they are above the end does not yank them down.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const onScroll = () => { stick.current = atBottom() }
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [!!chatBox])
+
   useEffect(() => {
     if (!ready || !debriefIntent || job || pending) return
     useUI.setState({ coachDebriefIntent: null })
@@ -123,6 +212,7 @@ export default function CoachChat() {
   const send = async () => {
     const msg = text.trim()
     if (!msg || busy) return
+    stick.current = true   // their own message: follow it, and the reply
     setBusy(true)
     try {
       // A message about a proposed plan refines it. With no plan at all — the first attempt
@@ -142,6 +232,7 @@ export default function CoachChat() {
   }
 
   const ask = async (fn, line) => {
+    stick.current = true
     setBusy(true)
     try {
       await fn()
@@ -208,7 +299,8 @@ export default function CoachChat() {
     ? t('What should change?')
     : job ? t('Coach is thinking…') : t('Message the Coach…')
 
-  return <div className="narrow chat">
+  return <div className={'narrow chat' + (chatBox ? ' kb' : '')} ref={chatRef}
+    style={chatBox ? { '--chat-h': chatBox.height + 'px' } : undefined}>
     <div className="chat-hdr">
       <button className="iconbtn" onClick={() => nav('/plan')} aria-label={t('Back')}><Icon name="chevronLeft" /></button>
       <div className="chat-av"><Icon name="sparkles" /></div>
@@ -219,8 +311,8 @@ export default function CoachChat() {
       <button className="iconbtn" onClick={menu} aria-label={t('More')}><Icon name="more" /></button>
     </div>
 
-    {isStale && <Button onClick={refresh}>{t('Retry')}</Button>}
-    <div className="msgs">
+    {isStale && <div className="chat-retry"><Button onClick={refresh}>{t('Retry')}</Button></div>}
+    <div className="msgs" ref={msgsRef} onScroll={() => { stick.current = atBottom() }}>
       <Bubble role="coach">{t('Hi, I’m your Coach. I build your plan from your answers and adjust it from what you actually log. Nothing changes until you say so.')}</Bubble>
 
       {(coach.chat || []).map(m => <Message key={m.id} m={m} S={S} profile={coach.profile} openSheet={openSheet} />)}
@@ -232,8 +324,6 @@ export default function CoachChat() {
         : pending.kind === 'debrief'
           ? <DebriefCard p={pending} S={S} update={update} toast={toast} refresh={refresh} />
           : <ReviewCard p={pending} S={S} update={update} toast={toast} refresh={refresh} />)}
-
-      <div ref={endRef} />
     </div>
 
     <div className="composer">

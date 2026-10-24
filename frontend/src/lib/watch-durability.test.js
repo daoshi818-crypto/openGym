@@ -1,23 +1,24 @@
 // @vitest-environment node
-import { readFileSync } from 'node:fs'
-import { runInNewContext } from 'node:vm'
 import { afterEach, expect, it, vi } from 'vitest'
+import { loadWatchModule } from './watch-test-harness.js'
 
-const code = name => readFileSync(new URL('../../../watch-app/src/lib/' + name + '.js', import.meta.url), 'utf8')
-  .replace(/^import[^\n]*\n/gm, '').replace(/export function /g, 'function ')
 function harness() {
   const shared = {}, disk = new Map(), writes = [], sent = [], failures = []
   const storage = { getSync: ({key}) => structuredClone(disk.get(key)), set: item => writes.push(item) }
   const runtime = () => shared
-  const context = { runtime, storage, console }
-  runInNewContext(code('persistence') + '\nthis.api = { readStored, writeStored, retryStorage, storageStatus }', context)
-  const persistence = context.api
+  const context = { runtime, storage, console, Date, setTimeout, clearTimeout }
+  loadWatchModule('persistence', context, ['readStored', 'writeStored', 'writeStoredConfirmed', 'retryStorage', 'storageStatus'])
+  const persistence = { readStored: context.readStored, writeStored: context.writeStored, retryStorage: context.retryStorage, storageStatus: context.storageStatus }
   const connection = { getReadyState: ({success}) => success({status:1}), send: item => { sent.push(item); if (!connection.hang) item.success() } }
   const transport = () => {
-    const ctx = { runtime, ...persistence, storage, interconnect: { instance: () => connection }, loadState: () => ({}), save() {},
+    const ctx = { runtime, ...persistence, writeStoredConfirmed: context.writeStoredConfirmed, storage,
+      interconnect: { instance: () => connection }, loadState: () => ({}), save() {},
+      buildSessionSummary: () => ({ sets: [] }), summaryEventOf: () => ({}), closeSession() {},
       WATCH_VERSION: 'test', Date, setTimeout, clearTimeout, setInterval: () => 1, clearInterval() {}, console }
-    runInNewContext(code('rpc') + '\nthis.api = { startServer, sendEvent, pendingCount, persistenceStatus }', ctx)
-    return ctx.api
+    loadWatchModule('event-id', ctx, ['allocateEventIdentity', 'rememberEventAt'])
+    loadWatchModule('close-journal', ctx, ['pendingSummaries', 'pendingEntry', 'journalEntry', 'prepareClose', 'releaseCandidate', 'markPhase', 'markDelivered'])
+    loadWatchModule('rpc', ctx, ['startServer', 'sendEvent', 'pendingCount', 'persistenceStatus'])
+    return { startServer: ctx.startServer, sendEvent: ctx.sendEvent, pendingCount: ctx.pendingCount, persistenceStatus: ctx.persistenceStatus }
   }
   const commit = index => { const item = writes[index]; disk.set(item.key, structuredClone(item.value)); item.success?.() }
   return { shared, disk, writes, sent, failures, persistence, connection, transport, commit }

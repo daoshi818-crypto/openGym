@@ -58,61 +58,99 @@ function setState(s, error = '') {
   }
 }
 
-// 原生侧的连接/事件回调
+// 原生侧的连接/事件回调。
+//
+// 注册要么全部成功，要么全部撤掉再重试：以前先写 bound=true 再 addListener，任一失败就
+// 永久处于“已绑定但没有监听”的状态 —— 手机能推计划（sendPlan 不需要监听），
+// 却收不到手表发来的完成组事件，正是“手表完成组手机不更新、反向正常”的形状。
+let binding = null
+const listenerHandles = []
+// Kept apart from lastError: connectWatch's setState() blanks that on every attempt, and a
+// failed listener registration is exactly what must stay visible until it is fixed.
+let listenerError = ''
 async function bindNative() {
-  if (bound || !MOBILE) return
-  const p = await watchPlugin()
-  if (!p) return
-  bound = true
+  if (!MOBILE || listenerHandles.length) return
+  if (binding) return binding
+  binding = (async () => {
+    const p = await watchPlugin()
+    if (!p) return
+    const added = []
+    try {
+      added.push(await p.WatchRpc.addListener('watchState', onNativeWatchState))
+      added.push(await p.WatchRpc.addListener('watchEvent', onNativeWatchEvent))
+      listenerHandles.push(...added)
+      bound = true
+      listenerError = ''
+    } catch (e) {
+      for (const handle of added) { try { await handle?.remove?.() } catch { /* 已经失效 */ } }
+      bound = false
+      listenerError = 'watch listeners: ' + (e && e.message ? e.message : String(e))
+    } finally {
+      binding = null
+    }
+  })().catch(() => { binding = null })
+  return binding
+}
 
-  p.WatchRpc.addListener('watchState', (ev) => {
-    const next = ev && ev.state ? ev.state : 'off'
-    if (typeof ev?.connected === 'boolean') device = { ...(device || {}), connected: ev.connected }
-    setState(next === 'disconnected' ? 'off' : next, ev && ev.reason ? ev.reason : '')
-    if (next === 'ready' || next === 'connected') {
-      if (!pendingPlan && latestPlan) pendingPlan = latestPlan
+function onNativeWatchState(ev) {
+  const next = ev && ev.state ? ev.state : 'off'
+  if (typeof ev?.connected === 'boolean') device = { ...(device || {}), connected: ev.connected }
+  setState(next === 'disconnected' ? 'off' : next, ev && ev.reason ? ev.reason : '')
+  if (next === 'ready' || next === 'connected') {
+    if (!pendingPlan && latestPlan) pendingPlan = latestPlan
+    Promise.resolve().then(flushPendingPlan)
+  }
+}
+
+function onNativeWatchEvent(ev) {
+  try {
+    if (!ev) return
+    for (const cb of receiptListeners) { try { cb(ev) } catch { /* Status subscribers must not interrupt delivery. */ } }
+    if (ev.t === 'device') {
+      device = { ...(device || {}), ...ev }
+      return
+    }
+    if (ev.watchVersion) watchVersion = String(ev.watchVersion)
+    if (ev.t === 'hello') {
+      watchVersion = ev.watchVersion ? String(ev.watchVersion) : 'not_reported'
+      watchReceiptsSupported = ev.receipts === true
+    }
+    if (ev.t === 'plan_ack') {
+      lastPlanReceipt = { ...ev, receivedAt: Date.now() }
+      if (latestPlan && ev.sid === latestPlan.sid && ev.planId === latestPlan.planId) {
+        latestPlan.receipt = lastPlanReceipt
+      }
+      return
+    }
+    if (ev.t === 'sync_ack') { lastSyncReceipt = { ...ev, receivedAt: Date.now() }; return }
+    if (ev.t === 'watch_rx') { lastWatchRx = { ...ev, receivedAt: Date.now() }; return }
+    // 生命周期消息（完成/撤销/结构/关闭/汇总）由全局协调器同步认领，其余仍交给训练页。
+    // 认领必须保持同步布尔判断；异步执行在其内部完成，不能让 Promise 冒充 true。
+    let claimed = false
+    try { claimed = onWatchLifecycle(ev) === true } catch (e) {
+      console.log('watch lifecycle failed', e)
+      listenerError = 'watch lifecycle: ' + (e && e.message ? e.message : String(e))
+      claimed = false
+    }
+    if (claimed) return
+    // 手表刚打开：如果计划之前没送到，借这次握手立刻补推。
+    if (ev.t === 'hello' && latestPlan) {
+      pendingPlan = latestPlan
       Promise.resolve().then(flushPendingPlan)
     }
-  })
-
-  p.WatchRpc.addListener('watchEvent', (ev) => {
-    try {
-      if (!ev) return
-      for (const cb of receiptListeners) { try { cb(ev) } catch { /* Status subscribers must not interrupt delivery. */ } }
-      if (ev.t === 'device') {
-        device = { ...(device || {}), ...ev }
-        return
-      }
-      if (ev.watchVersion) watchVersion = String(ev.watchVersion)
-      if (ev.t === 'hello') {
-        watchVersion = ev.watchVersion ? String(ev.watchVersion) : 'not_reported'
-        watchReceiptsSupported = ev.receipts === true
-      }
-      if (ev.t === 'plan_ack') {
-        lastPlanReceipt = { ...ev, receivedAt: Date.now() }
-        if (latestPlan && ev.sid === latestPlan.sid && ev.planId === latestPlan.planId) {
-          latestPlan.receipt = lastPlanReceipt
-        }
-        return
-      }
-      if (ev.t === 'sync_ack') { lastSyncReceipt = { ...ev, receivedAt: Date.now() }; return }
-      if (ev.t === 'watch_rx') { lastWatchRx = { ...ev, receivedAt: Date.now() }; return }
-      if (onWatchLifecycle(ev)) return
-      // 手表刚打开：如果计划之前没送到，借这次握手立刻补推。
-      if (ev.t === 'hello' && latestPlan) {
-        pendingPlan = latestPlan
-        Promise.resolve().then(flushPendingPlan)
-      }
-      // 这些是“状态/结构调整”，训练页通过 bindWatchSync 落库；其余是完成/结束事件。
-      if (ev.t === 'rest' || ev.t === 'weight' || ev.t === 'reps' ||
-          ev.t === 'add_set' || ev.t === 'remove_set' || ev.t === 'focus' ||
-          ev.t === 'hello' || ev.t === 'sync') {
-        onWatchSync(ev)
-      } else {
-        onWatchEvent(ev)
-      }
-    } catch (e) { console.log('watch event failed', e) }
-  })
+    // 这些是“状态/结构调整”，训练页通过 bindWatchSync 落库；其余是完成/结束事件。
+    if (ev.t === 'rest' || ev.t === 'weight' || ev.t === 'reps' ||
+        ev.t === 'add_set' || ev.t === 'remove_set' || ev.t === 'focus' ||
+        ev.t === 'hello' || ev.t === 'sync') {
+      onWatchSync(ev)
+    } else {
+      onWatchEvent(ev)
+    }
+  } catch (e) {
+    console.log('watch event failed', e)
+    // 未消费的消息不能假装成功：手表保留 outbox，等下一次重放。
+    listenerError = 'watch event: ' + (e && e.message ? e.message : String(e))
+  }
 }
 
 // ---- 设置页 API ----
@@ -192,7 +230,7 @@ export async function getWatchDeviceInfo() {
 }
 
 export function watchDevice() { return device ? { ...device } : null }
-export function watchLastError() { return lastError }
+export function watchLastError() { return lastError || listenerError }
 
 /** 原生 SDK 日志（最近 300 行），用于设置页排查连接问题。 */
 export async function getWatchLogs() {
@@ -377,9 +415,9 @@ export async function pushFocusToWatch(sid, ex, set) {
   await sendWatchEvent({ t: 'focus', sid, ex, set, at: Date.now(), source: 'phone' })
 }
 
-/** 确认收到手表事件；手表用 upto 清理 outbox。 */
+/** 确认收到手表事件；eventId 精确到一条，没有 upto 时也要能单独确认。 */
 export async function pushAckToWatch(upto, eventId) {
-  if (!MOBILE || upto == null) return
+  if (!MOBILE || (upto == null && !eventId)) return
   await sendWatchEvent({ t: 'ack', upto, eventId })
 }
 
@@ -430,4 +468,12 @@ export function bindWatchEvents(cb) {
   const fn = cb || (() => {})
   onWatchEvent = fn
   return () => { if (onWatchEvent === fn) onWatchEvent = () => {} }
+}
+
+/** 手机改了某组的强度（量表 + 数值；value=null 为清除）。 */
+export async function pushEffortToWatch(sid, ex, set, scale, value, version) {
+  if (!MOBILE || !sid) return
+  if (scale !== 'rpe' && scale !== 'rir') return
+  await sendWatchEvent({ t: 'effort', sid, ex, set, scale, value: value == null ? null : Number(value),
+    clear: value == null, effortVersion: version, baseEffortVersion: 0 })
 }

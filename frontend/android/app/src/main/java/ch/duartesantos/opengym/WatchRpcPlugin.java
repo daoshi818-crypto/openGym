@@ -73,11 +73,16 @@ public class WatchRpcPlugin extends Plugin {
     private final IDataReceiver receiver = new IDataReceiver() {
         @Override
         public void onReceiveRequest(Request request) {
-            if (request == null || !sessionActive) return;
+            if (request == null) return;
             log("RX request action=" + request.getAction() + " bytes=" + (request.getData() == null ? 0 : request.getData().length()));
             if (Constant.Action.ACTION_DEVICE_DYNAMIC.equals(request.getAction())) {
-                handleDeviceDynamic(request.getData());
+                if (sessionActive) handleDeviceDynamic(request.getData());
             } else {
+                // 收到手表上行数据与“前端是否调用过 connect/send”无关：那只是前端意愿，不是
+                // 传输条件。以前这里在 !sessionActive 时静默丢弃整条业务消息，手表的完成组
+                // 就永远到不了 JS（手机能下发计划、收不到完成组的形状）。收到的包一律交给
+                // JS 决定是否应用；JS 不在或已断开时由手表的 outbox 继续重试。
+                if (!sessionActive) log("RX business while inactive: forwarding to JS");
                 emit(request.getData(), "request");
             }
             // 手表用 connect.send 发请求时，回一个传输层 ack；业务含义仍由 data 表达。
@@ -91,11 +96,12 @@ public class WatchRpcPlugin extends Plugin {
 
         @Override
         public void onReceiveNotification(Notification notification) {
-            if (notification == null || !sessionActive) return;
+            if (notification == null) return;
             log("RX notification action=" + notification.getAction());
             if (Constant.Action.ACTION_DEVICE_DYNAMIC.equals(notification.getAction())) {
-                handleDeviceDynamic(notification.getData());
+                if (sessionActive) handleDeviceDynamic(notification.getData());
             } else {
+                if (!sessionActive) log("RX notification while inactive: forwarding to JS");
                 emit(notification.getData(), "notification");
             }
         }

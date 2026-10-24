@@ -109,7 +109,7 @@ vi.mock('../sheets.jsx', () => ({
 vi.mock('../components/Media.jsx', () => ({ default: () => null }))
 vi.mock('../lib/watch-link.js', () => ({
   bindWatchSync: vi.fn(), bindWatchEvents: vi.fn(),
-  pushRestToWatch: vi.fn(), pushWeightToWatch: vi.fn(), pushRepsToWatch: vi.fn(),
+  pushRestToWatch: vi.fn(), pushWeightToWatch: vi.fn(), pushRepsToWatch: vi.fn(), pushEffortToWatch: vi.fn(),
   pushSetToWatch: vi.fn(), pushUnsetToWatch: vi.fn(), pushAddSetToWatch: vi.fn(),
   pushRemoveSetToWatch: vi.fn(), pushFocusToWatch: vi.fn(), pushAckToWatch: vi.fn(), pushSyncToWatch: vi.fn(),
 }))
@@ -278,7 +278,7 @@ async function pressProgression(index = 0) {
   return button
 }
 
-// Discard lives at the end of the header's ⋯ menu (v1.3.11); the header's ⌄ only leaves the screen.
+// Discard lives at the end of the header's ⋯ menu (v1.3.11); the header's collapse control only leaves the screen.
 async function requestDiscard() {
   const button = container.querySelector('button[aria-label="Workout options"]')
   expect(button).toBeTruthy()
@@ -3002,6 +3002,10 @@ describe('effort rating auto-ends the set', () => {
     expect(mocks.S.active.entries[0].sets[0].rir).toBe(2)
     expect(mocks.S.active.entries[0].sets[0].done).toBe(true)
     expect(mocks.startRest).toHaveBeenCalledWith(90, expect.any(Number), { forSet: expect.any(Number) })
+    // Phone edits reach the watch with their own effort version; the watch compares that,
+    // never the wall clock.
+    expect(watch.pushEffortToWatch).toHaveBeenLastCalledWith(String(mocks.S.active.start), 0, 1, 'rir', 2, expect.any(Number))
+    expect(mocks.S.active.entries[0].sets[0].effortVersion).toBeGreaterThan(0)
   })
 
   it('does not re-toggle a set that is already done — a rating change leaves it done', async () => {
@@ -3398,7 +3402,7 @@ describe('the workout screen chrome (v1.3.11)', () => {
   const click = async el => { await act(async () => { el.dispatchEvent(new dom.Event('click', { bubbles: true })) }) }
   const openMore = () => click(container.querySelector('button[aria-label="More"]'))
 
-  it('has a labelled Finish pill and a ⌄ that leaves the screen with the session still running', async () => {
+  it('has a labelled Finish pill and a collapse control that leaves the screen with the session still running', async () => {
     await mount([exercise('plain-bench', [false])])
     const pill = container.querySelector('.whdr-finish')
     expect(pill.textContent).toBe('Finish')

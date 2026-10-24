@@ -877,7 +877,7 @@ body.chips-dragging *{cursor:inherit}
 @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
   .whdr.stick{background:var(--bg)}
 }
-/* The workout's own header (v1.3.11): ⌄ (or the editor's ✕), the name with the clock and set
+/* The workout's own header (v1.3.11): the collapse control (or the editor's ✕), the name with the clock and set
    count, ⋯, and a labelled Finish pill. The name block takes what is left and truncates; the pill
    never shrinks. */
 .hdr.whdr-bar{align-items:center;gap:8px;margin:4px 0 12px}

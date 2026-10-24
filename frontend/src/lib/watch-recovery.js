@@ -1,6 +1,6 @@
 import { convertWatchWeight } from './watch-identity.js'
 import { applyWatchSummary } from './watch-session.js'
-import { applyWatchEvent } from './watch-events.js'
+import { applyWatchEvent, applyWatchEffort } from './watch-events.js'
 import { buildCompletedWorkout } from './finish-workout.js'
 import { hasCompletedWork, isWarmupRow } from './workout-model.js'
 import { isoOf } from './format.js'
@@ -33,8 +33,17 @@ export function resolveWatchSave(S, key, accept) {
       const rows = entry.sets.filter(r => !isWarmupRow(r))
       while (rows.length < set.set && rows.length < 100) { const row = { ...(rows.at(-1) || {}), setId: set.setId || undefined, done: false }; entry.sets.push(row); rows.push(row) }
     }
-    for (const set of ev.completedSets || []) applyWatchEvent(draft, { ...set, t: 'set', sid: ev.sid,
-      eventId: key + ':' + set.ex + ':' + set.set, seq: ev.closedAt })
+    for (const set of ev.completedSets || []) {
+      applyWatchEvent(draft, { ...set, t: 'set', sid: ev.sid,
+        eventId: key + ':' + set.ex + ':' + set.set, seq: ev.closedAt })
+      // 离线合并也要保留评分与清除版本：旧摘要不能复活已清除评分。
+      if (set.rpe != null || set.rir != null || set.effortCleared === true) {
+        applyWatchEffort(draft, { ...set, t: 'effort', sid: ev.sid, clear: set.effortCleared === true,
+          scale: set.rpe != null ? 'rpe' : 'rir', value: set.rpe != null ? set.rpe : set.rir,
+          effortVersion: set.effortVersion || ev.closedAt,
+          eventId: key + ':effort:' + set.ex + ':' + set.set })
+      }
+    }
     applyWatchSummary(draft, { ...ev, ...ev.summary, at: ev.closedAt })
     const completed = buildCompletedWorkout(draft.active, { end: Math.max(record.end || 0, ev.closedAt || 0),
       prs: record.prs || [], snapshotFor: entry => entry.muscleSnapshot })

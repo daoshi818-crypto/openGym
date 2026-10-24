@@ -31,6 +31,42 @@ export function visibleBottom(win = typeof window !== 'undefined' ? window : nul
   return Math.min(visual, win.innerHeight - nativeKeyboardHeight(win.document))
 }
 
+/* One contract for "the part of the screen nothing covers", in CSS pixels and in
+   layout-viewport coordinates (the ones getBoundingClientRect uses).
+
+   Two things can describe the same keyboard: the visual viewport shrinking (iOS, Android 14
+   and older) and --native-kb carrying what the WebView did not absorb (Android 15 edge to
+   edge). Both may be present, so the bottom is the smallest of the layout bottom, the visual
+   bottom, and the layout bottom less the native residual — never `visualHeight - overlap`,
+   which subtracts one occlusion twice and can push the box off the top of the screen. */
+export function visibleBox({ innerHeight = 0, visualTop = 0, visualHeight = null, nativeOverlap = 0 } = {}) {
+  const layout = Number.isFinite(innerHeight) && innerHeight > 0 ? innerHeight : 0
+  const top = Math.max(0, Number.isFinite(visualTop) ? visualTop : 0)
+  const visual = top + (Number.isFinite(visualHeight) ? visualHeight : layout)
+  const overlap = Math.max(0, Number.isFinite(nativeOverlap) ? nativeOverlap : 0)
+  const bottom = Math.max(0, Math.min(layout, visual, layout - overlap))
+  return { top, bottom, height: Math.max(0, bottom - top) }
+}
+
+/** The visible box for a window, from whatever the platform reports. */
+export function viewportBox(win = typeof window !== 'undefined' ? window : null) {
+  if (!win) return { top: 0, bottom: 0, height: 0 }
+  const vv = win.visualViewport
+  return visibleBox({
+    innerHeight: win.innerHeight,
+    visualTop: vv ? vv.offsetTop || 0 : 0,
+    visualHeight: vv ? vv.height : null,
+    nativeOverlap: nativeKeyboardHeight(win.document),
+  })
+}
+
+/** A page that scrolls its own content: the box runs from the page's own top to the visible bottom. */
+export function boxBelow(containerTop, box, minHeight = 0) {
+  const top = Math.max(0, Number.isFinite(containerTop) ? containerTop : 0)
+  const bottom = Math.max(0, Number.isFinite(box?.bottom) ? box.bottom : 0)
+  return { top, bottom, height: Math.max(Number(minHeight) || 0, bottom - top) }
+}
+
 function scrollsVertically(el, win) {
   if (!el || el.nodeType !== 1) return false
   if (el.classList?.contains('sheet')) return true

@@ -129,7 +129,9 @@ public class RestAlertPlugin extends Plugin {
                 call.getString("importance", "high"),
                 Boolean.TRUE.equals(call.getBoolean("localOnly", Boolean.FALSE)),
                 call.getString("countdownTitle", "Rest"),
-                number(call, "totalMs", 0)
+                number(call, "totalMs", 0),
+                call.getString("restId", ""),
+                call.getString("context", "")
         );
         call.resolve();
     }
@@ -205,6 +207,30 @@ public class RestAlertPlugin extends Plugin {
         i.putExtra("totalMs", number(call, "totalMs", 0));
         try { app.startService(i); } catch (Exception ignored) { /* no countdown on screen to hold */ }
         call.resolve();
+    }
+
+    /** 训练摘要更新（下一组动作/处方）：只改悬浮窗内容，不重排闹钟、不改截止时间。 */
+    @PluginMethod
+    public void setOverlayContext(PluginCall call) {
+        Context ctx = getContext();
+        if (ctx == null) { call.reject("no context"); return; }
+        RestAlert.setContext(ctx.getApplicationContext(), call.getString("restId", ""), call.getString("context", ""));
+        call.resolve();
+    }
+
+    /** 原生休息状态：APP 回前台时用它裁决旧 WebView 计时。 */
+    @PluginMethod
+    public void getRestState(PluginCall call) {
+        RestTimerService.Snapshot s = RestTimerService.snapshot();
+        JSObject ret = new JSObject();
+        ret.put("active", s != null && s.active);
+        ret.put("restId", s == null ? "" : s.restId);
+        ret.put("endsAt", s == null ? 0 : s.endsAt);
+        ret.put("totalMs", s == null ? 0 : s.totalMs);
+        ret.put("leftMs", s == null ? 0 : s.leftMs);
+        ret.put("paused", s != null && s.paused);
+        ret.put("at", s == null ? 0 : s.at);
+        call.resolve(ret);
     }
 
     @PluginMethod

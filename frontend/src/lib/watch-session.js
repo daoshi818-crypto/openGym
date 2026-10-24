@@ -1,7 +1,7 @@
 import { watchSidOf } from './session-resume.js'
 import { watchSnapshotOf, watchCatalogOf } from './watch-workout.js'
 import { isWarmupRow } from './workout-model.js'
-import { applyWatchEvent, startFromWatch, rememberClose } from './watch-events.js'
+import { applyWatchEvent, applyWatchEffort, startFromWatch, rememberClose } from './watch-events.js'
 import { resolveWatchTarget } from './watch-identity.js'
 import { pruneWatchClosed } from './watch-retention.js'
 import { finiteKcal, isSegmentAtLeast, workoutCaloriesOf } from './workout-calories.js'
@@ -112,6 +112,20 @@ export function createWatchLifecycle({ getState, update, getTimer, sendEnded, se
       }
       ack(); sync(); return true
     }
+    if (ev.t === 'effort') {
+      // 评分有独立的版本域与冲突裁决：应用/过期都算已处理；冲突把手机现值交回手表，
+      // 让手表重新确认，而不是静默覆盖任何一方。
+      let result = { status: 'rejected' }
+      update(s => { result = applyWatchEffort(s, ev) })
+      if (result.status === 'applied' || result.status === 'stale') { ack(); sync() }
+      else if (result.status === 'conflict') {
+        send({ t: 'effort_ack', eventId: ev.eventId, sid: ev.sid, status: 'conflict',
+          scale: result.scale || ev.scale, value: result.value, version: result.version })
+        ack(); sync()
+      } else if (current.watchClosed?.[ev.sid]) ack()
+      else { send({ t: 'event_rejected', eventId: ev.eventId, sid: ev.sid, reason: result.reason || 'target_changed' }); sync() }
+      return true
+    }
     if (['weight', 'reps', 'set', 'unset', 'add_set', 'remove_set', 'focus'].includes(ev.t)) {
       let accepted = false
       const wasDone = resolveWatchTarget(current.active, ev)?.row?.done
@@ -130,11 +144,20 @@ export function createWatchLifecycle({ getState, update, getTimer, sendEnded, se
       if (ev.t === 'end' && watchSidOf(s.active) === ev.sid && Array.isArray(ev.completedSets)) {
         for (const set of ev.completedSets) {
           applyWatchEvent(s, { ...set, sid: ev.sid, t: 'set', eventId: (ev.eventId || ev.sid) + ':' + set.ex + ':' + set.set })
+          // 结束数据里的评分是最后一份权威值：按同一版本规则合并（不清除未提及的字段）。
+          if (set.rpe != null || set.rir != null || set.effortCleared === true) {
+            applyWatchEffort(s, { ...set, sid: ev.sid, t: 'effort', clear: set.effortCleared === true,
+              scale: set.rpe != null ? 'rpe' : 'rir', value: set.rpe != null ? set.rpe : set.rir,
+              effortVersion: set.effortVersion || ev.endedAt || ev.at,
+              eventId: (ev.eventId || ev.sid) + ':effort:' + set.ex + ':' + set.set })
+          }
         }
       }
     })
     if (ev.t === 'end' && !current.active?.editingWorkoutId && watchSidOf(current.active) === ev.sid) finish(ev.endedAt)
-    if (accepted || ev.t === 'end') sendAck(ev.at)
+    // 精确回执：汇总必须带 eventId，手表才能把关闭日志标成已送达并只清掉那一条。
+    // 只用时间戳回执会把同一时刻之后尚未确认的事件一起删掉（W06/W08）。
+    if (accepted || ev.t === 'end') sendAck(ev.at, ev.eventId)
     return true
   }
 }

@@ -8,7 +8,7 @@ import { accentValue, applyAccent } from './lib/accent.js'
 import { setLang, useLang, baseLang } from './lib/i18n.js'
 import { effectiveLang } from './lib/default-lang.js'
 import { setPlayOnSilent, setVibrate, setAlarmBuzzer } from './lib/sound.js'
-import { buzzAsAlarm } from './lib/rest-alert.js'
+import { buzzAsAlarm, getRestState, setOverlayStyle } from './lib/rest-alert.js'
 import { setNav } from './lib/nav.js'
 import { setSystemBarsLight } from './lib/system-bars.js'
 import { initBackButton } from './lib/back.js'
@@ -16,10 +16,11 @@ import { useWakeLock } from './lib/wakelock.js'
 import { installViewportGuard } from './lib/viewport-guard.js'
 import { installChipDrag } from './lib/hchips.js'
 import { syncPushSubscription } from './lib/push.js'
-import { MOBILE } from './lib/mobile.js'
+import { MOBILE, onAppActive } from './lib/mobile.js'
 import { pushPlanToWatch, clearWatchPlan, bindWatchLifecycle, pushEndedToWatch, pushSyncToWatch, pushAckToWatch, watchAvailable, connectWatch } from './lib/watch-link.js'
 import { watchPlanOf, watchCatalogOf } from './lib/watch-workout.js'
 import { sendToWatch, pushRestToWatch } from './lib/watch-link.js'
+import { restContextOf, restContextWire } from './lib/rest-context.js'
 import { watchSidOf } from './lib/session-resume.js'
 import { rememberClose } from './lib/watch-events.js'
 import { createWatchLifecycle } from './lib/watch-session.js'
@@ -111,6 +112,21 @@ function Shell() {
     useStore.getState().update(s => { if (s.active) s.active.restVersion = version })
     pushRestToWatch(watchSidOf(S.active), restTimer && !restTimer.ready ? restTimer.paused ? restTimer.left : Math.max(0, Math.ceil((restTimer.endsAt - Date.now()) / 1000)) : 0, restTimer)
   }, [S.active?.start, restTimer?.endsAt, restTimer?.paused, restTimer?.ready, restTimer?.total])
+  // 原生悬浮窗：启动/回前台恢复持久样式，并用原生休息状态裁决旧 WebView 计时。
+  const overlayStyle = S.overlayStyle === 'ring' ? 'ring' : 'card'
+  useEffect(() => {
+    if (!MOBILE) return
+    setOverlayStyle(overlayStyle)
+    onAppActive(() => { getRestState().then(st => useUI.getState().reconcileNativeRest(st)).catch(() => {}) })
+  }, [overlayStyle])
+  // 休息中训练状态变化（手表同步、加减组、切动作）→ 只更新悬浮窗摘要，不重排闹钟。
+  const restContextJson = useMemo(() => {
+    if (!MOBILE || !restTimer || restTimer.ready) return ''
+    return restContextWire(restContextOf(S, restTimer))
+  }, [S.active, S.workouts, restTimer?.restId, restTimer?.forIdx, restTimer?.forSet, restTimer?.paused])
+  useEffect(() => {
+    if (MOBILE && restContextJson) useUI.getState().syncRestContext()
+  }, [restContextJson])
   const priorWatchSession = useRef(null)
   useEffect(() => {
     if (!MOBILE) return
@@ -232,7 +248,7 @@ function Shell() {
   // bound to the workout, not to the route — checking Stats mid-session keeps the screen on
   useWakeLock(!!S.active && !S.active.editingWorkoutId && S.keepAwake !== false)
   // A running workout has the whole screen (v1.3.11): no tab bar, and the rest bar docks to the
-  // bottom edge in its place. Its header's ⌄ goes back to the app, where the tab bar's Resume
+  // bottom edge in its place. Its header's collapse control goes back to the app, where the tab bar's Resume
   // brings it back.
   const inWorkout = loc.pathname === '/workout' && !!S.active
   useEffect(() => {

@@ -79,8 +79,10 @@ jobs:
           files: |
             openGym.apk
             openGym.apk.sha256
-            watch-app/releases/*.rpk
-            watch-app/releases/*.rpk.sha256
+            watch-app/releases/opengym-watch-${{ env.WATCH_VERSION }}.rpk
+            watch-app/releases/opengym-watch-${{ env.WATCH_VERSION }}.rpk.sha256
+            watch-app/releases/opengym-watch-round-${{ env.WATCH_VERSION }}.rpk
+            watch-app/releases/opengym-watch-round-${{ env.WATCH_VERSION }}.rpk.sha256
           make_latest: true
 
       - name: Publish update metadata with the release

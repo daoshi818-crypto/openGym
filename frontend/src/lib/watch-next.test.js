@@ -6,15 +6,21 @@ import { applyWatchEvent, startFromWatch, rememberClose } from './watch-events.j
 import { resolveWatchSave } from './watch-recovery.js'
 import { watchSnapshotOf } from './watch-workout.js'
 import { applyEdit, restOf, applyRest, applyFocus } from '../../../watch-app/src/lib/protocol.js'
+import { loadWatchModule, watchPersistence } from './watch-test-harness.js'
 
 function watch() {
+  const { disk, ctx } = watchPersistence()
+  Object.assign(ctx, { Date, console, applyEdit, applyRest })
+  loadWatchModule('event-id', ctx, ['allocateEventIdentity', 'rememberEventAt'])
+  loadWatchModule('close-journal', ctx, ['prepareClose', 'releaseCandidate', 'pendingSummaries', 'pendingEntry', 'journalEntry', 'markPhase', 'markDelivered'])
+  loadWatchModule('session', ctx, ['startSession', 'loadState', 'save', 'applySync', 'replacePlan', 'setRowValue', 'addSet', 'removeSet', 'toggleSet', 'endSession', 'closeSession'])
   const memory = {}
-  const storage = { getSync: ({ key }) => structuredClone(memory[key]), set: ({ key, value, success }) => { memory[key] = structuredClone(value); success?.() } }
-  let code = readFileSync(new URL('../../../watch-app/src/lib/session.js', import.meta.url), 'utf8')
-    .replace(/^import .*\r?\n/gm, '').replace(/export function /g, 'function ')
-  code += '\n;({startSession,loadState,save,applySync,replacePlan,setRowValue,addSet,removeSet,toggleSet,endSession,closeSession})'
-  const shared = {}
-  return { memory, ...vm.runInNewContext(code, { storage, Date, console, applyEdit, applyRest, runtime: () => shared, readStored: key => storage.getSync({key}), writeStored: (key,value) => storage.set({key,value}) }) }
+  for (const key of ['session_state', 'summary_last', 'closed_sessions', 'watch_close_journal_v1'])
+    Object.defineProperty(memory, key, {
+      get: () => (disk.has(key) ? structuredClone(disk.get(key)) : null),
+      set: value => { disk.set(key, structuredClone(value)) },
+    })
+  return { memory, ...ctx }
 }
 const exercise = name => ({ name, sets: 2, reps: '8', weight: '50', restSec: 90 })
 const phone = () => ({ workouts: [], active: { start: 1000, name: 'Test', cur: 0, entries: [
@@ -80,14 +86,20 @@ describe('watch durable state and navigation', () => {
     w.removeSet(s, 0)
     expect(s.workout.rows[0][0].done).toBe(true)
   })
-  it('restores expired sessions as closed and queues one discard without erasing history summary', () => {
+  it('protects an expired session as a recoverable candidate before it is discarded', async () => {
     const w = watch(), s = w.startSession({ sid: 'expired', exercises: [exercise('A')] })
     s.startedAt = Date.now() - 21600001; w.save(s)
     w.memory.summary_last = { calories: 10 }
     expect(w.loadState().active).toBe(false)
+    await new Promise(r => setTimeout(r, 0))
     expect(w.loadState().active).toBe(false)
     expect(w.memory.closed_sessions).toContain('expired')
     expect(w.memory.session_state.expiredClose).toMatchObject({ t: 'session_close', disposition: 'abandoned' })
+    // The recorded session is frozen into its own journal key, not just thrown away.
+    const entry = w.memory.watch_close_journal_v1.entries.expired
+    expect(entry).toMatchObject({ sid: 'expired', delivery: 'candidate', phase: 'prepared' })
+    expect(entry.summaryEvent).toMatchObject({ t: 'summary', sid: 'expired', final: true })
+    expect(entry.summaryEvent.eventId).toMatch(/^watch:expired:/)
     expect(w.memory.summary_last.calories).toBe(10)
   })
 })

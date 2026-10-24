@@ -7,7 +7,7 @@
 // Android, iOS, a browser) nothing changes.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
-import { nativeKeyboardHeight, visibleBottom, revealAboveKeyboard, startNativeKeyboard, NATIVE_KEYBOARD_EVENT } from './native-keyboard.js'
+import { nativeKeyboardHeight, visibleBottom, revealAboveKeyboard, startNativeKeyboard, NATIVE_KEYBOARD_EVENT, visibleBox, viewportBox, boxBelow } from './native-keyboard.js'
 import { sheetKeyboardInsets } from './use-sheet-keyboard.js'
 
 const read = rel => readFileSync(new URL(rel, import.meta.url), 'utf8')
@@ -106,6 +106,43 @@ describe('keeping the focused field above the keyboard', () => {
     } finally {
       stop()
     }
+  })
+})
+
+// The Coach thread scrolls inside itself while the keyboard is up (A15). One box, one
+// subtraction: the visual viewport and the native residual may describe the same occlusion.
+describe('the visible box a page scrolls inside', () => {
+  it('follows the documented contract, never subtracting one occlusion twice', () => {
+    const cases = [
+      [{ innerHeight: 800, visualTop: 0, visualHeight: 800, nativeOverlap: 0 }, { top: 0, bottom: 800, height: 800 }],
+      [{ innerHeight: 500, visualTop: 0, visualHeight: 500, nativeOverlap: 0 }, { top: 0, bottom: 500, height: 500 }],
+      [{ innerHeight: 800, visualTop: 0, visualHeight: 800, nativeOverlap: 300 }, { top: 0, bottom: 500, height: 500 }],
+      [{ innerHeight: 800, visualTop: 0, visualHeight: 500, nativeOverlap: 300 }, { top: 0, bottom: 500, height: 500 }],
+      [{ innerHeight: 800, visualTop: 100, visualHeight: 500, nativeOverlap: 0 }, { top: 100, bottom: 600, height: 500 }],
+    ]
+    for (const [input, expected] of cases) expect(visibleBox(input)).toEqual(expected)
+  })
+
+  it('never produces a negative or NaN height', () => {
+    for (const input of [{}, { innerHeight: NaN, nativeOverlap: NaN, visualHeight: NaN }, { innerHeight: 400, nativeOverlap: 900 }])
+      expect(visibleBox(input).height).toBe(0)
+  })
+
+  it('runs from the page top to the visible bottom, with a floor for small screens', () => {
+    expect(boxBelow(60, { bottom: 800 }, 160)).toEqual({ top: 60, bottom: 800, height: 740 })
+    expect(boxBelow(-40, { bottom: 800 })).toMatchObject({ top: 0, height: 800 })
+    expect(boxBelow(700, { bottom: 500 }, 160).height).toBe(160)
+    expect(boxBelow(0, null)).toEqual({ top: 0, bottom: 0, height: 0 })
+  })
+
+  it('reads the window: nothing covered in a browser, the keyboard through either channel', () => {
+    expect(viewportBox(window)).toEqual({ top: 0, bottom: 915, height: 915 })
+    setKeyboard(336)
+    expect(viewportBox(window)).toEqual({ top: 0, bottom: 579, height: 579 })
+    setKeyboard(0)
+    viewport.height = 500
+    viewport.offsetTop = 0
+    expect(viewportBox(window)).toEqual({ top: 0, bottom: 500, height: 500 })
   })
 })
 

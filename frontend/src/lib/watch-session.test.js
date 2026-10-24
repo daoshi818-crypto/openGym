@@ -22,7 +22,7 @@ describe('watch lifecycle outside the training route', () => {
     app.receive({ t: 'summary', sid: '1000', calories: 122, avgHr: 101, at: 10 })
     app.receive({ t: 'summary', sid: '1000', calories: 122, avgHr: 101, at: 10 })
     expect(st.workouts[0].calories).toBe(122)
-    expect(app.sendAck).toHaveBeenLastCalledWith(10)
+    expect(app.sendAck).toHaveBeenLastCalledWith(10, undefined)
   })
   it('closes a missing/discarded session without affecting another active workout', () => {
     const st = { workouts: [], active: { start: 2000, entries: [], name: 'New' } }
@@ -39,7 +39,7 @@ describe('watch lifecycle outside the training route', () => {
     app.receive({ t: 'end', sid: '1000', calories: 222, at: 20 })
     expect(app.finish).toHaveBeenCalledOnce()
     expect(st.workouts[0].calories).toBe(222)
-    expect(app.sendAck).toHaveBeenLastCalledWith(20)
+    expect(app.sendAck).toHaveBeenLastCalledWith(20, undefined)
   })
   it('recovers watch work and the original end time when the phone was outside the training route', () => {
     const st = { workouts: [], active: history() }

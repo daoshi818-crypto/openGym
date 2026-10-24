@@ -29,7 +29,7 @@ export function accentColors(key) {
   return { accent: argb(accent), ink: argb(ink) }
 }
 
-export function buildRestAlert({ at, title, countdownTitle, totalSec, accent, sound = true, classic = false, tone = null, vibrate = true, alarmBuzz = false, now = Date.now() } = {}) {
+export function buildRestAlert({ at, title, countdownTitle, totalSec, accent, sound = true, classic = false, tone = null, vibrate = true, alarmBuzz = false, restId = '', context = '', now = Date.now() } = {}) {
   if (typeof at !== 'number' || !(at > now)) return null
   // Settings → Sound (#306): one of lib/sound.js REST_SOUNDS; without one, `classic` decides, as before.
   const kind = Object.hasOwn(REST_SOUNDS, tone) ? tone : classic === true ? 'classic' : 'chime'
@@ -49,6 +49,10 @@ export function buildRestAlert({ at, title, countdownTitle, totalSec, accent, so
     ink: colors.ink,
     totalMs,
     at,
+    // 休息身份 + 训练摘要（rest-context.js）：原生用它画紧凑卡片、展开控制；
+    // 之后的内容更新走 setOverlayContext，不再带 `at`，因此不会重排闹钟。
+    restId: String(restId || ''),
+    context: typeof context === 'string' ? context : '',
     allowWhileIdle: true,
     sound: !!sound,
     // Settings → Sound: the native side plays the same end tone the page does (RestTone.java).
@@ -138,7 +142,7 @@ export async function setOverlayStyle(style) {
 export function armRestAlert(at, opts = {}) {
   if (!MOBILE) return Promise.resolve(false)
   const mine = ++token
-  const alert = buildRestAlert({ at, title: opts.title, countdownTitle: opts.countdownTitle, totalSec: opts.totalSec, accent: opts.accent, sound: opts.sound, classic: opts.classic === true, tone: opts.tone, vibrate: opts.vibrate !== false, alarmBuzz: !!opts.alarmBuzz })
+  const alert = buildRestAlert({ at, title: opts.title, countdownTitle: opts.countdownTitle, totalSec: opts.totalSec, accent: opts.accent, sound: opts.sound, classic: opts.classic === true, tone: opts.tone, vibrate: opts.vibrate !== false, alarmBuzz: !!opts.alarmBuzz, restId: opts.restId, context: opts.context })
   if (!alert) return Promise.resolve(false)
   // Outside the chain and never awaited: the alarm, its tone and the alarm buzz do not need the
   // notification permission, and a dialog left open while the phone is put away must not hold
@@ -277,6 +281,8 @@ async function deliver(alert) {
     localOnly: alert.localOnly,
     countdownTitle: alert.countdownTitle,
     totalMs: alert.totalMs,
+    restId: alert.restId,
+    context: alert.context,
     pause: alert.pause,
     resume: alert.resume,
     minus: alert.minus,
@@ -291,4 +297,26 @@ async function deliver(alert) {
 async function cancelDelivered() {
   const p = await restPlugin()
   if (p) await p.RestAlert.cancel({ id: REST_ALERT_ID })
+}
+
+/**
+ * 训练摘要更新：只刷新悬浮窗内容，不重新安排闹钟、不改变截止时间、不重置休息。
+ * restId 不匹配时原生忽略，避免旧休息的摘要盖到新一轮上。
+ */
+export function setRestContext(restId, context) {
+  if (!MOBILE || !restId || !context) return Promise.resolve(false)
+  return restPlugin()
+    .then(p => (p ? p.RestAlert.setOverlayContext({ restId: String(restId), context: String(context) }).then(() => true) : false))
+    .catch(() => false)
+}
+
+/**
+ * 原生休息状态（服务在后台活着时最可信）：APP 回前台时用它裁决旧 WebView 计时，
+ * 已跳过/已结束的休息不能被旧状态复活。
+ */
+export function getRestState() {
+  if (!MOBILE) return Promise.resolve(null)
+  return restPlugin()
+    .then(p => (p ? p.RestAlert.getRestState().then(r => r || null) : null))
+    .catch(() => null)
 }

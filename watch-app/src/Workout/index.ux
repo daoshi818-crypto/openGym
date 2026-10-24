@@ -5,8 +5,12 @@ import router from '@blueos.app.appmanager.router'
 import brightness from '@blueos.hardware.display.brightness'
 import {
   loadState, save, replacePlan, applySync, toggleSet, nextUndone, nextUndoneFrom,
-  endSession, closeSession, addSet, removeSet, addRestTime, setRowValue, calories,
+  endSession, closeSession, addSet, removeSet, addRestTime, setRowValue, setEffort, calories,
 } from '../lib/session.js'
+import {
+  effortScaleOf, effortValueOf, effortKindOf, stepEffortValue, effortMeaning, effortSummaryText,
+  formatEffort,
+} from '../lib/effort-scale.js'
 import { startSessionHr, stopSessionHr, tick, restOver } from '../lib/sensors.js'
 import { startServer, sendEvent, sendControl, pendingCount, isConnected, persistenceStatus } from '../lib/rpc.js'
 import { storageStatus } from '../lib/persistence.js'
@@ -40,6 +44,24 @@ export default {
     closeMode: '',
     paused: false,
     pauseLabel: '暂停训练',
+    // 视觉：数值与单位分开，单位弱一级
+    weightNum: '—', weightSuffix: 'kg', repsNum: '—', repsSuffix: '次',
+    statusLead: '已连接',
+    // 本组强度登记（同页覆盖层）
+    effortOn: false,
+    effortScale: 'none',            // 手机设置：'rpe' | 'rir' | 'none'
+    effortScaleLabel: '',
+    effortDraft: null,
+    effortDraftLabel: '—',
+    effortHint: '左右滑动选择',
+    effortMeaning: '',
+    effortEntryText: '未登记',
+    effortEntryOn: false,
+    effortHasSaved: false,
+    effortNotice: '',
+    effortTargetLabel: '',
+    effortRestLabel: '',
+    effortStale: false,
   },
 
   onInit() {
@@ -59,6 +81,9 @@ export default {
     this.restCrownTimer = null
     this.restCrownDirty = false
     this.visible = true
+    this.effortTarget = null
+    this.effortBaseVersion = 0
+    this.effortScaleAtOpen = 'none'
 
     this.bindRpc()
 
@@ -106,6 +131,11 @@ export default {
     try { this.$element('training').requestFocus(true) } catch (e) {}
   },
   onRotation(ev) {
+    if (ev && this.effortOn && ev.state !== 3) {
+      const d = Number(ev.delta) || (ev.direction === true ? 1 : ev.direction === false ? -1 : 0)
+      if (d) this.effortMove(d > 0 ? 1 : -1)
+      return
+    }
     if (!ev || this.visible === false || ev.state === 3 || this.menuOn || this.closeMode || this.pageIndex || this.paused) return
     const delta = Number(ev.delta) || (ev.direction === true ? 1 : ev.direction === false ? -1 : 0)
     if (!delta) return
@@ -113,6 +143,7 @@ export default {
     else this.stepSet(delta > 0 ? 1 : -1)
   },
   onBackPress() {
+    if (this.effortOn) { this.closeEffort(); return true }
     if (this.closeMode) this.cancelClose()
     else if (this.menuOn) this.menuOn = false
     else if (this.pageIndex) this.pageIndex = 0
@@ -136,7 +167,7 @@ export default {
         this.state = latest
       }
       const msg = args[0], s = this.state
-      if (msg?.entryInstanceId && ['set','unset','weight','reps','add_set','remove_set','focus'].includes(msg.t)) {
+      if (msg?.entryInstanceId && ['set','unset','weight','reps','add_set','remove_set','focus','effort'].includes(msg.t)) {
         const ex = s.workout.exercises.findIndex(e => e.entryInstanceId === msg.entryInstanceId)
         if (ex < 0) return
         const set = msg.setId ? s.workout.rows[ex].findIndex(r => r.setId === msg.setId) + 1 : msg.set
@@ -157,6 +188,7 @@ export default {
       },
       onSet: (msg) => handle('onRemoteSet', msg),
       onUnset: (msg) => handle('onRemoteUnset', msg),
+      onEffort: (msg) => handle('onRemoteEffort', msg),
       onWeight: (msg) => handle('onRemoteValue', msg, 'w'),
       onReps: (msg) => handle('onRemoteValue', msg, 'r'),
       onAddSet: (msg) => handle('onRemoteAddSet', msg),
@@ -203,6 +235,7 @@ export default {
     this.touch = t ? { x: t.clientX, y: t.clientY } : null
     this.touchLast = this.touch
     this.touchAxis = null
+    this.effortSwipe = 0
   },
 
   touchMove(e) {
@@ -226,6 +259,13 @@ export default {
     const axisAtRelease = this.touchAxis
     this.touchCancel()
     if (!end) return
+    // 评分层独占横滑：只移动一个步长，不切页、不切组、不碰休息。
+    if (this.effortOn) {
+      if (Math.abs(end.x - start.x) >= 24 && Math.abs(end.x - start.x) > Math.abs(end.y - start.y)) {
+        this.effortMove(end.x < start.x ? 1 : -1)
+      }
+      return
+    }
     const dx = end.x - start.x
     const dy = end.y - start.y
     if (Math.abs(dx) < 60 && Math.abs(dy) < 60) return
@@ -346,6 +386,11 @@ export default {
     if (!current || current.done) return
     const row = toggleSet(s, true)
     if (!row) return
+    // 评分归属必须在焦点前进之前捕获：完成后游标会去下一组，这里记住的是刚完成的这一组。
+    this.effortEntryText = '未登记'
+    this.effortTarget = { sid: s.sid, entryInstanceId: s.workout.exercises[exIdx]?.entryInstanceId,
+      setId: row.setId, completedAt: row.at, exIdx, setIdx,
+      name: s.workout.exercises[exIdx]?.name || '', setNo: setIdx + 1 }
     this.restStartAt = Date.now()
     this.setRestScreenLock(!!s.restUntil)
     this.emitEvent({ t: 'set', sid: s.sid, ex: exIdx, set: setIdx + 1, reps: row.r != null ? String(row.r) : '', weight: row.w != null ? String(row.w) : '', at: row.at, rest: restOf(s) })
@@ -609,6 +654,152 @@ export default {
     return !!(row && row.done)
   },
 
+
+  // ---- 本组强度（RPE/RIR）----------------------------------------------------
+  // 同页覆盖层：不新增页面，原计时器/RPC/心率 owner 全部继续运行，休息不会因为登记暂停或重置。
+  effortTargetRow() {
+    const t = this.effortTarget
+    if (!t) return null
+    const s = loadState()
+    if (!s.active || s.sid !== t.sid || !s.workout) return null
+    const rows = s.workout.rows[t.exIdx] || []
+    const set = t.setId ? rows.findIndex(r => r.setId === t.setId) : t.setIdx
+    if (!(set >= 0)) return null
+    return { s, exIdx: t.exIdx, set, row: rows[set] }
+  },
+  // 重启后内存里的 lastCompleted 没了：用“最近完成的一组”重建补录目标。
+  lastCompletedFromState(s) {
+    let best = null
+    ;(s.workout?.rows || []).forEach((rows, exIdx) => rows.forEach((r, setIdx) => {
+      if (r.done && (!best || (r.at || 0) > best.completedAt)) best = { sid: s.sid,
+        entryInstanceId: s.workout.exercises[exIdx]?.entryInstanceId, setId: r.setId,
+        completedAt: r.at || 0, exIdx, setIdx, name: s.workout.exercises[exIdx]?.name || '', setNo: setIdx + 1 }
+    }))
+    return best
+  },
+  effortTargetValid() {
+    const found = this.effortTargetRow()
+    return !!(found && found.row.done)
+  },
+  openEffort(fromOp) {
+    if (this.effortOn) return
+    // 最后一组完成时没有休息：仍可从已完成组入口补录，不强制制造休息。
+    if (!this.effortTargetValid()) { this.effortNotice = ''; return }
+    const found = this.effortTargetRow()
+    const scale = this.state.effortScale === 'rpe' || this.state.effortScale === 'rir' ? this.state.effortScale : 'none'
+    if (scale === 'none') return
+    this.effortScale = scale
+    this.effortScaleLabel = effortScaleOf(scale).label
+    this.effortScaleAtOpen = scale
+    this.effortBaseVersion = Number.isFinite(found.row.effortVersion) ? found.row.effortVersion : 0
+    const kind = effortKindOf(found.row)
+    const saved = kind ? effortValueOf(found.row, kind) : null
+    this.effortHasSaved = saved != null
+    this.effortDraft = null
+    this.effortStale = false
+    this.effortNotice = ''
+    this.effortTargetLabel = (this.effortTarget.name || '') + ' · 刚完成第' + this.effortTarget.setNo + '组'
+    if (kind && kind === scale && saved != null) {
+      // 已登记：显示已存值（旧值即使不是 0.5 步长也如实显示，不静默改写）。
+      this.effortDraft = saved
+      this.effortHint = '左右滑动调整'
+    } else if (kind && saved != null) {
+      // 旧值是另一个量表：如实告知，本次按当前量表重新登记。
+      this.effortHint = '旧值 ' + effortScaleOf(kind).label + ' ' + formatEffort(saved) + ' · 左右滑动选择'
+    } else {
+      this.effortHint = '左右滑动选择'
+    }
+    this.effortOn = true
+    this.effortFromOp = !!fromOp
+    this.updateEffortText()
+    this.refreshEffortRest()
+    this.focusCrown()
+  },
+  closeEffort() {
+    this.effortOn = false
+    this.effortDraft = null
+    this.effortNotice = ''
+    this.effortStale = false
+    this.effortFromOp = false
+    this.focusCrown()
+    this.refresh()
+  },
+  effortMinus() { this.effortMove(-1) },
+  effortPlus() { this.effortMove(1) },
+  effortMove(dir) {
+    if (!this.effortOn) return
+    const next = stepEffortValue(this.effortScale, this.effortDraft, dir)
+    if (next === this.effortDraft) return
+    this.effortDraft = next
+    this.effortHint = '左右滑动调整'
+    this.updateEffortText()
+  },
+  updateEffortText() {
+    const v = this.effortDraft
+    this.effortDraftLabel = v == null ? '—' : formatEffort(v)
+    const m = v == null ? null : effortMeaning(this.effortScale, v)
+    this.effortMeaning = m ? m.text : ''
+  },
+  refreshEffortRest() {
+    const s = this.state
+    const left = s && s.restUntil ? Math.max(0, Math.ceil((s.restUntil - Date.now()) / 1000)) : 0
+    this.effortRestLabel = left > 0 ? '休息 ' + this.mmss(left) : '休息已结束'
+  },
+  confirmEffort() {
+    if (!this.effortOn) return
+    if (this.state.effortScale !== this.effortScaleAtOpen) {
+      // 手表中途换了量表：旧草稿按新量表保存会是错的，要求重新打开。
+      this.effortNotice = '手机已切换量表，请重新打开'
+      return
+    }
+    if (this.effortDraft == null) { this.closeEffort(); return }
+    this.commitEffort(this.effortDraft)
+  },
+  clearEffort() {
+    if (!this.effortOn || !this.effortHasSaved) return
+    this.commitEffort(null)
+  },
+  commitEffort(value) {
+    const found = this.effortTargetRow()
+    if (!found || !found.row.done) {
+      this.effortNotice = '目标组已变化，无法登记'
+      return
+    }
+    // 只把评分字段合并进最新状态：绝不保存打开覆盖层时的整份旧 state。
+    const latest = found.s
+    const at = Math.max(Date.now(), Number(latest.effortSeq || 0) + 1)
+    latest.effortSeq = at
+    setEffort(latest, found.exIdx, found.set, this.effortScale, value, at)
+    save(latest)
+    this.state = loadState()
+    this.emitEvent({ t: 'effort', sid: latest.sid, ex: found.exIdx, set: found.set + 1,
+      scale: this.effortScale, value: value == null ? null : value, clear: value == null,
+      effortVersion: at, baseEffortVersion: this.effortBaseVersion, at })
+    this.effortOn = false
+    this.effortDraft = null
+    this.effortNotice = ''
+    this.focusCrown()
+    this.refresh()
+  },
+  onRemoteEffort(msg) {
+    const s = this.state
+    if (!msg || msg.sid !== s.sid) return
+    const ex = Number(msg.ex)
+    const set = Number(msg.set) - 1
+    if (!(ex >= 0) || !(set >= 0)) return
+    const row = s.workout.rows[ex] && s.workout.rows[ex][set]
+    if (!row) return
+    const version = Number(msg.effortVersion) || Date.now()
+    if (Number.isFinite(row.effortVersion) && version < row.effortVersion) return
+    setEffort(s, ex, set, msg.scale, msg.clear ? null : msg.value, version)
+    save(s)
+    if (this.effortOn && this.effortTarget && this.effortTarget.setId === row.setId) {
+      if (this.effortScale !== s.effortScale) this.effortNotice = '手机已切换量表，请重新打开'
+      else this.effortNotice = '手机已更新本组强度'
+    }
+    this.refresh()
+  },
+
   refresh() {
     this.weightUnit = this.state?.weightUnit || 'kg'
     const s = this.state
@@ -622,6 +813,11 @@ export default {
     this.groupLabel = ex ? '第 ' + (s.setIdx + 1) + ' / ' + (ex.sets || 1) + ' 组' : ''
     this.weightVal = row && row.w !== '' && row.w != null ? row.w + ' kg' : '—'
     this.repsVal = row && row.r !== '' && row.r != null ? row.r + (this.isTimed(ex) ? ' 秒' : ' 次') : '—'
+    // 数值与单位分开渲染：数字大、单位弱一级。
+    this.weightNum = row && row.w !== '' && row.w != null ? String(row.w) : '—'
+    this.weightSuffix = 'kg'
+    this.repsNum = row && row.r !== '' && row.r != null ? String(row.r) : '—'
+    this.repsSuffix = this.isTimed(ex) ? '秒' : '次'
     this.isRest = !!s.restUntil
     if (this.isRest) this.pageIndex = 0
     this.paused = !!s.pausedAt
@@ -660,6 +856,24 @@ export default {
       this.nextDetails = '第 ' + (next.setIdx + 1) + ' / ' + (s.workout.rows[next.exIdx] || []).length + ' 组 · ' + (w && r ? w + ' × ' + r : (w || r || '待填写'))
     } else { this.nextLabel = '本次训练已完成'; this.nextDetails = this.restProgLabel }
 
+    // 强度入口：只在手机开启强度记录、且存在“刚完成但还没评”的组时出现。
+    // 无休息/跳过休息也能补录（入口在休息页与操作页各一处）。
+    this.effortScale = s.effortScale === 'rpe' || s.effortScale === 'rir' ? s.effortScale : 'none'
+    if (!this.effortTarget) this.effortTarget = this.lastCompletedFromState(s)
+    const target = this.effortTargetRow()
+    const targetKind = target ? effortKindOf(target.row) : null
+    const targetValue = target && targetKind ? effortValueOf(target.row, targetKind) : null
+    // 显示“已登记”的数值；只有业务 ACK 之前才附带“待同步”（不把已发送当已保存）。
+    this.effortEntryText = targetKind && targetValue != null
+      ? effortSummaryText(targetKind, targetValue) + (pendingCount() > 0 ? ' · 待同步' : '')
+      : '未登记'
+    this.effortEntryOn = this.effortScale !== 'none' && !!target
+    if (this.effortOn) {
+      if (!target || !target.row.done) { this.effortNotice = '目标组已变化，已停止编辑' ; this.effortOn = false }
+      else if (this.state.effortScale !== this.effortScaleAtOpen) this.effortStale = true
+      this.refreshEffortRest()
+    }
+
     this.syncClockTimer()
     this.tickClock()
   },
@@ -668,6 +882,8 @@ export default {
 
   checkCompletion(total, done) {
     this.allFinished = total > 0 && done === total
+    // 登记强度时不要被“全部完成”面板盖住；关闭后 refresh() 会重新判定一次。
+    if (this.effortOn) return
     if (!this.allFinished) {
       if (this.state.completionAcknowledged) {
         this.state.completionAcknowledged = false
@@ -700,6 +916,11 @@ export default {
   },
 
   tickClock() {
+    // 评分层先判目标是否还有效：会话被结束/组被撤销时 this.state 可能已经变成 blank。
+    if (this.effortOn) {
+      if (!this.effortTargetValid()) { this.effortOn = false; this.effortNotice = '目标组已变化，已停止编辑' }
+      else this.refreshEffortRest()
+    }
     const s = this.state
     if (!s || !s.workout) return
     const currentTime = new Date()
@@ -804,166 +1025,250 @@ export default {
 <template>
   <div class="page" id="training" touch-focusable="true" onrotation="onRotation" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
     <div class="screen" if="{{ pageIndex === 0 && !closeMode }}">
-    <div class="topline"><text class="status">{{ syncLabel }}</text><text class="clock now">{{ clockLabel }}</text><text class="clock">已用 {{ elapsedLabel }}</text></div>
-    <text class="ex">{{ isRest ? restExerciseName : exName }}</text>
+      <div class="topbar">
+        <div class="st"><div class="dot"></div><text class="status">{{ syncLabel }}</text></div>
+        <text class="clock now">{{ clockLabel }}</text>
+      </div>
+      <div class="metabar">
+        <text class="clock">已用 {{ elapsedLabel }}</text>
+        <div class="metabar-r"><text class="energy">{{ kcalLabel }} 千卡</text><text class="hr">{{ hrLabel }}</text></div>
+      </div>
 
-    <div class="training-panel compact" if="{{ !isRest }}">
-      <text class="group">{{ groupLabel }}{{ rowDone ? ' · 已完成' : '' }}</text>
-      <div class="inputs">
-        <div class="field" onclick="editWeight">
-          <text class="fval">{{ weightVal }}</text>
+      <div class="training-panel compact" if="{{ !isRest }}">
+        <text class="ex">{{ exName }}</text>
+        <text class="group">{{ groupLabel }}{{ rowDone ? ' · 已完成' : '' }}</text>
+        <div class="inputs">
+          <div class="field" onclick="editWeight">
+            <text class="fval">{{ weightNum }}</text>
+            <text class="funit">{{ weightSuffix }}</text>
+          </div>
+          <div class="field" onclick="editReps">
+            <text class="fval">{{ repsNum }}</text>
+            <text class="funit">{{ repsSuffix }}</text>
+          </div>
         </div>
-        <div class="field" onclick="editReps">
-          <text class="fval">{{ repsVal }}</text>
+        <div class="navrow">
+          <input class="nav" type="button" value="上" onclick="onPrevSet" />
+          <input class="complete {{ rowDone || paused ? 'secondary' : '' }}" type="button" value="{{ paused ? '已暂停' : rowDone ? '已完成' : '完成' }}" disabled="{{ paused }}" onclick="onCurrentSetAction" />
+          <input class="nav" type="button" value="下" onclick="onNextSet" />
         </div>
+        <input class="effort-row" type="button" if="{{ effortEntryOn }}" value="{{ '本组强度  ' + effortEntryText + '  ›' }}" onclick="openEffort" />
       </div>
-      <div class="navrow">
-        <input class="nav" type="button" value="上" onclick="onPrevSet" />
-        <input class="nav" type="button" value="下" onclick="onNextSet" />
-        <input class="complete {{ rowDone || paused ? 'secondary' : '' }}" type="button" value="{{ paused ? '已暂停' : rowDone ? '已完成' : '完成' }}" disabled="{{ paused }}" onclick="onCurrentSetAction" />
+
+      <div class="training-panel rest-panel" if="{{ isRest }}">
+        <text class="rest-ex">{{ restExerciseName }}</text>
+        <text class="rest">{{ restLabel }}</text>
+        <div class="rrow">
+          <input class="rbtn" type="button" value="−15s" onclick="onRestMinus" />
+          <text class="rest-total">本次 {{ restTotalLabel }}</text>
+          <input class="rbtn" type="button" value="+15s" onclick="onRestPlus" />
+        </div>
+        <text class="next">{{ nextLabel }}</text>
+        <text class="next-details">{{ nextDetails }}</text>
+        <input class="effort-row" type="button" if="{{ effortEntryOn }}" value="{{ '本组强度  ' + effortEntryText + '  ›' }}" onclick="openEffort" />
+        <input class="skip" type="button" value="跳过休息" onclick="onSkipRest" />
+      </div>
+
+      <div class="primary-footer">
+        <text class="progress">{{ setProgressLabel }}</text>
       </div>
     </div>
 
-    <div class="training-panel rest-panel" if="{{ isRest }}">
-      <text class="rest-kicker">剩余休息</text>
-      <text class="rest">{{ restLabel }}</text>
-      <div class="rrow">
-        <input class="rbtn" type="button" value="−15s" onclick="onRestMinus" />
-        <text class="rest-total">本次 {{ restTotalLabel }}</text>
-        <input class="rbtn" type="button" value="+15s" onclick="onRestPlus" />
-      </div>
-      <text class="next">{{ nextLabel }}</text>
-      <text class="next-details">{{ nextDetails }}</text>
-      <input class="skip" type="button" value="跳过休息" onclick="onSkipRest" />
-    </div>
-    <div class="primary-footer"><text class="progress">{{ setProgressLabel }}</text><div class="footer-metrics"><text class="energy">{{ kcalLabel }} 千卡</text><text class="hr">{{ hrLabel }}</text></div></div>
-    </div>
     <div class="screen operation-screen" if="{{ pageIndex === 1 && !closeMode }}">
-    <div class="topline"><text class="status">{{ syncLabel }}</text><text class="clock now">{{ clockLabel }}</text><text class="clock">已用 {{ elapsedLabel }}</text></div>
-    <text class="group">{{ setProgressLabel }}</text>
-    <text class="volume-line">已完成容量 {{ volumeLabel }} {{ weightUnit }}·次</text>
-    <div class="metrics"><text class="energy">{{ kcalLabel }} 千卡</text><text class="hr">{{ hrLabel }}</text></div>
-    <div class="mrow">
-      <input class="m" type="button" value="加组" onclick="onMenuAddSet" />
-      <input class="m" type="button" value="减组" onclick="onMenuRemoveSet" />
+      <div class="topbar">
+        <div class="st"><div class="dot"></div><text class="status">{{ syncLabel }}</text></div>
+        <text class="clock now">{{ clockLabel }}</text>
+      </div>
+      <div class="metabar">
+        <text class="clock">已用 {{ elapsedLabel }}</text>
+        <div class="metabar-r"><text class="energy">{{ kcalLabel }} 千卡</text><text class="hr">{{ hrLabel }}</text></div>
+      </div>
+      <div class="op-card">
+        <text class="op-title">{{ exName }}</text>
+        <text class="op-group">{{ groupLabel }}</text>
+        <div class="op-row"><text class="op-k">重量</text><text class="op-v">{{ weightNum }}</text><text class="op-u">{{ weightSuffix }}</text></div>
+        <div class="op-row"><text class="op-k">次数</text><text class="op-v">{{ repsNum }}</text><text class="op-u">{{ repsSuffix }}</text></div>
+      </div>
+      <text class="volume-line">已完成容量 {{ volumeLabel }} {{ weightUnit }}·次</text>
+      <input class="effort-row" type="button" if="{{ effortEntryOn }}" value="{{ '本组强度  ' + effortEntryText + '  ›' }}" onclick="openEffort" />
+      <div class="mrow">
+        <input class="m" type="button" value="加组" onclick="onMenuAddSet" />
+        <input class="m" type="button" value="减组" onclick="onMenuRemoveSet" />
+      </div>
+      <input class="operation" type="button" value="{{ pauseLabel }}" onclick="onPause" />
     </div>
-    <input class="operation" type="button" value="{{ pauseLabel }}" onclick="onPause" />
-    </div>
+
     <div class="dots" if="{{ !isRest && !closeMode }}"><div class="dot {{ pageIndex === 0 ? 'selected' : '' }}"></div><div class="dot {{ pageIndex === 1 ? 'selected' : '' }}"></div></div>
+
     <div class="completion-panel" if="{{ closeMode === 'complete' }}">
       <text class="completion-title">全部组已完成</text>
       <text class="completion-progress">{{ setProgressLabel }}</text>
+      <input class="completion-btn effort" type="button" if="{{ effortEntryOn }}" value="{{ '登记本组强度 · ' + effortEntryText }}" onclick="openEffort" />
       <input class="completion-btn finish" type="button" value="保存结束" onclick="saveEnd" />
       <input class="completion-btn continue" type="button" value="继续训练" onclick="cancelClose" />
     </div>
 
+    <div class="effort-layer" if="{{ effortOn }}">
+      <div class="effort-head">
+        <text class="effort-back" onclick="closeEffort">‹ 返回</text>
+        <text class="effort-timer">{{ effortRestLabel }}</text>
+      </div>
+      <text class="effort-target">{{ effortTargetLabel }}</text>
+      <text class="effort-scale">{{ effortScaleLabel }}</text>
+      <div class="effort-pick">
+        <text class="effort-arrow" onclick="effortMinus">‹</text>
+        <text class="effort-value">{{ effortDraftLabel }}</text>
+        <text class="effort-arrow" onclick="effortPlus">›</text>
+      </div>
+      <text class="effort-hint">{{ effortNotice || effortHint }}</text>
+      <text class="effort-meaning">{{ effortMeaning }}</text>
+      <input class="effort-ok" type="button" value="确认登记" onclick="confirmEffort" />
+      <text class="effort-clear" if="{{ effortHasSaved }}" onclick="clearEffort">清除登记</text>
+    </div>
   </div>
 </template>
 
 <style>
 .page { flex-direction: column; align-items: center; width: 100%; height: 100%; background-color: #000000; }
 .screen { width: 350px; height: 414px; margin-top: 18px; flex-direction: column; align-items: center; justify-content: space-between; }
-.training-panel { width: 350px; height: 290px; flex-direction: column; align-items: center; justify-content: space-between; }
-.rest-panel { height: 270px; }
-.compact { height: 230px; justify-content: center; }
-.primary-footer { width: 326px; height: 48px; flex-direction: column; align-items: center; justify-content: space-between; }
-.progress { font-size: 16px; color: #bfc6c9; }
-.footer-metrics { width: 326px; height: 22px; flex-direction: row; align-items: center; justify-content: space-between; }
-.dots { position: absolute; right: 6px; top: 64px; width: 8px; height: 30px; flex-direction: column; justify-content: space-between; }
-.dot { width: 7px; height: 7px; border-radius: 4px; background-color: #48484a; }
-.selected { background-color: #63dfb1; }
-.action-link { width: 160px; height: 40px; font-size: 18px; color: #aeb9bd; background-color: transparent; margin-top: 4px; }
-.footer-action { margin-top: 0; }
-.danger { color: #ff7d93; }
-.operation { width: 326px; height: 56px; margin-top: 4px; border-radius: 8px; font-size: 23px; background-color: #191d1f; color: #ffffff; }
-.topline { width: 326px; height: 22px; flex-direction: row; justify-content: space-between; }
-.status { font-size: 16px; color: #63dfb1; }
-.clock { font-size: 17px; color: #bfc6c9; }
-.now { color: #ffffff; }
-.ex { width: 350px; height: 56px; font-size: 25px; color: #ffffff; lines: 2; text-align: center; }
+
+.topbar { width: 326px; height: 24px; flex-direction: row; align-items: center; justify-content: space-between; }
+.st { flex-direction: row; align-items: center; }
+.dot { width: 7px; height: 7px; border-radius: 4px; background-color: #63dfb1; margin-right: 7px; }
+.status { font-size: 14px; color: #63dfb1; lines: 1; }
+.clock { font-size: 15px; color: #8b9497; lines: 1; }
+.now { color: #ffffff; font-size: 17px; }
+.metabar { width: 326px; height: 20px; flex-direction: row; align-items: center; justify-content: space-between; }
+.metabar-r { flex-direction: row; align-items: center; }
+.metabar-r .energy { margin-right: 10px; }
+
+.training-panel { width: 350px; flex-direction: column; align-items: center; justify-content: center; }
+.compact { height: 300px; }
+.ex { width: 350px; height: 58px; font-size: 25px; color: #ffffff; lines: 2; text-align: center; }
 .group { width: 350px; height: 26px; font-size: 19px; color: #bfc6c9; text-align: center; lines: 1; }
-.inputs { flex-direction: row; justify-content: space-between; width: 350px; height: 72px; margin-top: 12px; margin-bottom: 16px; }
-.field { flex-direction: column; align-items: center; justify-content: center; width: 170px; height: 72px; border-radius: 8px; background-color: #191d1f; }
-.fval { font-size: 34px; color: #ffffff; width: 164px; text-align: center; lines: 1; }
-.navrow { flex-direction: row; justify-content: space-between; width: 350px; height: 52px; }
-.nav { width: 72px; height: 52px; font-size: 22px; border-radius: 8px; background-color: #191d1f; color: #ffffff; }
-.complete { width: 190px; height: 52px; font-size: 25px; border-radius: 8px; background-color: #63dfb1; color: #001b12; }
+.inputs { flex-direction: row; justify-content: space-between; width: 350px; height: 88px; margin-top: 10px; margin-bottom: 14px; }
+.field { flex-direction: column; align-items: center; justify-content: center; width: 170px; height: 88px; border-radius: 12px; background-color: #12171a; border: 1px solid #232b2f; }
+.fval { font-size: 38px; color: #ffffff; width: 166px; text-align: center; lines: 1; }
+.funit { font-size: 14px; color: #8b9497; margin-top: 2px; lines: 1; }
+.navrow { flex-direction: row; align-items: center; justify-content: space-between; width: 350px; height: 56px; }
+.nav { width: 70px; height: 56px; font-size: 22px; border-radius: 12px; background-color: #1c2226; color: #ffffff; }
+.complete { width: 186px; height: 56px; font-size: 25px; border-radius: 12px; background-color: #63dfb1; color: #001b12; }
 .secondary { background-color: #283236; color: #ffffff; }
-.rest-kicker { width: 350px; height: 22px; font-size: 18px; color: #aeb9bd; text-align: center; }
-.rest { width: 350px; height: 82px; line-height: 76px; font-size: 62px; color: #63dfb1; text-align: center; lines: 1; }
-.rrow { flex-direction: row; align-items: center; justify-content: space-between; width: 350px; height: 48px; margin-top: 8px; }
-.rbtn { width: 105px; height: 44px; font-size: 20px; border-radius: 8px; background-color: #191d1f; color: #ffffff; }
-.rest-total { width: 120px; font-size: 18px; color: #ffffff; text-align: center; lines: 1; }
-.next { width: 350px; height: 36px; line-height: 18px; font-size: 16px; color: #63dfb1; text-align: center; lines: 2; }
-.next-details { width: 350px; height: 24px; font-size: 18px; color: #ffffff; text-align: center; lines: 1; }
-.prog { width: 350px; height: 26px; font-size: 18px; color: #bfc6c9; text-align: center; }
-.skip { width: 220px; height: 44px; font-size: 21px; border-radius: 8px; background-color: #63dfb1; color: #001b12; margin-top: 0; }
-.metrics { width: 326px; height: 38px; flex-direction: row; align-items: center; justify-content: space-between; }
-.hr { font-size: 17px; color: #ff7d93; }
-.energy { font-size: 17px; color: #e0c775; }
-.volume-line { width: 326px; height: 30px; font-size: 19px; color: #ffffff; text-align: center; }
-.sync { width: 326px; height: 24px; font-size: 16px; color: #63dfb1; text-align: center; }
-.mrow { width: 326px; height: 64px; flex-direction: row; justify-content: space-between; }
-.m { width: 156px; height: 60px; font-size: 23px; border-radius: 8px; background-color: #191d1f; color: #ffffff; }
-.footer { width: 350px; height: 48px; justify-content: space-between; }
-.tool { width: 110px; height: 44px; border-radius: 8px; background-color: #191d1f; color: #ffffff; font-size: 18px; }
-.menu { position: absolute; top: 0; left: 0; width: 100%; height: 100%; flex-direction: column; align-items: center; justify-content: center; background-color: #000000; }
-.mrow { width: 326px; height: 64px; flex-direction: row; justify-content: space-between; }
-.m { width: 156px; height: 60px; font-size: 23px; border-radius: 8px; background-color: #191d1f; color: #ffffff; margin: 0; }
-.operation-screen { justify-content: space-between; }
-.operation-screen .operation { margin-top: 0; }
-.panel-title { height: 32px; font-size: 26px; color: #ffffff; margin-bottom: 4px; }
-.mclose { width: 180px; height: 44px; font-size: 18px; border-radius: 12px; background-color: transparent; color: #636366; margin-top: 5px; }
-.undo { width: 250px; color: #e0c775; }
-.finish { background-color: #63dfb1; color: #001b12; }
-.leave-panel { position: absolute; top: 0; left: 0; width: 100%; height: 100%; flex-direction: column; align-items: center; justify-content: center; background-color: #000000; }
-.leave-title { font-size: 28px; color: #ffffff; margin-bottom: 4px; }
-.leave-hint { font-size: 16px; color: #8e8e93; margin-bottom: 14px; }
-.leave-btn { width: 350px; height: 54px; font-size: 23px; border-radius: 8px; margin-top: 12px; }
-.continue { background-color: #1c1c1e; color: #ffffff; }
-.exit { background-color: #3a3a3c; color: #ffffff; }
-.end { background-color: #ff453a; color: #ffffff; }
+
+.rest-panel { height: 262px; }
+.rest-ex { width: 350px; height: 34px; font-size: 20px; color: #ffffff; text-align: center; lines: 2; }
+.rest { width: 350px; height: 76px; line-height: 72px; font-size: 58px; color: #63dfb1; text-align: center; lines: 1; }
+.rrow { flex-direction: row; align-items: center; justify-content: space-between; width: 350px; height: 42px; margin-top: 8px; }
+.rbtn { width: 106px; height: 42px; font-size: 20px; border-radius: 10px; background-color: #1c2226; color: #ffffff; }
+.rest-total { width: 120px; font-size: 17px; color: #bfc6c9; text-align: center; lines: 1; }
+.next { width: 350px; height: 24px; font-size: 16px; color: #63dfb1; text-align: center; lines: 1; }
+.next-details { width: 350px; height: 20px; font-size: 17px; color: #ffffff; text-align: center; lines: 1; }
+.skip { width: 350px; height: 42px; font-size: 20px; border-radius: 10px; background-color: #1c2226; color: #ffffff; margin-top: 0; }
+
+.effort-row { width: 350px; height: 42px; font-size: 18px; color: #e0c775; background-color: #12171a; border: 1px solid #2a3338; border-radius: 10px; text-align: left; padding-left: 14px; }
+.primary-footer { width: 326px; height: 24px; flex-direction: column; align-items: center; justify-content: center; }
+.progress { font-size: 15px; color: #bfc6c9; }
+.footer-metrics { width: 326px; height: 20px; flex-direction: row; align-items: center; justify-content: space-between; }
+.hr { font-size: 15px; color: #ff7d93; }
+.energy { font-size: 15px; color: #e0c775; }
+
+.dots { position: absolute; right: 10px; top: 96px; width: 8px; height: 30px; flex-direction: column; justify-content: space-between; }
+.dots .dot { width: 7px; height: 7px; border-radius: 4px; background-color: #3a4247; margin-right: 0; }
+.dots .selected { background-color: #63dfb1; }
+
+.operation-screen { justify-content: flex-start; }
+.op-card { width: 350px; height: 186px; flex-direction: column; background-color: #12171a; border: 1px solid #232b2f; border-radius: 14px; padding: 12px 14px; margin-top: 6px; }
+.op-title { width: 318px; height: 50px; font-size: 22px; color: #ffffff; lines: 2; }
+.op-group { width: 318px; height: 22px; font-size: 17px; color: #bfc6c9; }
+.op-row { width: 318px; height: 40px; flex-direction: row; align-items: center; justify-content: space-between; margin-top: 4px; }
+.op-k { font-size: 16px; color: #8b9497; }
+.op-v { font-size: 26px; color: #ffffff; }
+.op-u { font-size: 13px; color: #8b9497; }
+.volume-line { width: 350px; height: 26px; font-size: 17px; color: #ffffff; text-align: center; margin-top: 6px; }
+.operation-screen .effort-row { margin-top: 4px; }
+.operation-screen .metrics { margin-top: 4px; }
+.metrics { width: 326px; height: 24px; flex-direction: row; align-items: center; justify-content: space-between; }
+.mrow { width: 350px; height: 52px; flex-direction: row; justify-content: space-between; }
+.m { width: 170px; height: 52px; font-size: 21px; border-radius: 12px; background-color: #1c2226; color: #ffffff; }
+.operation { width: 350px; height: 54px; margin-top: 6px; border-radius: 12px; font-size: 22px; background-color: #1c2226; color: #ffffff; }
+
 .completion-panel { width: 350px; height: 414px; margin-top: 18px; flex-direction: column; align-items: center; justify-content: center; }
-.completion-title { width: 350px; height: 44px; font-size: 26px; color: #ffffff; text-align: center; }
-.completion-progress { width: 350px; height: 32px; font-size: 18px; color: #bfc6c9; text-align: center; }
-.completion-btn { width: 310px; height: 56px; margin-top: 18px; font-size: 23px; border-radius: 8px; }
+.completion-title { width: 350px; height: 40px; font-size: 26px; color: #ffffff; text-align: center; }
+.completion-progress { width: 350px; height: 28px; font-size: 17px; color: #bfc6c9; text-align: center; }
+.completion-btn { width: 310px; height: 52px; margin-top: 12px; font-size: 22px; border-radius: 12px; }
+.completion-btn.effort { background-color: #12171a; color: #e0c775; border: 1px solid #2a3338; }
+.finish { background-color: #63dfb1; color: #001b12; }
+.continue { background-color: #1c2226; color: #ffffff; }
+
+.effort-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
+.effort-head { width: 350px; height: 34px; margin-top: 18px; flex-direction: row; align-items: center; justify-content: space-between; }
+.effort-back { font-size: 17px; color: #8b9497; }
+.effort-timer { font-size: 17px; color: #63dfb1; }
+.effort-target { width: 350px; height: 48px; font-size: 17px; color: #bfc6c9; text-align: center; lines: 2; }
+.effort-scale { width: 350px; height: 20px; font-size: 14px; color: #8b9497; text-align: center; }
+.effort-pick { width: 350px; height: 108px; flex-direction: row; align-items: center; justify-content: space-between; }
+.effort-arrow { width: 64px; height: 108px; font-size: 40px; color: #63dfb1; text-align: center; line-height: 108px; }
+.effort-value { width: 170px; font-size: 66px; color: #ffffff; text-align: center; lines: 1; }
+.effort-hint { width: 350px; height: 22px; font-size: 15px; color: #8b9497; text-align: center; lines: 1; }
+.effort-meaning { width: 330px; height: 44px; font-size: 18px; color: #e0c775; text-align: center; lines: 2; margin-top: 4px; }
+.effort-ok { width: 300px; height: 50px; margin-top: 10px; font-size: 21px; border-radius: 12px; background-color: #63dfb1; color: #001b12; }
+.effort-clear { width: 300px; height: 34px; font-size: 16px; color: #ff7d93; text-align: center; line-height: 34px; }
+
 @media screen and (min-width: 450px) {
   .screen { width: 280px; height: 300px; margin-top: 70px; }
-  .training-panel { width: 280px; height: 210px; }
-  .rest-panel { height: 210px; }
-  .compact { height: 180px; }
-  .primary-footer { width: 260px; height: 40px; }
-  .progress { font-size: 14px; }
-  .footer-metrics { width: 260px; height: 19px; }
-  .dots { right: 20px; top: 106px; }
-  .operation { width: 260px; height: 44px; font-size: 20px; }
-  .topline { width: 260px; height: 18px; }
-  .status { font-size: 13px; }
-  .clock { font-size: 14px; }
-  .ex { width: 280px; height: 42px; font-size: 21px; }
-  .group { width: 280px; height: 22px; font-size: 17px; }
-  .inputs { width: 280px; height: 58px; margin-top: 7px; margin-bottom: 10px; }
-  .field { width: 136px; height: 58px; }
-  .fval { width: 130px; font-size: 28px; }
+  .topbar, .metabar, .primary-footer, .footer-metrics, .metrics { width: 260px; }
+  .topbar { height: 20px; }
+  .metabar { height: 18px; }
+  .training-panel { width: 280px; }
+  .compact { height: 214px; }
+  .rest-panel { height: 196px; }
+  .ex { width: 280px; height: 42px; font-size: 20px; }
+  .group { width: 280px; height: 20px; font-size: 16px; }
+  .inputs { width: 280px; height: 62px; margin-top: 6px; margin-bottom: 8px; }
+  .field { width: 136px; height: 62px; }
+  .fval { width: 132px; font-size: 28px; }
+  .funit { font-size: 12px; }
   .navrow { width: 280px; height: 44px; }
-  .nav { width: 58px; height: 44px; font-size: 20px; }
-  .complete { width: 154px; height: 44px; font-size: 21px; }
-  .rest-kicker { width: 280px; height: 18px; font-size: 15px; }
-  .rest { width: 280px; height: 56px; line-height: 52px; font-size: 46px; }
-  .rrow { width: 280px; height: 38px; margin-top: 5px; }
-  .rbtn { width: 82px; height: 36px; font-size: 16px; }
-  .rest-total { width: 96px; font-size: 15px; }
-  .next { width: 280px; height: 32px; line-height: 16px; font-size: 14px; }
-  .next-details { width: 280px; height: 20px; font-size: 15px; }
-  .skip { width: 180px; height: 36px; font-size: 17px; }
-  .metrics { width: 260px; height: 28px; }
-  .hr, .energy { font-size: 14px; }
-  .volume-line { width: 260px; height: 24px; font-size: 16px; }
-  .mrow { width: 260px; height: 48px; }
-  .m { width: 124px; height: 44px; font-size: 19px; }
+  .nav { width: 56px; height: 44px; font-size: 19px; }
+  .complete { width: 150px; height: 44px; font-size: 20px; }
+  .rest-ex { width: 280px; height: 26px; font-size: 17px; }
+  .rest { width: 280px; height: 54px; line-height: 50px; font-size: 44px; }
+  .rrow { width: 280px; height: 34px; margin-top: 8px; }
+  .rbtn { width: 84px; height: 34px; font-size: 16px; }
+  .rest-total { width: 96px; font-size: 14px; }
+  .next { width: 280px; height: 20px; font-size: 14px; }
+  .next-details { width: 280px; height: 18px; font-size: 14px; }
+  .skip { width: 280px; height: 34px; font-size: 17px; }
+  .effort-row { width: 280px; height: 34px; font-size: 15px; padding-left: 10px; }
+  .primary-footer { height: 20px; }
+  .progress { font-size: 13px; }
+  .footer-metrics { height: 16px; }
+  .hr, .energy { font-size: 13px; }
+  .dots { right: 22px; top: 104px; }
+  .op-card { width: 280px; height: 150px; padding: 8px 10px; }
+  .op-title { width: 256px; height: 40px; font-size: 18px; }
+  .op-group { width: 256px; height: 18px; font-size: 14px; }
+  .op-row { width: 256px; height: 30px; }
+  .op-v { font-size: 20px; }
+  .volume-line { width: 280px; height: 20px; font-size: 14px; }
+  .m { width: 136px; height: 42px; font-size: 18px; }
+  .operation { width: 280px; height: 42px; font-size: 19px; }
+  .mrow { width: 280px; height: 42px; }
+  .metrics { height: 20px; }
   .completion-panel { width: 280px; height: 300px; margin-top: 70px; }
-  .completion-title { width: 280px; height: 36px; font-size: 22px; }
-  .completion-progress { width: 280px; height: 26px; font-size: 16px; }
-  .completion-btn { width: 250px; height: 44px; margin-top: 12px; font-size: 20px; }
+  .completion-title { width: 280px; height: 34px; font-size: 22px; }
+  .completion-progress { width: 280px; height: 22px; font-size: 15px; }
+  .completion-btn { width: 250px; height: 42px; margin-top: 8px; font-size: 19px; }
+  .effort-head { width: 280px; height: 28px; margin-top: 14px; }
+  .effort-back, .effort-timer { font-size: 14px; }
+  .effort-target { width: 280px; height: 38px; font-size: 14px; }
+  .effort-scale { width: 280px; height: 18px; font-size: 12px; }
+  .effort-pick { width: 280px; height: 78px; }
+  .effort-arrow { width: 52px; height: 78px; font-size: 30px; line-height: 78px; }
+  .effort-value { width: 140px; font-size: 48px; }
+  .effort-hint { width: 280px; height: 18px; font-size: 13px; }
+  .effort-meaning { width: 270px; height: 34px; font-size: 15px; }
+  .effort-ok { width: 240px; height: 40px; font-size: 18px; }
+  .effort-clear { width: 240px; height: 28px; font-size: 14px; line-height: 28px; }
 }
 </style>

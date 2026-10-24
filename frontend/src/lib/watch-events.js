@@ -5,6 +5,44 @@ import { todayISO } from './format.js'
 
 const keyOf = ev => ev.eventId || [ev.sid, ev.t, ev.ex, ev.set, ev.at].join(':')
 const rememberEvent = (A, key) => { A.watchEvents = [...(A.watchEvents || []), key].slice(-4000) }
+
+/**
+ * 手表登记的一组强度（RPE/RIR）落到手机活动会话。
+ *
+ * 用独立于 done/weight/rest 的 `effortVersion` 判新旧：
+ *  - 版本更旧 → stale（保留现值，不回退；已清除的评分不会被旧消息复活）；
+ *  - 手表基于旧版本编辑（baseEffortVersion 落后于现值版本）→ conflict，返回现值让手表收敛；
+ *  - 其余按到达顺序应用，且只写 rpe 或 rir 一个字段（明确换量表时清掉另一个）。
+ * 返回 {status, version, value, scale}，调用方据此 ACK 或告知冲突。
+ */
+export function applyWatchEffort(S, ev) {
+  const A = S.active
+  if (!A || watchSidOf(A) !== ev.sid || A.editingWorkoutId) return { status: 'rejected', reason: 'no_session' }
+  ensureWatchIdentity(A)
+  const key = keyOf(ev)
+  // Same event replayed: a durable decision already exists, so it is a confirmable duplicate.
+  if ((A.watchEvents || []).includes(key)) return { status: 'applied', duplicate: true }
+  const target = resolveWatchTarget(A, ev)
+  if (!target || !target.row) return { status: 'rejected', reason: 'target_changed' }
+  const { row } = target
+  const version = Number(ev.effortVersion || ev.seq || ev.at) || 0
+  const current = Number.isFinite(row.effortVersion) ? row.effortVersion : 0
+  const currentKind = row.rpe != null ? 'rpe' : row.rir != null ? 'rir' : null
+  const currentOut = { status: 'x', version: current, value: currentKind ? row[currentKind] : null, scale: currentKind }
+  // A rating edited on the watch while the phone changed the same set: the two clocks cannot
+  // decide this, so report a conflict with the phone's value and let the watch re-confirm.
+  const base = Number(ev.baseEffortVersion) || 0
+  if (base && current > base) { rememberEvent(A, key); return { ...currentOut, status: 'conflict' } }
+  if (version && current && version < current) { rememberEvent(A, key); return { ...currentOut, status: 'stale' } }
+  const scale = ev.scale === 'rpe' || ev.scale === 'rir' ? ev.scale : null
+  const cleared = ev.clear === true || ev.value == null
+  delete row.rpe
+  delete row.rir
+  if (!cleared && scale && Number.isFinite(Number(ev.value))) row[scale] = Number(ev.value)
+  row.effortVersion = version || current || Date.now()
+  rememberEvent(A, key)
+  return { status: 'applied', version: row.effortVersion, value: cleared ? null : row[scale], scale }
+}
 export function applyWatchEvent(S, ev) {
   const A = S.active
   if (!A || watchSidOf(A) !== ev.sid || A.editingWorkoutId) return false

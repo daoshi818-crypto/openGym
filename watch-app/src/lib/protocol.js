@@ -20,6 +20,15 @@ export function applyEdit(state, ev) {
       if (ev.t === 'add_set') while (rows.length < target) rows.push({ w: ev.weight || '', r: ev.reps || '', done: false, at: 0 })
       else if (!rows.slice(target).some(r => r.done)) rows.splice(target)
     }
+  } else if (ev.t === 'effort') {
+    // 手机改了一组的强度：只动这一组的评分字段，按独立评分版本判新旧（不跟 done/weight 混用）。
+    const row = ev.setId ? rows.find(r => r.setId === ev.setId) : rows[(Number(ev.set) || 1) - 1]
+    if (!row) return false
+    const version = Number(ev.effortVersion || ev.seq || ev.at) || 0
+    if (Number.isFinite(row.effortAt) && version < row.effortAt) return true
+    delete row.rpe; delete row.rir
+    if (!ev.clear && (ev.scale === 'rpe' || ev.scale === 'rir') && Number.isFinite(Number(ev.value))) row[ev.scale] = Number(ev.value)
+    row.effortAt = version
   } else {
     const row = ev.setId ? rows.find(r => r.setId === ev.setId) : rows[ev.set - 1]
     if (!row) return

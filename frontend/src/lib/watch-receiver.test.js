@@ -3,19 +3,29 @@ import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { applyEdit, applyRest, restOf, applyFocus } from '../../../watch-app/src/lib/protocol.js'
+import { loadWatchModule, watchPersistence } from './watch-test-harness.js'
+import { effortScaleOf, effortValueOf, effortKindOf, stepEffortValue, effortMeaning, effortSummaryText, formatEffort } from '../../../watch-app/src/lib/effort-scale.js'
 
 // Execute the shipped watch JS and page scripts with only the device APIs replaced.
 const source = path => readFileSync(new URL('../../../watch-app/src/' + path, import.meta.url), 'utf8')
 const imports = /^import[\s\S]*?from ['"][^'"]+['"]\r?$/gm
 function transport(connection, extra = {}) {
-  const memory = new Map(), shared = {}
-  const context = { interconnect: { instance: () => connection },
-    storage: { getSync: ({ key }) => memory.get(key), set: ({ key, value, success }) => { memory.set(key, structuredClone(value)); success?.() } }, loadState: () => ({}), save() {},
-    runtime: () => shared, retryStorage() {}, readStored: key => context.storage.getSync({key}), writeStored: (key,value) => context.storage.set({key,value}),
-    WATCH_VERSION: 'test-watch', console, setTimeout, clearTimeout, setInterval: () => 1, clearInterval() {}, ...extra }
-  runInNewContext(source('lib/rpc.js').replace(imports, '').replace(/export function /g, 'function ')
-    + '\nthis.api = { startServer, sendControl, sendEvent }', context)
-  return context.api
+  const { disk, ctx } = watchPersistence()
+  Object.assign(ctx, {
+    interconnect: { instance: () => connection },
+    loadState: extra.loadState || (() => ({})), save: extra.save || (() => {}),
+    closeSession: extra.closeSession || (() => {}),
+    buildSessionSummary: extra.buildSessionSummary || (() => ({ sets: [] })),
+    summaryEventOf: extra.summaryEventOf || (() => ({})),
+    retryStorage() {}, WATCH_VERSION: 'test-watch', console, Date,
+    setTimeout, clearTimeout, setInterval: () => 1, clearInterval() {}, ...extra,
+  })
+  loadWatchModule('event-id', ctx, ['allocateEventIdentity', 'rememberEventAt'])
+  loadWatchModule('close-journal', ctx, ['pendingSummaries', 'pendingEntry', 'journalEntry', 'prepareClose', 'releaseCandidate', 'markPhase', 'markDelivered'])
+  // rpc.js is loaded last so its own handlers win; it needs the session/dep surface above.
+  loadWatchModule('rpc', ctx, ['startServer', 'sendControl', 'sendEvent', 'pendingCount', 'persistenceStatus'])
+  const { startServer, sendControl, sendEvent, pendingCount, persistenceStatus } = ctx
+  return { startServer, sendControl, sendEvent, pendingCount, persistenceStatus, disk, sent: connection.sent }
 }
 function connection() {
   const sent = []
@@ -25,19 +35,19 @@ function connection() {
 function page(path, deps) {
   const script = source(path).match(/<script>([\s\S]*?)<\/script>/)[1]
   const context = { console, WATCH_VERSION: 'test-watch', applyEdit, applyRest, restOf, applyFocus, persistenceStatus: () => ({}), storageStatus: () => ({}),
+    effortScaleOf, effortValueOf, effortKindOf, stepEffortValue, effortMeaning, effortSummaryText, formatEffort,
     storage: { getSync: () => null, set() {} }, replacePlan() {}, ...deps }
   runInNewContext(script.replace(imports, '').replace('export default', 'this.page ='), context)
   return { ...context.page, ...context.page.data }
 }
 function session() {
-  const values = new Map(), shared = {}
-  const context = { storage: {
-    getSync: ({ key }) => values.has(key) ? JSON.parse(JSON.stringify(values.get(key))) : null,
-    set: ({ key, value, success }) => { values.set(key, JSON.parse(JSON.stringify(value))); success?.() },
-  }, runtime: () => shared, readStored: key => structuredClone(values.get(key) ?? null), writeStored: (key,value) => context.storage.set({key,value}), console, applyEdit, applyRest }
-  runInNewContext(source('lib/session.js').replace(imports, '').replace(/export function /g, 'function ')
-    + '\nthis.api = { loadState, startSession, save, replacePlan, applySync, nextUndone, nextUndoneFrom, setRowValue, toggleSet, addSet, removeSet, addRestTime, calories, endSession, closeSession, storage }', context)
-  return context.api
+  const { disk, ctx } = watchPersistence()
+  Object.assign(ctx, { console, Date, applyEdit, applyRest })
+  loadWatchModule('event-id', ctx, ['allocateEventIdentity', 'rememberEventAt'])
+  loadWatchModule('close-journal', ctx, ['prepareClose', 'releaseCandidate', 'pendingSummaries', 'pendingEntry', 'journalEntry', 'markPhase', 'markDelivered'])
+  loadWatchModule('session', ctx, ['loadState', 'startSession', 'save', 'replacePlan', 'applySync', 'nextUndone', 'nextUndoneFrom',
+    'setRowValue', 'toggleSet', 'addSet', 'removeSet', 'addRestTime', 'calories', 'endSession', 'closeSession', 'buildSessionSummary', 'summaryEventOf'])
+  return { ...ctx, disk, values: disk }
 }
 const plan = { t: 'plan', sid: 'today', planId: 'p1', workout: 'Leg day',
   exercises: [{ name: 'Squat', sets: 3, reps: '8', weight: '60' }] }
@@ -500,7 +510,7 @@ describe('watch business message boundary', () => {
     list.onBackPress()
     list.backToExercises()
     expect(list.endOn).toBe(true)
-    list.ignoreTapUntil = 0
+    list.trailingTapBlockedUntil = 0   // a fresh gesture clears the trailing protection
     list.backToExercises()
     expect(list.endOn).toBe(false)
     const ux = source('ExerciseList/index.ux')
@@ -524,7 +534,7 @@ describe('watch business message boundary', () => {
     list.saveWorkout()
     list.abandonWorkout()
     expect(sendEvent).not.toHaveBeenCalled()
-    list.ignoreTapUntil = 0
+    list.trailingTapBlockedUntil = 0   // a fresh gesture clears the trailing protection
     list.saveWorkout()
     expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({ t: 'session_close', disposition: 'saved' }))
     expect(replace).toHaveBeenCalledWith({ uri: '/Summary' })
@@ -577,8 +587,13 @@ describe('watch business message boundary', () => {
 
   it('keeps the training page compact and puts page dots on the right', () => {
     const ux = source('Workout/index.ux')
-    expect(ux).not.toContain('>重量<')
-    expect(ux).not.toContain('>次数<')
+    // The compact main page keeps the two big fields label-free; the operation page is the
+    // one that spells the prescription out (weight/reps labels live there).
+    const mainPage = ux.slice(ux.indexOf('<div class="screen"'), ux.indexOf('<div class="screen operation-screen"'))
+    expect(mainPage).not.toContain('>重量<')
+    expect(mainPage).not.toContain('>次数<')
+    expect(ux).toContain('>重量<')
+    expect(ux).toContain('>次数<')
     expect(ux).toContain('value="上"')
     expect(ux).toContain('value="下"')
     expect(ux).toContain('class="complete')
@@ -598,12 +613,12 @@ describe('watch business message boundary', () => {
     expect(operationPage).toContain('{{ hrLabel }}')
     expect(operationPage).not.toContain('估算')
     expect(ux).toContain('class="training-panel rest-panel"')
-    expect(ux).toContain('.rest-panel { height: 270px; }')
+    expect(ux).toContain('.rest-panel { height: 262px; }')
     expect(ux).not.toContain('训练操作')
     expect(source('ExerciseList/index.ux')).not.toContain('value="训练动作"')
     expect(source('Index/index.ux')).toContain('justify-content: center')
   })
-  it('finalizes on a delayed phone end, sends energy reliably and refuses stale plans for the closed session', () => {
+  it('finalizes on a delayed phone end, sends energy reliably and refuses stale plans for the closed session', async () => {
     const sessions = session(), c = connection(), rpc = transport(c, sessions)
     const state = sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
     state.startedAt = Date.now() - 600000
@@ -612,6 +627,8 @@ describe('watch business message boundary', () => {
     workout.onInit()
     workout.hrDirty = true
     c.onMessage({ data: { t: 'ended', sid: plan.sid, endedAt: Date.now() - 300000, reason: 'finished' } })
+    // The close is committed through the durable journal before the session is cleared.
+    await new Promise(r => setTimeout(r, 0))
     expect(sessions.loadState().active).toBe(false)
     expect(replace).toHaveBeenCalledWith({ uri: '/Index' })
     const summary = c.sent.find(m => m.t === 'summary')

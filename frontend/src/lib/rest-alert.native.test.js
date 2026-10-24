@@ -326,3 +326,40 @@ describe('the notification permission never holds the rest alarm back', () => {
     expect(h.request).not.toHaveBeenCalled()
   })
 })
+
+// 悬浮窗：训练摘要随闹钟下发；之后的内容更新只走 setOverlayContext，不重排闹钟。
+describe('the floating overlay payload', () => {
+  const capture = () => {
+    const calls = {}
+    h.registerPlugin = vi.fn(() => new Proxy({}, {
+      get: (_, prop) => {
+        if (prop === 'then') return () => new Promise(() => {})
+        return async (...args) => {
+          (calls[prop] = calls[prop] || []).push(args[0])
+          return prop === 'addListener' ? { remove: async () => {} } : prop === 'getRestState' ? { active: true, restId: 'r1', endsAt: 42, totalMs: 90000, leftMs: 70000, paused: false } : undefined
+        }
+      },
+    }))
+    return calls
+  }
+
+  it('sends the rest identity and the context with the alarm, and updates content without rescheduling', async () => {
+    h.platform = 'android'
+    const calls = capture()
+    const alert = await import('./rest-alert.js')
+    const at = Date.now() + 90_000
+    await alert.armRestAlert(at, { totalSec: 90, restId: 'r1', context: '{"version":1,"restId":"r1"}' })
+    expect(calls.schedule.at(-1)).toMatchObject({ restId: 'r1', context: '{"version":1,"restId":"r1"}', at })
+    const schedules = calls.schedule.length
+    await alert.setRestContext('r1', '{"version":1,"restId":"r1","next":{"name":"卧推"}}')
+    expect(calls.setOverlayContext.at(-1)).toMatchObject({ restId: 'r1' })
+    expect(calls.schedule.length).toBe(schedules)        // never a new alarm for a content update
+  })
+
+  it('reads the native rest state for the resume decision', async () => {
+    h.platform = 'android'
+    capture()
+    const alert = await import('./rest-alert.js')
+    expect(await alert.getRestState()).toMatchObject({ active: true, restId: 'r1', leftMs: 70000 })
+  })
+})

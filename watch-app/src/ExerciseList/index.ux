@@ -6,15 +6,32 @@ import { loadState, save, endSession, closeSession } from '../lib/session.js'
 import { sendEvent } from '../lib/rpc.js'
 
 export default {
-  data: { list: [], expanded: -1, endOn: false },
+  data: { list: [], expanded: -1, endOn: false, hint: '' },
 
   onInit() {
     if (this.$app && this.$app.$def) bindRuntime(this.$app.$def)
     const s = loadState()
     if (!s.active || !s.workout) { router.back(); return }
     this.state = s
+    this.gesture = null
+    this.trailingTapBlockedUntil = 0
+    this.navPending = false
     this.rebuild()
   },
+
+  onShow() {
+    // 回到本页：上一次导航要么已完成（正常 back），要么没有生效；后者定向进入训练页，
+    // 不把用户留在列表里反复点击。手势状态一律从干净状态开始。
+    this.gesture = null
+    this.trailingTapBlockedUntil = 0
+    if (this.navPending) { this.navPending = false; router.replace({ uri: '/Workout' }); return }
+    const s = loadState()
+    if (!s.active || !s.workout) { router.replace({ uri: '/Index' }); return }
+    this.state = s
+    this.rebuild()
+  },
+
+  onHide() { this.navPending = false; this.gesture = null },
 
   rebuild() {
     const s = this.state
@@ -22,47 +39,63 @@ export default {
       name: ex.name,
       idx: i,
       rows: (s.workout.rows[i] || []).map((row, j) => ({
-        no: String(j + 1), txt: this.rowTxt(row, ex), done: row.done, exIdx: i, setIdx: j,
+        no: String(j + 1), txt: this.rowTxt(row, ex), done: row.done, exIdx: i, setIdx: j, setId: row.setId,
       })),
     }))
   },
   onReady() { this.focusPanel() },
   focusPanel() { try { this.$element('page').requestFocus(true) } catch (e) {} },
+
+  // ---- 手势归属：一次触摸 = 一个手势 ----------------------------------------
+  // 父子两个组件都会收到 touch 事件，所以状态挂在页面上、只认一个手势：
+  //  - 新的一次真实 touchstart 永远开始新手势，并清掉上一次滑动留下的尾随保护；
+  //  - 滑动抬手后的那个 click 被消费一次（保护到 400ms 截止，也为没有 touch 的事件兜底）；
+  //  - 下一次独立轻触不再被旧时间窗吞掉 —— 这是“点组要连点几下”的直接原因。
   touchStart(e) {
     const t = e.touches && e.touches[0]
-    this.touch = t ? { x: t.clientX, y: t.clientY } : null
-    this.touchLast = this.touch
+    const point = t ? { x: t.clientX, y: t.clientY } : null
+    this.gesture = { start: point, last: point, consumed: false }
+    this.trailingTapBlockedUntil = 0
+    this.touch = point
+    this.touchLast = point
     this.swipeConsumed = false
   },
   touchMove(e) {
     const t = e.touches && e.touches[0]
-    if (this.touch && t) {
-      this.touchLast = { x: t.clientX, y: t.clientY }
-      this.handleSwipe(this.touchLast)
-    }
-  },
-  touchCancel() {
-    // 固件可在新面板挂载时 cancel；保护持续到抬手/取消之后，长滑也不会误点。
-    if (this.swipeConsumed) this.ignoreTapUntil = Date.now() + 400
-    this.swipeConsumed = false
-    this.touch = null; this.touchLast = null
+    if (!t) return
+    if (!this.gesture) this.gesture = { start: { x: t.clientX, y: t.clientY }, last: null, consumed: false }
+    this.gesture.last = { x: t.clientX, y: t.clientY }
+    this.touchLast = this.gesture.last
+    this.handleSwipe(this.gesture.last)
   },
   touchEnd(e) {
     const t = e.changedTouches && e.changedTouches[0] || e.touches && e.touches[0]
-    const end = t ? { x: t.clientX, y: t.clientY } : this.touchLast
-    if (end) this.handleSwipe(end)
+    const end = t ? { x: t.clientX, y: t.clientY } : this.gesture && this.gesture.last
+    if (this.gesture && end) this.handleSwipe(end)
     this.touchCancel()
   },
+  touchCancel() {
+    // 固件可在新面板挂载时 cancel：只要这个手势滑动过，就保护它的尾随 click。
+    if (this.gesture && this.gesture.consumed) this.trailingTapBlockedUntil = Date.now() + 400
+    this.gesture = null
+    this.swipeConsumed = false
+    this.touch = null
+    this.touchLast = null
+  },
   handleSwipe(end) {
-    if (!this.touch || this.swipeConsumed) return
-    const dx = end.x - this.touch.x, dy = end.y - this.touch.y
-    if (Math.abs(dx) < 45 || Math.abs(dx) <= Math.abs(dy) + 8) return
+    const g = this.gesture
+    if (!g || !g.start || !end || g.consumed) return false
+    const dx = end.x - g.start.x, dy = end.y - g.start.y
+    if (Math.abs(dx) < 45 || Math.abs(dx) <= Math.abs(dy) + 8) return false
+    g.consumed = true
     this.swipeConsumed = true
-    this.ignoreTapUntil = Date.now() + 400
+    this.trailingTapBlockedUntil = Date.now() + 400
     if (dx > 0 && !this.endOn) { this.endOn = true; this.focusPanel() }
     else if (dx < 0 && this.endOn) { this.endOn = false; this.focusPanel() }
+    return true
   },
-  interactionBlocked() { return this.swipeConsumed || Date.now() < (this.ignoreTapUntil || 0) },
+  // 只拦“这个手势的尾随 click”；新的 touchstart 已经把截止时间清零。
+  interactionBlocked() { return !!(this.gesture && this.gesture.consumed) || Date.now() < (this.trailingTapBlockedUntil || 0) },
   backToExercises() {
     if (this.interactionBlocked()) return
     this.endOn = false; this.focusPanel()
@@ -87,17 +120,29 @@ export default {
     this.expanded = this.expanded === idx ? -1 : idx
   },
 
+  // 一次有效轻触 = 一次导航：先同步运行态与持久化（网络与回执不参与），再返回训练页。
   pickRow(d) {
-    if (this.endOn || this.interactionBlocked()) return
+    if (this.endOn || this.interactionBlocked() || this.navPending) return
     const s = loadState()
     if (!s.active || !s.workout) { router.replace({ uri: '/Summary' }); return }
-    const ex = Number(d.exIdx)
-    const set = Number(d.setIdx)
+    const ex = Number(d && d.exIdx)
+    if (!(ex >= 0 && ex < s.workout.exercises.length)) { this.hint = '该动作已被删除'; return }
+    const rows = s.workout.rows[ex] || []
+    if (!rows.length) { this.hint = '该动作已没有可选的组'; return }
+    let set = Number(d.setIdx)
+    if (d.setId) {
+      const stable = rows.findIndex(r => r.setId === d.setId)
+      if (stable >= 0) set = stable
+    }
+    if (!(set >= 0 && set < rows.length)) set = Math.max(0, Math.min(Number(set) || 0, rows.length - 1))
+    this.hint = ''
     s.exIdx = ex
     s.setIdx = set
     s.focusAt = Date.now()
     save(s)
     sendEvent({ t: 'focus', sid: s.sid, ex, set: set + 1, at: s.focusAt, source: 'watch' })
+    this.navPending = true
+    this.focusPanel()
     router.back()
   },
 
@@ -122,7 +167,8 @@ export default {
 <template>
   <div class="page" id="page" touch-focusable="true" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
     <div class="content" if="{{ !endOn }}">
-    <text class="title">训练动作</text>
+    <text class="title" if="{{ !hint }}">训练动作</text>
+    <text class="hint-line" if="{{ hint }}">{{ hint }}</text>
     <div class="body">
       <list class="scroll" id="exercises" touch-focusable="true" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
         <list-item class="exrow" type="exercise" for="{{ item in list }}" tid="idx">
@@ -163,14 +209,15 @@ export default {
 .page { flex-direction: column; align-items: center; width: 100%; height: 100%; background-color: #000000; }
 .content { width: 350px; height: 414px; margin-top: 18px; flex-direction: column; align-items: center; }
 .title { height: 36px; width: 350px; font-size: 26px; color: #ffffff; text-align: center; }
+.hint-line { height: 36px; width: 350px; font-size: 18px; color: #ff7d93; text-align: center; lines: 2; }
 .body { width: 350px; height: 274px; }
 .scroll { width: 350px; height: 274px; }
-.exrow { flex-direction: column; width: 350px; padding: 8px 4px; }
+.exrow { flex-direction: column; width: 350px; padding: 8px 10px; margin-bottom: 6px; border-radius: 12px; background-color: #12171a; border: 1px solid #1f262a; }
 .exhead { flex-direction: column; min-height: 48px; }
 .exname { width: 342px; font-size: 23px; color: #ffffff; lines: 2; }
-.cnt { font-size: 17px; color: #8e8e93; margin-top: 1px; }
+.cnt { font-size: 16px; color: #8b9497; margin-top: 1px; }
 .rows { flex-direction: column; margin-top: 4px; }
-.rrow { flex-direction: row; align-items: center; min-height: 48px; padding: 6px 0; }
+.rrow { flex-direction: row; align-items: center; min-height: 48px; padding: 6px 6px; border-radius: 10px; }
 .rno { font-size: 20px; color: #30d158; width: 38px; }
 .rtxt { font-size: 20px; color: #ffffff; flex: 1; }
 .rtxt.done { color: #63dfb1; }
@@ -178,16 +225,17 @@ export default {
 .chev { font-size: 22px; color: #48484a; }
 .foot { width: 350px; height: 104px; flex-direction: column; align-items: center; justify-content: space-between; padding-top: 4px; }
 .exit-row { width: 326px; height: 48px; flex-direction: row; justify-content: space-between; }
-.back { width: 180px; height: 42px; font-size: 18px; color: #8e8e93; background-color: transparent; }
+.back { width: 180px; height: 42px; font-size: 18px; color: #8b9497; background-color: transparent; }
 .end-panel { width: 350px; height: 414px; margin-top: 18px; flex-direction: column; align-items: center; justify-content: center; }
 .hint { width: 350px; height: 48px; font-size: 18px; color: #aeb9bd; text-align: center; lines: 2; }
-.endbtn { width: 310px; height: 52px; margin-top: 14px; font-size: 23px; border-radius: 8px; background-color: #191d1f; color: #ffffff; }
+.endbtn { width: 310px; height: 52px; margin-top: 14px; font-size: 23px; border-radius: 12px; background-color: #1c2226; color: #ffffff; }
 .exit-row .endbtn { width: 156px; height: 46px; margin-top: 0; font-size: 18px; }
 .abandon { background-color: #3a3a3c; }
 .save { background-color: #30d158; }
 @media screen and (min-width: 450px) {
   .content { width: 280px; height: 300px; margin-top: 70px; }
   .title { width: 280px; height: 32px; font-size: 22px; }
+  .hint-line { width: 280px; height: 32px; font-size: 15px; }
   .body, .scroll { width: 280px; height: 190px; }
   .exrow { width: 280px; padding: 5px 3px; }
   .exname { width: 274px; font-size: 20px; }

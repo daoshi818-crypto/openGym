@@ -98,10 +98,12 @@ export function fmtSec(sec) {
 // `min`..`max` is the range the stepper walks. RIR bottoms out at 0 (a set taken to failure);
 // RPE bottoms out at 6, since the scale is only meaningful for working sets and anything
 // lighter is a warm-up nobody rates.
-export const EFFORT = {
-  rir: { f: 'rir', hd: 'RIR', step: 0.5, min: 0, max: 10 },
-  rpe: { f: 'rpe', hd: 'RPE', step: 0.5, min: 6, max: 10 }
-}
+//
+// The numbers live in the watch app's shared module so the watch's interval-effort overlay and
+// the phone cannot drift apart; `f`/`hd` keep the shape the rest of the phone code reads.
+import { EFFORT_SCALES, capEffortValue } from '../../../watch-app/src/lib/effort-scale.js'
+export const EFFORT = Object.fromEntries(Object.entries(EFFORT_SCALES)
+  .map(([key, def]) => [key, { f: def.field, hd: def.label, step: def.step, min: def.min, max: def.max }]))
 // One tap of an effort stepper. Empty is not 0 — an unlogged effort must not become "went to
 // failure" from one stray tap — so − on an empty cell leaves it empty, and + starts at the
 // bottom of the scale and walks up from there in even steps. Stepping back off the bottom
@@ -119,8 +121,7 @@ export function stepEffort(kind, cur, dir) {
 }
 // A typed effort is capped but not floored — clamping up while someone types "10" would turn
 // the first keystroke into the floor and fight the input.
-export const capEffort = (kind, v) =>
-  (v == null || !EFFORT[kind] ? v : Math.min(EFFORT[kind].max, v))
+export const capEffort = (kind, v) => capEffortValue(kind, v)
 // Which scale a profile logs. `showRir` is the boolean this replaced and is only consulted
 // when the profile has no answer of its own — an explicit 'none' has to win over it, or a
 // backup or another device that still carries the old flag would switch the column back on.
