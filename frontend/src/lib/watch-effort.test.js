@@ -14,7 +14,7 @@ const imports = /^import[\s\S]*?from ['"][^'"]+['"]\r?$/gm
 function page(path, deps) {
   const script = source(path).match(/<script>([\s\S]*?)<\/script>/)[1]
   const context = { console, WATCH_VERSION: 'test-watch', applyEdit, applyRest, restOf, applyFocus,
-    persistenceStatus: () => ({}), storageStatus: () => ({}), storage: { getSync: () => null, set() {} },
+    persistenceStatus: () => ({}), storageStatus: () => ({}), synchronizationStatus: () => ({}), storage: { getSync: () => null, set() {} },
     effortScaleOf, effortValueOf, effortKindOf, stepEffortValue, effortMeaning, effortSummaryText, formatEffort,
     replacePlan() {}, ...deps }
   runInNewContext(script.replace(imports, '').replace('export default', 'this.page ='), context)

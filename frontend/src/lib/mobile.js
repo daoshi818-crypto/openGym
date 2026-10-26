@@ -37,17 +37,27 @@ const FILE = 'opengym-state.json'
 
 export async function nativeLoad() {
   try {
+    if (await isAndroid()) {
+      const { registerPlugin } = await import('@capacitor/core')
+      const result = await registerPlugin('WatchRpc').loadState()
+      return JSON.parse(result.json)
+    }
     const { Filesystem, Directory, Encoding } = await import('@capacitor/filesystem')
     const r = await Filesystem.readFile({ path: FILE, directory: Directory.Data, encoding: Encoding.UTF8 })
     return JSON.parse(r.data)
   } catch (e) { return null }   // first launch, or unreadable — localStorage copy takes over
 }
 
-export async function nativeSave(state) {
+export async function nativeSave(state, { strict = false } = {}) {
   try {
+    if (await isAndroid()) {
+      const { registerPlugin } = await import('@capacitor/core')
+      await registerPlugin('WatchRpc').checkpointState({ json: JSON.stringify(state) })
+      return
+    }
     const { Filesystem, Directory, Encoding } = await import('@capacitor/filesystem')
     await Filesystem.writeFile({ path: FILE, directory: Directory.Data, data: JSON.stringify(state), encoding: Encoding.UTF8 })
-  } catch (e) { /* keep the localStorage copy */ }
+  } catch (e) { if (strict) throw e }
 }
 
 // "Connect to my server" mode (lib/remote.js): which of local-only / a paired remote account this

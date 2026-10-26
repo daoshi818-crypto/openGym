@@ -22,6 +22,16 @@ BlueOS watch companion for openGym. Display name: `opengym`; package identity:
 
 ## Transport and Persistence
 
+Watch 0.6.13 pairs with phone 1.6.5 for durable inbox/commit receipts, negotiated
+revision deltas, bounded checksummed snapshot chunks, explicit field conflicts and
+adaptive retry. Old peers keep the v2 path. See [SYNC_PROTOCOL.md](SYNC_PROTOCOL.md).
+The connection recovery and rest-screen fixes from 0.6.12 are included.
+
+Watch 0.6.12 restores uplink after an SDK error or missed `onOpen`: valid incoming
+messages and periodic readiness checks resume the durable outbox. Delayed probes are
+scoped to the connection generation. The rest screen reserves space for the effort
+entry, skip button and two-line exercise names on square and round targets.
+
 The active transport is vivo DeviceRpc via vivo Health and BlueOS interconnect, implemented
 in `src/lib/rpc.js`. The old BLE/Worker design is historical and is not the active protocol.
 Events carry persistent IDs; the outbox retries until business acknowledgement. Snapshots

@@ -34,7 +34,7 @@ function connection() {
 }
 function page(path, deps) {
   const script = source(path).match(/<script>([\s\S]*?)<\/script>/)[1]
-  const context = { console, WATCH_VERSION: 'test-watch', applyEdit, applyRest, restOf, applyFocus, persistenceStatus: () => ({}), storageStatus: () => ({}),
+  const context = { console, WATCH_VERSION: 'test-watch', applyEdit, applyRest, restOf, applyFocus, persistenceStatus: () => ({}), storageStatus: () => ({}), synchronizationStatus: () => ({}),
     effortScaleOf, effortValueOf, effortKindOf, stepEffortValue, effortMeaning, effortSummaryText, formatEffort,
     storage: { getSync: () => null, set() {} }, replacePlan() {}, ...deps }
   runInNewContext(script.replace(imports, '').replace('export default', 'this.page ='), context)
@@ -613,7 +613,7 @@ describe('watch business message boundary', () => {
     expect(operationPage).toContain('{{ hrLabel }}')
     expect(operationPage).not.toContain('估算')
     expect(ux).toContain('class="training-panel rest-panel"')
-    expect(ux).toContain('.rest-panel { height: 262px; }')
+    // Compiled rest bounds are checked against the child heights by verify-layout.cjs.
     expect(ux).not.toContain('训练操作')
     expect(source('ExerciseList/index.ux')).not.toContain('value="训练动作"')
     expect(source('Index/index.ux')).toContain('justify-content: center')

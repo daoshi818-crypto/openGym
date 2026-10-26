@@ -25,6 +25,20 @@ function harness() {
 }
 afterEach(() => vi.useRealTimers())
 
+it('does not send a new event when only an older outbox batch reached disk', () => {
+  const h = harness(), rpc = h.transport()
+  rpc.startServer({}); h.connection.onOpen(); h.commit(0)
+  rpc.sendEvent({t:'set',sid:'s',ex:0,set:1,eventId:'a',at:1})
+  rpc.sendEvent({t:'set',sid:'s',ex:0,set:2,eventId:'b',at:2})
+  h.commit(1) // only a is on disk; b's write has started but has not succeeded
+  h.writes[2].fail()
+  h.connection.onOpen() // reconnect flushes even with the next write outstanding
+  expect(h.sent.filter(x=>x.data.eventId==='b')).toHaveLength(0)
+  expect(rpc.pendingCount()).toBe(2)
+  for (let i=3;i<h.writes.length;i++) h.commit(i)
+  expect(h.sent.some(x=>x.data.eventId==='b')).toBe(true)
+})
+
 it('serializes session snapshots and retains the latest state while a write is delayed or fails', () => {
   const h = harness(), p = h.persistence
   p.writeStored('session_state', {rev:1}); p.writeStored('session_state', {rev:2})

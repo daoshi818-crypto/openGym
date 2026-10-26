@@ -50,6 +50,7 @@ export function watchSnapshotOf(S, timer, now = Date.now()) {
     segmentStartedAt: A.segmentStartedAt || A.start,
     exIdx: ex, setIdx: A.watchFocus?.ex === ex ? A.watchFocus.set - 1 : first < 0 ? 0 : first,
     focusAt: Number(A.watchFocus?.at || A.watchFocusAt || 0),
+    commitRev: A.syncRev || 0, sessionEpoch: watchSidOf(A),
     ackedEvents: A.watchEvents || [], pausedAt: A.pausedAt || 0, pausedMs: A.pausedMs || 0,
     pauseVersion: A.pauseVersion || 0, baseCalories: Object.entries(A.watchSegments || {}).filter(([id]) => id !== watchSidOf(A)).reduce((n, [, s]) => n + s.calories, 0),
     rest: timer ? { restId: timer.restId || String(timer.startedAt || timer.endsAt - timer.total * 1000),

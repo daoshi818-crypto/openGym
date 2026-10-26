@@ -8,8 +8,10 @@ import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.os.Bundle;
 import android.provider.Settings;
+import android.util.AtomicFile;
 
 import com.getcapacitor.JSObject;
+import com.getcapacitor.JSArray;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
@@ -33,6 +35,11 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 
 /**
  * vivo 智能终端设备 SDK 的 Capacitor 桥。
@@ -57,6 +64,66 @@ public class WatchRpcPlugin extends Plugin {
     private volatile int lastPlanCode = -1;
     private volatile int lastLaunchCode = -1;
     private final List<String> logs = new ArrayList<>();
+    private WatchInbox inbox;
+    private String inboxError = "";
+
+    private synchronized WatchInbox inbox() throws IOException {
+        if (inbox == null) {
+            AtomicFile file = new AtomicFile(new File(getContext().getFilesDir(), "watch-inbox.bin"));
+            inbox = new WatchInbox(new WatchInbox.Store() {
+                public byte[] read() throws IOException {
+                    if (!file.getBaseFile().exists() && !new File(file.getBaseFile() + ".bak").exists()) return null;
+                    return file.readFully();
+                }
+                public void write(byte[] bytes) throws IOException { atomicWrite(file, bytes); }
+            });
+        }
+        return inbox;
+    }
+
+    private static void atomicWrite(AtomicFile file, byte[] bytes) throws IOException {
+        FileOutputStream stream = null;
+        try { stream = file.startWrite(); stream.write(bytes); file.finishWrite(stream); }
+        catch (IOException e) { if (stream != null) file.failWrite(stream); throw e; }
+    }
+
+    @PluginMethod
+    public void checkpointState(PluginCall call) {
+        try {
+            String json = call.getString("json");
+            if (json == null) throw new IOException("state required");
+            new JSONObject(json);
+            synchronized (this) { atomicWrite(new AtomicFile(new File(getContext().getFilesDir(), "opengym-state.json")), json.getBytes(StandardCharsets.UTF_8)); }
+            call.resolve();
+        } catch (Exception e) { call.reject("state checkpoint failed", e); }
+    }
+
+    @PluginMethod
+    public void loadState(PluginCall call) {
+        try {
+            JSObject ret = new JSObject();
+            synchronized (this) { ret.put("json", new String(new AtomicFile(new File(getContext().getFilesDir(), "opengym-state.json")).readFully(), StandardCharsets.UTF_8)); }
+            call.resolve(ret);
+        } catch (Exception e) { call.reject("state read failed", e); }
+    }
+
+    @PluginMethod
+    public void drainInbox(PluginCall call) {
+        try {
+            JSArray events = new JSArray();
+            for (Map.Entry<String, String> item : inbox().batch(32).entrySet()) {
+                JSONObject ev = new JSONObject(item.getValue()); ev.put("_inboxId", item.getKey()); events.put(ev);
+            }
+            JSObject ret = new JSObject(); ret.put("events", events); ret.put("pending", inbox().size());
+            ret.put("error", inboxError); call.resolve(ret);
+        } catch (Exception e) { inboxError = "inbox read failed"; call.reject(inboxError, e); }
+    }
+
+    @PluginMethod
+    public void completeInbox(PluginCall call) {
+        try { inbox().complete(call.getString("id", "")); inboxError = ""; call.resolve(); }
+        catch (Exception e) { inboxError = "inbox completion failed"; call.reject(inboxError, e); }
+    }
 
     private void log(String message) {
         String line = new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date()) + "  " + message;
@@ -113,6 +180,31 @@ public class WatchRpcPlugin extends Plugin {
             JSObject data = JSObject.fromJSONObject(new JSONObject(json));
             lastRxType = data.optString("t", "unknown");
             log("RX business " + messageSummary(json));
+            String type = data.optString("t", "");
+            if (java.util.Arrays.asList("hello", "watch_start", "session_close", "session_close_ack", "pause", "rest", "effort", "weight", "reps", "set", "unset", "add_set", "remove_set", "focus", "end", "summary").contains(type)) {
+                try {
+                    String identity = data.optString("eventId", "");
+                    if (identity.isEmpty()) identity = json;
+                    byte[] hash = MessageDigest.getInstance("SHA-256").digest((data.optString("sid", "") + "\n" + identity).getBytes(StandardCharsets.UTF_8));
+                    StringBuilder key = new StringBuilder(); for (byte b : hash) key.append(String.format(Locale.US, "%02x", b & 255));
+                    inbox().put(key.toString(), json);
+                    data.put("_inboxId", key.toString());
+                    inboxError = "";
+                    if (data.optInt("protocolVersion", 0) >= 3 && !data.optString("eventId", "").isEmpty()) {
+                        JSONObject receipt = new JSONObject(); receipt.put("t", "received");
+                        receipt.put("eventId", data.optString("eventId")); receipt.put("sid", data.optString("sid"));
+                        try {
+                            RpcClient.getInstance().callAsync(new Request.Builder().action(Constant.Action.ACTION_DEVICE_BUSINESS_DATA)
+                                    .pkgName(TARGET_PACKAGE).data(receipt.toString()).timeout(Constant.DEFAULT_TIMEOUT).build(), new Callback() {
+                                @Override public void onResponse(Response response) { }
+                            });
+                        } catch (Exception ignored) { /* nonterminal receipt; command remains in both logs */ }
+                    }
+                } catch (Exception e) {
+                    inboxError = "inbox persistence failed"; log(inboxError);
+                    return; // no terminal business ACK: the watch retains its command
+                }
+            }
             data.put("_kind", kind);
             notifyListeners("watchEvent", data);
         } catch (Exception e) {
@@ -581,12 +673,16 @@ public class WatchRpcPlugin extends Plugin {
         ret.put("logs", sb.toString());
         ret.put("lastError", lastError == null ? "" : lastError);
         ret.put("initialized", initialized);
+        try { ret.put("inboxPending", inbox().size()); } catch (Exception e) { inboxError = "inbox read failed"; }
+        ret.put("inboxError", inboxError);
         call.resolve(ret);
     }
 
     @PluginMethod
     public void getVersion(PluginCall call) {
         JSObject ret = environmentDiagnostics();
+        try { ret.put("inboxPending", inbox().size()); } catch (Exception e) { inboxError = "inbox read failed"; }
+        ret.put("inboxError", inboxError);
         ret.put("initialized", initialized);
         ret.put("appSignature", appSignatureSha256());
         try {

@@ -71,11 +71,12 @@ jobs:
           tag_name: v${{ env.APP_VERSION }}
           name: openGym custom v${{ env.APP_VERSION }}
           body: |
-            手机 APK：openGym.apk；手表 BlueOS 安装包：opengym-watch-${{ env.WATCH_VERSION }}.rpk。
-            手表改名 opengym，圆形图标；训练/操作上下翻页，右滑选择动作，训练页保留心率。
-            新增缓存计划与手表开始训练、暂停、保存/放弃、离线补传及手机端冲突确认。
-            手机 APK 沿用本仓库签名。手表同时提供 watch-square（含 432x514 的 vivo WATCH GT 2）和 watch-round（vivo WATCH 4/5）RPK，使用 BlueOS Studio 官方编译器。
-            真机传感器、息屏和后台恢复仍需在具体 vivo 设备上验证。
+            手机：${{ env.APP_VERSION }}；手表：${{ env.WATCH_VERSION }}。
+            修复手表上行连接恢复与休息界面遮挡，增加持久化收发队列、业务提交确认、断连补传和重复消息去重。
+            新同步协议支持版本/增量对账、分片校验及双端修改冲突处理，兼容旧版协议；完整功能建议两端一起升级。
+            手机 openGym.apk 沿用本仓库正式签名。vivo WATCH GT 安装 opengym-watch-${{ env.WATCH_VERSION }}.rpk；圆屏安装 opengym-watch-round-${{ env.WATCH_VERSION }}.rpk，手表证书保持一致。
+            本地验证：565 项 JavaScript 测试、12 项 Android JVM 测试及手机/官方 BlueOS 方屏和圆屏构建通过。
+            WATCH GT 真机同步、息屏/后台恢复和休息页显示仍需验收；手机 JS 未运行时先缓存操作，恢复后处理。协议细节见 watch-app/SYNC_PROTOCOL.md。
           files: |
             openGym.apk
             openGym.apk.sha256

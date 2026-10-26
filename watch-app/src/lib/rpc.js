@@ -1,5 +1,6 @@
 import { runtime } from './runtime.js'
-import { readStored, writeStored, retryStorage } from './persistence.js'
+import { readStored, writeStored, writeStoredConfirmed, retryStorage } from './persistence.js'
+import { wireHash, acceptWireChunk, expandWireDelta } from './sync-wire.js'
 // 手表侧传输层：vivo 智能终端 SDK（穿戴业务 Kit）。
 //
 // 手机是唯一权威；手表只做辅助显示与记录。所有动作先进本地 outbox，
@@ -34,8 +35,8 @@ function initialize() {
 }
 
 // 日志里的汇总也已经是可靠数据：把它连同 outbox 现有内容一起视为可发送。
-function markDurable() {
-  const ids = new Set(rpcState().outbox.map(e => e.msg.eventId))
+function markDurable(batch = rpcState().outbox) {
+  const ids = new Set(batch.map(e => e.msg.eventId))
   for (const entry of pendingSummaries()) if (entry.summaryEvent?.eventId) ids.add(entry.summaryEvent.eventId)
   rpcState().durable = ids
 }
@@ -63,7 +64,7 @@ function persist() {
     r.writeBusy = false
     if (ok) {
       r.persistFailed = false
-      markDurable()
+      markDurable(value)
       if (r.writeDirty) persist()
       else flush()
     } else {
@@ -129,14 +130,47 @@ function sendHello() {
   const s = loadState()
   sendControl({
     t: 'hello',
-    watchVersion: WATCH_VERSION, protocolVersion: 2, stableIds: true,
+    watchVersion: WATCH_VERSION, protocolVersion: 3, stableIds: true,
+    capabilities: { durableCommit: true, snapshotChunks: true, deltas: true },
     receipts: true,
     sid: s.sid || '',
     rev: s.rev || 0,
+    commitRev: s.commitRev || 0, sessionEpoch: s.sid || '',
     pending: rpcState().outbox.length,
     active: !!s.active,
     pendingStart: !!s.pendingStart,
   })
+}
+
+function resumeConnection() {
+  const r = rpcState()
+  if (r.connected || !r.connect) return
+  r.connected = true
+  r.nextProbeAt = 0; r.probeAttempts = 0
+  r.connectionGeneration++; r.sending = false; clearTimeout(r.sendingTimer)
+  r.outbox.forEach(e => { e.sent = false })
+  r.handlers.onState?.(true)
+  sendHello()
+  flush()
+}
+
+// 错误/息屏恢复时固件不一定再次触发 onOpen。重试队列也检查真实状态，
+// 否则一次 onError 就会令上行永久停在 connected=false，虽然下行仍然到达。
+function probeConnection() {
+  const r = rpcState(), connection = r.connect
+  if (!connection || r.connected || Date.now() < (r.nextProbeAt || 0) || r.readyProbe && Date.now() - r.readyProbe.at < 6000) return
+  const token = { at: Date.now(), generation: r.connectionGeneration }
+  r.readyProbe = token
+  r.nextProbeAt = Date.now() + Math.min(60000, 4000 * Math.pow(2, Math.min(4, r.probeAttempts || 0)))
+  r.probeAttempts = (r.probeAttempts || 0) + 1
+  const done = data => {
+    if (r.readyProbe !== token) return
+    r.readyProbe = null
+    if (r.connect !== connection || r.connectionGeneration !== token.generation) return
+    if (data?.status === 1) resumeConnection()
+  }
+  try { connection.getReadyState({ success: done, fail: () => done(null) }) }
+  catch { done(null) }
 }
 
 function flush() {
@@ -145,8 +179,10 @@ function flush() {
   if (expired.length) { runtime().expiredEvents = []; for (const event of expired) sendEvent(event) }
   retryStorage()
   if (rpcState().persistFailed && !rpcState().writeBusy) persist()
+  if (!rpcState().connected) { probeConnection(); return }
   if (!rpcState().connected || !rpcState().connect || rpcState().sending) return
-  const next = rpcState().outbox.find(e => rpcState().durable.has(e.msg.eventId) && (!e.sent || Date.now() - (e.sentAt || 0) > 4000))
+  const eligible = e => rpcState().durable.has(e.msg.eventId) && (!e.sent || Date.now() >= (e.nextAttemptAt || (e.sentAt || 0) + 4000))
+  const next = rpcState().peerProtocol >= 3 ? (eligible(rpcState().outbox[0] || { msg: {} }) ? rpcState().outbox[0] : null) : rpcState().outbox.find(eligible)
   if (!next) return
   const token = { generation: rpcState().connectionGeneration, eventId: next.msg.eventId }
   rpcState().sending = token
@@ -154,8 +190,8 @@ function flush() {
   rpcState().sendingTimer = setTimeout(() => { if (release()) flush() }, 6000)
   try {
     rpcState().connect.send({ data: next.msg,
-      success: () => { if (!release()) return; const item = rpcState().outbox.find(e => e.msg.eventId === token.eventId); if (item) { item.sent = true; item.sentAt = Date.now() }; flush() },
-      fail: () => { if (release() && rpcState().connected) setTimeout(flush, 2000) }
+      success: () => { if (!release()) return; const item = rpcState().outbox.find(e => e.msg.eventId === token.eventId); if (item) { item.sent = true; item.sentAt = Date.now(); item.attempts = (item.attempts || 0) + 1; item.nextAttemptAt = Date.now() + Math.min(60000, 4000 * Math.pow(2, Math.min(4, item.attempts - 1))) + Math.floor(Math.random() * 1000) }; flush() },
+      fail: () => { if (!release()) return; next.sent = true; next.nextAttemptAt = Date.now() + Math.min(60000, 2000 * Math.pow(2, Math.min(5, next.attempts || 0))); next.attempts = (next.attempts || 0) + 1; flush() }
     })
   } catch { release() }
 }
@@ -292,18 +328,74 @@ export function startServer(h) {
   }
   rpcState().connect.onError = (err) => {
     rpcState().connected = false
+    rpcState().connectionGeneration++; rpcState().sending = false; clearTimeout(rpcState().sendingTimer)
     if (rpcState().handlers.onState) rpcState().handlers.onState(false)
     if (rpcState().handlers.onError) rpcState().handlers.onError(err || {})
   }
   rpcState().connect.onMessage = (data) => {
     const decoded = parseMessage(data)
-    const msg = decoded.message
+    let msg = decoded.message
     if (!msg) {
       sendControl({ t: 'watch_rx', watchVersion: WATCH_VERSION, status: 'invalid_message',
         envelopeType: typeof data, keys: data && typeof data === 'object' ? Object.keys(data).slice(0, 8) : [],
         reason: decoded.reason, decodePath: decoded.decodePath, layers: decoded.layers })
       return
     }
+    // 能收到有效业务包就是连接已恢复的证据，不依赖遗漏的 onOpen。
+    if (!rpcState().connected) resumeConnection()
+    if (msg.t === 'conflict_reviewed') {
+      const conflicts = readStored('sync_conflicts') || []
+      for (const c of conflicts) if (c.event.eventId === msg.eventId) c.reviewed = true
+      writeStored('sync_conflicts', conflicts)
+      return
+    }
+    if (msg.t === 'received') {
+      const item = rpcState().outbox.find(e => e.msg.eventId === msg.eventId && e.msg.sid === msg.sid)
+      if (item) item.receivedAt = Date.now()
+      return // native inbox receipt is not a business commit
+    }
+    if (msg.t === 'committed') {
+      const item = rpcState().outbox.find(e => e.msg.eventId === msg.eventId && e.msg.sid === msg.sid)
+      if (!item || !['applied', 'conflict', 'rejected'].includes(msg.status)) return
+      serial(async () => {
+        if (msg.status !== 'applied') {
+          const conflicts = readStored('sync_conflicts') || []
+          if (conflicts.filter(c => !c.reviewed).length >= 100 && !conflicts.some(c => c.event.eventId === msg.eventId)) { rpcState().handlers.onError?.({ code: 'conflict_archive_full' }); return }
+          if (!conflicts.some(c => c.event.eventId === msg.eventId)) conflicts.push({ event: item.msg, decision: msg, at: Date.now() })
+          // Never discard a rejected edit until the original and the decision can be recovered.
+          const retained = conflicts.filter(c => !c.reviewed).concat(conflicts.filter(c => c.reviewed).slice(-20))
+          try { if (!(await writeStoredConfirmed('sync_conflicts', retained))) return } catch { return }
+          storage.set({ key: 'last_notice', value: '存在同步冲突，离线操作已保留，请核对手机训练记录', fail() {} })
+        }
+        const s = loadState()
+        if (msg.status === 'applied') {
+          for (const edit of s.pendingEdits || []) if (edit.eventId === msg.eventId) edit.committedRev = msg.commitRev
+        } else s.pendingEdits = (s.pendingEdits || []).filter(e => e.eventId !== msg.eventId)
+        save(s)
+        // A snapshot can beat its commit receipt. Reconcile again after removing/tagging the
+        // pending edit, so a rejected optimistic value cannot remain on top of phone state.
+        if (s.active && s.syncBase && s.syncBase.commitRev >= msg.commitRev) {
+          try { rpcState().handlers.onSync?.(s.syncBase) } catch { return }
+        }
+        if (!(await writeStoredConfirmed('session_state', loadState()))) return
+        ackEvent(null, msg.eventId)
+        rpcState().lastCommitAt = Date.now()
+      })
+      return
+    }
+    if (msg.t === 'sync_chunk' || msg.t === 'sync_delta') {
+      try {
+        if (msg.t === 'sync_chunk') msg = acceptWireChunk(rpcState().transfers ||= {}, msg, Date.now())
+        if (!msg) return
+        if (msg.t === 'sync_delta') msg = expandWireDelta(loadState().syncBase, msg)
+      } catch (error) { sendControl({ t: 'sync_request', reason: String(error.message).slice(0, 80) }); return }
+    }
+    if (msg.t === 'sync' && msg.protocolVersion >= 3) {
+      const { wireHash: hash, ...value } = msg
+      if (wireHash(value) !== hash) { sendControl({ t: 'sync_request', reason: 'snapshot_checksum' }); return }
+      rpcState().peerProtocol = 3
+    }
+    else if (msg.t === 'sync') rpcState().peerProtocol = 2
     if (msg.t === 'event_rejected') {
       const state = loadState(); state.pendingEdits = (state.pendingEdits || []).filter(e => e.eventId !== msg.eventId); save(state)
       ackEvent(null, msg.eventId)
@@ -374,6 +466,7 @@ export function startServer(h) {
       // code=0 仅代表手机 RPC 成功；此回执在页面实际处理后发出。
       sendControl({ ...result, t: msg.t + '_ack', watchVersion: WATCH_VERSION,
         sid: msg.sid || '', planId: msg.planId || '', rev: msg.rev || 0,
+        commitRev: msg.commitRev || 0, wireHash: msg.wireHash || '',
         decodePath: decoded.decodePath })
       return
     }
@@ -405,16 +498,8 @@ export function startServer(h) {
   rpcState().connect.onerror = rpcState().connect.onError
   rpcState().connect.onmessage = rpcState().connect.onMessage
 
-  try {
-    rpcState().connect.getReadyState({
-      success: (data) => {
-        rpcState().connected = !!(data && data.status === 1)
-        if (rpcState().handlers.onState) rpcState().handlers.onState(rpcState().connected)
-        if (rpcState().connected) { sendHello(); flush() }
-      },
-      fail: () => {},
-    })
-  } catch (e) { /* 旧固件没有 getReadyState 时等 onOpen */ }
+  if (rpcState().connected) sendHello()
+  else probeConnection()
 }
 
 export function stopServer() {
@@ -437,20 +522,29 @@ export function sendEvent(obj) {
     if (obj.seq == null) obj.seq = identity.seq
     obj.source = 'watch'
     obj.eventId = identity.eventId
+    obj.installationId = identity.installationId
+    obj.deviceSeq = identity.deviceSeq
   } else {
     rememberEventAt(Number(obj.seq || obj.at) || 0)
   }
   const s = loadState()
+  if (rpcState().peerProtocol >= 3) {
+    obj.protocolVersion = 3
+    obj.baseCommitRev ??= s.commitRev || 0
+    obj.sessionEpoch = obj.sid
+    obj.installationId ||= runtime().eventClock?.installationId
+    obj.deviceSeq ||= runtime().eventClock?.deviceSeq
+  }
   if (s.active && s.sid === obj.sid && Number.isInteger(obj.ex)) {
     const exercise = s.workout?.exercises?.[obj.ex], row = s.workout?.rows?.[obj.ex]?.[obj.set - 1]
-    obj.protocolVersion = s.protocolVersion || 1
+    obj.protocolVersion = rpcState().peerProtocol >= 3 ? 3 : Math.min(2, s.protocolVersion || 1)
     obj.entryInstanceId ||= exercise?.entryInstanceId
     obj.setId ||= row?.setId
     obj.structureRevision ||= s.structureRevision
     obj.weightUnit ||= s.weightUnit || 'kg'
     if (obj.t === 'add_set') obj.newSetIds = (s.workout.rows[obj.ex] || []).map(r => r.setId)
   }
-  if (s.active && s.sid === obj.sid && ['set', 'unset', 'weight', 'reps', 'add_set', 'remove_set', 'effort'].includes(obj.t)) {
+  if (s.active && s.sid === obj.sid && (['set', 'unset', 'weight', 'reps', 'add_set', 'remove_set', 'effort'].includes(obj.t) || obj.protocolVersion >= 3 && ['rest', 'pause', 'focus'].includes(obj.t))) {
     s.pendingEdits = (s.pendingEdits || []).filter(e => !(e.t === obj.t && e.ex === obj.ex && e.set === obj.set && e.at === obj.at))
     s.pendingEdits.push(obj); save(s)
   }
@@ -488,3 +582,9 @@ export function sendControl(obj) {
 export function pendingCount() { initialize(); return rpcState().outbox.length }
 export function persistenceStatus() { return { pending: rpcState().writeBusy || rpcState().writeDirty, failed: rpcState().persistFailed } }
 export function isConnected() { return rpcState().connected }
+export function synchronizationStatus() {
+  initialize()
+  const conflicts = readStored('sync_conflicts') || []
+  return { pending: rpcState().outbox.length, phonePending: rpcState().outbox.filter(e => e.receivedAt).length,
+    conflicts: conflicts.filter(c => !c.reviewed).length, lastCommitAt: rpcState().lastCommitAt || 0 }
+}

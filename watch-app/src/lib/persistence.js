@@ -45,6 +45,7 @@ export function writeStoredConfirmed(key, value) {
   return new Promise(resolve => {
     q.waiters.push({ revision, resolve })
     if (revision <= q.confirmed) settle(q, true)
+    else if (state.errors[key] && !q.busy) settle(q, false)
   })
 }
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.6.5 / Watch v0.6.13 (2026-10-26)
+
+- **Reliable watch uploads**: persist exact outbox batches and the Android inbox; acknowledge business changes only after a durable serial commit. Retry and replay after disconnects, failed writes and restarts without applying duplicate workout finishes.
+- **Synchronization protocol**: negotiate v3 with v2 compatibility, per-session and field revisions, explicit conflict decisions, acknowledged delta baselines and bounded checksummed snapshot chunks. Settings shows synchronization state and lets users resolve conflicting edits.
+- **Watch recovery and layout**: recover uplink after SDK errors or a missing open callback, and fit rest controls and long exercise names within square and round screens.
+- Local validation: 565 JavaScript tests, 12 Android JVM tests, mobile builds and official BlueOS square/round builds and compiled layout checks. Physical WATCH GT acceptance is still required; background business execution waits for the phone JavaScript runtime to resume. See `watch-app/SYNC_PROTOCOL.md` for protocol limits.
+
 ## v1.6.3 / Watch v0.6.9 (2026-10-23)
 
 - **Workout calories**: the workout detail and completion screens share one calories card, and the history list shows compact calories. Missing values read "not recorded", a real zero stays zero, partial data keeps its note, and every value is labelled as a watch estimate.

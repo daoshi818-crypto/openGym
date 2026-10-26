@@ -10,6 +10,7 @@ import { DEMO, DEMO_SEEDED } from '../lib/demo.js'
 import { rememberDefaultLang } from '../lib/default-lang.js'
 import { guestAllowed } from '../lib/guest.js'
 import { MOBILE, initReminderSync, nativeLoad, nativeSave, onAppActive, readJsonFile, syncReminder, writeAutoBackup, writeJsonFile } from '../lib/mobile.js'
+import { stampWatchRevision } from '../lib/watch-revision.js'
 import { initHealthSync, syncHealth } from '../lib/health-sync.js'
 import { refillIfComplete } from '../lib/rotation.js'
 import { liftLegacy } from '../lib/sync-legacy.js'
@@ -334,6 +335,7 @@ export const useStore = create((set, get) => {
   let fpOf = null          // the copy the stored fingerprint was last taken of (confirmed)
   let keeping = null       // phone: the file write of what keepForPrevious set aside, until it lands
   let mirrorQ = Promise.resolve()   // phone: the file mirror's writes, one after the other (saveMirror)
+  let watchDraft = null
   // The write of the saved copy this tab last read or made, and whose copy it was (joinSaved).
   let seenWid = (() => { try { return localStorage.getItem(WID_KEY) } catch { return null } })()
   let seenOwner = (() => { try { return localStorage.getItem('gym_owner') } catch { return null } })()
@@ -483,13 +485,17 @@ export const useStore = create((set, get) => {
   // so a mirror write that failed, or a kill between the two writes, leaves a file that is never
   // taken. One write at a time, each of the copy in the store when its turn comes: a slow write
   // can never land after a later one.
-  const saveMirror = () => (mirrorQ = mirrorQ.then(async () => {
+  const saveMirror = (strict = false) => {
+    const write = mirrorQ.catch(() => {}).then(async () => {
     const S = get().S
     let owner = null
     try { owner = localStorage.getItem('gym_owner') } catch { /* unknown — the file is then nobody's */ }
-    await nativeSave(S)
-    await writeJsonFile(MIRROR_OWNER_FILE, { owner, ts: S._ts || 0 })
-  }).catch(() => {}))
+    await nativeSave(S, { strict: true })
+    await writeJsonFile(MIRROR_OWNER_FILE, { owner, ts: S._ts || 0 }, { strict })
+    })
+    mirrorQ = write.catch(() => {})
+    return strict ? write : mirrorQ
+  }
   // Mobile build: mirror the state into a file in the app's data directory (survives WebView
   // storage eviction) and keep the native reminder schedule in step with the weekly plan.
   // `now` skips the wait and returns the write, for a copy that replaced the last one wholesale.
@@ -1328,7 +1334,37 @@ export const useStore = create((set, get) => {
 
     // Mutate a draft of S via producer fn, then persist + schedule sync. Every routine the change
     // touched carries the time of it, for a conflict to keep the version edited last.
-    update(mut, push = true) {
+    withWatchTransaction(run) {
+      if (watchDraft) throw new Error('nested watch transaction')
+      const before = get().S
+      const draft = clone(before)
+      watchDraft = draft
+      // The existing finish action reads the shared store. Keep all of its nested updates
+      // in this synchronous draft; publish/persist exactly once with the event decision.
+      set({ S: draft })
+      try { run() }
+      catch (error) { set({ S: before }); throw error }
+      finally { watchDraft = null; set({ S: before }) }
+      get().update(s => { for (const key of Object.keys(s)) delete s[key]; Object.assign(s, draft) }, true, { skipWatchStamp: true })
+    },
+
+    async checkpointWatchState() {
+      // Share the mirror queue with ordinary saves: an older delayed write must never land
+      // after a business receipt. State and event decisions are one recoverable document.
+      localStorage.setItem(KEY, JSON.stringify(get().S))
+      clearTimeout(saveTm)
+      saveTm = null
+      if (MOBILE) await saveMirror(true)
+    },
+
+    update(mut, push = true, { watchActor = 'phone', skipWatchStamp = false } = {}) {
+      if (watchDraft) {
+        const before = clone(watchDraft)
+        mut(watchDraft)
+        ensureWatchIdentity(watchDraft.active)
+        stampWatchRevision(before, watchDraft, watchActor)
+        return
+      }
       const prev = get().S
       const S = clone(prev)
       mut(S)
@@ -1337,6 +1373,7 @@ export const useStore = create((set, get) => {
         S.active.watchRemovedSets = [...new Set([...(S.active.watchRemovedSets || []), ...(prev.active.entries || []).flatMap(e => (e.sets || []).map(r => r.setId)).filter(id => id && !live.has(id))])].slice(-4000)
       }
       ensureWatchIdentity(S.active)
+      if (!skipWatchStamp) stampWatchRevision(prev, S, watchActor)
       if (prev.active && !prev.active.editingWorkoutId && watchSidOf(prev.active) !== watchSidOf(S.active)) {
         const sid = watchSidOf(prev.active)
         if (sid && !S.watchClosed?.[sid]) {

@@ -32,14 +32,16 @@ export function applyWatchEffort(S, ev) {
   // A rating edited on the watch while the phone changed the same set: the two clocks cannot
   // decide this, so report a conflict with the phone's value and let the watch re-confirm.
   const base = Number(ev.baseEffortVersion) || 0
-  if (base && current > base) { rememberEvent(A, key); return { ...currentOut, status: 'conflict' } }
-  if (version && current && version < current) { rememberEvent(A, key); return { ...currentOut, status: 'stale' } }
+  if (ev.protocolVersion < 3 || !ev.protocolVersion) {
+    if (base && current > base) { rememberEvent(A, key); return { ...currentOut, status: 'conflict' } }
+    if (version && current && version < current) { rememberEvent(A, key); return { ...currentOut, status: 'stale' } }
+  }
   const scale = ev.scale === 'rpe' || ev.scale === 'rir' ? ev.scale : null
   const cleared = ev.clear === true || ev.value == null
   delete row.rpe
   delete row.rir
   if (!cleared && scale && Number.isFinite(Number(ev.value))) row[scale] = Number(ev.value)
-  row.effortVersion = version || current || Date.now()
+  row.effortVersion = ev.protocolVersion >= 3 ? current + 1 : version || current || Date.now()
   rememberEvent(A, key)
   return { status: 'applied', version: row.effortVersion, value: cleared ? null : row[scale], scale }
 }
@@ -58,7 +60,7 @@ export function applyWatchEvent(S, ev) {
     if (weight == null) return false
     ev.weight = weight
   }
-  const version = Number(ev.seq || ev.at) || 0
+  const version = ev.protocolVersion >= 3 ? Object.values(A.watchVersions || {}).reduce((n, v) => Math.max(n, v), A.watchFocus?.at || 0) + 1 : Number(ev.seq || ev.at) || 0
   A.watchVersions ||= {}
   const field = ev.t === 'focus' ? 'focus' : ['weight', 'reps'].includes(ev.t) ? ev.t : ['set', 'unset'].includes(ev.t) ? 'done' : 'structure'
   const versionKeyFor = field => [entry.entryInstanceId || ev.ex, field === 'structure' ? '' : row?.setId || ev.set, field].join(':')

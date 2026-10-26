@@ -29,6 +29,25 @@ for (const page of Object.keys(manifest.router.pages)) {
     assert.ok(parseFloat(digits.height) >= parseFloat(digits.lineHeight), 'Native countdown clips its line box')
     assert.ok(parseFloat(styles['.rrow'].marginTop) >= 8, 'Native countdown needs separation from rest controls')
     assert.ok(styles['.completion-panel'], 'All-complete choice was not compiled')
+    const checkRest = sheet => {
+      const px = (selector, field) => parseFloat(sheet[selector]?.[field] || 0)
+      const children = ['.rest-ex', '.rest', '.rrow', '.next', '.next-details', '.rest-panel .effort-row', '.skip']
+      const height = children.reduce((n, selector) => n + px(selector, 'height') + px(selector, 'marginTop') + px(selector, 'marginBottom'), 0)
+      assert.ok(height <= px('.rest-panel', 'height'), 'Rest children exceed panel height: ' + height)
+      assert.ok(px('.rest-ex', 'height') >= 2 * px('.rest-ex', 'lineHeight'), 'Rest exercise clips two lines')
+      assert.ok(px('.rest-ex', 'lineHeight') >= px('.rest-ex', 'fontSize') * 1.2, 'Rest exercise line-height is too tight')
+      assert.ok(px('.rest', 'lineHeight') >= px('.rest', 'fontSize') * 1.2, 'Countdown media line-height is too tight')
+      assert.ok(px('.rest', 'height') >= px('.rest', 'lineHeight'), 'Countdown media clips its line box')
+      const occupied = ['.topbar', '.metabar', '.rest-panel', '.primary-footer'].reduce((n, s) => n + px(s, 'height'), 0)
+      assert.ok(occupied + 6 <= px('.screen', 'height'), 'Rest page needs footer clearance')
+    }
+    checkRest(styles)
+    const roundMedia = styles['@MEDIA']?.find(item => item.condition === 'screen and (min-width: 450px)')
+    if (roundMedia) {
+      const merged = { ...styles }
+      for (const [selector, rule] of Object.entries(roundMedia)) merged[selector] = { ...(styles[selector] || {}), ...rule }
+      checkRest(merged)
+    }
     if (target === 'watch-round') {
       const media = styles['@MEDIA']?.find(item => item.condition === 'screen and (min-width: 450px)')
       assert.ok(media, 'Round-watch media layout is missing')

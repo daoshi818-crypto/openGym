@@ -23,7 +23,8 @@ import { sendToWatch, pushRestToWatch } from './lib/watch-link.js'
 import { restContextOf, restContextWire } from './lib/rest-context.js'
 import { watchSidOf } from './lib/session-resume.js'
 import { rememberClose } from './lib/watch-events.js'
-import { createWatchLifecycle } from './lib/watch-session.js'
+import { createDurableWatchLifecycle } from './lib/watch-commit.js'
+import { holdWatchOutbound, completeWatchInbox, drainWatchInbox, setWatchCommitStatus } from './lib/watch-link.js'
 import { exitWorkoutEdit, startFlow, finishWorkoutFromWatch } from './sheets.jsx'
 import Icon from './components/Icon.jsx'
 import WatchSaveReview from './components/WatchSaveReview.jsx'
@@ -81,37 +82,44 @@ function Shell() {
   const { S, user, ready } = useStore()
   const watchPlan = MOBILE ? JSON.stringify(watchPlanOf(S)) : 'null'
   useEffect(() => {
-    if (!MOBILE) return
-    const unbind = bindWatchLifecycle(createWatchLifecycle({
+    if (!MOBILE || !ready) return
+    const receive = createDurableWatchLifecycle({
       getState: () => useStore.getState().S,
-      update: fn => useStore.getState().update(fn), getTimer: () => useUI.getState().timer,
+      update: (fn, ev) => useStore.getState().update(fn, true, { watchActor: ev?.installationId || 'watch' }), getTimer: () => useUI.getState().timer,
       sendEnded: pushEndedToWatch, sendSync: pushSyncToWatch, sendAck: pushAckToWatch,
       finish: finishWorkoutFromWatch,
       send: sendToWatch, rest: ev => useUI.getState().followWatchRest(ev),
       pause: paused => useUI.getState()[paused ? 'pauseRest' : 'resumeRest'](),
       stop: () => { useUI.getState().stopRest(); useUI.getState().stopWork() },
-    }), { getState: () => useStore.getState().S, update: fn => useStore.getState().update(fn) })
+      checkpoint: () => useStore.getState().checkpointWatchState(),
+      transaction: run => useStore.getState().withWatchTransaction(run),
+      holdOutbound: holdWatchOutbound, completeInbox: completeWatchInbox, status: setWatchCommitStatus,
+    })
+    const unbind = bindWatchLifecycle(receive, { getState: () => useStore.getState().S,
+      update: fn => useStore.getState().update(fn), getTimer: () => useUI.getState().timer,
+      checkpoint: () => useStore.getState().checkpointWatchState() })
+    onAppActive(() => { receive.retry(); drainWatchInbox() })
     watchAvailable().then(result => { if (result.available) connectWatch() })
-    return unbind
-  }, [])
+    return () => { unbind(); receive.dispose() }
+  }, [ready])
   // 会话级生命周期：在设置页拉起手表时仍保留计划，结束/丢弃后才清除。
   useEffect(() => {
-    if (!MOBILE) return
+    if (!MOBILE || !ready) return
     const plan = JSON.parse(watchPlan)
     if (plan) pushPlanToWatch({ ...plan.workout, protocolVersion: plan.protocolVersion, weightUnit: plan.weightUnit, structureRevision: plan.structureRevision }, plan.sid, plan.profile)
     else clearWatchPlan(undefined, S.active?.editingWorkoutId ? 'history_editor' : 'no_active_session')
-  }, [watchPlan])
+  }, [watchPlan, ready])
   const watchCatalog = useMemo(() => MOBILE ? JSON.stringify({ ...watchCatalogOf(S), at: 0 }) : 'null', [S.routines, S.week, S.dayPlan, S.watchPlanIds, S.workouts])
   const restTimer = useUI(s => s.timer)
   useEffect(() => {
-    if (MOBILE) sendToWatch({ ...JSON.parse(watchCatalog), at: Date.now() })
-  }, [watchCatalog])
+    if (MOBILE && ready) sendToWatch({ ...JSON.parse(watchCatalog), at: Date.now() })
+  }, [watchCatalog, ready])
   useEffect(() => {
-    if (!MOBILE || !S.active?.start || restTimer?.source === 'watch') return
+    if (!MOBILE || !ready || !S.active?.start || restTimer?.source === 'watch') return
     const version = restTimer?.seq || Date.now()
     useStore.getState().update(s => { if (s.active) s.active.restVersion = version })
     pushRestToWatch(watchSidOf(S.active), restTimer && !restTimer.ready ? restTimer.paused ? restTimer.left : Math.max(0, Math.ceil((restTimer.endsAt - Date.now()) / 1000)) : 0, restTimer)
-  }, [S.active?.start, restTimer?.endsAt, restTimer?.paused, restTimer?.ready, restTimer?.total])
+  }, [ready, S.active?.start, restTimer?.endsAt, restTimer?.paused, restTimer?.ready, restTimer?.total])
   // 原生悬浮窗：启动/回前台恢复持久样式，并用原生休息状态裁决旧 WebView 计时。
   const overlayStyle = S.overlayStyle === 'ring' ? 'ring' : 'card'
   useEffect(() => {

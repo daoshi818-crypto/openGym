@@ -5,6 +5,8 @@
 // 协议仍是 plan / set / end / rest / weight / unset / ack，只是底层从 GATT 换成 RPC。
 import { MOBILE, isAndroid } from './mobile.js'
 import { isWarmupRow } from './workout-model.js'
+import { wireHash, splitWire, diffWire } from '../../../watch-app/src/lib/sync-wire.js'
+import { watchSnapshotOf } from './watch-workout.js'
 
 let pluginP = null
 const watchPlugin = () => pluginP || (pluginP = (async () => {
@@ -34,13 +36,86 @@ let lastPlanClear = null
 let lastPublishedPlan = null
 let onWatchLifecycle = () => false
 let trainingStore = null
+let syncProtocol = 2
+let syncBase = null
+const sentSnapshots = new Map()
+let pendingSync = null, syncRetryTimer = null, syncQueue = Promise.resolve()
+function scheduleSyncRetry(attempt) {
+  clearTimeout(syncRetryTimer)
+  if (pendingSync !== attempt) return
+  syncRetryTimer = setTimeout(() => {
+    if (pendingSync !== attempt) return
+    transmitSync(attempt)
+  }, Math.min(60000, 6000 * Math.pow(2, Math.min(4, Math.max(0, attempt.tries - 1)))) + Math.floor(Math.random() * 500))
+  syncRetryTimer.unref?.()
+}
+function transmitSync(attempt) {
+  const task = syncQueue.catch(() => {}).then(async () => {
+    if (pendingSync !== attempt) return false
+    attempt.tries++
+    const delta = diffWire(syncBase, attempt.snapshot)
+    const message = delta && JSON.stringify(delta).length < JSON.stringify(attempt.snapshot).length ? delta : attempt.snapshot
+    try {
+      for (const chunk of splitWire(message, attempt.snapshot.sid + ':' + attempt.snapshot.wireHash)) {
+        if (pendingSync !== attempt) return false
+        if (!(await sendWatchEvent(chunk))) return false
+      }
+      return true
+    } catch (error) { lastError = error.message; return false }
+    finally { scheduleSyncRetry(attempt) }
+  })
+  syncQueue = task
+  return task
+}
+let outboundBarrier = null
+let commitStatus = { phase: 'idle', pending: 0, error: '' }
+const commitListeners = new Set()
+export function onWatchCommitStatus(cb) { commitListeners.add(cb); cb(commitStatus); return () => commitListeners.delete(cb) }
+export function holdWatchOutbound() {
+  if (outboundBarrier) return () => {}
+  let resolve
+  const promise = new Promise(done => { resolve = done })
+  const barrier = { promise, resolve }
+  outboundBarrier = barrier
+  return () => {
+    if (outboundBarrier !== barrier) return
+    outboundBarrier = null; resolve()
+    Promise.resolve().then(flushPendingPlan)
+  }
+}
+export function setWatchCommitStatus(status) { commitStatus = status; for (const cb of commitListeners) { try { cb(status) } catch { /* isolated subscriber */ } } }
+let drainingInbox = false
+export async function drainWatchInbox() {
+  if (drainingInbox || !trainingStore) return
+  drainingInbox = true
+  try {
+    const p = await watchPlugin()
+    if (!p?.WatchRpc.drainInbox) return
+    const batch = await p.WatchRpc.drainInbox()
+    for (const ev of batch?.events || []) onNativeWatchEvent(ev)
+  } catch (e) { listenerError = 'watch inbox: ' + (e?.message || String(e)) }
+  finally { drainingInbox = false }
+}
+export async function completeWatchInbox(id) {
+  const p = await watchPlugin()
+  if (p?.WatchRpc.completeInbox) await p.WatchRpc.completeInbox({ id })
+  // A bounded drain advances only as committed entries leave the native inbox.
+  Promise.resolve().then(drainWatchInbox)
+}
 export function bindWatchLifecycle(cb, store = null) {
   trainingStore = store
   onWatchLifecycle = cb
+  Promise.resolve().then(drainWatchInbox)
   return () => { if (onWatchLifecycle === cb) onWatchLifecycle = () => false }
 }
 export const pushEndedToWatch = msg => sendWatchEvent({ ...msg, t: 'ended' })
 export const sendToWatch = msg => sendWatchEvent(msg)
+export function retryWatchConflict(key, record) {
+  return onWatchLifecycle({ ...record.event, _inboxId: undefined, resolutionOf: key,
+    eventId: record.event.eventId + ':resolve:' + Date.now(),
+    baseCommitRev: trainingStore?.getState()?.active?.syncRev || 0,
+    at: Date.now() }) === true
+}
 const receiptListeners = new Set()
 
 export function watchState() { return state }
@@ -81,6 +156,7 @@ async function bindNative() {
       listenerHandles.push(...added)
       bound = true
       listenerError = ''
+      Promise.resolve().then(drainWatchInbox)
     } catch (e) {
       for (const handle of added) { try { await handle?.remove?.() } catch { /* 已经失效 */ } }
       bound = false
@@ -114,6 +190,9 @@ function onNativeWatchEvent(ev) {
     if (ev.t === 'hello') {
       watchVersion = ev.watchVersion ? String(ev.watchVersion) : 'not_reported'
       watchReceiptsSupported = ev.receipts === true
+      syncProtocol = ev.protocolVersion >= 3 && ev.capabilities?.durableCommit && ev.capabilities?.snapshotChunks ? 3 : 2
+      syncBase = null; sentSnapshots.clear()
+      clearTimeout(syncRetryTimer); pendingSync = null
     }
     if (ev.t === 'plan_ack') {
       lastPlanReceipt = { ...ev, receivedAt: Date.now() }
@@ -122,7 +201,21 @@ function onNativeWatchEvent(ev) {
       }
       return
     }
-    if (ev.t === 'sync_ack') { lastSyncReceipt = { ...ev, receivedAt: Date.now() }; return }
+    if (ev.t === 'sync_ack') {
+      lastSyncReceipt = { ...ev, receivedAt: Date.now() }
+      const snapshot = sentSnapshots.get(ev.wireHash)
+      if (snapshot && ['applied', 'retained'].includes(ev.status) && ev.commitRev === snapshot.commitRev) syncBase = snapshot
+      if (pendingSync?.snapshot.wireHash === ev.wireHash && ['applied', 'retained', 'closed', 'conflict'].includes(ev.status)) {
+        clearTimeout(syncRetryTimer); pendingSync = null
+      }
+      return
+    }
+    if (ev.t === 'sync_request') {
+      syncBase = null
+      const snapshot = [...sentSnapshots.values()].at(-1)
+      if (snapshot) pushSyncToWatch(snapshot)
+      return
+    }
     if (ev.t === 'watch_rx') { lastWatchRx = { ...ev, receivedAt: Date.now() }; return }
     // 生命周期消息（完成/撤销/结构/关闭/汇总）由全局协调器同步认领，其余仍交给训练页。
     // 认领必须保持同步布尔判断；异步执行在其内部完成，不能让 Promise 冒充 true。
@@ -186,6 +279,7 @@ export async function connectWatch() {
 }
 
 export async function disconnectWatch() {
+  clearTimeout(syncRetryTimer); pendingSync = null
   const p = await watchPlugin()
   if (p) {
     try { await p.WatchRpc.disconnect() } catch { /* 已经断开 */ }
@@ -253,6 +347,8 @@ export async function getWatchDiagnostics() {
       planPending: !!pendingPlan, planPushInFlight, planLastError: lastError,
       planDelivery: !latestPlan ? 'idle' : latestPlan.receipt?.status || latestPlan.delivery,
       watchVersion, watchReceiptsSupported, lastPlanReceipt, lastSyncReceipt, lastWatchRx,
+      commitStatus,
+      syncProtocol, syncCommitRev: syncBase?.commitRev || 0,
       lastPublishedPlan, lastPlanClear }
   } catch (e) {
     return { lastError: e && e.message ? e.message : String(e) }
@@ -275,6 +371,7 @@ export async function pushPlanToWatch(workout, sid, profile = null) {
 
 export function clearWatchPlan(sid, reason = 'no_active_session', endedAt = Date.now()) {
   if (sid && latestPlan?.sid !== sid) return
+  if (!sid || pendingSync?.snapshot.sid === sid) { clearTimeout(syncRetryTimer); pendingSync = null }
   if (latestPlan) lastPlanClear = { sid: latestPlan.sid, planId: latestPlan.planId, reason, at: Date.now() }
   if (latestPlan?.sid) pushEndedToWatch({ sid: latestPlan.sid, reason, endedAt })
   latestPlan = null
@@ -282,6 +379,7 @@ export function clearWatchPlan(sid, reason = 'no_active_session', endedAt = Date
 }
 
 async function flushPendingPlan() {
+  if (outboundBarrier) return
   if (planPushInFlight || !pendingPlan) return
   if (state !== 'ready' && state !== 'connected') return
   // 在第一个 await 前占用发送位，ready/hello/新计划共用同一串行队列。
@@ -292,6 +390,14 @@ async function flushPendingPlan() {
     while (pendingPlan && (state === 'ready' || state === 'connected')) {
       const next = pendingPlan
       pendingPlan = null
+      try {
+        await trainingStore?.checkpoint?.()
+        if (outboundBarrier) { pendingPlan ||= next; break }
+      } catch (error) {
+        lastError = 'watch state save: ' + (error?.message || String(error))
+        pendingPlan ||= next
+        break
+      }
       const msg = {
         t: 'plan',
         v: 2, protocolVersion: next.workout.protocolVersion || 1, weightUnit: next.workout.weightUnit || next.profile?.weightUnit || 'kg', structureRevision: next.workout.structureRevision,
@@ -333,6 +439,7 @@ async function flushPendingPlan() {
 
 async function sendWatchEvent(obj) {
   if (!MOBILE || !obj) return false
+  while (outboundBarrier) await outboundBarrier.promise
   const S = trainingStore?.getState(), A = S?.active
   if (A && obj.sid === String(A.watchSid || A.start) && Number.isInteger(obj.ex)) {
     const entry = A.entries[obj.ex], rows = entry?.sets.filter(r => !isWarmupRow(r)) || [], row = rows[obj.set - 1]
@@ -342,10 +449,15 @@ async function sendWatchEvent(obj) {
     const field = obj.t === 'weight' ? 'weight' : obj.t === 'reps' ? 'reps' : ['set','unset'].includes(obj.t) ? 'done' : null
     if (field && row) trainingStore.update(s => { const a = s.active; if (!a || a.start !== A.start) return; a.watchVersions ||= {}; a.watchVersions[[entry.entryInstanceId || obj.ex, row.setId || obj.set, field].join(':')] = obj.at })
   }
+  if (syncProtocol >= 3 && trainingStore && obj.sid === String(A?.watchSid || A?.start) && ['weight', 'reps', 'set', 'unset', 'effort', 'rest', 'pause', 'focus', 'add_set', 'remove_set'].includes(obj.t)) {
+    const snapshot = watchSnapshotOf(trainingStore.getState(), trainingStore.getTimer?.())
+    if (snapshot) return pushSyncToWatch(snapshot)
+  }
   await bindNative()
   const p = await watchPlugin()
   if (!p) return false
   try {
+    if (!['ack', 'committed', 'received', 'effort_ack', 'event_rejected', 'watch_start_ack'].includes(obj.t)) await trainingStore?.checkpoint?.()
     const r = await p.WatchRpc.sendEvent({ json: JSON.stringify(obj) })
     if (r && !r.ok) lastError = r.data || 'send event failed'
     return !!(r && r.ok)
@@ -449,7 +561,15 @@ export async function continueOnWatch(snapshot, onStatus) {
 /** 重连后的权威快照。snapshot 由训练页从活动会话生成。 */
 export async function pushSyncToWatch(snapshot) {
   if (!MOBILE || !snapshot) return false
-  return sendWatchEvent({ ...snapshot, t: 'sync' })
+  if (syncProtocol < 3) return sendWatchEvent({ ...snapshot, t: 'sync' })
+  // Hash and delta against an acknowledged phone baseline, never against optimistic watch edits.
+  const { wireHash: ignored, ...value } = { ...snapshot, t: 'sync', protocolVersion: 3, ackedEvents: (snapshot.ackedEvents || []).slice(-128) }
+  const next = { ...value, wireHash: wireHash(value) }
+  sentSnapshots.set(next.wireHash, next)
+  while (sentSnapshots.size > 8) sentSnapshots.delete(sentSnapshots.keys().next().value)
+  clearTimeout(syncRetryTimer)
+  pendingSync = { snapshot: next, tries: 0 }
+  return transmitSync(pendingSync)
 }
 
 // ---- 手表事件 → 训练页 ----

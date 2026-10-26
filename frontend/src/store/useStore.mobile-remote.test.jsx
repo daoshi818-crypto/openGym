@@ -40,7 +40,10 @@ vi.mock('@capacitor/local-notifications', () => ({
   LocalNotifications: { cancel: async () => {}, checkPermissions: async () => ({ display: 'granted' }), requestPermissions: async () => ({ display: 'granted' }), schedule: async () => {} },
 }))
 vi.mock('@capacitor/app', () => ({ App: { addListener: () => ({ remove() {} }) } }))
-vi.mock('@capacitor/core', () => ({ Capacitor: { getPlatform: () => 'android', isNativePlatform: () => true }, registerPlugin: () => ({}) }))
+vi.mock('@capacitor/core', () => ({ Capacitor: { getPlatform: () => 'android', isNativePlatform: () => true }, registerPlugin: name => name !== 'WatchRpc' ? {} : {
+  loadState: async () => { const json = h.files.get('DATA/opengym-state.json'); if (!json) throw new Error('File does not exist'); return { json } },
+  checkpointState: async ({ json }) => { if (h.refuse.has('opengym-state.json')) throw new Error('No space left on device'); h.files.set('DATA/opengym-state.json', json) },
+} }))
 vi.mock('./useUI.js', () => ({ useUI: { getState: () => ({ toast: () => {} }) } }))
 
 const BASE = 'https://gym.example.com'

@@ -1,4 +1,18 @@
 export function applyEdit(state, ev) {
+  if (ev.t === 'rest') return applyRest(state, ev)
+  if (ev.t === 'pause') {
+    state.pausedAt = ev.paused ? state.pausedAt || ev.at || Date.now() : 0
+    state.pauseVersion = ev.seq || ev.at || state.pauseVersion
+    return true
+  }
+  if (ev.t === 'focus') {
+    const ex = ev.entryInstanceId ? state.workout?.exercises.findIndex(e => e.entryInstanceId === ev.entryInstanceId) : ev.ex
+    if (!(ex >= 0) || !state.workout?.rows?.[ex]) return false
+    const set = ev.setId ? state.workout.rows[ex].findIndex(r => r.setId === ev.setId) : ev.set - 1
+    if (!(set >= 0)) return false
+    state.exIdx = ex; state.setIdx = set; state.focusAt = ev.at || 0
+    return true
+  }
   const workout = state.workout
   const exIndex = ev.entryInstanceId ? workout?.exercises.findIndex(e => e.entryInstanceId === ev.entryInstanceId) : ev.ex
   if (!(exIndex >= 0)) return false
@@ -34,6 +48,11 @@ export function applyEdit(state, ev) {
     if (!row) return
     if (ev.t === 'weight') row.w = eventWeight(ev.weight, ev.weightUnit, state.weightUnit)
     if (ev.t === 'reps') row.r = ev.reps
+    if (ev.t === 'effort') {
+      delete row.rpe; delete row.rir
+      if (!ev.clear && ev.value != null && ['rpe', 'rir'].includes(ev.scale) && Number.isFinite(Number(ev.value))) row[ev.scale] = Number(ev.value)
+      row.effortAt = ev.effortVersion || ev.seq || ev.at || 0
+    }
     if (ev.t === 'set' || ev.t === 'unset') {
       row.done = ev.t === 'set'; row.at = row.done ? ev.at : 0
       if (ev.weight != null) row.w = eventWeight(ev.weight, ev.weightUnit, state.weightUnit)

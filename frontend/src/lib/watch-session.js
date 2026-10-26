@@ -94,10 +94,10 @@ export function createWatchLifecycle({ getState, update, getTimer, sendEnded, se
       return true
     }
     if (ev.t === 'pause') {
-      if (watchSidOf(current.active) === ev.sid && (ev.seq || 0) > (current.active.pauseVersion || 0)) {
+      if (watchSidOf(current.active) === ev.sid && (ev.protocolVersion >= 3 || (ev.seq || 0) > (current.active.pauseVersion || 0))) {
         update(s => {
           const a = s.active
-          a.pauseVersion = ev.seq
+          a.pauseVersion = ev.protocolVersion >= 3 ? (a.pauseVersion || 0) + 1 : ev.seq
           if (ev.paused && !a.pausedAt) a.pausedAt = ev.at || Date.now()
           else if (!ev.paused && a.pausedAt) { a.pausedMs = (a.pausedMs || 0) + Math.max(0, (ev.at || Date.now()) - a.pausedAt); a.pausedAt = 0 }
         })
@@ -106,7 +106,8 @@ export function createWatchLifecycle({ getState, update, getTimer, sendEnded, se
       ack(); sync(); return true
     }
     if (ev.t === 'rest') {
-      if (watchSidOf(current.active) === ev.sid && (ev.seq || 0) >= Math.max(current.active.restVersion || 0, getTimer()?.seq || 0)) {
+      if (watchSidOf(current.active) === ev.sid && (ev.protocolVersion >= 3 || (ev.seq || 0) >= Math.max(current.active.restVersion || 0, getTimer()?.seq || 0))) {
+        if (ev.protocolVersion >= 3) ev = { ...ev, seq: Math.max(current.active.restVersion || 0, getTimer()?.seq || 0) + 1 }
         update(s => { s.active.restVersion = ev.seq || Date.now() })
         rest(ev)
       }

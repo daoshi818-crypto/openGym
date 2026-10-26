@@ -2,7 +2,7 @@
 // End-to-end: a watch "complete set" event must reach the phone, be applied and
 // acknowledged with the same eventId. The shipped watch modules run against a fake device
 // (two page bundles sharing one runtime, like the app), and the shipped phone lifecycle.
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { applyEdit, applyRest, restOf, applyFocus } from '../../../watch-app/src/lib/protocol.js'
 import { createWatchLifecycle } from './watch-session.js'
 import { startFromWatch } from './watch-events.js'
@@ -23,7 +23,7 @@ function device() {
   }
   // A second bundle: same runtime and disk, its own module instance (as on the watch).
   const rpcCtx = { ...ctx, interconnect: { instance: () => connection }, WATCH_VERSION: 'test-watch',
-    setTimeout, clearTimeout, setInterval: () => 1, clearInterval() {} }
+    setTimeout, clearTimeout, setInterval, clearInterval }
   loadWatchModule('rpc', rpcCtx, ['startServer', 'sendEvent', 'sendControl', 'pendingCount', 'persistenceStatus'])
   return { disk, storage, ctx, rpc: rpcCtx, connection, sent }
 }
@@ -73,6 +73,72 @@ function completeCurrent(h) {
 }
 
 describe('watch → phone completed set (W06)', () => {
+  afterEach(() => vi.useRealTimers())
+  it('recovers uplink on a valid downlink after an SDK error without another onOpen', () => {
+    vi.useFakeTimers()
+    const h = device(), S = phoneSession(), app = phone(S)
+    startWatch(h, S)
+    h.connection.onError({ code: 7 })
+    h.connection.getReadyState = ({ success }) => success({ status: 0 })
+    const before = h.sent.length
+    completeCurrent(h)
+    expect(h.sent.slice(before).filter(e => e.t === 'set')).toHaveLength(0)
+    h.connection.onMessage({ data: { t: 'sync', sid: S.active.watchSid } })
+    const event = h.sent.slice(before).find(e => e.t === 'set')
+    expect(event).toBeTruthy()
+    app.receive(event)
+    expect(S.active.entries[0].sets[0].done).toBe(true)
+    h.connection.onMessage({ t: 'ack', eventId: event.eventId })
+    expect(h.rpc.pendingCount()).toBe(0)
+  })
+
+  it('probes readiness and uploads offline edits when the firmware omits onOpen', () => {
+    vi.useFakeTimers()
+    const h = device(), S = phoneSession(), app = phone(S)
+    startWatch(h, S)
+    h.connection.onClose()
+    h.connection.getReadyState = ({ success }) => success({ status: 0 })
+    const before = h.sent.length
+    completeCurrent(h)
+    h.connection.getReadyState = ({ success }) => success({ status: 1 })
+    vi.advanceTimersByTime(4000)
+    const event = h.sent.slice(before).find(e => e.t === 'set')
+    expect(event).toBeTruthy()
+    app.receive(event)
+    expect(S.active.entries[0].sets[0].done).toBe(true)
+  })
+
+  it('ignores a late readiness callback from before a disconnect', () => {
+    vi.useFakeTimers()
+    const h = device(), S = phoneSession()
+    startWatch(h, S)
+    h.connection.onClose()
+    let reply
+    h.connection.getReadyState = ({ success }) => { reply = success }
+    completeCurrent(h)
+    h.connection.onClose()
+    const before = h.sent.length
+    reply({ status: 1 })
+    expect(h.sent).toHaveLength(before)
+    expect(h.rpc.pendingCount()).toBe(1)
+    h.connection.getReadyState = ({ success }) => success({ status: 1 })
+    vi.advanceTimersByTime(4000)
+    expect(h.sent.slice(before).some(e => e.t === 'set')).toBe(true)
+  })
+
+  it('retries readiness when a firmware probe callback is lost', () => {
+    vi.useFakeTimers()
+    const h = device(), S = phoneSession()
+    startWatch(h, S)
+    h.connection.onClose()
+    h.connection.getReadyState = () => {}
+    completeCurrent(h)
+    const before = h.sent.length
+    h.connection.getReadyState = ({ success }) => success({ status: 1 })
+    vi.advanceTimersByTime(8000)
+    expect(h.sent.slice(before).some(e => e.t === 'set')).toBe(true)
+    expect(h.rpc.pendingCount()).toBe(1)
+  })
   it('updates the phone row, acknowledges that exact event and clears the watch outbox', () => {
     const h = device(), S = phoneSession(), app = phone(S)
     startWatch(h, S)

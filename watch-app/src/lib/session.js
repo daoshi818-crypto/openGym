@@ -107,7 +107,7 @@ function rowEffort(cell) {
   const out = {}
   if (cell && Number.isFinite(cell.rpe)) out.rpe = cell.rpe
   if (cell && Number.isFinite(cell.rir)) out.rir = cell.rir
-  if (cell && Number.isFinite(cell.effortAt)) out.effortAt = cell.effortAt
+  if (cell && Number.isFinite(cell.effortAt ?? cell.effortVersion)) out.effortAt = cell.effortAt ?? cell.effortVersion
   return out
 }
 function initReps(ex) { return ex.reps == null ? '' : ex.reps }
@@ -178,13 +178,19 @@ export function replacePlan(state, workout) {
 export function applySync(state, snapshot) {
   if (!snapshot || !Array.isArray(snapshot.exercises)) return state
   if (snapshot.sid && state.sid && snapshot.sid !== state.sid) return state
-  if (snapshot.rev && snapshot.rev < (state.snapshotRev || 0)) return state
+  if (snapshot.protocolVersion >= 3 ? snapshot.commitRev < (state.commitRev || 0) : snapshot.rev && snapshot.rev < (state.snapshotRev || 0)) return state
+  if (snapshot.protocolVersion >= 3) {
+    state.commitRev = snapshot.commitRev || 0
+    state.syncBase = JSON.parse(JSON.stringify(snapshot))
+  }
   state.weightUnit = snapshot.weightUnit || snapshot.profile?.weightUnit || state.weightUnit || 'kg'
   state.protocolVersion = snapshot.protocolVersion || state.protocolVersion || 1
   state.structureRevision = snapshot.structureRevision || state.structureRevision
   if (snapshot.effortScale != null) state.effortScale = snapshot.effortScale === 'rpe' || snapshot.effortScale === 'rir' ? snapshot.effortScale : 'none'
   state.snapshotRev = snapshot.rev || state.snapshotRev || 0
-  const edits = snapshot.sid && snapshot.sid !== state.sid ? [] : state.pendingEdits || []
+  const stored = snapshot.protocolVersion >= 3 ? readStored(K_STATE) : null
+  const edits = snapshot.sid && snapshot.sid !== state.sid ? [] :
+    stored?.sid === state.sid && Array.isArray(stored.pendingEdits) ? stored.pendingEdits : state.pendingEdits || []
   const focused = state.workout && state.workout.exercises[state.exIdx]
   if (snapshot.sid && state.sid && snapshot.sid !== state.sid) {
     // 手机已经换了一场训练：手表不该把旧会话续上去。
@@ -213,8 +219,7 @@ export function applySync(state, snapshot) {
   })
   // 手机尚未回传对应确认值的本地编辑，不能被在途旧快照覆盖。
   state.pendingEdits = edits
-  state.pendingEdits = edits.filter(e => !(snapshot.ackedEvents || []).includes(e.eventId))
-  for (const edit of state.pendingEdits) applyEdit(state, edit)
+  state.pendingEdits = edits.filter(e => !(snapshot.ackedEvents || []).includes(e.eventId) && !(snapshot.protocolVersion >= 3 && e.committedRev != null && e.committedRev <= snapshot.commitRev))
   const maxEx = Math.max(0, state.workout.exercises.length - 1)
   state.exIdx = Math.max(0, Math.min(Number(state.exIdx) || 0, maxEx))
   const focusedIndex = focused ? state.workout.exercises.findIndex(ex => focused.entryInstanceId ? ex.entryInstanceId === focused.entryInstanceId : focused.id ? ex.id === focused.id : ex.name === focused.name) : -1
@@ -222,22 +227,26 @@ export function applySync(state, snapshot) {
   const curRows = state.workout.rows[state.exIdx] || []
   state.setIdx = Math.max(0, Math.min(Number(state.setIdx) || 0, Math.max(0, curRows.length - 1)))
   const incomingFocusAt = Number(snapshot.focusAt || (snapshot.focus && snapshot.focus.at) || 0)
-  if (incomingFocusAt > (state.focusAt || 0)) {
+  if (snapshot.protocolVersion >= 3 || incomingFocusAt > (state.focusAt || 0)) {
     const incomingEx = Math.max(0, Math.min(Number(snapshot.exIdx) || 0, maxEx))
     const incomingRows = state.workout.rows[incomingEx] || []
     state.exIdx = incomingEx
     state.setIdx = Math.max(0, Math.min(Number(snapshot.setIdx) || 0, Math.max(0, incomingRows.length - 1)))
     state.focusAt = incomingFocusAt
   }
-  if (snapshot.pauseVersion >= (state.pauseVersion || 0)) {
+  if (snapshot.protocolVersion >= 3 || snapshot.pauseVersion >= (state.pauseVersion || 0)) {
     state.pausedAt = snapshot.pausedAt || 0
     state.pausedMs = snapshot.pausedMs || 0
     state.pauseVersion = snapshot.pauseVersion || 0
   }
-  if (snapshot.rest) applyRest(state, snapshot.rest)
+  if (snapshot.rest) {
+    if (snapshot.protocolVersion >= 3) state.restVersion = 0
+    applyRest(state, snapshot.rest)
+  }
   else if (!state.restVersion) state.restUntil = snapshot.restUntil || 0
   if (snapshot.baseCalories != null) state.baseCalories = snapshot.baseCalories
   if (snapshot.profile) state.profile = snapshot.profile
+  for (const edit of state.pendingEdits) applyEdit(state, edit)
   state.rev = Math.max(state.rev || 0, snapshot.rev || 0)
   persist(state)
   return state
@@ -438,6 +447,7 @@ export function closeSession(sid, extra = {}) {
 }
 
 export function eventIdentity(s, ex, set) {
-  return { protocolVersion: s.protocolVersion || 1, entryInstanceId: s.workout?.exercises?.[ex]?.entryInstanceId,
+  return { protocolVersion: s.protocolVersion || 1, baseCommitRev: s.commitRev || 0, sessionEpoch: s.sid,
+    entryInstanceId: s.workout?.exercises?.[ex]?.entryInstanceId,
     setId: s.workout?.rows?.[ex]?.[set]?.setId, structureRevision: s.structureRevision, weightUnit: s.weightUnit || 'kg' }
 }

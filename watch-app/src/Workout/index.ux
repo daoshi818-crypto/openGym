@@ -12,7 +12,7 @@ import {
   formatEffort,
 } from '../lib/effort-scale.js'
 import { startSessionHr, stopSessionHr, tick, restOver } from '../lib/sensors.js'
-import { startServer, sendEvent, sendControl, pendingCount, isConnected, persistenceStatus } from '../lib/rpc.js'
+import { startServer, sendEvent, sendControl, pendingCount, isConnected, persistenceStatus, synchronizationStatus } from '../lib/rpc.js'
 import { storageStatus } from '../lib/persistence.js'
 import { applyEdit, applyFocus, applyRest, restOf } from '../lib/protocol.js'
 
@@ -949,7 +949,8 @@ export default {
     this.hrLabel = s.hr?.last && Date.now() - (s.hr.sampleAt || 0) < 15000 && !s.pausedAt ? '♥ ' + s.hr.last : '♥ --'
     this.kcalLabel = String((s.baseCalories || 0) + calories(s, s.profile, Math.max(0, ((s.pausedAt || Date.now()) - (s.segmentStartedAt || s.startedAt) - (s.pausedMs || 0)) / 60000)))
     const n = pendingCount()
-    this.syncLabel = persistenceStatus().failed || storageStatus().failed ? '存储失败，请保留应用' : n > 0 ? '待上传 ' + n + ' 条' : isConnected() ? '已连接' : '离线记录'
+    const sync = synchronizationStatus()
+    this.syncLabel = persistenceStatus().failed || storageStatus().failed ? '存储失败，请保留应用' : sync.conflicts > 0 ? '存在冲突，请核对手机' : sync.phonePending > 0 ? '手机待处理 ' + sync.phonePending + ' 条' : n > 0 ? '待上传 ' + n + ' 条' : isConnected() ? (sync.lastCommitAt ? '已同步' : '已连接') : '离线记录'
   },
 
   mmss(sec) {
@@ -1155,15 +1156,16 @@ export default {
 .complete { width: 186px; height: 56px; font-size: 25px; border-radius: 12px; background-color: #63dfb1; color: #001b12; }
 .secondary { background-color: #283236; color: #ffffff; }
 
-.rest-panel { height: 262px; }
-.rest-ex { width: 350px; height: 34px; font-size: 20px; color: #ffffff; text-align: center; lines: 2; }
+.rest-panel { height: 326px; justify-content: flex-start; }
+.rest-ex { width: 350px; height: 48px; line-height: 24px; font-size: 20px; color: #ffffff; text-align: center; lines: 2; }
 .rest { width: 350px; height: 76px; line-height: 72px; font-size: 58px; color: #63dfb1; text-align: center; lines: 1; }
 .rrow { flex-direction: row; align-items: center; justify-content: space-between; width: 350px; height: 42px; margin-top: 8px; }
 .rbtn { width: 106px; height: 42px; font-size: 20px; border-radius: 10px; background-color: #1c2226; color: #ffffff; }
 .rest-total { width: 120px; font-size: 17px; color: #bfc6c9; text-align: center; lines: 1; }
-.next { width: 350px; height: 24px; font-size: 16px; color: #63dfb1; text-align: center; lines: 1; }
-.next-details { width: 350px; height: 20px; font-size: 17px; color: #ffffff; text-align: center; lines: 1; }
-.skip { width: 350px; height: 42px; font-size: 20px; border-radius: 10px; background-color: #1c2226; color: #ffffff; margin-top: 0; }
+.next { width: 350px; height: 22px; line-height: 22px; margin-top: 4px; font-size: 16px; color: #63dfb1; text-align: center; lines: 1; }
+.next-details { width: 350px; height: 22px; line-height: 22px; font-size: 17px; color: #ffffff; text-align: center; lines: 1; }
+.skip { width: 350px; height: 42px; font-size: 20px; border-radius: 10px; background-color: #1c2226; color: #ffffff; margin-top: 6px; }
+.rest-panel .effort-row { height: 38px; margin-top: 6px; font-size: 16px; }
 
 .effort-row { width: 350px; height: 42px; font-size: 18px; color: #e0c775; background-color: #12171a; border: 1px solid #2a3338; border-radius: 10px; text-align: left; padding-left: 14px; }
 .primary-footer { width: 326px; height: 24px; flex-direction: column; align-items: center; justify-content: center; }
@@ -1221,7 +1223,7 @@ export default {
   .metabar { height: 18px; }
   .training-panel { width: 280px; }
   .compact { height: 214px; }
-  .rest-panel { height: 196px; }
+  .rest-panel { height: 230px; }
   .ex { width: 280px; height: 42px; font-size: 20px; }
   .group { width: 280px; height: 20px; font-size: 16px; }
   .inputs { width: 280px; height: 62px; margin-top: 6px; margin-bottom: 8px; }
@@ -1231,14 +1233,15 @@ export default {
   .navrow { width: 280px; height: 44px; }
   .nav { width: 56px; height: 44px; font-size: 19px; }
   .complete { width: 150px; height: 44px; font-size: 20px; }
-  .rest-ex { width: 280px; height: 26px; font-size: 17px; }
-  .rest { width: 280px; height: 54px; line-height: 50px; font-size: 44px; }
-  .rrow { width: 280px; height: 34px; margin-top: 8px; }
-  .rbtn { width: 84px; height: 34px; font-size: 16px; }
+  .rest-ex { width: 280px; height: 36px; line-height: 18px; font-size: 15px; }
+  .rest { width: 280px; height: 52px; line-height: 52px; font-size: 42px; }
+  .rrow { width: 280px; height: 32px; margin-top: 8px; }
+  .rbtn { width: 84px; height: 32px; font-size: 16px; }
   .rest-total { width: 96px; font-size: 14px; }
-  .next { width: 280px; height: 20px; font-size: 14px; }
-  .next-details { width: 280px; height: 18px; font-size: 14px; }
-  .skip { width: 280px; height: 34px; font-size: 17px; }
+  .next { width: 280px; height: 18px; line-height: 18px; margin-top: 2px; font-size: 14px; }
+  .next-details { width: 280px; height: 18px; line-height: 18px; font-size: 14px; }
+  .skip { width: 280px; height: 30px; margin-top: 2px; font-size: 16px; }
+  .rest-panel .effort-row { height: 28px; margin-top: 2px; font-size: 13px; }
   .effort-row { width: 280px; height: 34px; font-size: 15px; padding-left: 10px; }
   .primary-footer { height: 20px; }
   .progress { font-size: 13px; }

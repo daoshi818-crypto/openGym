@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 
 const native = vi.hoisted(() => ({
   events: {},
@@ -6,11 +6,13 @@ const native = vi.hoisted(() => ({
   getDeviceInfo: vi.fn(), isSupported: vi.fn(),
   getVersion: vi.fn(),
   sendPlan: vi.fn(), sendEvent: vi.fn(), openWatchApp: vi.fn(),
+  drainInbox: vi.fn(), completeInbox: vi.fn(),
 }))
 vi.mock('./mobile.js', () => ({ MOBILE: true, isAndroid: async () => true }))
 vi.mock('@capacitor/core', () => ({ registerPlugin: () => native }))
 
 let link
+afterEach(async () => { await link?.disconnectWatch(); vi.useRealTimers() })
 beforeEach(async () => {
   vi.resetModules()
   vi.clearAllMocks()
@@ -21,6 +23,8 @@ beforeEach(async () => {
   native.sendPlan.mockReset().mockResolvedValue({ ok: true, code: 0 })
   native.openWatchApp.mockReset().mockResolvedValue({ ok: true, code: 0 })
   native.getVersion.mockResolvedValue({ initialized: true })
+  native.drainInbox.mockReset().mockResolvedValue({ events: [], pending: 0 })
+  native.completeInbox.mockReset().mockResolvedValue({})
   link = await import('./watch-link.js')
 })
 
@@ -174,6 +178,63 @@ describe('watch app and plan delivery', () => {
 })
 
 describe('watch connection state', () => {
+  it('retries a lost snapshot receipt and stops after an exact baseline receipt', async () => {
+    vi.useFakeTimers()
+    native.sendEvent.mockResolvedValue({ ok: true })
+    await link.connectWatch()
+    native.events.watchEvent({ t: 'hello', protocolVersion: 3, capabilities: { durableCommit: true, snapshotChunks: true } })
+    await link.pushSyncToWatch({ sid: 's', commitRev: 1, exercises: [], rows: [], ackedEvents: [] })
+    expect(native.sendEvent).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(6500)
+    expect(native.sendEvent).toHaveBeenCalledTimes(2)
+    const sent = JSON.parse(native.sendEvent.mock.calls.at(-1)[0].json)
+    native.events.watchEvent({ t: 'sync_ack', sid: 's', status: 'applied', wireHash: sent.wireHash, commitRev: sent.commitRev })
+    await vi.advanceTimersByTimeAsync(65000)
+    expect(native.sendEvent).toHaveBeenCalledTimes(2)
+  })
+  it('drains persisted native events after bind and deletes only the committed id', async () => {
+    const receive = vi.fn(() => true)
+    native.drainInbox.mockResolvedValueOnce({ events: [{ t: 'set', sid: 's', eventId: 'A', _inboxId: 'native:A' }], pending: 1 })
+    const unbind = link.bindWatchLifecycle(receive, { getState: () => ({}) })
+    await link.connectWatch()
+    await link.drainWatchInbox()
+    expect(receive).toHaveBeenCalledWith(expect.objectContaining({ _inboxId: 'native:A' }))
+    expect(native.completeInbox).not.toHaveBeenCalled()
+    await link.completeWatchInbox('native:A')
+    expect(native.completeInbox).toHaveBeenCalledWith({ id: 'native:A' })
+    unbind()
+  })
+
+  it('blocks plan and state messages until a durable commit releases the barrier', async () => {
+    native.sendEvent.mockResolvedValue({ ok: true })
+    await link.connectWatch()
+    const release = link.holdWatchOutbound()
+    await link.pushPlanToWatch({ name: 'Today', exercises: [] }, 's')
+    const sending = link.pushSyncToWatch({ sid: 's', exercises: [], rows: [] })
+    expect(native.sendPlan).not.toHaveBeenCalled()
+    expect(native.sendEvent).not.toHaveBeenCalled()
+    release(); await sending
+    expect(native.sendEvent).toHaveBeenCalledOnce()
+  })
+
+  it('negotiates deltas only after a verified watch baseline and falls back for old watches', async () => {
+    native.sendEvent.mockResolvedValue({ ok: true })
+    await link.connectWatch()
+    native.events.watchEvent({ t: 'hello', protocolVersion: 3, capabilities: { durableCommit: true, snapshotChunks: true } })
+    const snapshot = { sid: 's', commitRev: 1, exercises: [{ name: 'Bench'.repeat(250), sets: 1 }], rows: [[{ setId: 'a', done: false }]], ackedEvents: [] }
+    await link.pushSyncToWatch(snapshot)
+    const full = JSON.parse(native.sendEvent.mock.calls.at(-1)[0].json)
+    expect(full).toMatchObject({ t: 'sync', protocolVersion: 3 })
+    native.events.watchEvent({ t: 'sync_ack', sid: 's', status: 'applied', wireHash: full.wireHash, commitRev: 1 })
+    await link.pushSyncToWatch({ ...snapshot, commitRev: 2, rows: [[{ setId: 'a', done: true }]] })
+    expect(JSON.parse(native.sendEvent.mock.calls.at(-1)[0].json)).toMatchObject({ t: 'sync_delta', baseCommitRev: 1 })
+    native.events.watchEvent({ t: 'sync_request' })
+    for (let i = 0; i < 30; i++) await Promise.resolve()
+    expect(JSON.parse(native.sendEvent.mock.calls.at(-1)[0].json).t).toBe('sync')
+    native.events.watchEvent({ t: 'hello', protocolVersion: 2 })
+    await link.pushSyncToWatch(snapshot)
+    expect(JSON.parse(native.sendEvent.mock.calls.at(-1)[0].json)).toMatchObject({ t: 'sync', commitRev: 1 })
+  })
   it('reads device fields from the SDK device envelope', async () => {
     native.getDeviceInfo.mockResolvedValue({
       ok: true, data: JSON.stringify({ device: { deviceName: 'WATCH', connected: true } }),

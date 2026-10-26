@@ -12,6 +12,7 @@ export const stripImports = code => code
   .replace(/^export function /gm, 'function ')
 
 export function loadWatchModule(name, ctx, names) {
+  if (name === 'rpc' && !ctx.acceptWireChunk) loadWatchModule('sync-wire', ctx, ['wireHash', 'wireBytes', 'acceptWireChunk', 'expandWireDelta'])
   const body = stripImports(watchSource('lib/' + name + '.js'))
   // Each module gets its own function scope, like a real ES module: the flattened global
   // would otherwise let one module's top-level `save`/`loadState` overwrite another's.
