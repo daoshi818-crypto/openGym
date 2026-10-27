@@ -294,6 +294,9 @@ h4.sec{
    55px, so the button pair may drop to a second line — still flush right, hence the auto margin. */
 .bw-head{flex-wrap:wrap;row-gap:8px}
 .bw-head>.row{margin-inline-start:auto}
+.bw-rate{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;width:100%;margin-top:6px;padding:6px 2px;background:none;border:0;color:var(--label-2);font:inherit;text-align:start;cursor:pointer}
+.bw-rate-t{min-width:0}
+.rate-range{display:grid;gap:8px;margin:14px 0 8px}
 
 /* ----------------------------------------------------------------- card -- */
 .card{
@@ -1638,12 +1641,51 @@ body.no-tabbar #timer.working{box-shadow:inset 0 var(--hair) 0 var(--acc),0 -10p
 .mrow .bar{width:74px;height:5px;border-radius:3px;background:var(--surface-2);flex:none;overflow:hidden}
 .mrow .bar i{display:block;height:100%;background:var(--acc);border-radius:3px}
 .mrow .v{font-size:12px;color:var(--label-2);min-width:52px;text-align: end;flex:none}
+/* The Week view's "done/planned · %" (#573): wider than a set count, and as wide on every row, so
+   the bars line up the way they do in 30d, 90d and All. coach.css has a `.cmp` of its own (the
+   Coach's comparison rows) with a rule line and padding, loaded on every page: reset both here. */
+.mrow .v.cmp{min-width:92px;font-variant-numeric:tabular-nums;white-space:nowrap;border-top:none;padding:0}
+/* Selected-muscle fatigue detail: the legend's three bands as one bar, the value above
+   its marker, the 0–100% endpoints under it and each zone named beneath itself. Ready is
+   the map's unshaded base, so the left zone stays neutral; margins leave room for the
+   value bubble above the bar. */
+.fname{font-size:14px;padding:5px 0 0}
+.fbarwrap{position:relative;height:8px;margin-top:20px}
+.fbar{position:relative;display:flex;height:8px;border-radius:4px;overflow:hidden;background:var(--surface-2)}
+.fbar .zone{height:100%}
+.fbar .zone.ready{width:25%;background:color-mix(in srgb,var(--label) 14%,var(--surface-2))}
+.fbar .zone.recovering{width:25%;background:var(--yellow)}
+.fbar .zone.fatigued{width:50%;background:var(--red)}
+.fbarwrap .knob{position:absolute;top:-3px;bottom:-3px;width:3px;border-radius:2px;background:var(--label);box-shadow:0 0 0 1.5px var(--surface);pointer-events:none}
+.fbarwrap .fval{position:absolute;bottom:100%;margin-bottom:3px;transform:translateX(-50%);font-size:11px;font-weight:600;color:var(--label);white-space:nowrap;pointer-events:none}
+[dir="rtl"] .fbarwrap .fval{transform:translateX(50%)}
+.fends{display:flex;justify-content:space-between;font-size:10px;color:var(--label-3);margin-top:3px}
+.fzones{display:flex;font-size:10px;color:var(--label-3);line-height:1.2}
+/* A zone is a quarter of the bar, 64px on a 320px phone: "Восстанавливается" or "En
+   recuperación" don't fit and were cut to "Восстанав…". A name may spill past its zone instead,
+   centred on it, and Ready starts at the bar's start so the middle one has room on both sides. */
+.fzones .z{display:flex;justify-content:center;white-space:nowrap}
+.fzones .z.ready{justify-content:flex-start}
+.fzones .z.ready{width:25%}
+.fzones .z.recovering{width:25%}
+.fzones .z.fatigued{width:50%}
 /* A headline number inside a card — tile weight without a tile around it, for the pair of
    readings at the top of the effort card. */
 .stat-v{font-size:26px;font-weight:600;letter-spacing:-.026em;line-height:1.1}
 .mchips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
 .mchip{font-size:12px;padding:4px 9px;border-radius:99px;background:var(--surface-2);color:var(--label-2)}
 .mchip.miss{background:color-mix(in srgb,var(--orange) 16%,transparent);color:var(--orange)}
+button.mchip{border:none;font:inherit;font-size:12px;cursor:pointer}
+/* "Exercises ›" on an untrained muscle picked on the map (#553), at the end of its row. On a
+   narrow phone the row has no room for it (the name shrank to nothing at 320 and 360px, and the
+   Russian chip poked out of the card), so it wraps to a line of its own, still at the end; the
+   name keeps enough width to be read. The ::after stretches the tap area to 33px without making
+   the chip look any bigger. */
+.mchip.mfind{flex:none;display:inline-flex;align-items:center;gap:2px;padding-inline-end:6px;position:relative}
+.mchip.mfind::after{content:"";position:absolute;inset:-5px 0}
+.mrow.has-find{flex-wrap:wrap;row-gap:4px}
+.mrow.has-find .nm{flex-basis:0;min-width:64px}
+.mrow.has-find .mfind{margin-inline-start:auto}
 
 /* --- stat tiles --- */
 .tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}

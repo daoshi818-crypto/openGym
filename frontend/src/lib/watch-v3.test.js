@@ -4,7 +4,7 @@ import { ensureWatchIdentity } from './watch-identity.js'
 import { stampWatchRevision, watchConflict } from './watch-revision.js'
 import { watchSnapshotOf } from './watch-workout.js'
 import { watchPersistence, loadWatchModule } from './watch-test-harness.js'
-import { applyEdit, applyRest } from '../../../watch-app/src/lib/protocol.js'
+import { applyEdit, applyRest, restOf } from '../../../watch-app/src/lib/protocol.js'
 import { wireHash, diffWire, splitWire } from '../../../watch-app/src/lib/sync-wire.js'
 
 function phone() {
@@ -21,7 +21,7 @@ function watch(S) {
   Object.assign(ctx, { applyEdit, applyRest, console, setInterval: () => 1, clearInterval() {}, WATCH_VERSION: 'test' })
   loadWatchModule('event-id', ctx, ['allocateEventIdentity', 'rememberEventAt'])
   loadWatchModule('close-journal', ctx, ['prepareClose', 'releaseCandidate', 'pendingSummaries', 'pendingEntry', 'journalEntry', 'markPhase', 'markDelivered'])
-  loadWatchModule('session', ctx, ['startSession', 'loadState', 'save', 'applySync', 'closeSession', 'buildSessionSummary', 'summaryEventOf'])
+  loadWatchModule('session', ctx, ['startSession', 'loadState', 'save', 'applySync', 'closeSession', 'buildSessionSummary', 'summaryEventOf', 'toggleSet'])
   const sent = [], connection = { send: ({ data, success }) => { sent.push(data); success?.() }, getReadyState: ({ success }) => success({ status: 1 }) }
   ctx.interconnect = { instance: () => connection }
   loadWatchModule('rpc', ctx, ['startServer', 'sendEvent', 'pendingCount', 'synchronizationStatus'])
@@ -38,6 +38,46 @@ const event = a => ({ t: 'weight', sid: 's', eventId: 'v3:A', protocolVersion: 3
   ex: 0, set: 1, weight: '65', at: 1, seq: 1 })
 afterEach(() => vi.useRealTimers())
 describe('negotiated durable protocol', () => {
+  it('keeps completion rest and next-set focus while older snapshots arrive, then preserves a local skip', () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-27T09:00:00Z'))
+    const a = phone(), w = watch(a.S), local = w.ctx.loadState()
+    w.ctx.toggleSet(local, true)
+    const rest = restOf(local), deadline = local.restUntil
+    w.ctx.sendEvent({ t: 'set', sid: 's', ex: 0, set: 1, at: local.workout.rows[0][0].at, rest })
+    const completion = w.sent.find(m => m.t === 'set')
+    // Match Workout.emitEvent: reconcile the RPC-persisted pending edits before saving the cursor.
+    local.pendingEdits = w.ctx.loadState().pendingEdits
+    local.setIdx = 1; w.ctx.save(local)
+    w.ctx.sendEvent({ t: 'focus', sid: 's', ex: 0, set: 2, at: Date.now() + 1 })
+    for (let i = 0; i < 3; i++) {
+      w.ctx.applySync(w.ctx.loadState(), w.snap)
+      expect(w.ctx.loadState().restUntil).toBe(deadline)
+      expect(w.ctx.loadState().workout.rows[0][0].done).toBe(true)
+      expect(w.ctx.loadState().setIdx).toBe(1)
+    }
+    const committed = { ...w.snap, commitRev: w.snap.commitRev + 1, rows: structuredClone(w.snap.rows),
+      ackedEvents: [completion.eventId], rest }
+    committed.rows[0][0].done = true
+    w.ctx.applySync(w.ctx.loadState(), committed)
+    expect(w.ctx.loadState().restUntil).toBe(deadline)
+    w.ctx.sendEvent({ t: 'rest', sid: 's', ...rest, seq: rest.seq + 1, leftSec: 0, totalSec: 0, endsAt: 0 })
+    w.ctx.applySync(w.ctx.loadState(), committed)
+    expect(w.ctx.loadState().restUntil).toBe(0)
+    expect(w.ctx.loadState().setIdx).toBe(1)
+    a.receive.dispose()
+  })
+
+  it('does not resurrect completion rest when a pending undo follows it', () => {
+    const a = phone(), w = watch(a.S), local = w.ctx.loadState()
+    w.ctx.toggleSet(local, true)
+    w.ctx.sendEvent({ t: 'set', sid: 's', ex: 0, set: 1, at: local.workout.rows[0][0].at, rest: restOf(local) })
+    w.ctx.sendEvent({ t: 'unset', sid: 's', ex: 0, set: 1, at: Date.now() + 1 })
+    w.ctx.applySync(w.ctx.loadState(), w.snap)
+    expect(w.ctx.loadState().workout.rows[0][0].done).toBe(false)
+    expect(w.ctx.loadState().restUntil).toBe(0)
+    a.receive.dispose()
+  })
+
   it('applies phone rest/pause by commit revision and keeps uncommitted local timer intent', () => {
     const a = phone(), w = watch(a.S), local = w.ctx.loadState()
     local.restVersion = Date.now() + 864e5; local.pauseVersion = local.restVersion; local.pausedAt = Date.now()

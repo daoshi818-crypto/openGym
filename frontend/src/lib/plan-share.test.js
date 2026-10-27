@@ -69,6 +69,11 @@ describe('what survives a shared plan', () => {
     expect(cardio.side).toBeUndefined()
   })
 
+  it('carries cardio set on a non-cardio exercise, mode and all (#640)', () => {
+    expect(roundTrip({ mode: 'cardio', min: 15, speed: 10, sets: 2, reps: undefined, weight: undefined }))
+      .toMatchObject({ mode: 'cardio', min: 15, speed: 10, sets: 2 })
+  })
+
   it('carries a drop-set prescription', () => {
     expect(roundTrip({ intensifier: { type: 'dropset', count: 2, pct: 20 } }).intensifier)
       .toEqual({ type: 'dropset', count: 2, pct: 20 })

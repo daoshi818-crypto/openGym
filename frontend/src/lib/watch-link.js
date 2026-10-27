@@ -32,6 +32,8 @@ let watchReceiptsSupported = false
 let lastPlanReceipt = null
 let lastSyncReceipt = null
 let lastWatchRx = null
+let lastWatchTransport = null, watchDiagnosticProbe = null
+let watchDiagnosticRequest = null, diagnosticSequence = 0
 let lastPlanClear = null
 let lastPublishedPlan = null
 let onWatchLifecycle = () => false
@@ -216,6 +218,11 @@ function onNativeWatchEvent(ev) {
       if (snapshot) pushSyncToWatch(snapshot)
       return
     }
+    if (ev.t === 'watch_diagnostics') {
+      lastWatchTransport = { ...ev, receivedAt: Date.now() }
+      if (watchDiagnosticProbe?.id === ev.requestId) watchDiagnosticProbe.finish('received')
+      return
+    }
     if (ev.t === 'watch_rx') { lastWatchRx = { ...ev, receivedAt: Date.now() }; return }
     // 生命周期消息（完成/撤销/结构/关闭/汇总）由全局协调器同步认领，其余仍交给训练页。
     // 认领必须保持同步布尔判断；异步执行在其内部完成，不能让 Promise 冒充 true。
@@ -279,6 +286,7 @@ export async function connectWatch() {
 }
 
 export async function disconnectWatch() {
+  watchDiagnosticProbe?.finish('disconnected')
   clearTimeout(syncRetryTimer); pendingSync = null
   const p = await watchPlugin()
   if (p) {
@@ -337,6 +345,32 @@ export async function getWatchLogs() {
   }
 }
 
+/** Explicit read-only probe; no workout checkpoint, ACK, reconnect or queue mutation. */
+export async function requestWatchDiagnostics() {
+  await bindNative()
+  const p = await watchPlugin()
+  if (!p) return false
+  if (watchDiagnosticProbe) return watchDiagnosticProbe.promise
+  const id = Date.now() + '-' + (++diagnosticSequence)
+  watchDiagnosticRequest = { id, sentAt: Date.now(), status: 'pending' }
+  const probe = { id }
+  let timer
+  probe.promise = new Promise(resolve => {
+    probe.finish = status => {
+      if (watchDiagnosticProbe !== probe) return
+      clearTimeout(timer)
+      watchDiagnosticProbe = null
+      watchDiagnosticRequest = { ...watchDiagnosticRequest, status, completedAt: Date.now() }
+      resolve(status === 'received')
+    }
+  })
+  watchDiagnosticProbe = probe
+  timer = setTimeout(() => probe.finish('timeout'), 2500)
+  Promise.resolve().then(() => p.WatchRpc.sendEvent({ json: JSON.stringify({ t: 'watch_diagnostics_request', requestId: id }) }))
+    .then(result => { if (!result?.ok) probe.finish('send_failed') }, () => probe.finish('send_failed'))
+  return probe.promise
+}
+
 /** 版本/环境诊断：vivo、健康应用、SDK 初始化、设备版本。 */
 export async function getWatchDiagnostics() {
   const p = await watchPlugin()
@@ -347,6 +381,7 @@ export async function getWatchDiagnostics() {
       planPending: !!pendingPlan, planPushInFlight, planLastError: lastError,
       planDelivery: !latestPlan ? 'idle' : latestPlan.receipt?.status || latestPlan.delivery,
       watchVersion, watchReceiptsSupported, lastPlanReceipt, lastSyncReceipt, lastWatchRx,
+      lastWatchTransport, watchDiagnosticRequest,
       commitStatus,
       syncProtocol, syncCommitRev: syncBase?.commitRev || 0,
       lastPublishedPlan, lastPlanClear }

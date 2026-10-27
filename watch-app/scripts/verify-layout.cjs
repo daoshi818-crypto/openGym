@@ -34,6 +34,13 @@ for (const page of Object.keys(manifest.router.pages)) {
       const children = ['.rest-ex', '.rest', '.rrow', '.next', '.next-details', '.rest-panel .effort-row', '.skip']
       const height = children.reduce((n, selector) => n + px(selector, 'height') + px(selector, 'marginTop') + px(selector, 'marginBottom'), 0)
       assert.ok(height <= px('.rest-panel', 'height'), 'Rest children exceed panel height: ' + height)
+      const training = ['.ex', '.group', '.inputs', '.navrow', '.compact .effort-row']
+      const trainingHeight = training.reduce((n, selector) => n + px(selector, 'height') + px(selector, 'marginTop') + px(selector, 'marginBottom'), 0)
+      assert.ok(trainingHeight <= px('.compact', 'height'), 'Training children exceed panel height: ' + trainingHeight)
+      const picker = ['.effort-head', '.effort-target', '.effort-scale', '.effort-pick', '.effort-hint', '.effort-meaning', '.effort-ok', '.effort-clear']
+      const pickerHeight = picker.reduce((n, selector) => n + px(selector, 'height') + px(selector, 'marginTop') + px(selector, 'marginBottom'), 0)
+      assert.ok(pickerHeight <= 434, 'Effort picker clips the viewport: ' + pickerHeight)
+
       assert.ok(px('.rest-ex', 'height') >= 2 * px('.rest-ex', 'lineHeight'), 'Rest exercise clips two lines')
       assert.ok(px('.rest-ex', 'lineHeight') >= px('.rest-ex', 'fontSize') * 1.2, 'Rest exercise line-height is too tight')
       assert.ok(px('.rest', 'lineHeight') >= px('.rest', 'fontSize') * 1.2, 'Countdown media line-height is too tight')

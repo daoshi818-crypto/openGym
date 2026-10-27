@@ -51,6 +51,80 @@ function setup({ scale = 'rpe', sets = 3 } = {}) {
 const complete = workout => { workout.state.restUntil = 0; workout.refresh(); workout.onCurrentSetAction(); vi.advanceTimersByTime(400) }
 
 describe('per-set effort on the watch (RPE/RIR)', () => {
+  it('offers current-set registration before completion without marking the set done', () => {
+    const { workout, sessions, sendEvent } = setup()
+    expect(workout.effortEntryOn).toBe(true)
+    workout.openEffort(); workout.effortMove(1); workout.confirmEffort()
+    expect(sessions.loadState().workout.rows[0][0]).toMatchObject({ rpe: 6, done: false })
+    expect(sessions.loadState().restUntil).toBe(0)
+    expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({ t: 'effort', ex: 0, set: 1, value: 6 }))
+  })
+
+  it('never shows the previous set rating on the next training screen and keeps summaries concise', () => {
+    const { workout, sessions } = setup()
+    complete(workout)
+    workout.openEffort(); workout.effortMove(1); workout.confirmEffort()
+    expect(workout.effortEntryText).toBe('RPE 6')
+    expect(workout.effortEntryLabel).toBe('第1组强度')
+    workout.onSkipRest()
+    expect(workout.effortTarget).toMatchObject({ setId: 'a2', setNo: 2 })
+    expect(workout.effortEntryLabel).toBe('第2组强度')
+    expect(workout.effortEntryText).toBe('未登记')
+    workout.openEffort(); workout.effortMove(1); workout.effortMove(1); workout.confirmEffort()
+    expect(sessions.loadState().workout.rows[0][0].rpe).toBe(6)
+    expect(sessions.loadState().workout.rows[0][1]).toMatchObject({ rpe: 6.5, done: false })
+    complete(workout)
+    expect(workout.effortEntryText).toBe('RPE 6.5')
+    expect(workout.effortTarget.setId).toBe('a2')
+  })
+
+  it('retargets an unrated next set after rest expires, but pins any open draft to its original set', () => {
+    const { workout, sessions } = setup()
+    complete(workout)
+    workout.openEffort(); workout.effortMove(1)
+    vi.advanceTimersByTime(95_000); workout.tickClock()
+    expect(workout.effortOn).toBe(true)
+    expect(workout.effortTarget.setId).toBe('a1')
+    workout.confirmEffort()
+    expect(sessions.loadState().workout.rows[0][0].rpe).toBe(6)
+    expect(workout.effortTarget.setId).toBe('a2')
+    expect(workout.effortEntryText).toBe('未登记')
+  })
+
+  it('hides effort explanations until a rating is selected in the picker', () => {
+    const { workout } = setup()
+    workout.openEffort()
+    expect(workout.effortMeaning).toBe('')
+    workout.effortMove(1)
+    expect(workout.effortMeaning).toBe('还能再做约4次，较轻松')
+    workout.confirmEffort()
+    expect(workout.effortEntryText).toBe('RPE 6')
+    expect(source('Workout/index.ux')).toContain('<text class="effort-meaning" if="{{ effortDraft != null }}">')
+  })
+
+  it('keeps the picker bound to stable exercise/set IDs across exercise reordering', () => {
+    const { workout, sessions } = setup()
+    complete(workout); workout.openEffort(); workout.effortMove(1)
+    const s = sessions.loadState()
+    s.workout.exercises.unshift({ name: 'Row', entryInstanceId: 'e2', sets: 1, setIds: ['b1'] })
+    s.workout.rows.unshift([{ setId: 'b1', done: false, at: 0, w: 30, r: 10 }])
+    sessions.save(s); workout.state = sessions.loadState(); workout.refresh()
+    workout.confirmEffort()
+    const rows = sessions.loadState().workout.rows
+    expect(rows[0][0].rpe).toBeUndefined()
+    expect(rows[1][0].rpe).toBe(6)
+  })
+
+  it('does not leak a previous RIR into the next set or display unrelated pending edits as effort status', () => {
+    const { workout, sessions } = setup({ scale: 'rir' })
+    complete(workout); workout.openEffort(); workout.effortMove(1); workout.confirmEffort()
+    expect(workout.effortEntryText).toBe('RIR 0')
+    workout.onSkipRest()
+    expect(workout.effortEntryText).toBe('未登记')
+    expect(workout.effortTarget.setId).toBe('a2')
+    expect(sessions.loadState().workout.rows[0][1].rir).toBeUndefined()
+  })
+
   it('shows only the phone’s scale and hides the entry when effort is off', () => {
     const rpe = setup({ scale: 'rpe' }), rir = setup({ scale: 'rir' }), none = setup({ scale: 'none' })
     expect(rpe.workout.effortScale).toBe('rpe')
@@ -165,7 +239,7 @@ describe('per-set effort on the watch (RPE/RIR)', () => {
     expect(workout.effortMeaning).toBe('无法再完成一次标准动作')
     workout.confirmEffort()
     expect(sessions.loadState().workout.rows[0][0].rir).toBe(0)
-    expect(workout.effortEntryText).toBe('RIR 0 · 无法再完成一次标准动作')
+    expect(workout.effortEntryText).toBe('RIR 0')
   })
 
   it('shows an out-of-step historical value as-is and does not rewrite it on open', () => {

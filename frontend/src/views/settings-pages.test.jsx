@@ -11,9 +11,9 @@ import { PAGES, PAGE_IDS, ROOT_GROUPS, SEARCH, pageVisible, searchSettings, page
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 const mocks = vi.hoisted(() => {
-  const state = { S: null, user: null, sync: null, MOBILE: false, push: false, sheets: [], navs: [], toast: null }
+  const state = { S: null, user: null, sync: null, config: null, MOBILE: false, push: false, sheets: [], navs: [], toast: null }
   state.snapshot = () => ({
-    S: state.S, user: state.user, coachLocal: null, sync: state.sync, config: null,
+    S: state.S, user: state.user, coachLocal: null, sync: state.sync, config: state.config,
     update: mut => { const next = structuredClone(state.S); mut(next); state.S = next },
     replaceState: vi.fn(), setUser: vi.fn(), pullState: vi.fn(), pushState: vi.fn(), setUnit: vi.fn(),
     resetEverything: vi.fn(), resetDemo: vi.fn(), importBackup: vi.fn(), importConflict: vi.fn(),
@@ -55,6 +55,7 @@ beforeEach(() => {
   }
   mocks.user = null
   mocks.sync = null
+  mocks.config = null
   mocks.MOBILE = false
   mocks.push = false
   mocks.pushOn = false
@@ -145,6 +146,30 @@ describe('the root', () => {
     act(() => rowTitled('AI Coach').click())
     act(() => host.querySelector('.sp-acct').click())
     expect(mocks.navs).toEqual([['/settings/alerts'], ['/coach/setup'], ['/settings/account']])
+  })
+
+  it('in a hosted app, an admin gets the Coach row too, straight to the Coach card of the admin dashboard', () => {
+    mocks.config = { coach: { enabled: true } }
+    mocks.user = { id: 'u1', name: 'Dana' }
+    mount()
+    expect(titles()).not.toContain('AI Coach')
+    mocks.user = { id: 'u1', name: 'Dana', admin: true }
+    mount()
+    expect(rowTitled('AI Coach').textContent).toContain('Admin')
+    act(() => rowTitled('AI Coach').click())
+    expect(mocks.navs).toEqual([['/admin', { state: { section: 'coach' } }]])
+  })
+
+  it('only while the server offers the Coach, so the row never leads to an admin page without it (#683)', () => {
+    mocks.user = { id: 'u1', name: 'Dana', admin: true }
+    mount()
+    expect(titles()).not.toContain('AI Coach')
+    mocks.config = { coach: null }
+    mount()
+    expect(titles()).not.toContain('AI Coach')
+    mocks.config = { coach: { enabled: true } }
+    mount()
+    expect(titles()).toContain('AI Coach')
   })
 
   it('searches every setting and a hit goes to its page with the row to flash', () => {
@@ -263,7 +288,7 @@ describe('the pages', () => {
   it('each search entry is a row on its page (guest in a browser)', () => {
     const byPage = {}
     for (const e of SEARCH) if (pageVisible(PAGES[e.page].parent || e.page, guestWeb) && (!e.when || e.when(guestWeb))) (byPage[e.page] ||= []).push(e.title)
-    expect(Object.keys(byPage).sort()).toEqual(['about', 'advanced', 'alerts', 'data', 'equipment', 'look', 'plan', 'units', 'workout'])
+    expect(Object.keys(byPage).sort()).toEqual(['about', 'advanced', 'alerts', 'data', 'equipment', 'look', 'plan', 'themes', 'units', 'workout'])
     for (const [page, want] of Object.entries(byPage)) {
       mount(page)
       const have = titles()

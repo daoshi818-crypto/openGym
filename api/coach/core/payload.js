@@ -359,6 +359,8 @@ function trainedIds(S, workouts) {
 // 10k+ tokens a small local model cannot hold and a metered API should not be billed for —
 // while stalls and trends already live in `aggregates`, computed over the full window.
 export const FULL_DETAIL_SESSIONS = 3;
+// The sessions a question in the chat sees: enough for "last week", not a review's whole window.
+export const ASK_SESSIONS = 8;
 
 // A set taken to failure (the app's "F", `failure: true`) is RIR 0 when nothing was rated.
 const fmtSet = s => {
@@ -422,9 +424,23 @@ function cleanWorkout(S, w, lang) {
       id: ident(en.id),
       name: exerciseName(S, en.id, lang),
       target: targetOf(en),
-      sets: setsOf(en).map(cleanSet)
+      sets: setsOf(en).slice(0, MAX_SETS_PER_ENTRY).map(cleanSet)
     }))
   };
+}
+
+// The most sets of one exercise a payload carries — far past any real session, and a bound on a
+// running session the client sends along with a question (`today`).
+const MAX_SETS_PER_ENTRY = 30;
+const MAX_ENTRIES_TODAY = 40;
+
+/** The session running on the phone as the question is asked, bounded like a logged one. */
+function cleanToday(S, a, lang) {
+  if (!a || typeof a !== 'object' || !Array.isArray(a.entries)) return null;
+  const w = { ...a, entries: a.entries.filter(en => en && typeof en === 'object').slice(0, MAX_ENTRIES_TODAY), end: null };
+  const out = cleanWorkout(S, w, lang);
+  out.minutes = num(a.minutes) ?? null;
+  return out;
 }
 
 /** The body-weight series between two days, each weigh-in a date and a number. */
@@ -496,7 +512,7 @@ export function build(S, opts = {}) {
   const requestLang = langTag(opts.lang) || word(S.lang, 16) || 'en';
   const p = {
     coach_contract: CONTRACT,
-    task: opts.kind === 'review' ? 'review' : opts.kind === 'debrief' ? 'debrief' : 'create',
+    task: opts.kind === 'review' ? 'review' : opts.kind === 'debrief' ? 'debrief' : opts.kind === 'ask' ? 'ask' : 'create',
     meta: {
       profile: opts.handle,
       // Both are short codes in any real state; cut anyway, since the state is the client's.
@@ -505,7 +521,7 @@ export function build(S, opts = {}) {
       lang: requestLang,
       unit: word(S.unit, 8) || 'kg',
       effortScale: effortOf(S),
-      today: opts.today || localDay(opts.now ?? Date.now(), opts.timeZone || S.reminder?.tz)
+      today: (typeof opts.today === 'string' ? opts.today : null) || localDay(opts.now ?? Date.now(), opts.timeZone || S.reminder?.tz)
     },
     coachProfile: profile && typeof profile === 'object' ? cleanProfile(profile) : null,
     scope: opts.scope || null,
@@ -558,6 +574,21 @@ export function build(S, opts = {}) {
     const on = day(w.d);
     p.bodyweight = { goal: num(S.targetW) ?? null, series: weighIns(S, daysBefore(on, 28), on) };
     if (opts.cohort) p.cohort = cleanCohort(opts.cohort, requestLang);
+  } else if (opts.kind === 'ask') {
+    // A question in the chat: the recent sessions (the newest in full), the stalls, and the
+    // session running now when the phone sent it.
+    p.question = String(opts.note || '').slice(0, MAX_NOTE_CHARS);
+    const workouts = (S.workouts || []).filter(w => w && w.d).slice(-ASK_SESSIONS);
+    const detailFrom = Math.max(0, workouts.length - FULL_DETAIL_SESSIONS);
+    p.window = {
+      from: day(workouts[0]?.d),
+      to: day(workouts[workouts.length - 1]?.d),
+      workouts: workouts.map((w, i) => (i >= detailFrom ? cleanWorkout(S, w, requestLang) : compactWorkout(S, w, requestLang)))
+    };
+    p.aggregates = aggregates(S, workouts, requestLang);
+    const today = cleanToday(S, opts.today, requestLang);
+    if (today) p.today = today;
+
   } else if (opts.kind === 'review') {
     const workouts = reviewWindow(S, reviewDay(coach.lastReview?.at, opts.timeZone || S.reminder?.tz), { now: opts.now, today: opts.today, timeZone: opts.timeZone });
     const detailFrom = Math.max(0, workouts.length - FULL_DETAIL_SESSIONS);

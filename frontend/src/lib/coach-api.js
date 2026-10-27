@@ -9,8 +9,9 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { api } from './api.js'
 import { DEMO } from './demo.js'
 import { MOBILE } from './mobile.js'
-import { t, getLang } from './i18n.js'
+import { t, tn, getLang } from './i18n.js'
 import { useStore } from '../store/useStore.js'
+import { todayForCoach } from './coach-context.js'
 import { useUI } from '../store/useUI.js'
 
 const POLL_MS = 3000        // a job is running: often enough to feel live
@@ -39,6 +40,9 @@ const local = async () => {
     // There is no admin card on a phone: the user is the operator, so failures go to them.
     localMod.setNotifier(ev => {
       const toast = useUI.getState().toast
+      // An automatic review speaks only when it has something to suggest, like the server's
+      // (api/coach/cadence.js): a skip, a failure or "nothing to change" nobody asked for is noise.
+      if (ev.scheduled) { if (ev.kind === 'ready') announceProposal(ev.pending); return }
       if (ev.kind === 'failed') toast(jobErrorText(ev.errorClass, ev.detail))
       else if (ev.kind === 'nochange') toast(t('Nothing to change right now: {0}', String(ev.reading || '').slice(0, 140)))
     })
@@ -95,6 +99,51 @@ const _requestDebrief = async selection => {
   return api('/api/coach/debrief', { method: 'POST', body: JSON.stringify(body) })
 }
 export const requestDebrief = (...a) => { const identity = runtimeModeKey(); return _requestDebrief(...a).then(r => track(r, identity)) }
+// A question in the chat, answered in words (the `ask` job). The session running here goes along
+// (lib/coach-context.js): the server never holds it.
+const _askCoach = async text => DEMO ? (await demo()).demoAsk(S(), text) : LOCAL() ? (await local()).localAsk(S(), text, todayForCoach(S())) : api('/api/coach/ask', { method: 'POST', body: JSON.stringify({ text, today: todayForCoach(S()), lang: getLang() }) })
+export const askCoach = (...a) => { const identity = runtimeModeKey(); return _askCoach(...a).then(r => track(r, identity)) }
+// An automatic review, if one is due (lib/coach-schedule.js asks while the app is open). Only a
+// phone with its own key runs them here; a server runs its own on its tick. The data-sharing
+// question was asked when they were switched on, and nobody is there to ask it now: a "yes"
+// withdrawn since (Coach menu, AI data sharing) means no run, not a dialog out of nowhere.
+export async function scheduledReview() {
+  if (DEMO || !LOCAL()) return null
+  if (!S()?.coach?.consent?.agreedAt) return null
+  return (await local()).localScheduled(S())
+}
+// A phone paired with a server leaves the reviews to the server's tick, and the server tells
+// people about a proposal by web push, which the phone app does not have. So the phone asks once
+// when it comes to the foreground, and says it once per proposal.
+const ANNOUNCED_KEY = 'gym_coach_announced'
+export async function scheduledNotice() {
+  if (DEMO || LOCAL() || !MOBILE) return null
+  const p = (await api('/api/coach/status'))?.pending
+  if (!p || p.trigger !== 'scheduled') return null
+  try { if (localStorage.getItem(ANNOUNCED_KEY) === p.id) return null; localStorage.setItem(ANNOUNCED_KEY, p.id) } catch { /* said again next time, at worst */ }
+  await announceProposal(p)
+  return p
+}
+// "The Coach has something for you", for a proposal nobody is looking at yet: a toast while the
+// app is on screen, a notification when it went to the background meanwhile (a review takes a
+// minute or two). Never a permission prompt: notifications were allowed in Settings, or not.
+const PROPOSAL_NOTIFICATION_ID = 3100
+async function announceProposal(pending) {
+  const n = (pending?.changes || []).length
+  if (!n) return
+  const body = tn('{0} suggestion', '{0} suggestions', n)
+  if (typeof document === 'undefined' || document.visibilityState !== 'hidden') {
+    useUI.getState().toast(t('Coach') + ': ' + body)
+    return
+  }
+  try {
+    const { LocalNotifications } = await import('@capacitor/local-notifications')
+    if ((await LocalNotifications.checkPermissions()).display !== 'granted') return
+    await LocalNotifications.schedule({ notifications: [{ id: PROPOSAL_NOTIFICATION_ID, title: t('Coach'), body, schedule: { at: new Date(Date.now() + 1000) } }] })
+  } catch { /* no notification plugin: the proposal still waits in the Coach tab */ }
+}
+
+
 // The room: anonymous medians across the profiles on this instance that opted in. Only a
 // server has a room; a phone with its own key and the demo both answer locally.
 export const cohortStats = async () => DEMO ? (await demo()).demoCohort(S()) : LOCAL() ? { ok: false, enabled: false } : api('/api/coach/cohort?lang=' + encodeURIComponent(getLang()))

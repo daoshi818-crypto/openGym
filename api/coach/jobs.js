@@ -27,6 +27,7 @@ import { runPipeline } from './core/pipeline.js';
 import { extractJSON } from './core/parse.js';
 import { hashPlan } from './core/plan-hash.js';
 import { buildPrompt } from './core/prompt.js';
+import { waitingProposal } from './core/pending.js';
 import { handleFor } from './handle.js';
 import { fetchFor } from './node-fetch.js';
 import { canDropPrivileges, unprivilegedIds } from './adapters/spawn.js';
@@ -159,7 +160,7 @@ export function status(uid) {
 }
 function lastOutcome(rec) {
   const h = (rec.history || []).at(-1);
-  return h ? { id: h.id, kind: h.kind, outcome: h.outcome, errorClass: h.errorClass || null, at: h.at, ...(h.reading ? { reading: h.reading } : {}) } : null;
+  return h ? { id: h.id, kind: h.kind, outcome: h.outcome, errorClass: h.errorClass || null, at: h.at, ...(h.trigger === 'scheduled' ? { trigger: 'scheduled' } : {}), ...(h.reading ? { reading: h.reading } : {}) } : null;
 }
 function archive(uid, rec, outcome) {
   const history = [...(rec.history || []), {
@@ -248,7 +249,7 @@ export function enqueue(uid, opts) {
     id: crypto.randomBytes(8).toString('hex'),
     uid,
     forgetSeq: forgetSeq.get(uid) || 0,
-    kind: opts.kind,                                  // 'create' | 'review' | 'debrief'
+    kind: opts.kind,                                  // 'create' | 'review' | 'debrief' | 'ask'
     trigger: opts.trigger || 'manual',                // 'manual' | 'scheduled'
     workoutId: opts.workoutId ? String(opts.workoutId).slice(0, 40) : null,
     scope: opts.scope || null,
@@ -256,6 +257,9 @@ export function enqueue(uid, opts) {
     intake: opts.intake || null,
     note: clampMessage(opts.note),
     refine: clampMessage(opts.refine),
+    // A question's running session, sent by the phone (the server never holds `active`). Kept on
+    // the in-memory job only, never in the user's file; the payload builder bounds it.
+    today: opts.kind === 'ask' && opts.today && typeof opts.today === 'object' ? opts.today : null,
     lang: payloadLib.langTag(opts.lang),              // the language the app was showing (#303)
     state: 'queued',
     startedAt: Date.now(), deadlineAt: Date.now() + TIMEOUT_MS
@@ -351,6 +355,8 @@ async function execute(job) {
     previous: pendingCreate?.bundle || null,
     workoutId: job.workoutId,
     debriefSelection: job.debriefSelection, scope: job.scope,
+    today: job.today,
+
     // The app says which language it is in. A scheduled review has no app behind it: a profile
     // that never picked a language then gets the instance's DEFAULT_LANG, like its screens do.
     lang: job.lang || (S.langAuto === true ? payloadLib.langTag(process.env.DEFAULT_LANG) : null),
@@ -397,10 +403,15 @@ async function execute(job) {
       planHash: hashPlan(payloadLib.canonicalPlan(S)),
       context: coachContext(S, hashPlan(payloadLib.canonicalPlan(S)), job.scope), scope: job.scope || null,
       iteration: job.refine ? (pendingCreate?.iteration || 1) + 1 : 1,
+      // Nobody asked for a scheduled one, so nobody is watching for it: a phone app has no web
+      // push, and says so itself when it next comes to the foreground (lib/coach-schedule.js).
+      ...(job.trigger === 'scheduled' ? { trigger: 'scheduled' } : {}),
       // A debrief names the session it read, so the card can show it after the fact.
+      ...(job.kind === 'ask' ? { prev: waitingProposal(readUser(job.uid).pending) } : {}),
       ...attempt.result,
       ...(job.kind === 'debrief' ? debriefMetadata(payload) : {}),
       ...(job.kind === 'create' ? { bundle: { ...attempt.result.bundle, unit: payload.meta.unit } } : {})
+
     };
     return finish(job, { outcome: 'ready', pending });
   } finally {
@@ -422,9 +433,11 @@ export function resolvePending(uid, { proposalId, requestId, accepted = [], reje
     accepted: accepted.length, rejected: rejected.length, at: Date.now()
   }].slice(-HISTORY_MAX);
   const resolved = { ...Object.fromEntries(Object.entries(rec.resolved || {}).filter(([, x]) => Date.now() - x.at < 21 * 864e5)), [proposalId]: { requestId, at: Date.now() } };
-  writeUser(uid, { ...rec, pending: null, history, resolved });
+  writeUser(uid, { ...rec, pending: rec.pending.kind === 'ask' ? waitingProposal(rec.pending.prev) : null, history, resolved });
   return { ok: true, proposalId };
+
 }
+
 
 /* ---------- admin test + boot recovery ---------- */
 

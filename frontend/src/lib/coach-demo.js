@@ -23,6 +23,8 @@ import { best1RM } from './onerm.js'
 import { fmtNum } from './format.js'
 import { planHash } from './coach.js'
 import { t, exerciseNameFor } from './i18n.js'
+import { waitingProposal } from '../../../api/coach/core/pending.js'
+
 
 const DELAY = 2200      // long enough to see "the Coach is thinking…", short enough to forgive
 
@@ -224,8 +226,16 @@ export const demoDebrief = (S, selectionOrId) => {
 }
 export const demoResolve = body => {
   if (body && pending && body.proposalId !== pending.id) throw Object.assign(new Error('pending_mismatch'), { code: 'pending_mismatch' })
-  pending = null; return { ok: true }
+  pending = pending?.kind === 'ask' ? waitingProposal(pending.prev) : null; return { ok: true }
 }
+// The demo has no model behind it: a question gets a sample answer that says so.
+export const demoAsk = (S, text) => start('ask', () => ({
+  id: 'demo-ask-' + Date.now().toString(36), kind: 'ask', createdAt: Date.now(), expiresAt: Date.now() + 864e5,
+  planHash: planHash(S), iteration: 1, prev: waitingProposal(pending),
+  answer: t('This is the demo, so there is no AI model behind me. On your own server I answer questions like “{0}” with your plan, your last sessions and the workout you are doing right now.', String(text || '').slice(0, 80)),
+}))
+
+
 export const demoDisclosure = () => ({
   provider: 'demo', providerLabel: t('the configured AI provider'),
   categories: ['plan', 'training', 'bodyweight', 'profile', 'prefs'], version: 1

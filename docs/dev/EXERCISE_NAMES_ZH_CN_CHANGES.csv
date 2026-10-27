@@ -1,0 +1,1121 @@
+﻿动作ID,英文原名,优化前中文名,优化后中文名,审校理由
+0003,air bike,空气自行车,空中自行车卷腹,air bike指空中蹬腿卷腹，避免误认有氧器械并保留源名称区别
+0014,assisted motion russian twist,辅助动作俄罗斯转体,辅助俄罗斯转体,去掉无意义的“动作”直译
+0018,assisted standing triceps extension (with towel),辅助站姿三头肌伸展(用毛巾),辅助站姿臂屈伸(用毛巾),区分抗阻臂屈伸与肌肉拉伸
+0021,ball sit up (on stability ball),球上仰卧起坐(稳定球),球上仰卧起坐(健身球),统一简体中文健身术语
+0035,barbell decline close grip to skull press,杠铃下斜窄握颅骨推举,杠铃下斜窄握仰卧臂屈伸,源说明屈肘降至额前，非颅骨推举
+0052,barbell jm bench press,杠铃杰姆卧推,杠铃JM推举,保留通用动作缩写，避免杰姆音译
+0056,barbell lying close-grip triceps extension,杠铃仰卧窄握三头肌伸展,杠铃仰卧窄握臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+0058,barbell lying lifting (on hip),杠铃仰卧举起(髋部),杠铃凳上臀推,杠铃位于髋部、肩背支撑凳面，统一臀推用语
+0060,barbell lying triceps extension skull crusher,杠铃仰卧三头肌伸展(颅骨粉碎者),杠铃仰卧臂屈伸（额前式）,区分抗阻臂屈伸与肌肉拉伸；skull crusher采用常见健身称呼
+0061,barbell lying triceps extension,杠铃仰卧三头肌伸展,杠铃仰卧臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+0075,barbell rear delt raise,杠铃后三角肌平举,杠铃三角肌后束平举,统一简体中文健身术语
+0076,barbell rear delt row,杠铃后三角肌划船,杠铃三角肌后束划船,统一简体中文健身术语
+0077,barbell rear lunge v. 2,杠铃后撤弓步蹲 v. 2,杠铃后撤弓步蹲（变式2）,变式编号中文化，保留不同动作ID
+0079,barbell revers wrist curl v. 2,杠铃反握腕弯举 v. 2,杠铃反握腕弯举（变式2）,变式编号中文化，保留不同动作ID
+0092,barbell seated overhead triceps extension,杠铃坐姿过头三头肌伸展,杠铃坐姿过头臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+0093,barbell seated twist (on stability ball),杠铃坐姿转体(稳定球),杠铃坐姿转体(健身球),统一简体中文健身术语
+0096,barbell side bent v. 2,杠铃侧弯 v. 2,杠铃侧弯（变式2）,变式编号中文化，保留不同动作ID
+0097,barbell side split squat v. 2,杠铃侧向分腿蹲 v. 2,杠铃侧向分腿蹲（变式2）,变式编号中文化，保留不同动作ID
+0109,barbell standing overhead triceps extension,杠铃站姿过头三头肌伸展,杠铃站姿过头臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+0119,barbell upright row v. 2,杠铃直立划船 v. 2,杠铃直立划船（变式2）,变式编号中文化，保留不同动作ID
+0121,barbell upright row v. 3,杠铃直立划船 v. 3,杠铃直立划船（变式3）,变式编号中文化，保留不同动作ID
+0125,barbell wrist curl v. 2,杠铃腕弯举 v. 2,杠铃腕弯举（变式2）,变式编号中文化，保留不同动作ID
+0131,bent knee lying twist (on stability ball),屈膝仰卧转体(稳定球),屈膝仰卧转体(健身球),统一简体中文健身术语
+0149,cable alternate triceps extension,绳索交替三头肌伸展,绳索交替臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+0170,cable incline fly (on stability ball),绳索上斜飞鸟(稳定球),绳索上斜飞鸟(健身球),统一简体中文健身术语
+0173,cable incline triceps extension,绳索上斜三头肌伸展,绳索上斜臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+0176,cable kneeling triceps extension,绳索跪姿三头肌伸展,绳索跪姿臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+0182,cable lying close-grip curl,绳索仰卧窄握弯举 v. 2,绳索仰卧窄握弯举（变式2）,变式编号中文化，保留不同动作ID
+0186,cable lying triceps extension v. 2,绳索仰卧三头肌伸展 v. 2,绳索仰卧臂屈伸（变式2）,区分抗阻臂屈伸与肌肉拉伸；变式编号中文化，保留不同动作ID
+0187,cable lying triceps extension,绳索仰卧三头肌伸展,绳索仰卧臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+0194,cable overhead triceps extension (rope attachment),绳索过头三头肌伸展(绳索把手),绳索过头臂屈伸(绳索把手),区分抗阻臂屈伸与肌肉拉伸
+0199,cable pushdown (straight arm) v. 2,绳索下压(直臂) v. 2,绳索下压(直臂)（变式2）,变式编号中文化，保留不同动作ID
+0202,cable rear delt row (stirrups),绳索后三角肌划船(吊环),绳索三角肌后束划船(吊环),统一简体中文健身术语
+0211,cable russian twists (on stability ball),绳索俄罗斯转体(稳定球),绳索俄罗斯转体(健身球),统一简体中文健身术语
+0231,cable standing one arm triceps extension,绳索站姿单臂三头肌伸展,绳索站姿单臂臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+0233,cable standing rear delt row (with rope),绳索站姿后三角肌划船(用绳),绳索站姿三角肌后束划船(用绳),统一简体中文健身术语
+0248,cambered bar lying row,弓形杆仰卧划船,弓形杠胸托俯卧划船,源说明face down，纠正仰卧误译
+0269,crunch (legs on stability ball),卷腹(双腿放稳定球),卷腹(双腿放健身球),统一简体中文健身术语
+0271,crunch (on stability ball),卷腹(稳定球),卷腹(健身球),统一简体中文健身术语
+0272,"crunch (on stability ball, arms straight)","卷腹(稳定球,直臂)","卷腹(健身球,直臂)",统一简体中文健身术语
+0275,crunch floor v. 2,地面卷腹 v. 2,地面卷腹（变式2）,变式编号中文化，保留不同动作ID
+0278,decline push up (on stability ball),下斜俯卧撑(稳定球),下斜俯卧撑(健身球),统一简体中文健身术语
+0287,dumbbell arnold press v. 2,哑铃阿诺德推举 v. 2,哑铃阿诺德推举（变式2）,变式编号中文化，保留不同动作ID
+0304,dumbbell decline shrug v. 2,哑铃下斜耸肩 v. 2,哑铃下斜耸肩（变式2）,变式编号中文化，保留不同动作ID
+0306,dumbbell decline triceps extension,哑铃下斜三头肌伸展,哑铃下斜臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+0309,dumbbell front raise v. 2,哑铃前平举 v. 2,哑铃前平举（变式2）,变式编号中文化，保留不同动作ID
+0312,dumbbell hammer curl v. 2,哑铃锤式弯举 v. 2,哑铃锤式弯举（变式2）,变式编号中文化，保留不同动作ID
+0317,dumbbell incline curl v. 2,哑铃上斜弯举 v. 2,哑铃上斜弯举（变式2）,变式编号中文化，保留不同动作ID
+0319,dumbbell incline fly,哑铃上斜飞鸟 v. 2,哑铃上斜飞鸟（变式2）,变式编号中文化，保留不同动作ID
+0330,dumbbell incline triceps extension,哑铃上斜三头肌伸展,哑铃上斜臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+0341,dumbbell lying one arm deltoid rear,哑铃仰卧单臂后三角肌,哑铃俯卧单臂三角肌后束上举,统一简体中文健身术语；按源说明核实卧姿与动作方向，避免仰卧误译
+0342,dumbbell lying one arm press v. 2,哑铃仰卧单臂推举 v. 2,哑铃仰卧单臂推举（变式2）,变式编号中文化，保留不同动作ID
+0344,dumbbell lying one arm pronated triceps extension,哑铃仰卧单臂旋前三头肌伸展,哑铃仰卧单臂旋前臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+0345,dumbbell lying one arm rear lateral raise,哑铃仰卧单臂后侧平举,哑铃俯卧单臂后束平举,按源说明核实卧姿与动作方向，避免仰卧误译
+0346,dumbbell lying one arm supinated triceps extension,哑铃仰卧单臂旋后三头肌伸展,哑铃仰卧单臂旋后臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+0348,dumbbell lying rear lateral raise,哑铃仰卧后侧平举,哑铃俯卧后束平举,按源说明核实卧姿与动作方向，避免仰卧误译
+0351,dumbbell lying triceps extension,哑铃仰卧三头肌伸展,哑铃仰卧臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+0353,dumbbell one arm concentration curl (on stability ball),哑铃单臂集中弯举(稳定球),哑铃单臂集中弯举(健身球),统一简体中文健身术语
+0357,dumbbell one arm press (on stability ball),哑铃单臂推举(稳定球),哑铃单臂推举(健身球),统一简体中文健身术语
+0360,dumbbell one arm shoulder press v. 2,哑铃单臂肩部推举 v. 2,哑铃单臂肩部推举（变式2）,变式编号中文化，保留不同动作ID
+0362,dumbbell one arm triceps extension (on bench),哑铃单臂三头肌伸展(凳上),哑铃单臂臂屈伸(凳上),区分抗阻臂屈伸与肌肉拉伸
+0373,dumbbell pronate-grip triceps extension,哑铃旋前握三头肌伸展,哑铃旋前握臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+0377,dumbbell rear delt row_shoulder,哑铃后三角肌划船(肩部),哑铃三角肌后束划船(肩部),统一简体中文健身术语
+0390,dumbbell seated biceps curl (on stability ball),哑铃坐姿二头弯举(稳定球),哑铃坐姿二头弯举(健身球),统一简体中文健身术语
+0394,dumbbell seated kickback,哑铃坐姿俯身臂屈伸,哑铃坐姿臂后屈伸,kickback按向后伸肘命名，保留与俯身臂屈伸条目的可辨识性
+0395,dumbbell seated lateral raise v. 2,哑铃坐姿侧平举 v. 2,哑铃坐姿侧平举（变式2）,变式编号中文化，保留不同动作ID
+0412,dumbbell squat (back on stability ball wall),哑铃深蹲(背靠稳定球顶墙),哑铃深蹲(背靠健身球顶墙),统一简体中文健身术语
+0430,dumbbell standing triceps extension,哑铃站姿三头肌伸展,哑铃站姿臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+0435,dumbbell sumo squat (back on stability ball wall),哑铃相扑深蹲(背靠稳定球顶墙),哑铃相扑深蹲(背靠健身球顶墙),统一简体中文健身术语
+0445,ez barbell anti gravity press,EZ杠铃反重力推举,EZ曲杆反重力推举,统一简体中文健身术语
+0446,ez barbell close-grip curl,EZ杠铃窄握弯举,EZ曲杆窄握弯举,统一简体中文健身术语
+0447,ez barbell curl,EZ杠铃弯举,EZ曲杆弯举,统一简体中文健身术语
+0448,ez barbell decline close grip face press,EZ杠铃下斜窄握面部推举,EZ曲杆下斜窄握面部推举,统一简体中文健身术语
+0449,ez barbell incline triceps extension,EZ杠铃上斜三头肌伸展,EZ曲杆上斜臂屈伸,统一简体中文健身术语；区分抗阻臂屈伸与肌肉拉伸
+0450,ez barbell jm bench press,EZ杠铃杰姆卧推,EZ曲杆JM推举,统一简体中文健身术语；JM采用通用缩写，明确曲杆
+0451,ez barbell reverse grip curl,EZ杠铃反握弯举,EZ曲杆反握弯举,统一简体中文健身术语
+0452,ez barbell reverse grip preacher curl,EZ杠铃反握牧师凳弯举,EZ曲杆反握牧师凳弯举,统一简体中文健身术语
+0453,ez barbell seated triceps extension,EZ杠铃坐姿三头肌伸展,EZ曲杆坐姿臂屈伸,统一简体中文健身术语；区分抗阻臂屈伸与肌肉拉伸
+0454,ez barbell spider curl,EZ杠铃蜘蛛弯举,EZ曲杆蜘蛛弯举,统一简体中文健身术语
+0485,hip raise bridge v. 2,抬髋桥式 v. 2,抬髋桥式（变式2）,变式编号中文化，保留不同动作ID
+0497,inverted row v. 2,反向划船 v. 2,反向划船（变式2）,变式编号中文化，保留不同动作ID
+0513,jump squat v. 2,跳跃深蹲 v. 2,跳跃深蹲（变式2）,变式编号中文化，保留不同动作ID
+0521,kettlebell alternating renegade row,壶铃交替反叛者划船,壶铃交替支撑划船,renegade为平板支撑划船，非反向划船
+0538,kettlebell one arm jerk,壶铃单臂挺,壶铃单臂上挺,补全jerk动作名，区别高翻加上挺
+0550,kettlebell thruster,壶铃推进深蹲,壶铃深蹲推举,动作顺序为深蹲后推举
+0556,kicks leg bent v. 2,屈腿踢 v. 2,屈腿踢（变式2）,变式编号中文化，保留不同动作ID
+0558,kipping muscle up,摆动式双杠上推,摆动式双力臂,muscle up统一双力臂称谓
+0569,leg curl (on stability ball),腿弯举(稳定球),腿弯举(健身球),统一简体中文健身术语
+0571,lever alternating narrow grip seated row,杠杆交替窄握坐姿划船,器械交替窄握坐姿划船,lever器械用语本土化
+0572,lever assisted chin-up,杠杆辅助反手引体向上,器械辅助反手引体向上,lever器械用语本土化
+0573,lever back extension,杠杆背部伸展,器械背部伸展,lever器械用语本土化
+0575,lever bicep curl,杠杆二头弯举,器械二头弯举,lever器械用语本土化
+0576,lever chest press,杠杆推胸,器械推胸,lever器械用语本土化
+0577,lever chest press,杠杆推胸 v. 2,器械推胸（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+0578,lever deadlift,杠杆硬拉,器械硬拉,lever器械用语本土化
+0579,lever front pulldown,杠杆前向下拉,器械前向下拉,lever器械用语本土化
+0580,lever gripless shrug,杠杆无握耸肩,器械无握耸肩,lever器械用语本土化
+0581,lever high row,杠杆高位划船,器械高位划船,lever器械用语本土化
+0582,lever kneeling leg curl,杠杆跪姿腿弯举,器械跪姿腿弯举,lever器械用语本土化
+0583,lever kneeling twist,杠杆跪姿转体,器械跪姿转体,lever器械用语本土化
+0584,lever lateral raise,杠杆侧平举,器械侧平举,lever器械用语本土化
+0585,lever leg extension,杠杆腿屈伸,器械腿屈伸,lever器械用语本土化
+0586,lever lying leg curl,杠杆俯卧腿弯举,器械俯卧腿弯举,lever器械用语本土化
+0587,lever military press,杠杆军事推举,器械军事推举,lever器械用语本土化
+0588,lever narrow grip seated row,杠杆窄握坐姿划船,器械窄握坐姿划船,lever器械用语本土化
+0590,lever one arm shoulder press,杠杆单臂肩部推举,器械单臂肩部推举,lever器械用语本土化
+0591,lever overhand triceps dip,杠杆正握三头肌臂屈伸,器械正握三头肌臂屈伸,lever器械用语本土化
+0592,lever preacher curl,杠杆牧师凳弯举,器械牧师凳弯举,lever器械用语本土化
+0593,lever reverse hyperextension,杠杆反向挺身,器械反向挺身,lever器械用语本土化
+0594,lever seated calf raise,杠杆坐姿提踵,器械坐姿提踵,lever器械用语本土化
+0595,lever seated crunch (chest pad),杠杆坐姿卷腹(胸垫),器械坐姿卷腹(胸垫),lever器械用语本土化
+0596,lever seated fly,杠杆坐姿飞鸟,器械坐姿飞鸟,lever器械用语本土化
+0597,lever seated hip abduction,杠杆坐姿髋外展,器械坐姿髋外展,lever器械用语本土化
+0598,lever seated hip adduction,杠杆坐姿髋内收,器械坐姿髋内收,lever器械用语本土化
+0599,lever seated leg curl,杠杆坐姿腿弯举,器械坐姿腿弯举,lever器械用语本土化
+0600,lever seated leg raise crunch,杠杆坐姿抬腿卷腹,器械坐姿抬腿卷腹,lever器械用语本土化
+0601,lever seated reverse fly (parallel grip),杠杆坐姿反向飞鸟(平行握),器械坐姿反向飞鸟(平行握),lever器械用语本土化
+0603,lever shoulder press,杠杆肩部推举,器械肩部推举,lever器械用语本土化
+0604,lever shrug,杠杆耸肩,器械耸肩,lever器械用语本土化
+0605,lever standing calf raise,杠杆站姿提踵,器械站姿提踵,lever器械用语本土化
+0606,lever t bar row,杠杆T杠划船,器械T杠划船,lever器械用语本土化
+0607,lever triceps extension,杠杆三头肌伸展,器械臂屈伸,lever器械用语本土化；区分抗阻臂屈伸与肌肉拉伸
+0608,lever twist,杠杆转体,器械转体,lever器械用语本土化
+0614,lying alternate hip extension,仰卧交替髋伸展,俯卧交替伸髋,按源说明核实卧姿与动作方向，避免仰卧误译
+0617,lying hip leg raise (on floor),仰卧髋部抬腿(地面),侧卧抬腿（地面）,源描述明确为地面侧卧抬腿，纠正仰卧误译
+0631,muscle up,双杠上推,双力臂,muscle up统一双力臂称谓
+0637,olympic barbell triceps extension,奥林匹克杠铃三头肌伸展,奥林匹克杠铃臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+0650,pull-in (on stability ball),收腹(稳定球),收腹(健身球),统一简体中文健身术语
+0655,push-up (on stability ball),俯卧撑(稳定球),俯卧撑(健身球),统一简体中文健身术语
+0656,push-up (on stability ball),俯卧撑(稳定球) v. 2,俯卧撑(健身球)（变式2）,统一简体中文健身术语；变式编号中文化，保留不同动作ID
+0657,push up (one arm on stability ball),俯卧撑(单臂放稳定球),俯卧撑(单臂放健身球),统一简体中文健身术语
+0658,push-up (wall) v. 2,俯卧撑(靠墙) v. 2,俯卧撑(靠墙)（变式2）,变式编号中文化，保留不同动作ID
+0669,rear deltoid stretch,后三角肌拉伸,三角肌后束拉伸,统一简体中文健身术语
+0675,reverse hyper extension (on stability ball),反向挺身(稳定球),反向挺身(健身球),统一简体中文健身术语
+0686,russian twist (on stability ball arms straight),"俄罗斯转体(稳定球,直臂)","俄罗斯转体(健身球,直臂)",统一简体中文健身术语
+0694,seated twist (on stability ball),坐姿转体(稳定球),坐姿转体(健身球),统一简体中文健身术语
+0700,side bend (on stability ball),侧弯(稳定球),侧弯(健身球),统一简体中文健身术语
+0705,side bridge v. 2,侧桥 v. 2,侧桥（变式2）,变式编号中文化，保留不同动作ID
+0707,side crunch v. 2,侧向卷腹 v. 2,侧向卷腹（变式2）,变式编号中文化，保留不同动作ID
+0714,side plank v. 2,侧平板支撑 v. 2,侧平板支撑（变式2）,变式编号中文化，保留不同动作ID
+0728,single leg extension (on stability ball),单腿伸展(稳定球),单腿伸展(健身球),统一简体中文健身术语
+0735,sit-up v. 2,仰卧起坐 v. 2,仰卧起坐（变式2）,变式编号中文化，保留不同动作ID
+0748,smith bench press,史密斯推胸,史密斯机推胸,统一史密斯机称谓
+0757,smith incline bench press,史密斯上斜推胸,史密斯机上斜推胸,统一史密斯机称谓
+0762,smith rear delt row,史密斯机后三角肌划船,史密斯机三角肌后束划船,统一简体中文健身术语
+0766,smith shoulder press,史密斯推肩,史密斯机推肩,统一史密斯机称谓
+0770,smith squat,史密斯深蹲,史密斯机深蹲,统一史密斯机称谓
+0777,spell caster,施法者,哑铃交替斜向转体,用动作描述替代施法者直译
+0798,stationary bike walk,固定自行车行走,固定单车轻松骑行,源为低强度踩踏，不是步行
+0805,suspended abdominal fallout,悬挂带腹部前推,悬吊带腹部前推,统一简体中文健身术语
+0806,suspended push-up,悬挂带俯卧撑,悬吊带俯卧撑,统一简体中文健身术语
+0807,suspended reverse crunch,悬挂带反向卷腹,悬吊带反向卷腹,统一简体中文健身术语
+0808,suspended row,悬挂带划船,悬吊带划船,统一简体中文健身术语
+0809,suspended split squat,悬挂带分腿蹲,悬吊带分腿蹲,统一简体中文健身术语
+0835,weighted hyperextension (on stability ball),负重背部伸展(稳定球),负重背部伸展(健身球),统一简体中文健身术语
+0840,weighted overhead crunch (on stability ball),负重过头卷腹(稳定球),负重过头卷腹(健身球),统一简体中文健身术语
+0842,weighted pullover (on stability ball),负重仰卧上拉(稳定球),负重仰卧上拉(健身球),统一简体中文健身术语
+0843,weighted reduction triangle,负重缩小三角,负重屈膝夹腿,依据原始说明膝外展后向内夹合
+0847,weighted seated bicep curl (on stability ball),负重坐姿二头弯举(稳定球),负重坐姿二头弯举(健身球),统一简体中文健身术语
+0849,weighted seated twist (on stability ball),负重坐姿扭转(稳定球),负重坐姿扭转(健身球),统一简体中文健身术语
+0850,weighted side bend (on stability ball),负重侧弯(稳定球),负重侧弯(健身球),统一简体中文健身术语
+0858,wind sprints,风中冲刺,间歇冲刺跑,源说明短距离全力冲刺后休息，wind非风中
+0869,lever shoulder press v. 2,杠杆肩部推举 v. 2,器械肩部推举（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+0880,cable standing hip extension v. 2,绳索站姿髋伸展 v. 2,绳索站姿髋伸展（变式2）,变式编号中文化，保留不同动作ID
+0881,dumbbell curtsey lunge,哑铃屈膝礼弓步蹲,哑铃交叉后撤弓步蹲,按交叉后撤动作命名
+0882,dumbbell one leg squat,哑铃单腿深蹲 v. 3,哑铃单腿深蹲（变式3）,变式编号中文化，保留不同动作ID
+0892,band bent over row v. 2,弹力带俯身划船 v. 2,弹力带俯身划船（变式2）,变式编号中文化，保留不同动作ID
+0893,band bent over rear lateral raise v. 3,弹力带俯身后侧平举 v. 3,弹力带俯身后侧平举（变式3）,变式编号中文化，保留不同动作ID
+0938,lever stepper,杠杆踏步机,器械踏步机,lever器械用语本土化
+0943,chair pose utkatasana v. 2,幻椅式 v. 2,幻椅式（变式2）,变式编号中文化，保留不同动作ID
+0948,default pose,默认姿势,自然站姿,源说明直立放松、双臂自然下垂
+0963,warrior pose virabhadrasana v. 2,战士二式 v. 2,战士二式（变式2）,变式编号中文化，保留不同动作ID
+0968,band alternating biceps curl,弹力带交替二头弯举 v. 2,弹力带交替二头弯举（变式2）,变式编号中文化，保留不同动作ID
+0973,band calf raise v. 2,弹力带提踵 v. 2,弹力带提踵（变式2）,变式编号中文化，保留不同动作ID
+0982,band lying hip external rotation,弹力带仰卧髋外旋,弹力带侧卧髋外旋,源说明为侧卧蚌式动作，纠正仰卧误译
+0998,band side triceps extension,弹力带侧向三头肌伸展,弹力带侧向臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+10041,dumbbell side plank v. 2,哑铃侧平板支撑 v. 2,哑铃侧平板支撑（变式2）,变式编号中文化，保留不同动作ID
+10043,dumbbell single arm z press,哑铃单臂z字推举,哑铃单臂Z字推举,统一简体中文健身术语
+10047,barbell split stance rdl,杠铃分腿站姿RDL,杠铃分腿站姿罗马尼亚硬拉,展开RDL以便中文阅读
+10049,barbell butterfly z press,杠铃蝴蝶式z字推举,杠铃蝴蝶式Z字推举,统一简体中文健身术语
+10052,landmine cossack squat,地雷杆哥萨克深蹲,地雷管哥萨克深蹲,统一简体中文健身术语
+10056,landmine banded press,地雷杆弹力带推举,地雷管弹力带推举,统一简体中文健身术语
+1006,band rear delt row,弹力带后三角肌划船,弹力带三角肌后束划船,统一简体中文健身术语
+10065,lever torso rotation,杠杆躯干旋转 v. 2,器械躯干旋转（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+1010,band straight leg deadlift,弹力带直腿硬拉 v. 2,弹力带直腿硬拉（变式2）,变式编号中文化，保留不同动作ID
+10113,lever isometric squat hip abduction,杠杆等长深蹲髋外展,器械等长深蹲髋外展,lever器械用语本土化
+10190,landmine single arm push press,地雷杆单臂借力推举,地雷管单臂借力推举,统一简体中文健身术语
+1022,band standing rear delt row,弹力带站姿后三角肌划船,弹力带站姿三角肌后束划船,统一简体中文健身术语
+1029,lever parallel chest press,杠杆平行推胸,器械平行推胸,lever器械用语本土化
+1031,lever standing hip extension,杠杆站姿髋伸展,器械站姿髋伸展,lever器械用语本土化
+1032,lever alternate biceps curl,杠杆交替二头弯举,器械交替二头弯举,lever器械用语本土化
+10328,lever belt bulgarian split squat,杠杆腰带保加利亚分腿蹲,器械腰带保加利亚分腿蹲,lever器械用语本土化
+1033,lever triceps extension v. 2,杠杆三头肌伸展 v. 2,器械臂屈伸（变式2）,lever器械用语本土化；区分抗阻臂屈伸与肌肉拉伸；变式编号中文化，保留不同动作ID
+1034,lever side hip abduction,杠杆侧向髋外展,器械侧向髋外展,lever器械用语本土化
+1035,lever side hip adduction,杠杆侧向髋内收,器械侧向髋内收,lever器械用语本土化
+1036,lever standing leg raise,杠杆站姿抬腿,器械站姿抬腿,lever器械用语本土化
+1037,lever standing rear kick,杠杆站姿后踢,器械站姿后踢,lever器械用语本土化
+1038,lever chair squat,杠杆椅式深蹲,器械椅式深蹲,lever器械用语本土化
+1039,lever full squat,杠杆全蹲,器械全蹲,lever器械用语本土化
+1040,lever pistol squat,杠杆手枪式深蹲,器械手枪式深蹲,lever器械用语本土化
+1041,lever lying chest press (plate loaded),杠杆仰卧推胸(挂片式),器械仰卧推胸(挂片式),lever器械用语本土化
+1042,weighted lying neck extension,负重仰卧颈伸展,负重俯卧颈后伸,按源说明核实卧姿与动作方向，避免仰卧误译
+1048,dumbbell lying one arm rear lateral raise v. 2,哑铃俯卧单臂后侧平举 v. 2,哑铃俯卧单臂后侧平举（变式2）,变式编号中文化，保留不同动作ID
+1053,kneeling hip flexor stretch,跪姿髋屈肌拉伸 v. 2,跪姿髋屈肌拉伸（变式2）,变式编号中文化，保留不同动作ID
+10538,seated single leg knee extension v. 2,坐姿单腿伸膝 v. 2,坐姿单腿伸膝（变式2）,变式编号中文化，保留不同动作ID
+10539,weighted seated single leg knee extension v. 2,负重坐姿单腿伸膝 v. 2,负重坐姿单腿伸膝（变式2）,变式编号中文化，保留不同动作ID
+10551,squat mobilization,深蹲灵活性练习 v. 2,深蹲灵活性练习（变式2）,变式编号中文化，保留不同动作ID
+10646,lever incline prone row,杠杆上斜俯卧划船,器械上斜俯卧划船,lever器械用语本土化
+1065,lying hip lift (on stability ball),仰卧抬髋(稳定球),仰卧抬髋(健身球),统一简体中文健身术语
+10664,planche press,平板撑推举,水平支撑推起,按源从前倾支撑推起进入水平支撑的动作命名
+10665,elbow planche,肘支撑planche,肘撑水平支撑,planche中文化，保留肘部支撑差别
+10669,lever stack seated incline chest press,杠杆配重片坐姿上斜推胸,器械配重片坐姿上斜推胸,lever器械用语本土化
+1067,cable straight arm pulldown v. 3,绳索直臂下拉 v. 3,绳索直臂下拉（变式3）,变式编号中文化，保留不同动作ID
+10670,lever stack seated incline single arm chest press,杠杆配重片坐姿上斜单臂推胸,器械配重片坐姿上斜单臂推胸,lever器械用语本土化
+10672,lever stack seated single arm chest press,杠杆配重片坐姿单臂推胸,器械配重片坐姿单臂推胸,lever器械用语本土化
+10675,landmine squat jump,地雷杆深蹲跳,地雷管深蹲跳,统一简体中文健身术语
+1068,cable kickback v. 3,绳索后踢 v. 3,绳索后踢（变式3）,变式编号中文化，保留不同动作ID
+1069,cable twist v. 3,绳索转体 v. 3,绳索转体（变式3）,变式编号中文化，保留不同动作ID
+1070,suspender arm curl,悬挂带手臂弯举,悬吊带手臂弯举,统一简体中文健身术语
+1071,suspender bent knee inverted row,悬挂带屈膝反向划船,悬吊带屈膝反向划船,统一简体中文健身术语
+1072,suspender chest dip,悬挂带胸部臂屈伸,悬吊带胸部臂屈伸,统一简体中文健身术语
+1073,suspender chest press,悬挂带推胸,悬吊带推胸,统一简体中文健身术语
+1074,suspender fly,悬挂带飞鸟,悬吊带飞鸟,统一简体中文健身术语
+10742,lying single arm slide from y to t,仰卧单臂从Y滑到T,俯卧单臂Y-T滑动,按源说明核实卧姿与动作方向，避免仰卧误译
+1075,suspender front raise,悬挂带前平举,悬吊带前平举,统一简体中文健身术语
+1076,suspension hamstring runner,悬挂带腘绳肌跑者式,悬吊带腘绳肌跑者式,统一简体中文健身术语
+10763,lever seated single leg curl (plate loaded),杠杆坐姿单腿弯举(挂片式),器械坐姿单腿弯举(挂片式),lever器械用语本土化
+1077,suspension hip abduction,悬挂带髋外展,悬吊带髋外展,统一简体中文健身术语
+1078,suspension hip bridge,悬挂带髋桥,悬吊带髋桥,统一简体中文健身术语
+10781,lying neck extension,仰卧颈伸展,俯卧颈后伸,按源说明核实卧姿与动作方向，避免仰卧误译
+1079,suspension hyperextension,悬挂带背部伸展,悬吊带背部伸展,统一简体中文健身术语
+1080,suspension inverted row,悬挂带反向划船,悬吊带反向划船,统一简体中文健身术语
+1081,suspension jackknife pike,悬挂带折刀屈髋,悬吊带折刀屈髋,统一简体中文健身术语
+10818,4 way single leg hop v. 2,四向单腿跳 v. 2,四向单腿跳（变式2）,变式编号中文化，保留不同动作ID
+1082,suspension jackknife,悬挂带折刀,悬吊带折刀,统一简体中文健身术语
+1083,suspension leg curl,悬挂带腿弯举,悬吊带腿弯举,统一简体中文健身术语
+1084,suspension mountain climber,悬挂带登山者,悬吊带登山者,统一简体中文健身术语
+1086,suspension power pull,悬挂带爆发拉,悬吊带爆发拉,统一简体中文健身术语
+10866,lever bent over single arm lats focused row,杠杆俯身单臂背阔肌划船,器械俯身单臂背阔肌划船,lever器械用语本土化
+10867,lever incline prone neutral grip row,杠杆上斜俯卧中立握划船,器械上斜俯卧中立握划船,lever器械用语本土化
+10868,bosu ball squat,波速球深蹲 v. 2,波速球深蹲（变式2）,变式编号中文化，保留不同动作ID
+1087,suspension pull through,悬挂带穿腿拉,悬吊带穿腿拉,统一简体中文健身术语
+10877,weighted plate crunch (hands overhead) v. 2,负重杠铃片卷腹(双手过头) v. 2,负重杠铃片卷腹(双手过头)（变式2）,变式编号中文化，保留不同动作ID
+10879,weighted dumbbell crunch (hands overhead) v. 2,负重哑铃卷腹(双手过头) v. 2,负重哑铃卷腹(双手过头)（变式2）,变式编号中文化，保留不同动作ID
+1088,suspension pull up,悬挂带引体向上,悬吊带引体向上,统一简体中文健身术语
+10899,resistance band lying abduction,弹力带仰卧外展,弹力带侧卧髋外展,源说明为侧卧髋外展，补足部位并纠正体位
+1090,suspension reverse fly,悬挂带反向飞鸟,悬吊带反向飞鸟,统一简体中文健身术语
+10903,resistance band assisted single arm pull up v. 2,弹力带辅助单臂引体向上 v. 2,弹力带辅助单臂引体向上（变式2）,变式编号中文化，保留不同动作ID
+10904,hamstring bridge v. 2,腘绳肌桥 v. 2,腘绳肌桥（变式2）,变式编号中文化，保留不同动作ID
+10905,hamstring bridge leg kick v. 2,腘绳肌桥踢腿 v. 2,腘绳肌桥踢腿（变式2）,变式编号中文化，保留不同动作ID
+1091,suspension rollout,悬挂带前推,悬吊带前推,统一简体中文健身术语
+10917,seated single leg tibialis press v. 2,坐姿单腿胫骨前肌推 v. 2,坐姿单腿胫骨前肌推（变式2）,变式编号中文化，保留不同动作ID
+10918,seated single leg squeezing toes v. 2,坐姿单腿挤压脚趾 v. 2,坐姿单腿挤压脚趾（变式2）,变式编号中文化，保留不同动作ID
+10919,seated single leg foot side to side v. 2,坐姿单腿足部左右摆动 v. 2,坐姿单腿足部左右摆动（变式2）,变式编号中文化，保留不同动作ID
+1093,suspension self assisted chest dip,悬挂带自助胸部臂屈伸,悬吊带自助胸部臂屈伸,统一简体中文健身术语
+10932,shoulder stretch behind the back with towel,背后毛巾肩部拉伸 v. 2,背后毛巾肩部拉伸（变式2）,变式编号中文化，保留不同动作ID
+10934,bodyweight side lying shoulder external rotation,徒手侧卧肩外旋 v. 2,徒手侧卧肩外旋（变式2）,变式编号中文化，保留不同动作ID
+1094,suspension self assisted pull up,悬挂带自助引体向上,悬吊带自助引体向上,统一简体中文健身术语
+1095,suspension self assisted triceps dip,悬挂带自助三头肌臂屈伸,悬吊带自助三头肌臂屈伸,统一简体中文健身术语
+1096,suspension shoulder external rotation,悬挂带肩外旋,悬吊带肩外旋,统一简体中文健身术语
+1097,suspension side bend,悬挂带侧弯,悬吊带侧弯,统一简体中文健身术语
+10977,dumbbell hyperextension v. 2,哑铃背部伸展 v. 2,哑铃背部伸展（变式2）,变式编号中文化，保留不同动作ID
+1098,suspension side bridge,悬挂带侧桥,悬吊带侧桥,统一简体中文健身术语
+10989,tuck planche on parallette,平行杠屈体planche,双杠团身水平支撑,tuck为团身，而非一般屈体
+1099,suspension single leg split squat (self assisted),悬挂带单腿分腿蹲(自助),悬吊带单腿分腿蹲(自助),统一简体中文健身术语
+10997,wall assisted handstand to tuck planche negative,靠墙倒立转屈体planche离心,靠墙倒立转团身水平支撑（离心）,保留靠墙辅助和离心阶段
+1100,suspension single leg split squat,悬挂带单腿分腿蹲,悬吊带单腿分腿蹲,统一简体中文健身术语
+1101,suspension single leg squat,悬挂带单腿深蹲,悬吊带单腿深蹲,统一简体中文健身术语
+11015,scapular pull up v. 2,肩胛引体 v. 2,肩胛引体（变式2）,变式编号中文化，保留不同动作ID
+1102,suspension straight hip leg curl,悬挂带直髋腿弯举,悬吊带直髋腿弯举,统一简体中文健身术语
+1103,suspension triceps dip,悬挂带三头肌臂屈伸,悬吊带三头肌臂屈伸,统一简体中文健身术语
+1104,suspension triceps extension v. 2,悬挂带三头肌伸展 v. 2,悬吊带臂屈伸（变式2）,统一简体中文健身术语；区分抗阻臂屈伸与肌肉拉伸；变式编号中文化，保留不同动作ID
+11047,lying abduction,仰卧外展,侧卧髋外展,源说明为侧卧抬腿，补足外展部位
+1105,suspension twist,悬挂带转体,悬吊带转体,统一简体中文健身术语
+11051,cable standing high cross neutral grip triceps extension,绳索站姿高位交叉中立握三头肌伸展,绳索站姿高位交叉中立握臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+11054,lever staggered stance hip thrust (plate loaded),杠杆错步臀推(挂片式),器械错步臀推(挂片式),lever器械用语本土化
+11055,lever belt sumo deadlift (v bar),杠杆腰带相扑硬拉(V形杠),器械腰带相扑硬拉(V形杠),lever器械用语本土化
+11056,lever seated scapular retraction (plate loaded),杠杆坐姿肩胛回缩(挂片式),器械坐姿肩胛回缩(挂片式),lever器械用语本土化
+1106,suspender twisting jackknife,悬挂带扭转折刀,悬吊带扭转折刀,统一简体中文健身术语
+1107,suspender y lateral raise,悬挂带Y字侧平举,悬吊带Y字侧平举,统一简体中文健身术语
+11077,dumbbell over the chest lying abduction,哑铃胸上方仰卧外展,哑铃胸前持重侧卧髋外展,源说明为胸前持哑铃的侧卧髋外展，不是肩部外展
+1108,suspender arm curl to ears,悬挂带手臂弯举至耳旁,悬吊带手臂弯举至耳旁,统一简体中文健身术语
+1109,suspender biceps clutch,悬挂带二头肌卡握,悬吊带二头弯举（顶端停顿）,统一简体中文健身术语；源说明屈臂至头侧并停顿，替代卡握直译
+11090,negative front lever raise,离心前水平举,前水平离心下放,源为由高位缓慢降至前水平，不是向上抬举
+11092,landmine kneeling 180s,地雷杆跪姿180度转体,地雷管跪姿180度转体,统一简体中文健身术语
+1110,suspender body saw,悬挂带人体锯,悬吊带人体锯,统一简体中文健身术语
+1111,suspender close grip chest press,悬挂带窄握推胸,悬吊带窄握推胸,统一简体中文健身术语
+1112,suspender crunch,悬挂带卷腹,悬吊带卷腹,统一简体中文健身术语
+1113,suspender face pull,悬挂带面拉,悬吊带面拉,统一简体中文健身术语
+1115,suspender handstand push up,悬挂带倒立俯卧撑,悬吊带倒立俯卧撑,统一简体中文健身术语
+1116,suspender incline push up,悬挂带上斜俯卧撑,悬吊带上斜俯卧撑,统一简体中文健身术语
+1117,suspender jump squat,悬挂带跳跃深蹲,悬吊带跳跃深蹲,统一简体中文健身术语
+1119,suspender lunge back crossover,悬挂带后撤交叉弓步蹲,悬吊带后撤交叉弓步蹲,统一简体中文健身术语
+1120,suspender middle row,悬挂带中位划船,悬吊带中位划船,统一简体中文健身术语
+1121,suspender mountain climber push up,悬挂带登山者俯卧撑,悬吊带登山者俯卧撑,统一简体中文健身术语
+1122,suspender oblique rollout,悬挂带斜向前推,悬吊带斜向前推,统一简体中文健身术语
+1123,suspender one arm biceps curl,悬挂带单臂二头弯举,悬吊带单臂二头弯举,统一简体中文健身术语
+1124,suspender one arm chest press,悬挂带单臂推胸,悬吊带单臂推胸,统一简体中文健身术语
+1125,suspender one arm leg push up,悬挂带单臂单腿俯卧撑,悬吊带单臂单腿俯卧撑,统一简体中文健身术语
+11250,cable standing fly v. 3,绳索站姿飞鸟 v. 3,绳索站姿飞鸟（变式3）,变式编号中文化，保留不同动作ID
+11251,cable kneeling woodchop v. 3,绳索跪姿砍柴 v. 3,绳索跪姿砍柴（变式3）,变式编号中文化，保留不同动作ID
+11252,cable overhead squat v. 3,绳索过头深蹲 v. 3,绳索过头深蹲（变式3）,变式编号中文化，保留不同动作ID
+11253,cable kneeling pulldown v. 3,绳索跪姿下拉 v. 3,绳索跪姿下拉（变式3）,变式编号中文化，保留不同动作ID
+11254,cable standing reverse fly v. 3,绳索站姿反向飞鸟 v. 3,绳索站姿反向飞鸟（变式3）,变式编号中文化，保留不同动作ID
+11255,cable lateral lunge v. 3,绳索侧向弓步蹲 v. 3,绳索侧向弓步蹲（变式3）,变式编号中文化，保留不同动作ID
+11256,cable bench press v. 3,绳索卧推 v. 3,绳索卧推（变式3）,变式编号中文化，保留不同动作ID
+11257,cable seated high row v. 3,绳索坐姿高位划船 v. 3,绳索坐姿高位划船（变式3）,变式编号中文化，保留不同动作ID
+11258,cable standing push pull v. 3,绳索站姿推拉 v. 3,绳索站姿推拉（变式3）,变式编号中文化，保留不同动作ID
+11259,cable standing hip extension v. 3,绳索站姿髋伸展 v. 3,绳索站姿髋伸展（变式3）,变式编号中文化，保留不同动作ID
+1126,suspender one leg chest press,悬挂带单腿推胸,悬吊带单腿推胸,统一简体中文健身术语
+11260,cable kneeling military press v. 3,绳索跪姿军事推举 v. 3,绳索跪姿军事推举（变式3）,变式编号中文化，保留不同动作ID
+11261,cable standing biceps curl (rope attachment) v. 3,绳索站姿二头弯举(绳索把手) v. 3,绳索站姿二头弯举(绳索把手)（变式3）,变式编号中文化，保留不同动作ID
+11262,cable lying alternating bent leg jackknife v. 3,绳索仰卧交替屈腿折刀 v. 3,绳索仰卧交替屈腿折刀（变式3）,变式编号中文化，保留不同动作ID
+11263,cable single arm row with rotation v. 3,绳索单臂旋转划船 v. 3,绳索单臂旋转划船（变式3）,变式编号中文化，保留不同动作ID
+11264,cable incline bench press v. 3,绳索上斜卧推 v. 3,绳索上斜卧推（变式3）,变式编号中文化，保留不同动作ID
+11265,cable standing hip flexion v. 3,绳索站姿屈髋 v. 3,绳索站姿屈髋（变式3）,变式编号中文化，保留不同动作ID
+11266,cable standing hip abduction v. 3,绳索站姿髋外展 v. 3,绳索站姿髋外展（变式3）,变式编号中文化，保留不同动作ID
+11267,cable standing hip adduction v. 3,绳索站姿髋内收 v. 3,绳索站姿髋内收（变式3）,变式编号中文化，保留不同动作ID
+11268,cable squat v. 3,绳索深蹲 v. 3,绳索深蹲（变式3）,变式编号中文化，保留不同动作ID
+11269,cable bent over single arm row v. 3,绳索俯身单臂划船 v. 3,绳索俯身单臂划船（变式3）,变式编号中文化，保留不同动作ID
+1127,suspender pull up v. 2,悬挂带引体向上 v. 2,悬吊带引体向上（变式2）,统一简体中文健身术语；变式编号中文化，保留不同动作ID
+11270,cable kneeling crunch v. 3,绳索跪姿卷腹 v. 3,绳索跪姿卷腹（变式3）,变式编号中文化，保留不同动作ID
+11271,cable standing torso twist v. 3,绳索站姿躯干扭转 v. 3,绳索站姿躯干扭转（变式3）,变式编号中文化，保留不同动作ID
+11272,cable standing biceps curl to arnold press v. 3,绳索站姿二头弯举转阿诺德推举 v. 3,绳索站姿二头弯举转阿诺德推举（变式3）,变式编号中文化，保留不同动作ID
+11273,cable lying fly v. 3,绳索仰卧飞鸟 v. 3,绳索仰卧飞鸟（变式3）,变式编号中文化，保留不同动作ID
+11274,cable standing alternating diagonal chest press v. 3,绳索站姿交替斜向推胸 v. 3,绳索站姿交替斜向推胸（变式3）,变式编号中文化，保留不同动作ID
+11275,cable side plank row v. 3,绳索侧平板支撑划船 v. 3,绳索侧平板支撑划船（变式3）,变式编号中文化，保留不同动作ID
+11276,cable prone single leg curl v. 3,绳索俯卧单腿弯举 v. 3,绳索俯卧单腿弯举（变式3）,变式编号中文化，保留不同动作ID
+11277,cable standing front raise v. 3,绳索站姿前平举 v. 3,绳索站姿前平举（变式3）,变式编号中文化，保留不同动作ID
+11278,cable standing side bend v. 3,绳索站姿侧弯 v. 3,绳索站姿侧弯（变式3）,变式编号中文化，保留不同动作ID
+11279,cable standing single arm overhead triceps extension v. 3,绳索站姿单臂过头三头肌伸展 v. 3,绳索站姿单臂过头臂屈伸（变式3）,区分抗阻臂屈伸与肌肉拉伸；变式编号中文化，保留不同动作ID
+1128,suspender push up,悬挂带俯卧撑 v. 2,悬吊带俯卧撑（变式2）,统一简体中文健身术语；变式编号中文化，保留不同动作ID
+1129,suspender rear lunge,悬挂带后撤弓步蹲,悬吊带后撤弓步蹲,统一简体中文健身术语
+1130,suspender reverse fly wake up,悬挂带反向飞鸟唤醒,悬吊带反向飞鸟（激活式）,统一简体中文健身术语；保留激活变式含义，去除唤醒直译
+11309,lever single arm reverse grip lateral pulldown (plate loaded),杠杆单臂反握高位下拉(挂片式),器械单臂反握高位下拉(挂片式),lever器械用语本土化
+1131,suspender side cross lunge,悬挂带侧向交叉弓步蹲,悬吊带侧向交叉弓步蹲,统一简体中文健身术语
+11317,weighted plate hyperextension v. 2,负重杠铃片背部伸展 v. 2,负重杠铃片背部伸展（变式2）,变式编号中文化，保留不同动作ID
+1132,suspender side lunge,悬挂带侧弓步蹲,悬吊带侧弓步蹲,统一简体中文健身术语
+1133,suspender single arm rear delt row,悬挂带单臂后三角肌划船,悬吊带单臂三角肌后束划船,统一简体中文健身术语
+1134,suspender single leg plank straight arm,悬挂带单腿平板支撑(直臂),悬吊带单腿平板支撑(直臂),统一简体中文健身术语
+1135,suspender single leg plank,悬挂带单腿平板支撑,悬吊带单腿平板支撑,统一简体中文健身术语
+1136,suspender single leg squat figure,悬挂带单腿深蹲(8字),悬吊带单腿深蹲(8字),统一简体中文健身术语
+1137,suspender sit up,悬挂带仰卧起坐,悬吊带仰卧起坐,统一简体中文健身术语
+1138,suspender spiderman push up,悬挂带蜘蛛侠俯卧撑,悬吊带蜘蛛侠俯卧撑,统一简体中文健身术语
+1139,suspender split fly,悬挂带分腿飞鸟,悬吊带分腿飞鸟,统一简体中文健身术语
+1140,suspender sprinter,悬挂带短跑者,悬吊带短跑者,统一简体中文健身术语
+1141,suspender squat arms overhead,悬挂带深蹲(手臂上举),悬吊带深蹲(手臂上举),统一简体中文健身术语
+1143,suspender squat,悬挂带深蹲,悬吊带深蹲,统一简体中文健身术语
+11436,cable standing neutral grip overhead triceps extension,绳索站姿中立握过头三头肌伸展,绳索站姿中立握过头臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+11452,calves stretch v. 2,小腿拉伸 v. 2,小腿拉伸（变式2）,变式编号中文化，保留不同动作ID
+1149,suspender triceps extension push up,悬吊带三头肌伸展俯卧撑,悬吊带臂屈伸俯卧撑,区分抗阻臂屈伸与肌肉拉伸
+11529,lever belt single leg romanian deadlift,杠杆腰带单腿罗马尼亚硬拉,器械腰带单腿罗马尼亚硬拉,lever器械用语本土化
+11567,lever lying leg curl to reverse hyperextension,杠杆俯卧腿弯举至反向山羊挺身,器械俯卧腿弯举至反向山羊挺身,lever器械用语本土化
+1164,smith calf raise v. 2,史密斯机提踵 v. 2,史密斯机提踵（变式2）,变式编号中文化，保留不同动作ID
+11717,plyo push up v. 2,增强式俯卧撑 v. 2,增强式俯卧撑（变式2）,变式编号中文化，保留不同动作ID
+11718,lever incline chest supported reverse delt fly (plate loaded),杠杆上斜胸部支撑反向飞鸟(挂片式),器械上斜胸部支撑反向飞鸟(挂片式),lever器械用语本土化
+1177,dumbbell lying hammer press v. 2,哑铃仰卧锤式推举 v. 2,哑铃仰卧锤式推举（变式2）,变式编号中文化，保留不同动作ID
+1179,flutter kicks v. 2,交替打腿 v. 2,交替打腿（变式2）,变式编号中文化，保留不同动作ID
+11794,single arm fingers press with ball v. 2,单臂手指推球 v. 2,单臂手指推球（变式2）,变式编号中文化，保留不同动作ID
+11801,lying single leg quadriceps mobilization,仰卧单腿股四头肌松动,卧姿单腿股四头肌活动,源允许侧卧或俯卧，不强行指定仰卧
+1181,lying straight leg raise v. 2,仰卧直腿抬腿 v. 2,仰卧直腿抬腿（变式2）,变式编号中文化，保留不同动作ID
+11880,lever t bar close grip row (plate loaded),杠杆T杠窄握划船(挂片式),器械T杠窄握划船(挂片式),lever器械用语本土化
+1190,incline twisting sit up v. 2,上斜扭转仰卧起坐 v. 2,上斜扭转仰卧起坐（变式2）,变式编号中文化，保留不同动作ID
+11903,standing hip flexors stretch,站姿髋屈肌拉伸 v. 2,站姿髋屈肌拉伸（变式2）,变式编号中文化，保留不同动作ID
+1194,lever lying t bar row,杠杆仰卧T杠划船,器械胸托T杠划船,lever器械用语本土化；源说明胸部贴凳俯卧划船，纠正仰卧
+1195,lever incline hammer chest press,杠杆上斜锤式胸推,器械上斜锤式胸推,lever器械用语本土化
+11954,lying pretzel stretch,仰卧椒盐卷饼拉伸,侧卧扭转拉伸（髋部与大腿）,按源侧卧扭转姿势命名，避免椒盐卷饼直译
+1196,dumbbell alternate biceps curl v. 2,哑铃交替二头弯举 v. 2,哑铃交替二头弯举（变式2）,变式编号中文化，保留不同动作ID
+1208,cable twist (up down) v. 2,绳索转体(由上向下) v. 2,绳索转体(由上向下)（变式2）,变式编号中文化，保留不同动作ID
+1216,lever seated one leg calf raise,杠杆坐姿单腿提踵,器械坐姿单腿提踵,lever器械用语本土化
+1220,lever calf raise (bench press machine),杠杆提踵(卧推机),器械提踵(卧推机),lever器械用语本土化
+1221,lever shrug (bench press machine),杠杆耸肩(卧推机),器械耸肩(卧推机),lever器械用语本土化
+1226,ez barbell standing overhead press,EZ杠铃站姿过头推举,EZ曲杆站姿过头推举,统一简体中文健身术语
+1232,lever seated squat,杠杆坐姿深蹲,器械坐姿深蹲,lever器械用语本土化
+1235,lever one arm seated row (seated row machine),杠杆单臂坐姿划船(坐姿划船机),器械单臂坐姿划船(坐姿划船机),lever器械用语本土化
+1243,dead bug v. 2,死虫式 v. 2,死虫式（变式2）,变式编号中文化，保留不同动作ID
+1244,flutter kicks v. 3,交替打腿 v. 3,交替打腿（变式3）,变式编号中文化，保留不同动作ID
+1246,hollow hold,空心支撑,仰卧中空支撑,hollow hold为中空支撑，非空心支撑
+1253,lever donkey calf raise,杠杆驴式提踵,器械驴式提踵,lever器械用语本土化
+1263,cable one arm fly on exercise ball,绳索单臂飞鸟(稳定球),绳索单臂飞鸟(健身球),统一简体中文健身术语
+1264,cable one arm incline fly on exercise ball,绳索单臂上斜飞鸟(稳定球),绳索单臂上斜飞鸟(健身球),统一简体中文健身术语
+1266,cable one arm incline press on exercise ball,绳索单臂上斜推举(稳定球),绳索单臂上斜推举(健身球),统一简体中文健身术语
+1267,cable one arm press on exercise ball,绳索单臂推举(稳定球),绳索单臂推举(健身球),统一简体中文健身术语
+1268,cable press on exercise ball,绳索推举(稳定球),绳索推举(健身球),统一简体中文健身术语
+1272,chest stretch with exercise ball,稳定球胸部拉伸,健身球胸部拉伸,统一简体中文健身术语
+1277,dumbbell fly on exercise ball,哑铃飞鸟(稳定球),哑铃飞鸟(健身球),统一简体中文健身术语
+1278,dumbbell incline fly on exercise ball,哑铃上斜飞鸟(稳定球),哑铃上斜飞鸟(健身球),统一简体中文健身术语
+1280,dumbbell incline one arm fly on exercise ball,哑铃上斜单臂飞鸟(稳定球),哑铃上斜单臂飞鸟(健身球),统一简体中文健身术语
+1282,dumbbell incline one arm press on exercise ball,哑铃上斜单臂推举(稳定球),哑铃上斜单臂推举(健身球),统一简体中文健身术语
+1283,dumbbell incline press on exercise ball,哑铃上斜推举(稳定球),哑铃上斜推举(健身球),统一简体中文健身术语
+1284,dumbbell lying pullover on exercise ball,哑铃仰卧上拉(稳定球),哑铃仰卧上拉(健身球),统一简体中文健身术语
+1286,dumbbell one arm chest fly on exercise ball,哑铃单臂胸部飞鸟(稳定球),哑铃单臂胸部飞鸟(健身球),统一简体中文健身术语
+1288,dumbbell one arm fly on exercise ball,哑铃单臂飞鸟(稳定球),哑铃单臂飞鸟(健身球),统一简体中文健身术语
+1290,dumbbell one arm press on exercise ball,哑铃单臂推举(稳定球) v. 2,哑铃单臂推举(健身球)（变式2）,统一简体中文健身术语；变式编号中文化，保留不同动作ID
+1291,dumbbell one arm pullover on exercise ball,哑铃单臂上拉(稳定球),哑铃单臂上拉(健身球),统一简体中文健身术语
+1292,dumbbell one leg fly on exercise ball,哑铃单腿飞鸟(稳定球),哑铃单腿飞鸟(健身球),统一简体中文健身术语
+1293,dumbbell press on exercise ball,哑铃推举(稳定球),哑铃推举(健身球),统一简体中文健身术语
+1294,dumbbell pullover hip extension on exercise ball,哑铃上拉伸髋(稳定球),哑铃上拉伸髋(健身球),统一简体中文健身术语
+1295,dumbbell pullover on exercise ball,哑铃上拉(稳定球),哑铃上拉(健身球),统一简体中文健身术语
+1296,exercise ball pike push up,稳定球屈体俯卧撑,健身球屈体俯卧撑,统一简体中文健身术语
+1299,lever incline chest press,杠杆上斜胸推,器械上斜胸推,lever器械用语本土化
+1300,lever decline chest press,杠杆下斜胸推,器械下斜胸推,lever器械用语本土化
+1313,lever unilateral row,杠杆单侧划船,器械单侧划船,lever器械用语本土化
+1314,back extension on exercise ball,稳定球背部伸展,健身球背部伸展,统一简体中文健身术语
+1328,dumbbell lying rear delt row,哑铃俯卧后三角肌划船,哑铃俯卧三角肌后束划船,统一简体中文健身术语
+1332,exercise ball alternating arm ups,稳定球交替举臂,健身球交替举臂,统一简体中文健身术语
+1333,exercise ball back extension with arms extended,稳定球背部伸展(手臂伸直),健身球背部伸展(手臂伸直),统一简体中文健身术语
+1334,exercise ball back extension with hands behind head,稳定球背部伸展(手放脑后),健身球背部伸展(手放脑后),统一简体中文健身术语
+1335,exercise ball back extension with knees off ground,稳定球背部伸展(膝盖离地),健身球背部伸展(膝盖离地),统一简体中文健身术语
+1336,exercise ball back extension with rotation,稳定球背部伸展并旋转,健身球背部伸展并旋转,统一简体中文健身术语
+1337,exercise ball back stretch,稳定球背部拉伸,健身球背部拉伸,统一简体中文健身术语
+1338,exercise ball hug,稳定球拥抱,健身球拥抱,统一简体中文健身术语
+1339,exercise ball lat stretch,稳定球背阔肌拉伸,健身球背阔肌拉伸,统一简体中文健身术语
+1340,exercise ball lower back prone stretch,稳定球下背部俯卧拉伸,健身球下背部俯卧拉伸,统一简体中文健身术语
+1341,exercise ball lower back stretch (pyramid),稳定球下背部拉伸(金字塔式),健身球下背部拉伸(金字塔式),统一简体中文健身术语
+1342,exercise ball lying side lat stretch,稳定球侧卧背阔肌拉伸,健身球侧卧背阔肌拉伸,统一简体中文健身术语
+1343,exercise ball prone leg raise,稳定球俯卧抬腿,健身球俯卧抬腿,统一简体中文健身术语
+1344,ez bar reverse grip bent over row,EZ杠反握俯身划船,EZ曲杆反握俯身划船,统一简体中文健身术语
+1347,lever one arm lateral wide pulldown,杠杆单臂侧向宽握下拉,器械单臂侧向宽握下拉,lever器械用语本土化
+1348,lever reverse grip vertical row,杠杆反握垂直划船,器械反握垂直划船,lever器械用语本土化
+1349,lever reverse t-bar row,杠杆反向T杠划船,器械反向T杠划船,lever器械用语本土化
+1351,lever t-bar reverse grip row,杠杆T杠反握划船,器械T杠反握划船,lever器械用语本土化
+1356,lever one arm lateral high row,杠杆单臂侧向高位划船,器械单臂侧向高位划船,lever器械用语本土化
+1369,band two legs calf raise - (band under both legs) v. 2,弹力带双腿提踵(弹力带踩于双脚下) v. 2,弹力带双腿提踵(弹力带踩于双脚下)（变式2）,变式编号中文化，保留不同动作ID
+1371,barbell seated calf raise,杠铃坐姿提踵 v. 2,杠铃坐姿提踵（变式2）,变式编号中文化，保留不同动作ID
+1372,barbell standing calf raise,杠铃站姿提踵 v. 2,杠铃站姿提踵（变式2）,变式编号中文化，保留不同动作ID
+1382,exercise ball on the wall calf raise,稳定球靠墙提踵,健身球靠墙提踵,统一简体中文健身术语
+1385,lever seated squat calf raise on leg press machine,杠杆坐姿深蹲提踵(腿举机),器械坐姿深蹲提踵(腿举机),lever器械用语本土化
+1394,smith reverse calf raises,史密斯机反向提踵 v. 2,史密斯机反向提踵（变式2）,变式编号中文化，保留不同动作ID
+1401,muscle-up (on vertical bar),双杠上推(垂直杆),双力臂(垂直杆),muscle up统一双力臂称谓
+1403,neck side stretch,颈部侧向拉伸 v. 2,颈部侧向拉伸（变式2）,变式编号中文化，保留不同动作ID
+1416,exercise ball one leg prone lower body rotation,稳定球单腿俯卧下肢旋转,健身球单腿俯卧下肢旋转,统一简体中文健身术语
+1417,exercise ball one legged diagonal kick hamstring curl,稳定球单腿斜向踢腿腘绳肌弯举,健身球单腿斜向踢腿腘绳肌弯举,统一简体中文健身术语
+1439,lever gripless shrug v. 2,杠杆无握耸肩 v. 2,器械无握耸肩（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+1445,dumbbell rdl stretch,哑铃RDL拉伸,哑铃罗马尼亚硬拉拉伸,展开RDL，保留stretch
+1447,lever calf stretch (plate loaded),杠杆小腿拉伸(挂片式),器械小腿拉伸(挂片式),lever器械用语本土化
+1451,lever seated dip,杠杆坐姿臂屈伸,器械坐姿臂屈伸,lever器械用语本土化
+1452,lever seated crunch,杠杆坐姿卷腹,器械坐姿卷腹,lever器械用语本土化
+1453,lever seated twist,杠杆坐姿转体,器械坐姿转体,lever器械用语本土化
+1454,lever seated shoulder press,杠杆坐姿肩部推举,器械坐姿肩部推举,lever器械用语本土化
+1455,lever chest press v. 2,杠杆胸推 v. 2,器械胸推（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+1458,ez barbell seated curls,EZ杠铃坐姿弯举,EZ曲杆坐姿弯举,统一简体中文健身术语
+1479,lever incline chest press v. 2,杠杆上斜胸推 v. 2,器械上斜胸推（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+1489,sissy squat,西西里深蹲,西西深蹲,sissy非西西里，统一库内已有称谓
+1495,oblique crunch v. 2,侧腹卷腹 v. 2,侧腹卷腹（变式2）,变式编号中文化，保留不同动作ID
+1505,band calf raise v. 3,弹力带提踵 v. 3,弹力带提踵（变式3）,变式编号中文化，保留不同动作ID
+1506,band ez barbell close grip curl,弹力带EZ杠铃窄握弯举,弹力带EZ曲杆窄握弯举,统一简体中文健身术语
+1508,band lateral raise v. 2,弹力带侧平举 v. 2,弹力带侧平举（变式2）,变式编号中文化，保留不同动作ID
+1543,barbell stiff legged deadlift,杠铃直腿硬拉 v. 2,杠铃直腿硬拉（变式2）,变式编号中文化，保留不同动作ID
+1552,dumbbell jumping squat,哑铃跳跃深蹲 v. 2,哑铃跳跃深蹲（变式2）,变式编号中文化，保留不同动作ID
+1555,dumbbell squat v. 2,哑铃深蹲 v. 2,哑铃深蹲（变式2）,变式编号中文化，保留不同动作ID
+1559,exercise ball hip flexor stretch,稳定球髋屈肌拉伸,健身球髋屈肌拉伸,统一简体中文健身术语
+1560,exercise ball seated hamstring stretch,稳定球坐姿腘绳肌拉伸,健身球坐姿腘绳肌拉伸,统一简体中文健身术语
+1561,exercise ball seated quad stretch,稳定球坐姿股四头肌拉伸,健身球坐姿股四头肌拉伸,统一简体中文健身术语
+1562,exercise ball wall squat,稳定球靠墙深蹲,健身球靠墙深蹲,统一简体中文健身术语
+1571,lever one leg extension,杠杆单腿腿屈伸,器械单腿腿屈伸,lever器械用语本土化
+1572,lever seated one leg wide squat,杠杆坐姿单腿宽距深蹲,器械坐姿单腿宽距深蹲,lever器械用语本土化
+1573,lever seated one leg squat,杠杆坐姿单腿深蹲,器械坐姿单腿深蹲,lever器械用语本土化
+1574,lever seated wide squat,杠杆坐姿宽距深蹲,器械坐姿宽距深蹲,lever器械用语本土化
+1586,lever seated one leg curl,杠杆坐姿单腿弯举,器械坐姿单腿弯举,lever器械用语本土化
+1590,lever lying single leg curl,杠杆俯卧单腿弯举,器械俯卧单腿弯举,lever器械用语本土化
+1601,standing straight leg hamstring contract relax on exercise ball,站姿直腿腘绳肌收缩放松(稳定球),站姿直腿腘绳肌收缩放松(健身球),统一简体中文健身术语
+1603,weighted exercise ball wall squat,负重稳定球靠墙深蹲,负重健身球靠墙深蹲,统一简体中文健身术语
+1614,lever preacher curl v. 2,杠杆牧师凳弯举 v. 2,器械牧师凳弯举（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+1615,lever hammer grip preacher curl,杠杆锤式握牧师凳弯举,器械锤式握牧师凳弯举,lever器械用语本土化
+1616,lever reverse grip preacher curl,杠杆反握牧师凳弯举,器械反握牧师凳弯举,lever器械用语本土化
+1618,dumbbell incline hammer press on exercise ball,哑铃上斜锤式推举(稳定球),哑铃上斜锤式推举(健身球),统一简体中文健身术语
+1620,dumbbell incline one arm hammer press on exercise ball,哑铃上斜单臂锤式推举(稳定球),哑铃上斜单臂锤式推举(健身球),统一简体中文健身术语
+1621,dumbbell one arm hammer press on exercise ball,哑铃单臂锤式推举(稳定球),哑铃单臂锤式推举(健身球),统一简体中文健身术语
+1627,ez barbell close grip preacher curl,EZ杠铃窄握牧师凳弯举,EZ曲杆窄握牧师凳弯举,统一简体中文健身术语
+1628,ez barbell spider curl,EZ杠铃蜘蛛弯举 v. 2,EZ曲杆蜘蛛弯举（变式2）,统一简体中文健身术语；变式编号中文化，保留不同动作ID
+1637,cable overhead curl on exercise ball,绳索过头弯举(稳定球),绳索过头弯举(健身球),统一简体中文健身术语
+1649,dumbbell alternating bicep curl with leg raised on exercise ball,"哑铃交替二头弯举(单腿抬起,稳定球)","哑铃交替二头弯举(单腿抬起,健身球)",统一简体中文健身术语
+1650,dumbbell alternating seated bicep curl on exercise ball,哑铃坐姿交替二头弯举(稳定球),哑铃坐姿交替二头弯举(健身球),统一简体中文健身术语
+1652,dumbbell bicep curl on exercise ball with leg raised,"哑铃二头弯举(稳定球,单腿抬起)","哑铃二头弯举(健身球,单腿抬起)",统一简体中文健身术语
+1657,dumbbell cross body hammer curl v. 2,哑铃交叉锤式弯举 v. 2,哑铃交叉锤式弯举（变式2）,变式编号中文化，保留不同动作ID
+1659,dumbbell hammer curl on exercise ball,哑铃锤式弯举(稳定球),哑铃锤式弯举(健身球),统一简体中文健身术语
+1660,dumbbell kneeling bicep curl exercise ball,哑铃跪姿二头弯举(稳定球),哑铃跪姿二头弯举(健身球),统一简体中文健身术语
+1668,dumbbell one arm seated bicep curl on exercise ball,哑铃单臂坐姿二头弯举(稳定球),哑铃单臂坐姿二头弯举(健身球),统一简体中文健身术语
+1673,dumbbell preacher curl over exercise ball,哑铃牧师凳弯举(稳定球上),哑铃牧师凳弯举(健身球上),统一简体中文健身术语
+1676,dumbbell seated alternate hammer curl on exercise ball,哑铃坐姿交替锤式弯举(稳定球),哑铃坐姿交替锤式弯举(健身球),统一简体中文健身术语
+1679,dumbbell seated one arm bicep curl on exercise ball with leg raised,"哑铃单臂坐姿二头弯举(稳定球,单腿抬起)","哑铃单臂坐姿二头弯举(健身球,单腿抬起)",统一简体中文健身术语
+1680,dumbbell standing one arm curl over incline bench,哑铃站姿单臂弯举(上斜凳上方) v. 2,哑铃站姿单臂弯举(上斜凳上方)（变式2）,变式编号中文化，保留不同动作ID
+1681,dumbbell two arm seated hammer curl on exercise ball,哑铃双臂坐姿锤式弯举(稳定球),哑铃双臂坐姿锤式弯举(健身球),统一简体中文健身术语
+1682,ez bar seated close grip concentration curl,EZ杠坐姿窄握集中弯举,EZ曲杆坐姿窄握集中弯举,统一简体中文健身术语
+1695,stability ball single leg squat,稳定球单腿深蹲,健身球单腿深蹲,统一简体中文健身术语
+1706,stability ball front plank,稳定球前平板支撑,健身球前平板支撑,统一简体中文健身术语
+1707,prone twist on stability ball,稳定球俯卧转体,健身球俯卧转体,统一简体中文健身术语
+1715,assisted oblique and latissimus dorsi stretch on stability ball,辅助腹斜肌与背阔肌拉伸(稳定球),辅助腹斜肌与背阔肌拉伸(健身球),统一简体中文健身术语
+1716,assisted seated pectoralis major stretch with stability ball,辅助坐姿胸大肌拉伸(稳定球),辅助坐姿胸大肌拉伸(健身球),统一简体中文健身术语
+1718,barbell seated close grip behind neck triceps extension,杠铃坐姿窄握颈后三头肌伸展,杠铃坐姿窄握颈后臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+1731,dumbbell close grip press,哑铃窄握推举 v. 3,哑铃窄握推举（变式3）,变式编号中文化，保留不同动作ID
+1732,dumbbell forward lunge triceps extension,哑铃前弓步蹲三头肌伸展,哑铃前弓步蹲臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+1734,dumbbell kickbacks on exercise ball,哑铃后踢(稳定球),哑铃后踢(健身球),统一简体中文健身术语
+1736,dumbbell one arm french press on exercise ball,哑铃单臂法式推举(稳定球),哑铃单臂法式推举(健身球),统一简体中文健身术语
+1737,dumbbell seated bent over triceps extension,哑铃坐姿俯身三头肌伸展,哑铃坐姿俯身臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+1740,dumbbell standing bent over one arm triceps extension,哑铃站姿俯身单臂三头肌伸展,哑铃站姿俯身单臂臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+1741,dumbbell standing bent over two arm triceps extension,哑铃站姿俯身双臂三头肌伸展,哑铃站姿俯身双臂臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+1744,exercise ball dip,稳定球臂屈伸,健身球臂屈伸,统一简体中文健身术语
+1745,exercise ball seated triceps stretch,稳定球坐姿三头肌拉伸,健身球坐姿三头肌拉伸,统一简体中文健身术语
+1746,exercise ball supine triceps extension,稳定球仰卧三头肌伸展,健身球仰卧臂屈伸,统一简体中文健身术语；区分抗阻臂屈伸与肌肉拉伸
+1747,ez bar french press on exercise ball,EZ杠法式推举(稳定球),EZ曲杆法式推举(健身球),统一简体中文健身术语
+1748,ez bar lying close grip triceps extension behind head,EZ杠仰卧窄握脑后三头肌伸展,EZ曲杆仰卧窄握脑后臂屈伸,统一简体中文健身术语；区分抗阻臂屈伸与肌肉拉伸
+1749,ez bar standing french press,EZ杠站姿法式推举,EZ曲杆站姿法式推举,统一简体中文健身术语
+1766,self assisted inverse leg curl,自助反向腿弯举 v. 2,自助反向腿弯举（变式2）,变式编号中文化，保留不同动作ID
+1771,bodyweight kneeling triceps extension,徒手跪姿三头肌伸展,徒手跪姿臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+1776,lying single straight leg hip extension,仰卧单直腿伸髋,俯卧单腿直腿伸髋,按源说明核实卧姿与动作方向，避免仰卧误译
+1820,ez bar preacher arms stretch,EZ杠牧师凳手臂拉伸,EZ曲杆牧师凳手臂拉伸,统一简体中文健身术语
+1856,lever lying leg raise (bent knee),杠杆仰卧抬腿(屈膝),器械仰卧抬腿(屈膝),lever器械用语本土化
+1857,lever total abdominal crunch,杠杆全腹卷腹,器械全腹卷腹,lever器械用语本土化
+1858,lever decline sit up,杠杆下斜仰卧起坐,器械下斜仰卧起坐,lever器械用语本土化
+1859,cable kneeling triceps extension v. 2,绳索跪姿三头肌伸展 v. 2,绳索跪姿臂屈伸（变式2）,区分抗阻臂屈伸与肌肉拉伸；变式编号中文化，保留不同动作ID
+1860,hyperextension v. 2,山羊挺身 v. 2,山羊挺身（变式2）,变式编号中文化，保留不同动作ID
+1862,lever cable shoulder press,杠杆绳索肩部推举,器械绳索肩部推举,lever器械用语本土化
+1863,lever cable rear pulldown,杠杆绳索后下拉,器械绳索后下拉,lever器械用语本土化
+1867,lever seated hip adduction v. 2,杠杆坐姿髋内收 v. 2,器械坐姿髋内收（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+1869,lever seated hip abduction v. 2,杠杆坐姿髋外展 v. 2,器械坐姿髋外展（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+1870,lever lateral pulldown (plate loaded),杠杆高位下拉(挂片式),器械高位下拉(挂片式),lever器械用语本土化
+1871,lever triceps dip (plate loaded),杠杆三头肌臂屈伸(挂片式),器械三头肌臂屈伸(挂片式),lever器械用语本土化
+1872,lever preacher curl (plate loaded),杠杆牧师凳弯举(挂片式),器械牧师凳弯举(挂片式),lever器械用语本土化
+1873,lever leg extension (plate loaded),杠杆腿屈伸(挂片式),器械腿屈伸(挂片式),lever器械用语本土化
+1874,lever alternate leg extension (plate loaded),杠杆交替腿屈伸(挂片式),器械交替腿屈伸(挂片式),lever器械用语本土化
+1875,lever squat (plate loaded),杠杆深蹲(挂片式),器械深蹲(挂片式),lever器械用语本土化
+1876,lever lateral raise (plate loaded),杠杆侧平举(挂片式),器械侧平举(挂片式),lever器械用语本土化
+2106,cat stretch v. 2,猫式拉伸 v. 2,猫式拉伸（变式2）,变式编号中文化，保留不同动作ID
+2136,dumbbell cuban press v. 2,哑铃古巴推举 v. 2,哑铃古巴推举（变式2）,变式编号中文化，保留不同动作ID
+2138,stationary bike run v. 3,固定自行车骑行 v. 3,固定自行车骑行（变式3）,变式编号中文化，保留不同动作ID
+2146,lever hip thrust,杠杆臀推,器械臀推,lever器械用语本土化
+2147,lever hip thrust with resistance band,杠杆臀推(用弹力带),器械臀推(用弹力带),lever器械用语本土化
+2148,lever single leg hip thrust,杠杆单腿臀推,器械单腿臀推,lever器械用语本土化
+2157,resistance band lying leg raise,阻力带仰卧抬腿,阻力带侧卧抬腿,源说明为侧卧抬腿，纠正仰卧误译
+2186,ez barbell decline triceps extension,EZ杠铃下斜三头肌伸展,EZ曲杆下斜臂屈伸,统一简体中文健身术语；区分抗阻臂屈伸与肌肉拉伸
+2188,dumbbell seated triceps extension,哑铃坐姿三头肌伸展,哑铃坐姿臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+2189,dumbbells seated triceps extension,双哑铃坐姿三头肌伸展,双哑铃坐姿臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+2192,elliptical machine walk,椭圆机步行 v. 2,椭圆机步行（变式2）,变式编号中文化，保留不同动作ID
+2193,bicycle recline walk,斜躺自行车步行,卧式单车轻松骑行,源为卧式单车低强度踩踏，不是步行
+2198,lever triceps extension v. 3,杠杆三头肌伸展 v. 3,器械臂屈伸（变式3）,lever器械用语本土化；区分抗阻臂屈伸与肌肉拉伸；变式编号中文化，保留不同动作ID
+2224,sled 45 degrees leg press,滑车45度腿举 v. 2,滑车45度腿举（变式2）,变式编号中文化，保留不同动作ID
+2265,lever seated row v. 2,杠杆坐姿划船 v. 2,器械坐姿划船（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+2266,lever back extension v. 2,杠杆背部伸展 v. 2,器械背部伸展（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+2267,lever seated leg press,杠杆坐姿腿举,器械坐姿腿举,lever器械用语本土化
+2268,lever seated crunch (hands pad),杠杆坐姿卷腹(手扶垫),器械坐姿卷腹(手扶垫),lever器械用语本土化
+2276,lever lying crunch,杠杆仰卧卷腹,器械仰卧卷腹,lever器械用语本土化
+2277,lever chest press v. 4,杠杆推胸 v. 4,器械推胸（变式4）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+2278,lever decline chest press v. 2,杠杆下斜推胸 v. 2,器械下斜推胸（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+2279,stationary bike run v. 4,固定自行车骑行 v. 4,固定自行车骑行（变式4）,变式编号中文化，保留不同动作ID
+2282,lever neck extension (plate loaded),杠杆颈部伸展(挂片式),器械颈部伸展(挂片式),lever器械用语本土化
+2283,lever neck left side flexion (plate loaded),杠杆颈部左侧屈(挂片式),器械颈部左侧屈(挂片式),lever器械用语本土化
+2284,lever neck right side flexion (plate loaded),杠杆颈部右侧屈(挂片式),器械颈部右侧屈(挂片式),lever器械用语本土化
+2285,lever pullover,杠杆仰卧上拉,器械仰卧上拉,lever器械用语本土化
+2286,lever hip extension v. 2,杠杆髋伸展 v. 2,器械髋伸展（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+2287,lever alternate leg press,杠杆交替腿举,器械交替腿举,lever器械用语本土化
+2288,lever gripper hands,杠杆握力器,器械握力器,lever器械用语本土化
+2289,lever calf press,杠杆小腿推举,器械小腿推举,lever器械用语本土化
+2292,dumbbell rear delt raise,哑铃后三角肌平举,哑铃三角肌后束平举,统一简体中文健身术语
+2296,stability ball rollout,稳定球滚动,健身球滚动,统一简体中文健身术语
+2297,stability ball crunch (full range hands behind head),稳定球卷腹(全幅度手放脑后),健身球卷腹(全幅度手放脑后),统一简体中文健身术语
+2314,lever lying crunch v. 2,杠杆仰卧卷腹 v. 2,器械仰卧卷腹（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+2315,lever rotary calf,杠杆旋转提踵,器械旋转提踵,lever器械用语本土化
+2318,lever shoulder press v. 3,杠杆肩部推举 v. 3,器械肩部推举（变式3）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+2321,dumbbell standing inner biceps curl v. 2,哑铃站姿内侧二头肌弯举 v. 2,哑铃站姿内侧二头肌弯举（变式2）,变式编号中文化，保留不同动作ID
+2335,lever seated calf press,杠杆坐姿小腿推举,器械坐姿小腿推举,lever器械用语本土化
+2365,dumbbells straight arm pullover v. 2,双哑铃直臂上拉 v. 2,双哑铃直臂上拉（变式2）,变式编号中文化，保留不同动作ID
+2371,weighted russian twist v. 2,负重俄罗斯转体 v. 2,负重俄罗斯转体（变式2）,变式编号中文化，保留不同动作ID
+2381,dumbbell one arm shoulder press v. 3,哑铃单臂肩部推举 v. 3,哑铃单臂肩部推举（变式3）,变式编号中文化，保留不同动作ID
+2393,dumbbell one arm bent over row,哑铃单臂俯身划船 v. 2,哑铃单臂俯身划船（变式2）,变式编号中文化，保留不同动作ID
+2395,air bike v. 2,空气自行车 v. 2,自行车卷腹（变式2）,变式编号中文化，保留不同动作ID；源为肘触对侧膝卷腹，不是有氧单车
+2396,cable lying biceps curl v. 2,绳索仰卧二头肌弯举 v. 2,绳索仰卧二头肌弯举（变式2）,变式编号中文化，保留不同动作ID
+2404,ez-bar biceps curl (with arm blaster),EZ杠二头肌弯举(用手臂塑形板),EZ曲杆二头肌弯举(用手臂塑形板),统一简体中文健身术语
+2408,weighted lying neck extension (with head harness),负重仰卧颈部伸展(用头带),负重俯卧颈后伸（头带）,按源说明核实卧姿与动作方向，避免仰卧误译
+2420,resistance band air bike,弹力带空气自行车,弹力带自行车卷腹（空气自行车式）,源为抗阻自行车卷腹，保留与其他ID区分
+2432,ez-bar close-grip bench press,EZ杠窄距卧推,EZ曲杆窄距卧推,统一简体中文健身术语
+2470,dumbbell lying on floor rear delt raise,哑铃俯卧地面后三角肌平举,哑铃俯卧地面三角肌后束平举,统一简体中文健身术语
+2485,dumbbell hammer curl v. 3,哑铃锤式弯举 v. 3,哑铃锤式弯举（变式3）,变式编号中文化，保留不同动作ID
+2487,dumbbell rear delt fly,哑铃后三角肌飞鸟,哑铃三角肌后束飞鸟,统一简体中文健身术语
+2515,cable front raise v. 2,绳索前平举 v. 2,绳索前平举（变式2）,变式编号中文化，保留不同动作ID
+2544,cable wide grip rear pulldown behind neck v. 2,绳索宽握颈后下拉 v. 2,绳索宽握颈后下拉（变式2）,变式编号中文化，保留不同动作ID
+2555,resistance band glute bridge v. 2,弹力带臀桥 v. 2,弹力带臀桥（变式2）,变式编号中文化，保留不同动作ID
+2589,dumbbell lying triceps extension v. 2,哑铃仰卧三头肌伸展 v. 2,哑铃仰卧臂屈伸（变式2）,区分抗阻臂屈伸与肌肉拉伸；变式编号中文化，保留不同动作ID
+2611,lever horizontal one leg press,杠杆水平单腿举,器械水平单腿举,lever器械用语本土化
+2656,cable one arm biceps curl v. 2,绳索单臂二头肌弯举 v. 2,绳索单臂二头肌弯举（变式2）,变式编号中文化，保留不同动作ID
+2659,lever incline chest press (plate loaded),杠杆上斜推胸(挂片式),器械上斜推胸(挂片式),lever器械用语本土化
+2660,lever preacher curl (plate loaded) v. 2,杠杆牧师凳弯举(挂片式) v. 2,器械牧师凳弯举(挂片式)（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+2662,lever high row (plate loaded) v. 2,杠杆高位划船(挂片式) v. 2,器械高位划船(挂片式)（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+2663,lever high row (plate loaded) v. 3,杠杆高位划船(挂片式) v. 3,器械高位划船(挂片式)（变式3）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+2664,lever seated row (plate loaded),杠杆坐姿划船(挂片式),器械坐姿划船(挂片式),lever器械用语本土化
+2665,lever lateral wide pulldown,杠杆宽握下拉,器械宽握下拉,lever器械用语本土化
+2666,lever seated calf raise (plate loaded) v. 2,杠杆坐姿提踵(挂片式) v. 2,器械坐姿提踵(挂片式)（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+2671,smith narrow row v. 2,史密斯机窄握划船 v. 2,史密斯机窄握划船（变式2）,变式编号中文化，保留不同动作ID
+2683,barbell reverse wrist curl v. 2,杠铃反握腕弯举 v. 3,杠铃反握腕弯举（变式2）,变式编号中文化，保留不同动作ID；英文动作源为v.2，纠正旧中文v.3的编号错误，保留ID
+2690,dumbbell one arm lateral raise v. 2,哑铃单臂侧平举 v. 2,哑铃单臂侧平举（变式2）,变式编号中文化，保留不同动作ID
+2705,dumbbell lying pronation on floor,哑铃地面仰卧旋前,哑铃俯卧地面旋前,按源说明核实卧姿与动作方向，避免仰卧误译
+2722,strongman hood stones,大力士罩石,大力士抱石上台,按石头举至平台的动作命名，非罩石
+2731,strongman weight for height,大力士举重过高,大力士重物过杆抛举,weight for height指抛越高杆，非举重过高
+2733,strongman apollons axle,大力士阿波罗杠铃轴,大力士阿波罗粗杠举,保留项目专名，axle为粗杠
+2735,strongman yoke walk,大力士轭行走,大力士负重架行走,yoke为肩背负重架，替代轭字直译
+2736,lever reverse grip lateral pulldown,杠杆反握高位下拉,器械反握高位下拉,lever器械用语本土化
+2738,dumbbell lying triceps extension on floor,哑铃地面仰卧三头肌伸展,哑铃地面仰卧臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+2741,ez-barbell standing wide grip biceps curl,EZ杠站姿宽握二头肌弯举,EZ曲杆站姿宽握二头肌弯举,统一简体中文健身术语
+2742,lever hip thrust (with stepbox) v. 2,杠杆臀推(用踏箱) v. 2,器械臀推(用踏箱)（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+2743,lever hip thrust v. 2,杠杆臀推 v. 2,器械臀推（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+2746,lever abduction squat,杠杆外展深蹲,器械外展深蹲,lever器械用语本土化
+2747,lever adduction thrust,杠杆内收推举,器械内收推举,lever器械用语本土化
+2748,lever kneeling reverse hyperextension,杠杆跪姿反向挺身,器械跪姿反向挺身,lever器械用语本土化
+2749,lever assisted leg press,杠杆辅助腿举,器械辅助腿举,lever器械用语本土化
+2752,split squat v. 2,分腿蹲 v. 2,分腿蹲（变式2）,变式编号中文化，保留不同动作ID
+2796,dumbbell step-up lunge,哑铃上台阶弓步 v. 2,哑铃上台阶弓步（变式2）,变式编号中文化，保留不同动作ID
+2797,barbell squat jump step rear lunge v. 2,杠铃深蹲跳后撤弓步 v. 2,杠铃深蹲跳后撤弓步（变式2）,变式编号中文化，保留不同动作ID
+2804,dumbbell supported squat v. 2,哑铃扶持深蹲 v. 2,哑铃扶持深蹲（变式2）,变式编号中文化，保留不同动作ID
+2806,dumbbell single leg deadlift with stepbox support v. 2,哑铃单腿硬拉(踏箱支撑) v. 2,哑铃单腿硬拉(踏箱支撑)（变式2）,变式编号中文化，保留不同动作ID
+2807,dumbbell sumo pull through v. 2,哑铃相扑穿腿拉 v. 2,哑铃相扑穿腿拉（变式2）,变式编号中文化，保留不同动作ID
+2809,barbell split squat v. 3,杠铃分腿蹲 v. 3,杠铃分腿蹲（变式3）,变式编号中文化，保留不同动作ID
+2810,barbell split squat v. 2,杠铃分腿蹲 v. 2,杠铃分腿蹲（变式2）,变式编号中文化，保留不同动作ID
+2815,v up down (with stability ball),V字起落(稳定球),V字起落(健身球),统一简体中文健身术语
+2844,floor hyperextension v. 2,地面挺身 v. 2,地面挺身（变式2）,变式编号中文化，保留不同动作ID
+2851,lying double leg kick,仰卧双腿踢,俯卧双腿踢,按源说明核实卧姿与动作方向，避免仰卧误译
+2855,lying single leg kick,仰卧单腿踢,俯卧单腿踢,按源说明核实卧姿与动作方向，避免仰卧误译
+2858,roll up v. 2,卷起 v. 2,卷起（变式2）,变式编号中文化，保留不同动作ID
+2868,spine twist v. 2,脊柱扭转 v. 2,脊柱扭转（变式2）,变式编号中文化，保留不同动作ID
+2872,single leg stretch (bent knee) v. 2,单腿伸展(屈膝) v. 2,单腿伸展(屈膝)（变式2）,变式编号中文化，保留不同动作ID
+2873,spine stretch forward v. 2,脊柱前伸 v. 2,脊柱前伸（变式2）,变式编号中文化，保留不同动作ID
+2900,ez barbell standing preacher curl,EZ杠站姿牧师凳弯举,EZ曲杆站姿牧师凳弯举,统一简体中文健身术语
+2903,power sled rear lunge v. 2,动力雪橇后撤弓步 v. 2,动力雪橇后撤弓步（变式2）,变式编号中文化，保留不同动作ID
+2935,half kneeling pvc pec mobilization stretch,半跪姿pvc管胸肌活动拉伸,半跪姿PVC管胸肌活动拉伸,统一简体中文健身术语
+2937,stability ball rounded rollout,稳定球圆背滚动,健身球圆背滚动,统一简体中文健身术语
+2950,lever belt squat,杠杆腰带深蹲,器械腰带深蹲,lever器械用语本土化
+2951,lever horizontal leg press,杠杆水平腿举,器械水平腿举,lever器械用语本土化
+2962,lever seated hammer grip shoulder press,杠杆坐姿锤式握肩部推举,器械坐姿锤式握肩部推举,lever器械用语本土化
+2968,dumbbell thruster,哑铃推举深蹲,哑铃深蹲推举,动作顺序为深蹲后推举
+2969,dumbbell thruster v. 2,哑铃推举深蹲 v. 2,哑铃深蹲推举（变式2）,动作顺序为深蹲后推举；变式编号中文化，保留不同动作ID
+2970,band thruster,弹力带推举深蹲,弹力带深蹲推举,动作顺序为深蹲后推举
+2974,lever one arm chest press (plate loaded),杠杆单臂推胸(挂片式),器械单臂推胸(挂片式),lever器械用语本土化
+2980,dumbbell renegade row,哑铃反向划船,哑铃支撑划船,renegade为平板支撑划船，非反向划船
+2997,band assisted pull up v. 3,弹力带辅助引体向上 v. 3,弹力带辅助引体向上（变式3）,变式编号中文化，保留不同动作ID
+3010,ez bar lying bent arms pullover,EZ杠仰卧屈臂上拉,EZ曲杆仰卧屈臂上拉,统一简体中文健身术语
+3023,band lying hip internal rotation v. 2,弹力带仰卧髋内旋 v. 2,弹力带仰卧髋内旋（变式2）,变式编号中文化，保留不同动作ID
+3048,cable hip abduction v. 2,龙门架髋外展 v. 2,龙门架髋外展（变式2）,变式编号中文化，保留不同动作ID
+3075,dumbbell close grip press v. 2,哑铃窄握推举 v. 2,哑铃窄握推举（变式2）,变式编号中文化，保留不同动作ID
+3083,dumbbell seated curl v. 2,哑铃坐姿弯举 v. 2,哑铃坐姿弯举（变式2）,变式编号中文化，保留不同动作ID
+3096,lever alternating narrow grip seated row (plate loaded),杠杆交替窄握坐姿划船(挂片式),器械交替窄握坐姿划船(挂片式),lever器械用语本土化
+3102,lever narrow grip seated row (plate loaded),杠杆窄握坐姿划船(挂片式),器械窄握坐姿划船(挂片式),lever器械用语本土化
+3119,potty squat,便盆式深蹲,徒手深蹲（蹲坐式）,按potty squat下蹲含义本土化，保留变式
+3132,potty squat with support,扶持便盆式深蹲,扶持深蹲（蹲坐式）,去除便盆直译，保留扶持变式
+3141,bird dog v. 2,鸟狗式 v. 2,鸟狗式（变式2）,变式编号中文化，保留不同动作ID
+3178,stability ball reverse hyperextension (off a bench),稳定球反向背伸(凳上),健身球反向背伸(凳上),统一简体中文健身术语
+3183,barbell hang clean below the knees v. 2,杠铃悬垂高翻(膝下) v. 2,杠铃悬垂高翻(膝下)（变式2）,变式编号中文化，保留不同动作ID
+3195,lever lying two-one leg curl,杠杆仰卧双腿屈单腿还原腿弯举,器械仰卧双腿屈单腿还原腿弯举,lever器械用语本土化
+3200,lever bent-over row with v-bar,杠杆俯身V型把手划船,器械俯身V型把手划船,lever器械用语本土化
+3232,cable standing rear delt horizontal row (with rope),龙门架站姿后三角肌水平划船(绳索),龙门架站姿三角肌后束水平划船(绳索),统一简体中文健身术语
+3237,landmine lateral raise,地雷杆侧平举,地雷管侧平举,统一简体中文健身术语
+3286,weighted muscle up,负重肌肉上拉,负重双力臂,muscle up统一双力臂称谓；muscle up采用简体中文常用动作名
+3293,archer pull up,弓步引体向上,射箭式引体向上,archer非弓步，与吊环同类名称统一
+3294,archer push up,弓步俯卧撑 v. 2,弓步俯卧撑（变式2）,变式编号中文化，保留不同动作ID
+3295,front lever reps,前水平举次数,前水平动态抬举,源为水平身体动态抬举，reps不是动作名中的次数
+3296,front lever,前水平举,前水平支撑,明确静态自重技能
+3297,back lever,后水平举,后水平支撑,明确静态自重技能
+3298,straddle planche,分腿俯撑,分腿水平支撑,planche统一水平支撑，保留分腿
+3299,full planche,全俯撑,全式水平支撑,planche统一水平支撑，保留全式
+3300,lean planche,倾斜俯撑,前倾支撑（水平支撑预备）,源脚着地前倾预备，不暗示双脚离地
+3301,frog planche,蛙式俯撑,蛙式水平支撑,保留蛙式进阶形式
+3304,skin the cat,剥猫式,悬垂翻肩（绕肩后翻）,按穿腿翻转动作命名，非剥猫
+3305,barbell thruster,杠铃推举深蹲,杠铃深蹲推举,动作顺序为深蹲后推举
+3312,weighted muscle up (on bar),负重肌肉上拉(单杠),负重双力臂（单杠）,muscle up统一双力臂称谓；muscle up采用简体中文常用动作名
+3327,full planche push-up,全俯撑俯卧撑,全式水平支撑俯卧撑,保留双脚离地的planche push-up
+3332,weighted stability ball crunch (full range),负重稳定球卷腹(全程),负重健身球卷腹(全程),统一简体中文健身术语
+3340,dumbbell stiff leg deadlift v. 2,哑铃直腿硬拉 v. 2,哑铃直腿硬拉（变式2）,变式编号中文化，保留不同动作ID
+3341,dumbbell lunge v. 2,哑铃弓步 v. 2,哑铃弓步（变式2）,变式编号中文化，保留不同动作ID
+3343,lever lateral raise v. 2,杠杆侧平举 v. 2,器械侧平举（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+3344,lever crossovers,杠杆夹胸,器械夹胸,lever器械用语本土化
+3354,cable front squat v. 2,龙门架前蹲 v. 2,龙门架前蹲（变式2）,变式编号中文化，保留不同动作ID
+3355,cable lateral lunge v. 2,龙门架侧弓步 v. 2,龙门架侧弓步（变式2）,变式编号中文化，保留不同动作ID
+3383,pike push up (on bench) v. 2,屈体俯卧撑(凳上) v. 2,屈体俯卧撑(凳上)（变式2）,变式编号中文化，保留不同动作ID
+3385,lever seated leg press v. 2,杠杆坐姿腿举 v. 2,器械坐姿腿举（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+3386,lever seated leg extension v. 2,杠杆坐姿腿屈伸 v. 2,器械坐姿腿屈伸（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+3414,lying upper body rotation,仰卧上身旋转,侧卧上身旋转,源说明为屈膝侧卧上身旋转，纠正体位
+3428,dumbbell front raise v. 3,哑铃前平举 v. 3,哑铃前平举（变式3）,变式编号中文化，保留不同动作ID
+3433,swimmer kicks v. 2 (male),游泳打腿 v. 2(男),游泳打腿（变式2）(男),变式编号中文化，保留不同动作ID
+3448,dumbbell side lunge v. 3,哑铃侧弓步 v. 3,哑铃侧弓步（变式3）,变式编号中文化，保留不同动作ID
+3469,downward facing dog,下犬式 v. 2,下犬式（变式2）,变式编号中文化，保留不同动作ID
+3507,self assisted inverse leg curl v. 2,自我辅助反向腿弯举 v. 2,自我辅助反向腿弯举（变式2）,变式编号中文化，保留不同动作ID
+3525,landmine kneeling one arm shoulder press,地雷杆跪姿单臂肩上推举,地雷管跪姿单臂肩上推举,统一简体中文健身术语
+3529,landmine stand up high knee,地雷杆站起高抬膝,地雷管站起高抬膝,统一简体中文健身术语
+3539,lying t spine mobility stretching,仰卧胸椎灵活性拉伸,侧卧胸椎活动拉伸,源说明为侧卧旋转，活动比灵活性拉伸更自然
+3552,quick feet v. 2,快速小步跑 v. 2,快速小步跑（变式2）,变式编号中文化，保留不同动作ID
+3606,leg extension crunch (with stability ball),腿屈伸卷腹(稳定球),腿屈伸卷腹(健身球),统一简体中文健身术语
+3623,vertical leg raise (on parallel bars) v. 3,垂直抬腿(双杠) v. 3,垂直抬腿(双杠)（变式3）,变式编号中文化，保留不同动作ID
+3651,dumbbell rdl death march,哑铃罗马尼亚硬拉死亡行进,哑铃行进式罗马尼亚硬拉,death march按行进方式命名，去除死亡行进直译
+3683,dumbbell goblet curtsey lunge,哑铃高脚杯屈膝礼弓步,哑铃高脚杯交叉后撤弓步蹲,按交叉后撤动作命名
+3696,dumbbell bent over alternate rear delt fly,哑铃俯身交替后三角肌飞鸟,哑铃俯身交替三角肌后束飞鸟,统一简体中文健身术语
+3697,cable kneeling rear delt row (with rope) (male),龙门架跪姿后三角肌划船(绳索)(男),龙门架跪姿三角肌后束划船(绳索)(男),统一简体中文健身术语
+3698,inchworm v. 2,尺蠖爬行 v. 2,尺蠖爬行（变式2）,变式编号中文化，保留不同动作ID
+3700,tuck jump v. 2,团身跳 v. 2,团身跳（变式2）,变式编号中文化，保留不同动作ID
+3707,dumbbell press squat (thighs),哑铃推举深蹲(大腿),哑铃深蹲推举（侧重大腿）,按先深蹲后推举的源描述，保留大腿侧重
+3711,single leg step up v. 2,单腿上台阶 v. 2,单腿上台阶（变式2）,变式编号中文化，保留不同动作ID
+3713,dumbbell standing single leg calf raise v. 2,哑铃站姿单腿提踵 v. 2,哑铃站姿单腿提踵（变式2）,变式编号中文化，保留不同动作ID
+3719,cable standing high cross triceps extension,龙门架站姿高位交叉三头肌伸展,龙门架站姿高位交叉臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+3722,barbell incline lying rear delt raise,杠铃上斜俯卧后三角肌上举,杠铃上斜俯卧三角肌后束上举,统一简体中文健身术语
+3723,barbell curtsey lunge,杠铃屈膝礼弓步,杠铃交叉后撤弓步蹲,按交叉后撤动作命名
+3727,barbell front bench squat,杠铃凳上前蹲 v. 2,杠铃凳上前蹲（变式2）,变式编号中文化，保留不同动作ID
+3729,barbell chest press on stability ball,杠铃稳定球胸推,杠铃健身球胸推,统一简体中文健身术语
+3732,kettlebell goblet curtsey lunge,壶铃高脚杯屈膝礼弓步,壶铃高脚杯交叉后撤弓步蹲,按交叉后撤动作命名
+3742,sliding leg curl on floor with towel v. 2,地面毛巾滑动腿弯举 v. 2,地面毛巾滑动腿弯举（变式2）,变式编号中文化，保留不同动作ID
+3744,rear delt fly with bed sheet,床单后三角肌飞鸟,床单三角肌后束飞鸟,统一简体中文健身术语
+3745,overhead triceps extension with bed sheet,床单头上三头肌伸展,床单头上臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+3746,rear delt row with bed sheet,床单后三角肌划船,床单三角肌后束划船,统一简体中文健身术语
+3758,lever standing chest press,杠杆站姿胸推,器械站姿胸推,lever器械用语本土化
+3759,lever seated good morning,杠杆坐姿早安式体前屈,器械坐姿早安式体前屈,lever器械用语本土化
+3760,lever seated crunch v. 2,杠杆坐姿卷腹 v. 2,器械坐姿卷腹（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+3764,dumbbell incline biceps curl v. 2,哑铃上斜二头弯举 v. 2,哑铃上斜二头弯举（变式2）,变式编号中文化，保留不同动作ID
+3767,dumbbell single leg squat v. 2,哑铃单腿深蹲 v. 2,哑铃单腿深蹲（变式2）,变式编号中文化，保留不同动作ID
+3768,lever seated horizontal leg press,杠杆坐姿水平腿举,器械坐姿水平腿举,lever器械用语本土化
+3769,curtsey squat,屈膝礼深蹲,交叉后撤深蹲,按交叉后撤动作命名
+3824,pseudo planche push up,伪俯撑俯卧撑,前倾俯卧撑（水平支撑预备）,pseudo planche为前倾预备，非伪俯撑
+3850,two legs reverse biceps curl with towel v. 2,毛巾双腿反握二头弯举 v. 2,毛巾双腿反握二头弯举（变式2）,变式编号中文化，保留不同动作ID
+3851,two legs hammer curl with towel v. 2,毛巾双腿锤式弯举 v. 2,毛巾双腿锤式弯举（变式2）,变式编号中文化，保留不同动作ID
+3861,stability ball body saw,稳定球身体锯,健身球身体锯,统一简体中文健身术语
+3881,lever seated full crunch,杠杆坐姿全程卷腹,器械坐姿全程卷腹,lever器械用语本土化
+3882,lever seated left side crunch,杠杆坐姿左侧卷腹,器械坐姿左侧卷腹,lever器械用语本土化
+3883,lever seated right side crunch,杠杆坐姿右侧卷腹,器械坐姿右侧卷腹,lever器械用语本土化
+3894,dumbbell stiff leg deadlift v. 3,哑铃直腿硬拉 v. 3,哑铃直腿硬拉（变式3）,变式编号中文化，保留不同动作ID
+3914,cable rear delt row,龙门架后三角肌划船,龙门架三角肌后束划船,统一简体中文健身术语
+3918,landmine single leg landmine rdl,单腿地雷杆罗马尼亚硬拉,单腿地雷管罗马尼亚硬拉,统一简体中文健身术语
+3939,band overhead triceps extension,弹力带过头三头肌伸展,弹力带过头臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+3942,romanian chair sit up v. 2,罗马椅仰卧起坐 v. 2,罗马椅仰卧起坐（变式2）,变式编号中文化，保留不同动作ID
+3943,cable seated rear delt fly with chest support,绳索坐姿胸部支撑后三角肌飞鸟,绳索坐姿胸部支撑三角肌后束飞鸟,统一简体中文健身术语
+3945,smith single arm bent over row,史密斯单臂俯身划船,史密斯机单臂俯身划船,统一史密斯机称谓
+3973,dumbbell single leg calf raise v. 2,哑铃单腿提踵 v. 2,哑铃单腿提踵（变式2）,变式编号中文化，保留不同动作ID
+3986,ez bar front twist raise,EZ杠铃前举扭转,EZ曲杆前举扭转,统一简体中文健身术语
+3989,ez bar incline front raise,EZ杠铃上斜前平举,EZ曲杆上斜前平举,统一简体中文健身术语
+3990,ez bar seated close grip shoulder press,EZ杠铃坐姿窄握肩部推举,EZ曲杆坐姿窄握肩部推举,统一简体中文健身术语
+4012,cable incline cross rear fly,绳索上斜交叉后三角肌飞鸟,绳索上斜交叉三角肌后束飞鸟,统一简体中文健身术语
+4018,lying leg hip raise on floor v. 2,地面仰卧抬髋抬腿 v. 2,地面仰卧抬髋抬腿（变式2）,变式编号中文化，保留不同动作ID
+4019,reverse crunch v. 2,反向卷腹 v. 2,反向卷腹（变式2）,变式编号中文化，保留不同动作ID
+4035,band bent over hip extension,弹力带俯身髋伸展 v. 2,弹力带俯身髋伸展（变式2）,变式编号中文化，保留不同动作ID
+4040,landmine rear lunge v. 2,地雷管后撤弓步蹲 v. 2,地雷管后撤弓步蹲（变式2）,变式编号中文化，保留不同动作ID
+4041,dumbbell russian twist (on stability ball),哑铃俄罗斯转体(稳定球),哑铃俄罗斯转体(健身球),统一简体中文健身术语
+4051,side lying leg raise,侧卧抬腿 v. 2,侧卧抬腿（变式2）,变式编号中文化，保留不同动作ID
+4054,dumbbell one arm triceps extension on stability ball,哑铃单臂三头肌伸展(稳定球),哑铃单臂臂屈伸(健身球),统一简体中文健身术语；区分抗阻臂屈伸与肌肉拉伸
+4055,dumbbell seated lateral raise on stability ball,哑铃坐姿侧平举(稳定球),哑铃坐姿侧平举(健身球),统一简体中文健身术语
+4056,dead bug with stability ball,稳定球死虫式,健身球死虫式,统一简体中文健身术语
+4062,lever lying banded t bar row,杠杆仰卧弹力带T杠划船,器械胸托弹力带T杠划船,lever器械用语本土化；按源说明核实卧姿与动作方向，避免仰卧误译
+4066,dumbbell seated bent over alternate rear delt fly,哑铃坐姿俯身交替后三角肌飞鸟,哑铃坐姿俯身交替三角肌后束飞鸟,统一简体中文健身术语
+4068,barbell bench press with 3 board,杠铃3块板卧推,杠铃垫板卧推（3层）,board指胸前限制行程垫板，不是杠铃片
+4069,barbell bench press with 2 board,杠铃2块板卧推,杠铃垫板卧推（2层）,board指胸前限制行程垫板，不是杠铃片
+4070,barbell bench press with 1 board,杠铃1块板卧推,杠铃垫板卧推（1层）,board指胸前限制行程垫板，不是杠铃片
+4092,weighted seated triceps extension,负重坐姿三头肌伸展,负重坐姿臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+4114,resistance band bent over rear delt fly,弹力带俯身后三角肌飞鸟,弹力带俯身三角肌后束飞鸟,统一简体中文健身术语
+4119,power sled triceps extension,动力雪橇三头肌伸展,动力雪橇臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+4123,kettlebell single front squat,壶铃单个前蹲,单壶铃前蹲,使用自然的器材数量词序
+4128,weighted counterbalanced squat,负重配重深蹲,前举配重深蹲,counterbalance指前举负重辅助平衡
+4129,weighted counterbalanced skater squat,负重配重滑冰者深蹲,前举配重滑冰者深蹲,counterbalance指前举负重辅助平衡
+4130,ez bar california skullcrusher,EZ杠铃加州仰卧臂屈伸,EZ曲杆加州仰卧臂屈伸,统一简体中文健身术语
+4139,band overhead triceps extension v. 2,弹力带过头三头肌伸展 v. 2,弹力带过头臂屈伸（变式2）,区分抗阻臂屈伸与肌肉拉伸；变式编号中文化，保留不同动作ID
+4140,band overhead single arm triceps extension,弹力带过头单臂三头肌伸展,弹力带过头单臂臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+4141,band overhead single arm triceps extension v. 2,弹力带过头单臂三头肌伸展 v. 2,弹力带过头单臂臂屈伸（变式2）,区分抗阻臂屈伸与肌肉拉伸；变式编号中文化，保留不同动作ID
+4148,band narrow grip high row v. 2,弹力带窄握高位划船 v. 2,弹力带窄握高位划船（变式2）,变式编号中文化，保留不同动作ID
+4151,dumbbell lying floor skullcrusher,哑铃地面仰卧臂屈伸,哑铃地面仰卧臂屈伸（额前式）,skullcrusher采用额前式称谓，与普通地面臂屈伸区别
+4171,smith rack pull,史密斯架上拉,史密斯机架上拉,统一史密斯机称谓
+4172,bodyweight bent over rear delt fly,徒手俯身后三角肌飞鸟,徒手俯身三角肌后束飞鸟,统一简体中文健身术语
+4174,lever reverse shoulder press (plate loaded),杠杆反向肩部推举(挂片式),器械反向肩部推举(挂片式),lever器械用语本土化
+4179,smith banded full squat,史密斯弹力带全蹲,史密斯机弹力带全蹲,统一史密斯机称谓
+4182,resistance band rear delt row,阻力带后三角肌划船,阻力带三角肌后束划船,统一简体中文健身术语
+4187,ez bar legs side pull in sit up,EZ杠铃侧拉腿仰卧起坐,EZ曲杆侧拉腿仰卧起坐,统一简体中文健身术语
+4188,ez bar reverse crunch,EZ杠铃反向卷腹,EZ曲杆反向卷腹,统一简体中文健身术语
+4189,ez bar kneeling rollout,EZ杠铃跪姿滚轮前推,EZ曲杆跪姿滚轮前推,统一简体中文健身术语
+4190,ez bar up down twist,EZ杠铃上下扭转,EZ曲杆上下扭转,统一简体中文健身术语
+4209,1 to 2 jump box,1对2跳箱,单脚起跳双脚落地跳箱,明确1 to 2的起跳与落地脚数
+4213,lever banded chest press,杠杆弹力带胸部推举,器械弹力带胸部推举,lever器械用语本土化
+4214,lever low row (plate loaded),杠杆低位划船(挂片式),器械低位划船(挂片式),lever器械用语本土化
+4215,lever one arm low row (plate loaded),杠杆单臂低位划船(挂片式),器械单臂低位划船(挂片式),lever器械用语本土化
+4235,dumbbell seated bent over rear delt row,哑铃坐姿俯身后三角肌划船,哑铃坐姿俯身三角肌后束划船,统一简体中文健身术语
+4239,dumbbell one arm reverse fly (with support) v. 2,哑铃单臂反向飞鸟(有支撑) v. 2,哑铃单臂反向飞鸟(有支撑)（变式2）,变式编号中文化，保留不同动作ID
+4247,landmine romanian deadlift v. 2,地雷管罗马尼亚硬拉 v. 2,地雷管罗马尼亚硬拉（变式2）,变式编号中文化，保留不同动作ID
+4250,dumbbell v up v. 2,哑铃V字起身 v. 2,哑铃V字起身（变式2）,变式编号中文化，保留不同动作ID
+4252,weighted crunch v. 2,负重卷腹 v. 2,负重卷腹（变式2）,变式编号中文化，保留不同动作ID
+4253,medicine ball crunch v. 2,药球卷腹 v. 2,药球卷腹（变式2）,变式编号中文化，保留不同动作ID
+4259,walking on elliptical machine v. 7,椭圆机行走 v. 7,椭圆机行走（变式7）,变式编号中文化，保留不同动作ID
+4278,circles knee stretch v. 2,绕膝拉伸 v. 2,绕膝拉伸（变式2）,变式编号中文化，保留不同动作ID
+4280,ceiling look stretch v. 2,仰望天花板拉伸 v. 2,仰望天花板拉伸（变式2）,变式编号中文化，保留不同动作ID
+4292,dumbbell lying hamstring curl,哑铃仰卧腿弯举 v. 2,哑铃俯卧腿弯举（变式2）,变式编号中文化，保留不同动作ID；按源说明核实卧姿与动作方向，避免仰卧误译
+4295,dumbbell walking lunge,哑铃行走弓步蹲 v. 2,哑铃行走弓步蹲（变式2）,变式编号中文化，保留不同动作ID
+4299,quadriceps lying stretch,仰卧股四头肌拉伸,卧姿股四头肌拉伸,源允许侧卧或俯卧，不限定为仰卧
+4314,spinal stretch (on stability ball),脊柱拉伸(稳定球),脊柱拉伸(健身球),统一简体中文健身术语
+4322,standing side bend (bent arm) v. 2,站姿侧弯(屈臂) v. 2,站姿侧弯(屈臂)（变式2）,变式编号中文化，保留不同动作ID
+4335,dumbbell side bend v. 2,哑铃侧弯 v. 2,哑铃侧弯（变式2）,变式编号中文化，保留不同动作ID
+4336,lever biceps curl,杠杆二头弯举 v. 2,器械二头弯举（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+4339,barbell pullover v. 2,杠铃仰卧上拉 v. 2,杠铃仰卧上拉（变式2）,变式编号中文化，保留不同动作ID
+4343,dumbbell one arm triceps extension,哑铃单臂三头肌伸展,哑铃单臂臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+4344,barbell incline triceps extension skull crusher,杠铃上斜三头肌伸展(仰卧臂屈伸),杠铃上斜臂屈伸(仰卧臂屈伸),区分抗阻臂屈伸与肌肉拉伸
+4347,lever standing leg curl,杠杆站姿腿弯举,器械站姿腿弯举,lever器械用语本土化
+4349,barbell single leg squat,杠铃单腿深蹲 v. 2,杠铃单腿深蹲（变式2）,变式编号中文化，保留不同动作ID
+4352,bench dip on floor v. 2,地面凳上臂屈伸 v. 2,地面凳上臂屈伸（变式2）,变式编号中文化，保留不同动作ID
+4353,cable lying triceps extension (with rope),绳索仰卧三头肌伸展(用绳),绳索仰卧臂屈伸(用绳),区分抗阻臂屈伸与肌肉拉伸
+4355,cable triceps pushdown (v bar) v. 2,绳索三头肌下压(V形把手) v. 2,绳索三头肌下压(V形把手)（变式2）,变式编号中文化，保留不同动作ID
+4356,cable horizontal pallof press v. 2,绳索水平帕洛夫推举 v. 2,绳索水平帕洛夫推举（变式2）,变式编号中文化，保留不同动作ID
+4357,band biceps curl v. 2,弹力带二头弯举 v. 2,弹力带二头弯举（变式2）,变式编号中文化，保留不同动作ID
+4359,band overhead triceps extension v. 3,弹力带过头三头肌伸展 v. 3,弹力带过头臂屈伸（变式3）,区分抗阻臂屈伸与肌肉拉伸；变式编号中文化，保留不同动作ID
+4369,bodyweight standing biceps curl v. 2,徒手站姿二头弯举 v. 2,徒手站姿二头弯举（变式2）,变式编号中文化，保留不同动作ID
+4370,smith seated calf raise,史密斯坐姿提踵,史密斯机坐姿提踵,统一史密斯机称谓
+4371,lever incline one arm chest press (plate loaded),杠杆上斜单臂胸部推举(挂片式),器械上斜单臂胸部推举(挂片式),lever器械用语本土化
+4378,lever reverse grip high row (plate loaded),杠杆反握高位划船(挂片式),器械反握高位划船(挂片式),lever器械用语本土化
+4382,barbell front rack lunge v. 2,杠铃前架弓步蹲 v. 2,杠铃前架弓步蹲（变式2）,变式编号中文化，保留不同动作ID
+4396,kettlebell side bend v. 2,壶铃侧弯 v. 2,壶铃侧弯（变式2）,变式编号中文化，保留不同动作ID
+4422,ez bar drag bicep curl,EZ杠铃拖曳二头弯举,EZ曲杆拖曳二头弯举,统一简体中文健身术语
+4425,dumbbell lying close grip parallel row on rack,哑铃架上仰卧窄握平行握划船,哑铃架上俯卧窄握中立握划船,按源说明核实卧姿与动作方向，避免仰卧误译
+4426,dumbbell lying wide grip row on rack,哑铃架上仰卧宽握划船,哑铃架上俯卧宽握划船,按源说明核实卧姿与动作方向，避免仰卧误译
+4429,weighted lying side neck raise,负重仰卧颈部侧抬,负重侧卧颈部侧屈,源为侧卧侧向抬头，使用颈部侧屈术语
+4435,high knee squat v. 2,高抬膝深蹲 v. 2,高抬膝深蹲（变式2）,变式编号中文化，保留不同动作ID
+4440,kettlebell step up v. 2,壶铃上台阶 v. 2,壶铃上台阶（变式2）,变式编号中文化，保留不同动作ID
+4456,glute ham raise v. 2,俯卧腿弯举 v. 2,俯卧腿弯举（变式2）,变式编号中文化，保留不同动作ID
+4474,roll ball piriformis v. 2,按摩球滚压梨状肌 v. 2,按摩球滚压梨状肌（变式2）,变式编号中文化，保留不同动作ID
+4486,roll ball infraspinatus v. 2,按摩球滚压冈下肌 v. 2,按摩球滚压冈下肌（变式2）,变式编号中文化，保留不同动作ID
+4488,roll ball scapula levator v. 2,按摩球滚压肩胛提肌 v. 2,按摩球滚压肩胛提肌（变式2）,变式编号中文化，保留不同动作ID
+4492,roll ball trapezius lower v. 2,按摩球滚压下斜方肌 v. 2,按摩球滚压下斜方肌（变式2）,变式编号中文化，保留不同动作ID
+4511,bridge pose setu bandhasana,桥式瑜伽体式(setu bandhasana),瑜伽桥式,删除重复的梵语罗马字转写
+4515,back pec stretch v. 2,后侧胸肌拉伸 v. 2,后侧胸肌拉伸（变式2）,变式编号中文化，保留不同动作ID
+4518,kettlebell single arm thruster,壶铃单臂推举深蹲,壶铃单臂深蹲推举,动作顺序为深蹲后推举
+4523,kettlebell single leg deadlift,壶铃单腿硬拉 v. 2,壶铃单腿硬拉（变式2）,变式编号中文化，保留不同动作ID
+4528,kettlebell farmers walk,壶铃农夫行走 v. 2,壶铃农夫行走（变式2）,变式编号中文化，保留不同动作ID
+4536,kettlebell rear delt row,壶铃后三角肌划船,壶铃三角肌后束划船,统一简体中文健身术语
+4540,dumbbell one arm thruster,哑铃单臂推举深蹲,哑铃单臂深蹲推举,动作顺序为深蹲后推举
+4541,kettlebell one arm thruster,壶铃单臂推举深蹲 v. 2,壶铃单臂深蹲推举（变式2）,动作顺序为深蹲后推举；变式编号中文化，保留不同动作ID
+4543,kettlebell one arm clean,壶铃单臂高翻 v. 2,壶铃单臂高翻（变式2）,变式编号中文化，保留不同动作ID
+4546,smith drag curl,史密斯拖曳弯举,史密斯机拖曳弯举,统一史密斯机称谓
+4554,seated glute stretch v. 2,坐姿臀部拉伸 v. 2,坐姿臀部拉伸（变式2）,变式编号中文化，保留不同动作ID
+4602,pvc external rotation,pvc管外旋,PVC管外旋,统一简体中文健身术语
+4603,pvc front rack stretch,pvc管前架拉伸,PVC管前架拉伸,统一简体中文健身术语
+4604,pvc good morning,pvc管早安式体前屈,PVC管早安式体前屈,统一简体中文健身术语
+4605,pvc hip hinge,pvc管髋铰链,PVC管髋铰链,统一简体中文健身术语
+4606,pvc overhead squat,pvc管过头深蹲,PVC管过头深蹲,统一简体中文健身术语
+4607,pvc pass through,pvc管绕肩,PVC管绕肩,统一简体中文健身术语
+4629,dumbbell renegade row to squat,哑铃反向划船转深蹲,哑铃支撑划船转深蹲,renegade为平板支撑划船，非反向划船
+4667,bodyweight overhead triceps extension,徒手过头三头肌伸展,徒手过头臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+4679,band split squat v. 2,弹力带分腿蹲 v. 2,弹力带分腿蹲（变式2）,变式编号中文化，保留不同动作ID
+4680,band standing triceps extension,弹力带站姿三头肌伸展,弹力带站姿臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+4682,band bent over rear delt fly,弹力带俯身后三角肌飞鸟 v. 2,弹力带俯身三角肌后束飞鸟（变式2）,统一简体中文健身术语；变式编号中文化，保留不同动作ID
+4683,band squat v. 2,弹力带深蹲 v. 2,弹力带深蹲（变式2）,变式编号中文化，保留不同动作ID
+4694,band overhead triceps extension v. 4,弹力带过头三头肌伸展 v. 4,弹力带过头臂屈伸（变式4）,区分抗阻臂屈伸与肌肉拉伸；变式编号中文化，保留不同动作ID
+4697,band skier v. 2,弹力带滑雪者 v. 2,弹力带滑雪者（变式2）,变式编号中文化，保留不同动作ID
+4698,band bent over row v. 3,弹力带俯身划船 v. 3,弹力带俯身划船（变式3）,变式编号中文化，保留不同动作ID
+4703,bodyweight full squat with overhead press (version 2),徒手全蹲加过头推举(版本2),徒手全蹲加过头推举（变式2）,统一中文变式编号
+4711,criss cross jack,交叉开合跳 v. 2,交叉开合跳（变式2）,变式编号中文化，保留不同动作ID
+4714,air squat (version 2),徒手深蹲(版本2),徒手深蹲（变式2）,统一中文变式编号
+4715,alternating superman v. 2,交替超人式 v. 2,交替超人式（变式2）,变式编号中文化，保留不同动作ID
+4719,band assisted dip (version 2),弹力带辅助臂屈伸(版本2),弹力带辅助臂屈伸（变式2）,统一中文变式编号
+4720,band kneeling crunch v. 2,弹力带跪姿卷腹 v. 2,弹力带跪姿卷腹（变式2）,变式编号中文化，保留不同动作ID
+4730,dumbbell bent over single arm row v. 2,哑铃俯身单臂划船 v. 2,哑铃俯身单臂划船（变式2）,变式编号中文化，保留不同动作ID
+4732,dumbbell cossack squat v. 2,哑铃哥萨克深蹲 v. 2,哑铃哥萨克深蹲（变式2）,变式编号中文化，保留不同动作ID
+4733,dumbbell decline lying leg curl,哑铃下斜仰卧腿弯举,哑铃下斜俯卧腿弯举,按源说明核实卧姿与动作方向，避免仰卧误译
+4736,dumbbell deep push up and renegade row,哑铃深俯卧撑加反向划船,哑铃深俯卧撑加支撑划船,renegade为平板支撑划船，非反向划船
+4743,dumbbell incline biceps curl v. 3,哑铃上斜二头弯举 v. 3,哑铃上斜二头弯举（变式3）,变式编号中文化，保留不同动作ID
+4751,dumbbell glute bridge v. 2,哑铃臀桥 v. 2,哑铃臀桥（变式2）,变式编号中文化，保留不同动作ID
+4772,kneeling straight leg kickback v. 2,跪姿直腿后踢 v. 2,跪姿直腿后踢（变式2）,变式编号中文化，保留不同动作ID
+4778,reverse crunch v. 3,反向卷腹 v. 3,反向卷腹（变式3）,变式编号中文化，保留不同动作ID
+4792,single leg hip thrust v. 2,单腿臀推 v. 2,单腿臀推（变式2）,变式编号中文化，保留不同动作ID
+4798,suspender alternate superman,悬挂带交替超人式,悬吊带交替超人式,统一简体中文健身术语
+4799,suspender rollout v. 2,悬挂带滚轮前推 v. 2,悬吊带滚轮前推（变式2）,统一简体中文健身术语；变式编号中文化，保留不同动作ID
+4808,lying leg raise v. 2,仰卧抬腿 v. 2,仰卧抬腿（变式2）,变式编号中文化，保留不同动作ID
+4810,standing side bend v. 2,站姿侧弯 v. 2,站姿侧弯（变式2）,变式编号中文化，保留不同动作ID
+4811,side plank v. 3,侧平板支撑 v. 3,侧平板支撑（变式3）,变式编号中文化，保留不同动作ID
+4812,side crunch v. 3,侧向卷腹 v. 3,侧向卷腹（变式3）,变式编号中文化，保留不同动作ID
+4829,jump skip rope,跳绳 v. 2,跳绳（变式2）,变式编号中文化，保留不同动作ID
+4831,sliding floor pulldown on towel v. 2,毛巾滑行地面下拉 v. 2,毛巾滑行地面下拉（变式2）,变式编号中文化，保留不同动作ID
+4834,dumbbell alternate chest press on stability ball,哑铃交替推胸(稳定球),哑铃交替推胸(健身球),统一简体中文健身术语
+4849,banded glute ham raise v. 2,弹力带腿弯举挺身 v. 2,弹力带腿弯举挺身（变式2）,变式编号中文化，保留不同动作ID
+4853,dumbbell lateral lunge,哑铃侧弓步蹲 v. 2,哑铃侧弓步蹲（变式2）,变式编号中文化，保留不同动作ID
+4859,push up to side plank v. 2,俯卧撑转侧平板支撑 v. 2,俯卧撑转侧平板支撑（变式2）,变式编号中文化，保留不同动作ID
+4863,side plank leg lift,侧平板支撑抬腿 v. 2,侧平板支撑抬腿（变式2）,变式编号中文化，保留不同动作ID
+4864,barbell sumo deadlift from deficit,杠铃垫高相扑硬拉 v. 2,杠铃垫高相扑硬拉（变式2）,变式编号中文化，保留不同动作ID
+4866,barbell z press,杠铃z式推举,杠铃Z式推举,统一简体中文健身术语
+4887,dumbbells glute bridge v. 2,双哑铃臀桥 v. 2,双哑铃臀桥（变式2）,变式编号中文化，保留不同动作ID
+4893,kneeling half triceps extension,跪姿半程三头肌伸展,跪姿半程臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+4899,lever bent over wide row (plate loaded),杠杆俯身宽握划船(挂片式),器械俯身宽握划船(挂片式),lever器械用语本土化
+4905,banded glute ham raise v. 3,弹力带腿弯举挺身 v. 3,弹力带腿弯举挺身（变式3）,变式编号中文化，保留不同动作ID
+4906,long lever decline sit up,长杠杆下斜仰卧起坐,长力臂下斜仰卧起坐,long lever指力臂，不是器械
+4907,side plank with raised leg v. 2,抬腿侧平板支撑 v. 2,抬腿侧平板支撑（变式2）,变式编号中文化，保留不同动作ID
+4912,ring leg curl v. 2,吊环腿弯举 v. 2,吊环腿弯举（变式2）,变式编号中文化，保留不同动作ID
+4924,long lever lying back extension,长杠杆仰卧背部伸展,长力臂俯卧背伸,long lever指力臂，不是器械；按源说明核实卧姿与动作方向，避免仰卧误译
+4928,seated calf stretch v. 2,坐姿小腿拉伸 v. 2,坐姿小腿拉伸（变式2）,变式编号中文化，保留不同动作ID
+4934,reverse plank v. 2,反向平板支撑 v. 2,反向平板支撑（变式2）,变式编号中文化，保留不同动作ID
+4951,lever pendulum squat (plate loaded),杠杆摆动深蹲(挂片式),器械摆动深蹲(挂片式),lever器械用语本土化
+4958,cable overhead single arm triceps extension (rope attachment),绳索过头单臂三头肌伸展(绳索把手),绳索过头单臂臂屈伸(绳索把手),区分抗阻臂屈伸与肌肉拉伸
+4960,cable high triceps extension,绳索高位三头肌伸展,绳索高位臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+4965,jump box v. 2,跳箱 v. 2,跳箱（变式2）,变式编号中文化，保留不同动作ID
+4975,lying leg raise v. 3,仰卧抬腿 v. 3,仰卧抬腿（变式3）,变式编号中文化，保留不同动作ID
+4980,reverse flutter kick on floor (hand under head) v. 2,地面反向打水腿(手放头下) v. 2,地面反向打水腿(手放头下)（变式2）,变式编号中文化，保留不同动作ID
+4986,dumbbell step up v. 2,哑铃踏阶 v. 2,哑铃踏阶（变式2）,变式编号中文化，保留不同动作ID
+4994,lying leg cross,仰卧交叉腿 v. 2,仰卧交叉腿（变式2）,变式编号中文化，保留不同动作ID
+5004,suspension sumo squat,悬挂带相扑深蹲,悬吊带相扑深蹲,统一简体中文健身术语
+5006,suspension underhand grip inverted row,悬挂带反握反向划船,悬吊带反握反向划船,统一简体中文健身术语
+5007,suspension hammer curl,悬挂带锤式弯举,悬吊带锤式弯举,统一简体中文健身术语
+5008,suspension chin up,悬挂带反手引体向上,悬吊带反手引体向上,统一简体中文健身术语
+5009,elevated standing calf raise v. 2,垫高站姿提踵 v. 2,垫高站姿提踵（变式2）,变式编号中文化，保留不同动作ID
+5028,dumbbell goblet split squat v. 2,哑铃高脚杯分腿蹲 v. 2,哑铃高脚杯分腿蹲（变式2）,变式编号中文化，保留不同动作ID
+5034,landmine one arm bent over row v. 2,地雷管单臂俯身划船 v. 2,地雷管单臂俯身划船（变式2）,变式编号中文化，保留不同动作ID
+5038,double jump rope,双摇跳绳 v. 2,双摇跳绳（变式2）,变式编号中文化，保留不同动作ID
+5054,crab pose,螃蟹式 v. 2,螃蟹式（变式2）,变式编号中文化，保留不同动作ID
+5073,kettlebell sumo squat v. 2,壶铃相扑深蹲 v. 2,壶铃相扑深蹲（变式2）,变式编号中文化，保留不同动作ID
+5110,triceps dip floor,地面三头肌臂屈伸 v. 3,地面三头肌臂屈伸（变式3）,变式编号中文化，保留不同动作ID
+5118,cable twist v. 2,绳索转体 v. 2,绳索转体（变式2）,变式编号中文化，保留不同动作ID
+5119,dumbbell deadlift v. 2,哑铃硬拉 v. 2,哑铃硬拉（变式2）,变式编号中文化，保留不同动作ID
+5120,cable kickback v. 2,绳索后踢 v. 2,绳索后踢（变式2）,变式编号中文化，保留不同动作ID
+5130,triceps dip floor v. 2,地面三头肌臂屈伸 v. 2,地面三头肌臂屈伸（变式2）,变式编号中文化，保留不同动作ID
+5160,incline close grip push up,上斜窄距俯卧撑 v. 2,上斜窄距俯卧撑（变式2）,变式编号中文化，保留不同动作ID
+5169,standing hip adduction v. 2,站姿髋内收 v. 2,站姿髋内收（变式2）,变式编号中文化，保留不同动作ID
+5178,lever single leg extension (plate loaded),杠杆单腿屈伸(挂片式),器械单腿屈伸(挂片式),lever器械用语本土化
+5188,power clean thruster,力量翻推进深蹲,力量翻深蹲推举,动作顺序为深蹲后推举
+5190,barbell clean and jerk v. 2,杠铃高翻挺举 v. 2,杠铃高翻挺举（变式2）,变式编号中文化，保留不同动作ID
+5193,power sled rear drag v. 2,力量雪橇后拖 v. 2,力量雪橇后拖（变式2）,变式编号中文化，保留不同动作ID
+5194,bodyweight muscle up v. 2,徒手双杠上推 v. 2,徒手双力臂（变式2）,muscle up统一双力臂称谓；变式编号中文化，保留不同动作ID
+5206,resistance band kneeling ab crunch v. 2,阻力带跪姿卷腹 v. 2,阻力带跪姿卷腹（变式2）,变式编号中文化，保留不同动作ID
+5213,mountain climber v. 2,登山者 v. 2,登山者（变式2）,变式编号中文化，保留不同动作ID
+5216,sprint,冲刺跑 v. 2,冲刺跑（变式2）,变式编号中文化，保留不同动作ID
+5239,dumbbell biceps curl with overhead extension on stability ball,哑铃二头弯举加过头伸展(稳定球),哑铃二头弯举加过头伸展(健身球),统一简体中文健身术语
+5240,ez barbell deadlift with biceps curl,EZ杠铃硬拉加二头弯举,EZ曲杆硬拉加二头弯举,统一简体中文健身术语
+5243,cable lying triceps extension (low),绳索仰卧三头肌伸展(低位),绳索仰卧臂屈伸(低位),区分抗阻臂屈伸与肌肉拉伸
+5299,lever preacher curl (turned torso),杠杆牧师凳弯举(转体),器械牧师凳弯举(转体),lever器械用语本土化
+5302,balance board v. 2,平衡板 v. 2,平衡板（变式2）,变式编号中文化，保留不同动作ID
+5303,dumbbell rear delt fly (45 degrees),哑铃后三角肌飞鸟(45度),哑铃三角肌后束飞鸟(45度),统一简体中文健身术语
+5308,ez bar russian twist sit up,EZ杠俄罗斯转体仰卧起坐,EZ曲杆俄罗斯转体仰卧起坐,统一简体中文健身术语
+5309,ez bar shoulder press sit up,EZ杠肩部推举仰卧起坐,EZ曲杆肩部推举仰卧起坐,统一简体中文健身术语
+5326,lever multy mode rope lat pulldown,杠杆多模式绳索高位下拉,器械多模式绳索高位下拉,lever器械用语本土化
+5327,lever t bar romanian deadlift,杠杆T杠罗马尼亚硬拉,器械T杠罗马尼亚硬拉,lever器械用语本土化
+5330,dumbbell pullover v. 2,哑铃仰卧上拉 v. 2,哑铃仰卧上拉（变式2）,变式编号中文化，保留不同动作ID
+5333,lever trunk rotation,杠杆躯干旋转,器械躯干旋转,lever器械用语本土化
+5334,cross twisting sit up v. 2,交叉扭转仰卧起坐 v. 2,交叉扭转仰卧起坐（变式2）,变式编号中文化，保留不同动作ID
+5336,kettlebell forward lunge v. 2,壶铃前弓步蹲 v. 2,壶铃前弓步蹲（变式2）,变式编号中文化，保留不同动作ID
+5349,lever abduction leg raise,杠杆外展抬腿,器械外展抬腿,lever器械用语本土化
+5374,roll biceps lying on floor,泡沫轴二头肌放松(仰卧),泡沫轴肱二头肌放松（俯卧）,按源说明核实卧姿与动作方向，避免仰卧误译
+5377,roll chest lying on floor,泡沫轴胸部放松(仰卧),泡沫轴胸部放松（俯卧）,按源说明核实卧姿与动作方向，避免仰卧误译
+5378,roll front shoulder and chest lying on floor,泡沫轴前肩与胸部放松(仰卧),泡沫轴前肩与胸部放松（俯卧）,按源说明核实卧姿与动作方向，避免仰卧误译
+5379,roll posterior shoulder lying on floor,泡沫轴肩后侧放松(仰卧),泡沫轴肩后侧放松（侧卧）,源首步明确侧卧，纠正仰卧误译
+5380,roll shoulder back rotation lying on floor,泡沫轴肩部后旋放松(仰卧),泡沫轴肩背旋转放松（侧卧）,源侧卧滚压肩背并转动上侧手臂，纠正体位及生硬措辞
+5383,roll lower back (side) lying on floor,泡沫轴下背部(侧)放松(仰卧),泡沫轴下背侧面放松（侧卧）,源首步明确侧卧，整理括号与方位
+5385,roll shoulder blade reach lying on floor,泡沫轴肩胛伸展放松(仰卧),泡沫轴肩胛伸展放松（侧卧）,源首步明确侧卧，纠正仰卧误译
+5393,roll quadriceps (vastus lateralis) lying on floor,泡沫轴股四头肌(股外侧肌)放松(仰卧),泡沫轴股外侧肌放松（侧卧）,按源说明核实卧姿与动作方向，避免仰卧误译
+5395,roll tibialis anterior (single leg) lying on floor,泡沫轴胫骨前肌(单腿)放松(仰卧),泡沫轴单腿胫骨前肌放松,按源说明核实卧姿与动作方向，避免仰卧误译
+5447,lever pronated grip seated row (plate loaded),杠杆正握坐姿划船(挂片式),器械正握坐姿划船(挂片式),lever器械用语本土化
+5448,lever pronated grip seated scapular retraction shrug (plate loaded),杠杆正握坐姿肩胛后缩耸肩(挂片式),器械正握坐姿肩胛后缩耸肩(挂片式),lever器械用语本土化
+5449,dumbbell standing drag curl v. 2,哑铃站姿拖曳弯举 v. 2,哑铃站姿拖曳弯举（变式2）,变式编号中文化，保留不同动作ID
+5450,ez bar 21s,EZ杠21下弯举,EZ曲杆21下弯举,统一简体中文健身术语
+5477,vertical leg raise (on parallel bars) v. 2,垂直抬腿(双杠上) v. 2,垂直抬腿(双杠上)（变式2）,变式编号中文化，保留不同动作ID
+5483,weighted seated calf raise v. 2,负重坐姿提踵 v. 2,负重坐姿提踵（变式2）,变式编号中文化，保留不同动作ID
+5484,weighted seated single calf raise v. 2,负重坐姿单腿提踵 v. 2,负重坐姿单腿提踵（变式2）,变式编号中文化，保留不同动作ID
+5513,bench dip on stability ball,稳定球凳上臂屈伸,健身球凳上臂屈伸,统一简体中文健身术语
+5515,decline sit up v. 3,下斜仰卧起坐 v. 3,下斜仰卧起坐（变式3）,变式编号中文化，保留不同动作ID
+5527,lever seated bent over rear delt fly,杠杆坐姿俯身后三角肌飞鸟,器械坐姿俯身三角肌后束飞鸟,lever器械用语本土化；统一简体中文健身术语
+5576,lever one arm incline chest press (plate loaded),杠杆单臂上斜推胸(挂片式),器械单臂上斜推胸(挂片式),lever器械用语本土化
+5579,ez bar seated wrist curl,EZ杠坐姿腕弯举,EZ曲杆坐姿腕弯举,统一简体中文健身术语
+5583,lever ab coaster crunch,杠杆腹肌滑车卷腹,器械腹肌滑车卷腹,lever器械用语本土化
+5606,dumbbell prone rear delt swing,哑铃俯卧后三角肌摆动,哑铃俯卧三角肌后束摆动,统一简体中文健身术语
+5608,band standing chest press v. 2,弹力带站姿推胸 v. 2,弹力带站姿推胸（变式2）,变式编号中文化，保留不同动作ID
+5633,barbell narrow stance squat v. 2,杠铃窄站距深蹲 v. 2,杠铃窄站距深蹲（变式2）,变式编号中文化，保留不同动作ID
+5636,landmine kneeling one arm shoulder press v. 2,地雷管跪姿单臂肩部推举 v. 2,地雷管跪姿单臂肩部推举（变式2）,变式编号中文化，保留不同动作ID
+5649,hollow rock,空心摇摆,中空摇摆,统一hollow术语
+5657,cable side bend v. 2,绳索侧弯 v. 2,绳索侧弯（变式2）,变式编号中文化，保留不同动作ID
+5667,dumbbell z press,哑铃z式推举,哑铃Z式推举,统一简体中文健身术语
+5697,dumbbell lying row on rack,哑铃架上仰卧划船,哑铃架上俯卧划船,按源说明核实卧姿与动作方向，避免仰卧误译
+5699,45 degrees side bend,45度侧弯 v. 2,45度侧弯（变式2）,变式编号中文化，保留不同动作ID
+5737,suspension fly,悬挂带飞鸟 v. 2,悬吊带飞鸟（变式2）,统一简体中文健身术语；变式编号中文化，保留不同动作ID
+5738,suspension chest press,悬挂带推胸 v. 2,悬吊带推胸（变式2）,统一简体中文健身术语；变式编号中文化，保留不同动作ID
+5741,cable kneeling crunch v. 2,绳索跪姿卷腹 v. 2,绳索跪姿卷腹（变式2）,变式编号中文化，保留不同动作ID
+5754,dumbbell hip thrust v. 2,哑铃臀推 v. 2,哑铃臀推（变式2）,变式编号中文化，保留不同动作ID
+5784,lever reverse vertical hack squat,杠杆反向垂直哈克深蹲,器械反向垂直哈克深蹲,lever器械用语本土化
+5801,band assisted muscle up,弹力带辅助双杠上推,弹力带辅助双力臂,muscle up统一双力臂称谓
+5815,lever one arm side chest press,杠杆单臂侧向推胸,器械单臂侧向推胸,lever器械用语本土化
+5825,smith rear lunge v. 2,史密斯机后撤弓步蹲 v. 2,史密斯机后撤弓步蹲（变式2）,变式编号中文化，保留不同动作ID
+5843,lever incline fly,杠杆上斜飞鸟,器械上斜飞鸟,lever器械用语本土化
+5853,barbell incline rear delt row,杠铃上斜后三角肌划船,杠铃上斜三角肌后束划船,统一简体中文健身术语
+5860,kettlebell overhead triceps extension,壶铃过头三头肌伸展,壶铃过头臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+5861,kettlebell lying triceps extension skull crusher,壶铃仰卧三头肌伸展(颅骨粉碎者),壶铃仰卧臂屈伸（额前式）,区分抗阻臂屈伸与肌肉拉伸；skull crusher采用常见健身称呼
+5873,ez barbell lying triceps extension,EZ杠铃仰卧三头肌伸展,EZ曲杆仰卧臂屈伸,统一简体中文健身术语；区分抗阻臂屈伸与肌肉拉伸
+5874,cable high pulley straight bar overhead triceps extension,绳索高位滑轮直杆过头三头肌伸展,绳索高位滑轮直杆过头臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+5876,suspension triceps extension,悬挂带三头肌伸展,悬吊带臂屈伸,统一简体中文健身术语；区分抗阻臂屈伸与肌肉拉伸
+5900,revolved side angle pose,扭转侧角式 v. 2,扭转侧角式（变式2）,变式编号中文化，保留不同动作ID
+6011,side step rear delt row,侧步后三角肌划船,侧步三角肌后束划船,统一简体中文健身术语
+6013,front leg kick,前踢腿 v. 2,前踢腿（变式2）,变式编号中文化，保留不同动作ID
+6016,twisting crunch v. 2,扭转卷腹 v. 2,扭转卷腹（变式2）,变式编号中文化，保留不同动作ID
+6019,lying hyperextension hold,仰卧挺身保持,俯卧挺身保持,按源说明核实卧姿与动作方向，避免仰卧误译
+6024,lying alternate frog kick,仰卧交替蛙腿,俯卧交替蛙腿后抬,按源说明核实卧姿与动作方向，避免仰卧误译
+6025,lying frog kick,仰卧蛙腿,俯卧蛙腿后抬,按源说明核实卧姿与动作方向，避免仰卧误译
+6035,cable rear delt row (parallel bar),绳索后三角肌划船(平行杆),绳索三角肌后束划船(平行杆),统一简体中文健身术语
+6036,cable straight arm pulldown v. 2,绳索直臂下拉 v. 2,绳索直臂下拉（变式2）,变式编号中文化，保留不同动作ID
+6067,bottle weighted overhead triceps extension,负重瓶过头三头肌伸展,负重瓶过头臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+6143,dumbbell seated single arm front raise,哑铃坐姿单臂前平举 v. 2,哑铃坐姿单臂前平举（变式2）,变式编号中文化，保留不同动作ID
+6144,dumbbell straight arm crunch v. 2,哑铃直臂卷腹 v. 2,哑铃直臂卷腹（变式2）,变式编号中文化，保留不同动作ID
+6158,dumbbell seated single arm overhead triceps extension,哑铃坐姿单臂过头三头肌伸展,哑铃坐姿单臂过头臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+6159,dumbbell seated single arm overhead triceps extension (left),哑铃坐姿单臂过头三头肌伸展(左),哑铃坐姿单臂过头臂屈伸(左),区分抗阻臂屈伸与肌肉拉伸
+6160,dumbbell frog hip thrust,哑铃蛙式髋推,哑铃蛙式臀推,统一简体中文健身术语
+6161,dumbbell lying leg curl,哑铃仰卧腿弯举(交替),哑铃俯卧腿弯举,按源说明核实卧姿与动作方向，避免仰卧误译
+6208,side plank with raised leg v. 2 (left),侧平板支撑抬腿 v. 2(左),侧平板支撑抬腿（变式2）(左),变式编号中文化，保留不同动作ID
+6209,kneeling straight leg kickback v. 2 (left),跪姿直腿后踢 v. 2(左),跪姿直腿后踢（变式2）(左),变式编号中文化，保留不同动作ID
+6220,suspender row,悬挂带划船 v. 2,悬吊带划船（变式2）,统一简体中文健身术语；变式编号中文化，保留不同动作ID
+6222,suspender squat jump,悬挂带深蹲跳,悬吊带深蹲跳,统一简体中文健身术语
+6232,suspender biceps curl,悬挂带二头弯举,悬吊带二头弯举,统一简体中文健身术语
+6259,ring single arm rear delt row,吊环单臂后三角肌划船,吊环单臂三角肌后束划船,统一简体中文健身术语
+6270,barbell larsen press,杠铃拉森推举,杠铃拉森卧推,Larsen press为卧推变式，非肩上推举
+6271,barbell close grip larsen press,杠铃窄握拉森推举,杠铃窄握拉森卧推,Larsen press为卧推变式，非肩上推举
+6272,dumbbell larsen press,哑铃拉森推举,哑铃拉森卧推,Larsen press为卧推变式，非肩上推举
+6303,camel pose ustrasana,骆驼式 v. 2,骆驼式（变式2）,变式编号中文化，保留不同动作ID
+6318,single curtsy lunge,单侧屈膝礼弓步蹲,单侧交叉后撤弓步蹲,按交叉后撤动作命名
+6350,lying prone y raise,俯卧Y字上举 v. 2,俯卧Y字上举（变式2）,变式编号中文化，保留不同动作ID
+6354,lever outdoor seated leg press,杠杆式户外坐姿腿举,器械户外坐姿腿举,lever器械用语本土化
+6355,lever outdoor seated chest press,杠杆式户外坐姿推胸,器械户外坐姿推胸,lever器械用语本土化
+6356,lever outdoor seated lat pulldown,杠杆式户外坐姿高位下拉,器械户外坐姿高位下拉,lever器械用语本土化
+6367,cable standing back wrist curl v. 2,绳索站姿背后腕弯举 v. 2,绳索站姿背后腕弯举（变式2）,变式编号中文化，保留不同动作ID
+6419,resistance band reverse crunch v. 2,弹力带反向卷腹 v. 2,弹力带反向卷腹（变式2）,变式编号中文化，保留不同动作ID
+6423,bodyweight triceps extension from plank position,徒手平板支撑位三头肌伸展,徒手平板支撑位臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+6425,kettlebell good morning v. 2,壶铃早安式体前屈 v. 2,壶铃早安式体前屈（变式2）,变式编号中文化，保留不同动作ID
+6428,90 degree heel touch v. 2,90度触脚跟 v. 2,90度触脚跟（变式2）,变式编号中文化，保留不同动作ID
+6464,bodyweight frog hip thrust,徒手蛙式髋推,徒手蛙式臀推,统一简体中文健身术语
+6465,smith frog hip thrust,史密斯蛙式髋推,史密斯机蛙式臀推,统一史密斯机称谓；统一简体中文健身术语
+6486,band bent over rear lateral raise v. 2,弹力带俯身后三角肌侧平举 v. 2,弹力带俯身三角肌后束侧平举（变式2）,统一简体中文健身术语；变式编号中文化，保留不同动作ID
+6513,lever bent over row (with chest support),杠杆式俯身划船(胸部支撑),器械俯身划船(胸部支撑),lever器械用语本土化
+6514,lever bent over neutral grip row (with chest support),杠杆式俯身中立握划船(胸部支撑),器械俯身中立握划船(胸部支撑),lever器械用语本土化
+6515,lever bent over single arm neutral grip row (with chest support),杠杆式俯身单臂中立握划船(胸部支撑),器械俯身单臂中立握划船(胸部支撑),lever器械用语本土化
+6516,lever bent over wide grip row (with chest support),杠杆式俯身宽握划船(胸部支撑),器械俯身宽握划船(胸部支撑),lever器械用语本土化
+6517,lever bent over single arm wide grip row (with chest support),杠杆式俯身单臂宽握划船(胸部支撑),器械俯身单臂宽握划船(胸部支撑),lever器械用语本土化
+6523,lever linear hack squat,杠杆式直线哈克深蹲,器械直线哈克深蹲,lever器械用语本土化
+6546,landmine single leg hip thrust,地雷管单腿髋推,地雷管单腿臀推,统一简体中文健身术语
+6547,hanging hollow hold,悬垂空心保持,悬垂中空保持,统一hollow术语
+6561,lever ab swing,杠杆式腹部摆动,器械腹部摆动,lever器械用语本土化
+6601,lever glute press,杠杆式臀部推举,器械臀部推举,lever器械用语本土化
+6606,smith curtsey lunge,史密斯屈膝礼弓步蹲,史密斯机交叉后撤弓步蹲,统一史密斯机称谓；按交叉后撤动作命名
+6607,band lateral walk,弹力带侧向行走 v. 2,弹力带侧向行走（变式2）,变式编号中文化，保留不同动作ID
+6735,dumbbell banded hip thrust,哑铃弹力带髋推,哑铃弹力带臀推,统一简体中文健身术语
+6738,resistance band reverse hyper with stability ball on flat bench,弹力带稳定球平凳反向挺身,弹力带健身球平凳反向挺身,统一简体中文健身术语
+6785,band seated hip abduction v. 2,弹力带坐姿髋外展 v. 2,弹力带坐姿髋外展（变式2）,变式编号中文化，保留不同动作ID
+6786,faber test,faber测试,FABER试验（4字试验）,保留标准缩写，附中文名称，不增加诊断解释
+6796,smith sumo chair squat,史密斯相扑椅上深蹲,史密斯机相扑椅上深蹲,统一史密斯机称谓
+6806,dumbbell military press russian twist with legs floor off v. 2,哑铃军事推举俄罗斯转体(双腿离地) v. 2,哑铃军事推举俄罗斯转体(双腿离地)（变式2）,变式编号中文化，保留不同动作ID
+6881,lever cross lat pulldown,杠杆式交叉高位下拉,器械交叉高位下拉,lever器械用语本土化
+6890,dumbbell z press v. 2,哑铃z式推举 v. 2,哑铃Z式推举（变式2）,统一简体中文健身术语；变式编号中文化，保留不同动作ID
+6891,dumbbell alternate z press,哑铃交替z式推举,哑铃交替Z式推举,统一简体中文健身术语
+6914,sitting scapular adduction v. 2,坐姿肩胛内收 v. 2,坐姿肩胛内收（变式2）,变式编号中文化，保留不同动作ID
+7019,stability ball rollout on knees,稳定球跪姿滚轮前推,健身球跪姿滚轮前推,统一简体中文健身术语
+7107,lever seated single leg press v. 2,杠杆式坐姿单腿腿举 v. 2,器械坐姿单腿腿举（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+7108,lever seated leg extension v. 3,杠杆式坐姿腿伸展 v. 3,器械坐姿腿伸展（变式3）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+7113,dumbbell straight arm pullover v. 2,哑铃直臂上拉 v. 2,哑铃直臂上拉（变式2）,变式编号中文化，保留不同动作ID
+7129,bodyweight lying alternate legs curl,徒手仰卧交替腿弯举,徒手俯卧交替腿弯举,按源说明核实卧姿与动作方向，避免仰卧误译
+7176,lever seated calf press v. 2,杠杆式坐姿小腿推举 v. 2,器械坐姿小腿推举（变式2）,lever器械用语本土化；变式编号中文化，保留不同动作ID
+7177,lever seated single calf press,杠杆式坐姿单腿小腿推举,器械坐姿单腿小腿推举,lever器械用语本土化
+7199,resistance band lying bent knee hip abduction,弹力带仰卧屈膝髋外展,弹力带侧卧屈膝髋外展,源首步明确屈膝侧卧，纠正仰卧误译
+7201,resistance band lying leg raise v. 2,弹力带仰卧抬腿 v. 2,弹力带仰卧抬腿（变式2）,变式编号中文化，保留不同动作ID
+7204,resistance band standing balance glute kickback v. 2,弹力带站姿平衡臀部后踢 v. 2,弹力带站姿平衡臀部后踢（变式2）,变式编号中文化，保留不同动作ID
+7212,resistance band air bike v. 2,弹力带空中自行车 v. 2,弹力带空中自行车（变式2）,变式编号中文化，保留不同动作ID
+7217,floor t raise v. 2,地面T字上举 v. 2,地面T字上举（变式2）,变式编号中文化，保留不同动作ID
+7274,suspension trainer pike,悬挂训练带屈体,悬吊带屈体,统一简体中文健身术语
+7275,suspension trainer front plank,悬挂训练带前平板支撑,悬吊带前平板支撑,统一简体中文健身术语
+7277,resistance band hip thrusts on knees,弹力带跪姿髋推,弹力带跪姿臀推,统一简体中文健身术语
+7278,suspension trainer lat stretch,悬挂训练带背阔肌拉伸,悬吊带背阔肌拉伸,统一简体中文健身术语
+7279,suspension trainer squat power pull,悬挂训练带深蹲爆发拉,悬吊带深蹲爆发拉,统一简体中文健身术语
+7327,lever leg extension (inward toes),杠杆式腿伸展(脚尖内扣),器械腿伸展(脚尖内扣),lever器械用语本土化
+7374,smith sumo deadlift,史密斯相扑硬拉,史密斯机相扑硬拉,统一史密斯机称谓
+7384,lever hip thrust (plate loaded),杠杆式髋推(插片式),器械臀推(挂片式),lever器械用语本土化；区分挂片式与插片式；统一简体中文健身术语
+7413,elevated two legs hip thrust,垫高双腿髋推,垫高双腿臀推,统一简体中文健身术语
+7556,squat jack,深蹲开合跳 v. 2,深蹲开合跳（变式2）,变式编号中文化，保留不同动作ID
+7562,seated quadriceps stretch v. 2,坐姿股四头肌拉伸 v. 2,坐姿股四头肌拉伸（变式2）,变式编号中文化，保留不同动作ID
+7565,barbell bent arm pullover v. 2,杠铃屈臂上拉 v. 2,杠铃屈臂上拉（变式2）,变式编号中文化，保留不同动作ID
+7592,cable incline rear delt fly with back support,绳索上斜后三角肌飞鸟(背部支撑),绳索上斜三角肌后束飞鸟(背部支撑),统一简体中文健身术语
+7619,jack burpee v. 2,开合跳波比 v. 2,开合跳波比（变式2）,变式编号中文化，保留不同动作ID
+7751,kettlebell swing clean grip front squat v. 2,壶铃摆动高翻握法前蹲 v. 2,壶铃摆动高翻握法前蹲（变式2）,变式编号中文化，保留不同动作ID
+7839,dead bug v. 3,死虫式 v. 3,死虫式（变式3）,变式编号中文化，保留不同动作ID
+7864,lever overhead triceps extension,杠杆式过头三头肌伸展,器械过头臂屈伸,lever器械用语本土化；区分抗阻臂屈伸与肌肉拉伸
+7892,dumbbell seated triceps extension v. 2,哑铃坐姿三头肌伸展 v. 2,哑铃坐姿臂屈伸（变式2）,区分抗阻臂屈伸与肌肉拉伸；变式编号中文化，保留不同动作ID
+8075,dumbbell single leg hip thrust v. 2,哑铃单腿髋推 v. 2,哑铃单腿臀推（变式2）,统一简体中文健身术语；变式编号中文化，保留不同动作ID
+8188,standing ankle circles v. 2,站姿踝关节画圈 v. 2,站姿踝关节画圈（变式2）,变式编号中文化，保留不同动作ID
+8222,dumbbell underhand renegade row,哑铃反握反式划船,哑铃反握支撑划船,renegade为平板支撑划船，非反向划船
+8223,dumbbell renegade row on stability ball,哑铃稳定球反式划船,哑铃健身球支撑划船,统一简体中文健身术语；renegade为平板支撑划船，非反向划船
+8224,resistance band renegade row,弹力带反式划船,弹力带支撑划船,renegade为平板支撑划船，非反向划船
+8225,dumbbell renegade row walk,哑铃反式划船行走,哑铃支撑划船行走,renegade为平板支撑划船，非反向划船
+8299,cable half kneeling single arm row v. 2,绳索半跪单臂划船 v. 2,绳索半跪单臂划船（变式2）,变式编号中文化，保留不同动作ID
+8311,seated side bend on a chair,椅上坐姿侧弯 v. 2,椅上坐姿侧弯（变式2）,变式编号中文化，保留不同动作ID
+8364,resistance band overhead shoulder press v. 2,弹力带过头肩部推举 v. 2,弹力带过头肩部推举（变式2）,变式编号中文化，保留不同动作ID
+8366,kettlebell side swing v. 2,壶铃侧摆 v. 2,壶铃侧摆（变式2）,变式编号中文化，保留不同动作ID
+8375,lever angled leg press,杠杆式斜角腿举,器械斜角腿举,lever器械用语本土化
+8604,lever seated leg curl (plate loaded),杠杆式坐姿腿弯举(插片式),器械坐姿腿弯举(挂片式),lever器械用语本土化；区分挂片式与插片式
+8614,cable standing single arm horizontal triceps extension,绳索站姿单臂水平三头肌伸展,绳索站姿单臂水平臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+8654,seated overhead triceps extension on a chair,椅上坐姿过头三头肌伸展,椅上坐姿过头臂屈伸,区分抗阻臂屈伸与肌肉拉伸
+8664,dumbbell curtsey lunge v. 2,哑铃屈膝礼弓步蹲 v. 2,哑铃交叉后撤弓步蹲（变式2）,按交叉后撤动作命名；变式编号中文化，保留不同动作ID
+8712,lever romanian deadlift (plate loaded),杠杆式罗马尼亚硬拉(插片式),器械罗马尼亚硬拉(挂片式),lever器械用语本土化；区分挂片式与插片式
+8799,leverage single leg deadlift on hack squat machine,杠杆式单腿硬拉(哈克深蹲机),器械单腿硬拉(哈克深蹲机),lever器械用语本土化
+8800,smith staggered stance romanian deadlift,史密斯错位站姿罗马尼亚硬拉,史密斯机错位站姿罗马尼亚硬拉,统一史密斯机称谓
+8847,lever standing lateral raise,杠杆式站姿侧平举,器械站姿侧平举,lever器械用语本土化
+8899,cable standing y raise v. 2,绳索站姿Y字上举 v. 2,绳索站姿Y字上举（变式2）,变式编号中文化，保留不同动作ID
+8900,cable standing jab v. 2,绳索站姿直拳 v. 2,绳索站姿直拳（变式2）,变式编号中文化，保留不同动作ID
+8901,cable single arm lateral raise v. 2,绳索单臂侧平举 v. 2,绳索单臂侧平举（变式2）,变式编号中文化，保留不同动作ID
+8916,side to side hop v. 2,左右跳 v. 2,左右跳（变式2）,变式编号中文化，保留不同动作ID
+8971,side lunge stretch v. 2,侧弓步拉伸 v. 2,侧弓步拉伸（变式2）,变式编号中文化，保留不同动作ID
+8990,lever side seated single arm rear delt fly,杠杆式侧坐单臂后三角肌飞鸟,器械侧坐单臂三角肌后束飞鸟,lever器械用语本土化；统一简体中文健身术语
+9009,reverse hyperextension on stability ball,稳定球反向挺身,健身球反向挺身,统一简体中文健身术语
+9010,medicine ball crunch on stability ball,稳定球药球卷腹,健身球药球卷腹,统一简体中文健身术语
+9025,sitting woodchopper on stability ball,稳定球坐姿伐木,健身球坐姿伐木,统一简体中文健身术语
+9041,smith front leg elevated split squat,史密斯前腿垫高分腿蹲,史密斯机前腿垫高分腿蹲,统一史密斯机称谓
+9042,smith elevated split squat,史密斯垫高分腿蹲,史密斯机垫高分腿蹲,统一史密斯机称谓
+9047,straight hip single leg curl on stability ball,稳定球直髋单腿腿弯举,健身球直髋单腿腿弯举,统一简体中文健身术语
+9304,cable neutral grip wide pulldown v. 3,绳索中立握宽距下拉 v. 3,绳索中立握宽距下拉（变式3）,变式编号中文化，保留不同动作ID
+9314,45 degree hip extension glute focused v. 2,45度髋伸展(臀部专注) v. 2,45度髋伸展(臀部专注)（变式2）,变式编号中文化，保留不同动作ID
+9324,long lever standing hip extension,长杠杆站姿髋伸展,长力臂站姿髋伸展,long lever指力臂，不是器械
+9385,smith jm bench press,史密斯jm卧推,史密斯机JM卧推,统一史密斯机称谓；保留JM专名大写
+9387,lever angled single leg press,杠杆式斜角单腿腿举,器械斜角单腿腿举,lever器械用语本土化
+9398,lever standing pec fly,杠杆式站姿蝴蝶机夹胸,器械站姿蝴蝶机夹胸,lever器械用语本土化
+9493,lever belt sumo squat,杠杆式腰带相扑深蹲,器械腰带相扑深蹲,lever器械用语本土化
+9494,lever belt romanian deadlift,杠杆式腰带罗马尼亚硬拉,器械腰带罗马尼亚硬拉,lever器械用语本土化
+9503,suspender rear delt row,悬挂带后三角肌划船,悬吊带三角肌后束划船,统一简体中文健身术语
+9509,lever sitting toe raise,杠杆式坐姿脚尖抬起,器械坐姿脚尖抬起,lever器械用语本土化
+9609,kettlebell deadlift v. 2,壶铃硬拉 v. 2,壶铃硬拉（变式2）,变式编号中文化，保留不同动作ID
+9676,lever lying knee flexion,杠杆式仰卧屈膝,器械俯卧腿弯举,lever器械用语本土化；按源说明核实卧姿与动作方向，避免仰卧误译
+9692,kettlebell alternating arm thruster,壶铃交替单臂推举深蹲,壶铃交替单臂深蹲推举,动作顺序为深蹲后推举
+9693,dumbbell alternating arm thruster,哑铃交替单臂推举深蹲,哑铃交替单臂深蹲推举,动作顺序为深蹲后推举
+9703,kettlebell z press,壶铃z式推举,壶铃Z式推举,统一简体中文健身术语
+9704,suspender headstand,悬挂带头倒立,悬吊带头倒立,统一简体中文健身术语
+9848,leverage standing hip thrust,杠杆式站姿髋推,器械站姿臀推,lever器械用语本土化；统一简体中文健身术语
+9862,lever single arm preacher curl (plate loaded),杠杆式单臂牧师凳弯举(插片式),器械单臂牧师凳弯举(挂片式),lever器械用语本土化；区分挂片式与插片式
+9865,lever belt deadlift (v bar),杠杆式腰带硬拉(V形杠),器械腰带硬拉(V形杠),lever器械用语本土化
+9866,lever belt deadlift (straight bar),杠杆式腰带硬拉(直杠),器械腰带硬拉(直杠),lever器械用语本土化
+9874,cable lying single arm cross lateral raise,绳索仰卧单臂交叉侧平举,绳索卧姿单臂交叉侧平举,源允许侧卧或仰卧，不限定为仰卧
+9876,lever belt romanian deadlift (straight bar),杠杆腰带罗马尼亚硬拉(直杆),器械腰带罗马尼亚硬拉(直杆),lever器械用语本土化
+9877,lever belt romanian deadlift (v bar),杠杆腰带罗马尼亚硬拉(V型杆),器械腰带罗马尼亚硬拉(V型杆),lever器械用语本土化
+9927,cable lying incline side leg raise,绳索仰卧上斜侧抬腿,绳索上斜侧卧抬腿,源明确上斜侧卧髋外展，纠正仰卧误译

@@ -29,7 +29,7 @@ BT=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)
   --ks-pass "pass:$KS_PASS" --key-pass "pass:$KS_PASS" \
   --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
   --out openGym.apk aligned.apk
-"$BT/apksigner" verify --print-certs -v openGym.apk | grep -E "Verified using" || true
+"$BT/apksigner" verify --print-certs -v openGym.apk
 sha256sum openGym.apk | cut -d' ' -f1 > openGym.apk.sha256
 echo "APP_VERSION=$(node -p "require('./frontend/package.json').version")" >> "$GITHUB_ENV"
 ls -la openGym.apk

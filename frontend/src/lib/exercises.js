@@ -2,6 +2,7 @@ import { EXDB, EXALIAS } from './exercises-data.js'
 import MUSCLE_MAP from './exercise-muscle-map.json' with { type: 'json' }
 import V13_IDS from './catalogue-v13-ids.json' with { type: 'json' }
 import { t, getVersion, exerciseNameSearchText } from './i18n-core.js'
+import { exerciseAliases, aliasSnapshot } from './exercise-aliases.js'
 
 export { EXDB }
 
@@ -28,6 +29,8 @@ const SECONDARY_ADDITIONS = {
   '0293': ['rear deltoids'], // dumbbell bent over row
   '0499': ['rear deltoids'], // inverted row
   '0861': ['rear deltoids'], // cable seated row
+  '4133': ['lower back'], // kettlebell suitcase deadlift (#693)
+  '10189': ['lower back'], // weighted plate deadlift rear lunge with overhead press (#693)
 }
 
 // Secondary muscles for an exercise, with the small conservative additions applied as an
@@ -142,8 +145,9 @@ function isSubsequence(needle, hay) {
 export function searchScore(exercise, query) {
   const needle = searchableText(query).toLowerCase().trim()
   if (!needle) return 1
-  const source = exercise && typeof exercise === 'object' ? exercise : {}
-  const fields = [['n', 100], ['tg', 40], ['eq', 40], ['sm', 30], ['muscleGroups', 30], ['primaries', 30], ['secondaries', 30], ['desc', 10], ['cues', 10]]
+  const ex = exercise && typeof exercise === 'object' ? exercise : {}
+  const source = { ...ex, aliases: exerciseAliases(ex) }
+  const fields = [['n', 100], ['aliases', 100], ['tg', 40], ['eq', 40], ['sm', 30], ['muscleGroups', 30], ['primaries', 30], ['secondaries', 30], ['desc', 10], ['cues', 10]]
   // Token-level matching: every query word must match somewhere (any order), so
   // "press bench" finds "Bench Press". The score sums each token's best hit.
   const tokens = needle.split(/[^a-z0-9]+/).filter(Boolean)
@@ -307,11 +311,11 @@ const VOCAB = new Set()
 function corpusOf(e) {
   const v = getVersion()
   const hit = corpusCache.get(e)
-  if (hit && hit.v === v) return hit
+  if (hit && hit.v === v && hit.aliases === aliasSnapshot()) return hit
   const sm = Array.isArray(e?.sm) ? e.sm : []
   const name = normalizeStr(exerciseNameSearchText(e))
   const s = normalizeStr([
-    name,
+    name, ...exerciseAliases(e),
     e?.tg || '', t(e?.tg || ''),
     e?.eq || '', t(e?.eq || ''),
     e?.bp || '', t(e?.bp || ''),
@@ -323,7 +327,7 @@ function corpusOf(e) {
   // a body part and an equipment word would start matching as one.
   // The joined form only counts from the start of a name word, or "thigh" would find "sumo
   // deadlift high pull" through "deadlifthighpull".
-  const entry = { v, s, name, ...joinedOf(name), nameWords: name.split(/[\s\-‐-―()/,]+/).filter(Boolean) }
+  const entry = { v, s, name, aliases: aliasSnapshot(), ...joinedOf(name), nameWords: name.split(/[\s\-‐-―()/,]+/).filter(Boolean) }
   for (const w of entry.nameWords) VOCAB.add(w)
   corpusCache.set(e, entry)
   return entry

@@ -292,3 +292,86 @@ describe('watch connection state', () => {
     expect(link.watchLastError()).toContain('boom')
   })
 })
+
+
+describe('explicit watch transport diagnostics', () => {
+  const drain = async () => { for (let i = 0; i < 25; i++) await Promise.resolve() }
+  async function probe() {
+    const result = link.requestWatchDiagnostics()
+    await drain()
+    const sent = JSON.parse(native.sendEvent.mock.calls.at(-1)[0].json)
+    return { result, sent }
+  }
+  beforeEach(() => {
+    vi.useFakeTimers()
+    native.sendEvent.mockReset().mockResolvedValue({ ok: true, code: 0 })
+  })
+
+  it('requires the matching reply and keeps diagnostic events out of training handlers', async () => {
+    const lifecycle = vi.fn(() => true), sync = vi.fn(), events = vi.fn()
+    link.bindWatchLifecycle(lifecycle)
+    link.bindWatchSync(sync)
+    link.bindWatchEvents(events)
+    const { result, sent } = await probe()
+    expect(sent).toEqual({ t: 'watch_diagnostics_request', requestId: expect.any(String) })
+    native.events.watchEvent({ t: 'watch_diagnostics', requestId: 'old', pending: 8 })
+    expect((await link.getWatchDiagnostics()).watchDiagnosticRequest.status).toBe('pending')
+    native.events.watchEvent({ t: 'watch_diagnostics', requestId: sent.requestId, pending: 2,
+      events: [{ stage: 'send_fail', code: '77' }] })
+    expect(await result).toBe(true)
+    expect(await link.getWatchDiagnostics()).toMatchObject({
+      watchDiagnosticRequest: { id: sent.requestId, status: 'received' },
+      lastWatchTransport: { pending: 2, receivedAt: expect.any(Number), events: [{ code: '77' }] },
+    })
+    expect(lifecycle).not.toHaveBeenCalled()
+    expect(sync).not.toHaveBeenCalled()
+    expect(events).not.toHaveBeenCalled()
+    expect(native.connect).not.toHaveBeenCalled()
+    expect(native.sendPlan).not.toHaveBeenCalled()
+    expect(native.openWatchApp).not.toHaveBeenCalled()
+  })
+
+  it('does not treat SDK success as a reply and times out without reconnecting', async () => {
+    const { result } = await probe()
+    let done = false
+    result.then(() => { done = true })
+    await vi.advanceTimersByTimeAsync(2499)
+    expect(done).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(await result).toBe(false)
+    expect((await link.getWatchDiagnostics()).watchDiagnosticRequest.status).toBe('timeout')
+    expect(native.connect).not.toHaveBeenCalled()
+  })
+
+  it.each(['rejected', 'failed'])('reports %s SDK sends without changing training state', async mode => {
+    if (mode === 'rejected') native.sendEvent.mockRejectedValueOnce(new Error('offline'))
+    else native.sendEvent.mockResolvedValueOnce({ ok: false, code: 5 })
+    const { result } = await probe()
+    expect(await result).toBe(false)
+    expect((await link.getWatchDiagnostics()).watchDiagnosticRequest.status).toBe('send_failed')
+    expect(native.sendEvent).toHaveBeenCalledOnce()
+    expect(native.connect).not.toHaveBeenCalled()
+  })
+
+  it('coalesces simultaneous probes and settles them on disconnect', async () => {
+    const first = link.requestWatchDiagnostics(), second = link.requestWatchDiagnostics()
+    await drain()
+    expect(native.sendEvent).toHaveBeenCalledOnce()
+    await link.disconnectWatch()
+    expect(await first).toBe(false)
+    expect(await second).toBe(false)
+    expect((await link.getWatchDiagnostics()).watchDiagnosticRequest.status).toBe('disconnected')
+  })
+
+  it('does not confirm a new request using a late reply to the previous probe', async () => {
+    const first = await probe()
+    await vi.advanceTimersByTimeAsync(2500)
+    expect(await first.result).toBe(false)
+    const second = await probe()
+    expect(second.sent.requestId).not.toBe(first.sent.requestId)
+    native.events.watchEvent({ t: 'watch_diagnostics', requestId: first.sent.requestId })
+    expect((await link.getWatchDiagnostics()).watchDiagnosticRequest.status).toBe('pending')
+    native.events.watchEvent({ t: 'watch_diagnostics', requestId: second.sent.requestId })
+    expect(await second.result).toBe(true)
+  })
+})

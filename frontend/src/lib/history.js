@@ -751,6 +751,13 @@ export function workoutVolume(w) {
   })
   return v
 }
+// Recount recorded sets (including imports); older records retain their cached total.
+export function sessionVolume(w) {
+  if (Array.isArray(w?.entries)) return Math.max(0, Number(workoutVolume(w)) || 0)
+  const v = Number(w?.vol)
+  return Number.isFinite(v) ? Math.max(0, v) : 0
+}
+export const lifetimeVolume = S => (Array.isArray(S?.workouts) ? S.workouts : []).reduce((n, w) => n + sessionVolume(w), 0)
 // Finished sessions carry their canonical local calendar day in `d`. Keep it aligned with
 // History/calendar readers, and use the local start timestamp only for older records whose date
 // is missing or malformed. Invalid records stay out of the activity map.

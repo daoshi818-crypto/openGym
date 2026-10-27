@@ -1,2 +1,4 @@
 # Vitest must load the CLI hashbang with an LF terminator on Windows too.
 frontend/scripts/check-mobile-bundle.mjs text eol=lf
+# Prompt strings are embedded into generated JS; checkout EOL must be identical on Windows/Linux.
+api/coach/prompts/*.md text eol=lf

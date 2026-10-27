@@ -1,6 +1,6 @@
 import { runtime } from './runtime.js'
 import { readStored, writeStored, writeStoredConfirmed, retryStorage } from './persistence.js'
-import { wireHash, acceptWireChunk, expandWireDelta } from './sync-wire.js'
+import { wireHash, wireBytes, acceptWireChunk, expandWireDelta } from './sync-wire.js'
 // 手表侧传输层：vivo 智能终端 SDK（穿戴业务 Kit）。
 //
 // 手机是唯一权威；手表只做辅助显示与记录。所有动作先进本地 outbox，
@@ -25,6 +25,39 @@ const WRITE_TIMEOUT_MS = 5000
 const rpcState = () => runtime().rpc ||= { ...{"connect":null,"handlers":{},"connected":false,"outbox":[],"sending":false,"retryTimer":null,"lastEventAt":0,"initialized":false,"connectionGeneration":0,"sendingTimer":null,"writeBusy":false,"writeDirty":false,"persistFailed":false}, durable: new Set(), lifecycleQueue: null }
 
 
+// Memory-only metadata: diagnostics must not write training storage, enter the durable
+// outbox, change retries, or include workout payloads. A broken console is nonfatal.
+function trace(stage, msg = {}, error = null, code = null) {
+  try {
+    const r = rpcState(), head = r.outbox[0]?.msg
+    const text = value => value == null ? '' : String(value).slice(0, 80)
+    const entry = { at: Date.now(), stage, type: text(msg.t), sid: text(msg.sid),
+      eventId: text(msg.eventId), pending: r.outbox.length }
+    if (head) entry.headEventId = text(head.eventId)
+    if (error != null) {
+      entry.code = text(code ?? error.code)
+      entry.detail = text(error.message || error.data || (typeof error === 'string' ? error : ''))
+      if (error.status != null) entry.status = typeof error.status === 'number' ? error.status : text(error.status)
+    }
+    const events = r.trace ||= []
+    events.push(entry)
+    if (events.length > 40) events.splice(0, events.length - 40)
+    console.info?.('[watch-rpc] ' + JSON.stringify(entry))
+  } catch { /* diagnostic failure must not affect delivery */ }
+}
+
+export function transportDiagnostics(limit = 40) {
+  const r = rpcState(), head = r.outbox[0]
+  return { connected: !!r.connected, readyState: r.lastReadyState ?? null,
+    peerProtocol: r.peerProtocol || 0, pending: r.outbox.length,
+    phonePending: r.outbox.filter(e => e.receivedAt).length,
+    storageFailed: !!r.persistFailed,
+    head: head ? { type: head.msg.t, sid: head.msg.sid, eventId: head.msg.eventId,
+      durable: r.durable.has(head.msg.eventId), attempts: head.attempts || 0,
+      receivedAt: head.receivedAt || 0, nextAttemptAt: head.nextAttemptAt || 0 } : null,
+    events: (r.trace || []).slice(-Math.max(1, Math.min(40, limit))).map(e => ({ ...e })) }
+}
+
 function initialize() {
   if (rpcState().initialized) return
   rpcState().outbox = loadOutbox()
@@ -46,6 +79,7 @@ function enqueue(msg, { persistOutbox = true } = {}) {
   if (rpcState().outbox.some(e => e.msg.eventId === msg.eventId)) return true
   if (rpcState().outbox.some(e => e.msg.sid === msg.sid && e.msg.t === msg.t && e.msg.set === msg.set && e.at === msg.at)) return true
   rpcState().outbox.push({ at: msg.at || Date.now(), msg, sent: false })
+  trace('enqueue', msg)
   if (persistOutbox) persist()
   return true
 }
@@ -149,6 +183,7 @@ function resumeConnection() {
   r.nextProbeAt = 0; r.probeAttempts = 0
   r.connectionGeneration++; r.sending = false; clearTimeout(r.sendingTimer)
   r.outbox.forEach(e => { e.sent = false })
+  trace('connection_resumed')
   r.handlers.onState?.(true)
   sendHello()
   flush()
@@ -167,10 +202,12 @@ function probeConnection() {
     if (r.readyProbe !== token) return
     r.readyProbe = null
     if (r.connect !== connection || r.connectionGeneration !== token.generation) return
+    r.lastReadyState = data?.status ?? null
+    trace('ready_state', {}, data)
     if (data?.status === 1) resumeConnection()
   }
-  try { connection.getReadyState({ success: done, fail: () => done(null) }) }
-  catch { done(null) }
+  try { connection.getReadyState({ success: done, fail: (error, code) => { trace('ready_fail', {}, error, code); done(null) } }) }
+  catch (error) { trace('ready_exception', {}, error); done(null) }
 }
 
 function flush() {
@@ -187,13 +224,14 @@ function flush() {
   const token = { generation: rpcState().connectionGeneration, eventId: next.msg.eventId }
   rpcState().sending = token
   const release = () => { if (rpcState().sending !== token || token.generation !== rpcState().connectionGeneration) return false; clearTimeout(rpcState().sendingTimer); rpcState().sending = false; return true }
-  rpcState().sendingTimer = setTimeout(() => { if (release()) flush() }, 6000)
+  trace('send_attempt', next.msg)
+  rpcState().sendingTimer = setTimeout(() => { if (release()) { trace('send_timeout', next.msg); flush() } }, 6000)
   try {
     rpcState().connect.send({ data: next.msg,
-      success: () => { if (!release()) return; const item = rpcState().outbox.find(e => e.msg.eventId === token.eventId); if (item) { item.sent = true; item.sentAt = Date.now(); item.attempts = (item.attempts || 0) + 1; item.nextAttemptAt = Date.now() + Math.min(60000, 4000 * Math.pow(2, Math.min(4, item.attempts - 1))) + Math.floor(Math.random() * 1000) }; flush() },
-      fail: () => { if (!release()) return; next.sent = true; next.nextAttemptAt = Date.now() + Math.min(60000, 2000 * Math.pow(2, Math.min(5, next.attempts || 0))); next.attempts = (next.attempts || 0) + 1; flush() }
+      success: () => { if (!release()) return; trace('send_success', next.msg); const item = rpcState().outbox.find(e => e.msg.eventId === token.eventId); if (item) { item.sent = true; item.sentAt = Date.now(); item.attempts = (item.attempts || 0) + 1; item.nextAttemptAt = Date.now() + Math.min(60000, 4000 * Math.pow(2, Math.min(4, item.attempts - 1))) + Math.floor(Math.random() * 1000) }; flush() },
+      fail: (error, code) => { if (!release()) return; trace('send_fail', next.msg, error, code); next.sent = true; next.nextAttemptAt = Date.now() + Math.min(60000, 2000 * Math.pow(2, Math.min(5, next.attempts || 0))); next.attempts = (next.attempts || 0) + 1; flush() }
     })
-  } catch { release() }
+  } catch (error) { if (release()) trace('send_exception', next.msg, error) }
 }
 
 // 精确回执：eventId 匹配时只删那一条。日志里的最终汇总要先持久化 delivered，
@@ -305,6 +343,7 @@ export function startServer(h) {
       rpcState().connect = interconnect.instance({ package: PHONE_PACKAGE, fingerprint: PHONE_FINGERPRINT })
     } catch (e) {
       rpcState().connect = null
+      trace('connection_exception', {}, e)
       if (rpcState().handlers.onError) rpcState().handlers.onError({ code: 1000, data: String(e) })
       return
     }
@@ -313,6 +352,7 @@ export function startServer(h) {
   // 页面模块共享 application runtime；当前页面只接管 UI 回调。
   rpcState().connect.onOpen = () => {
     rpcState().connected = true
+    trace('connection_open')
     rpcState().connectionGeneration++; rpcState().sending = false; clearTimeout(rpcState().sendingTimer)
     initialize()
     rpcState().outbox.forEach(e => { e.sent = false })
@@ -322,11 +362,13 @@ export function startServer(h) {
     sendHello()
   }
   rpcState().connect.onClose = () => {
+    trace('connection_close')
     rpcState().connected = false
     rpcState().connectionGeneration++; rpcState().sending = false; clearTimeout(rpcState().sendingTimer)
     if (rpcState().handlers.onState) rpcState().handlers.onState(false)
   }
   rpcState().connect.onError = (err) => {
+    trace('connection_error', {}, err)
     rpcState().connected = false
     rpcState().connectionGeneration++; rpcState().sending = false; clearTimeout(rpcState().sendingTimer)
     if (rpcState().handlers.onState) rpcState().handlers.onState(false)
@@ -343,6 +385,16 @@ export function startServer(h) {
     }
     // 能收到有效业务包就是连接已恢复的证据，不依赖遗漏的 onOpen。
     if (!rpcState().connected) resumeConnection()
+    if (msg.t === 'watch_diagnostics_request') {
+      const snapshot = { t: 'watch_diagnostics', watchVersion: WATCH_VERSION,
+        sid: String(loadState().sid || '').slice(0, 80),
+        requestId: String(msg.requestId || '').slice(0, 80), ...transportDiagnostics(8) }
+      // Match the normal wire budget without introducing chunking or queue entries.
+      while (snapshot.events.length && wireBytes(JSON.stringify(snapshot)) > 6000) snapshot.events.shift()
+      sendControl(snapshot)
+      return
+    }
+    if (['received', 'committed'].includes(msg.t)) trace(msg.t, msg)
     if (msg.t === 'conflict_reviewed') {
       const conflicts = readStored('sync_conflicts') || []
       for (const c of conflicts) if (c.event.eventId === msg.eventId) c.reviewed = true
@@ -575,8 +627,9 @@ function freezeOwnClose(obj) {
 export function sendControl(obj) {
   if (!rpcState().connected || !rpcState().connect || !obj) return
   try {
-    rpcState().connect.send({ data: obj, success() {}, fail() {} })
-  } catch (e) { /* 下次再同步 */ }
+    trace('control_attempt', obj)
+    rpcState().connect.send({ data: obj, success() { trace('control_success', obj) }, fail(error, code) { trace('control_fail', obj, error, code) } })
+  } catch (error) { trace('control_exception', obj, error) }
 }
 
 export function pendingCount() { initialize(); return rpcState().outbox.length }

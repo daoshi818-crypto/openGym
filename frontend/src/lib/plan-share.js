@@ -21,6 +21,7 @@ import { t, exerciseNameFor, exerciseNameClass, getLang, RTL_LANGS } from './i18
 import { convertWeight } from './units.js'
 import { fmtSpeed, speedUnitOf } from './speed.js'
 import { MUSCLES, inMuscleOrder } from './muscles.js'
+import { normalizeAliases } from './exercise-aliases.js'
 
 const PLAN_FMT = 1
 const WEEK_DAYS = [1, 2, 3, 4, 5, 6, 0]   // every getDay() index; only the reader's own
@@ -71,6 +72,9 @@ function cleanEx(e) {
   const o = { id: e.id, sets: e.sets }
   const mode = modeOf(e)
   if (mode === 'cardio') {
+    // Written out for the same reason as 'time' below: swings set to cardio would otherwise
+    // arrive as reps with no target (#640).
+    o.mode = 'cardio'
     if (e.min != null) o.min = e.min
     if (e.speed != null) o.speed = e.speed
   } else if (mode === 'time') {
@@ -171,6 +175,8 @@ const muscleList = v => inMuscleOrder([...new Set((Array.isArray(v) ? v : []).fi
  *  that are empty stay absent, so a file written before this change reads the same as one after. */
 function cleanCustom(c) {
   const o = { id: c.id, n: c.n, bp: c.bp }
+  const aliases = normalizeAliases(c.aliases)
+  if (aliases.length) o.aliases = aliases
   if (c.desc) o.desc = c.desc
   // The link to a video or guide travels with a shared plan (#246), cleaned both ways like any
   // other field of someone else's file; the exercise's own photo or video never does — it is a
@@ -318,7 +324,8 @@ export function mergePlan(s, bundle, { schedule, idFor } = {}) {
       if (ids.length) s.week[d] = ids
     })
   }
-  return { routines: source.routines.length }
+  // `ids`: the new routines' ids in the plan's order, for a caller that puts them in a rotation.
+  return { routines: source.routines.length, ids: source.routines.map(r => ridMap[r.id]) }
 }
 
 /* ------------------------------- printable PDF ------------------------------- */

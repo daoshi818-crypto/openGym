@@ -245,7 +245,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <p class="api-facts">
     <span>OpenAPI 3.1.0</span>
     <span>openGym v1.4.1</span>
-    <span>69 endpoints</span>
+    <span>70 endpoints</span>
     <span>AGPL-3.0-or-later</span>
   </p>
 
@@ -607,10 +607,10 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
     <span class="ep-sum">Mint a pairing code for the mobile app</span>
   </summary>
   <div class="ep-body">
-<p>Called from an already signed-in browser tab (Settings → &quot;Pair the mobile app&quot;). Returns an 8-character code (alphabet without 0/O/1/I) the phone redeems within 5 minutes via /api/pair/redeem. One-shot. One live code per profile: minting a new one retires the previous one.</p>
+<p>Called from an already signed-in browser tab (Settings → &quot;Pair the mobile app&quot;). Returns an 8-character code (alphabet without 0/O/1/I) the phone redeems within 5 minutes via /api/pair/redeem. One-shot. One live code per profile: minting a new one retires the previous one. Same proof as a device link (a passkey assertion made for this request, or the current password while password sign-in is on), since the phone token a code turns into is renewed for as long as it is used. Audited as <code>auth.pair.create</code>.</p>
     <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
 
-
+<p class="ep-h">Request body</p><p class="p-desc"><a href="#schema-OwnerProof">OwnerProof</a></p>
     <p class="ep-h">Responses</p>
     <div class="ptab">
   <div class="prow rrow">
@@ -620,6 +620,18 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <div class="prow rrow">
     <span class="r-code s4">401</span>
     <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">403</span>
+    <span class="p-desc">No acceptable proof that the owner is here: <code>passkey-required</code> (no password that counts, because none is set or <code>PASSWORD_LOGIN</code> is off, so a passkey has to confirm), <code>passkey</code> (the assertion did not verify, belongs to another profile, or was made for another challenge, one handed out for another ceremony or one already used), <code>current-required</code> or <code>current-wrong</code>.<span class="r-sig"><code>{&quot;error&quot;:&quot;confirm with your passkey first&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">429</span>
+    <span class="p-desc">Paused by the sign-in throttle (see <i>Throttling</i> in the description). The request was not looked at; try again after <code>Retry-After</code> seconds.<span class="r-sig"><code>{&quot;error&quot;:&quot;too many attempts, try again later&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">Every password check slot and the short queue behind them are taken.<span class="r-sig"><code>{&quot;error&quot;:&quot;the server is busy, try again in a moment&quot;}</code></span></span>
   </div>
     </div>
   </div>
@@ -2214,6 +2226,21 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
     <span class="p-desc">Anything the profile wants the Coach to know this time round. Cut to the instance's <code>maxMessageLen</code> (1000 unless the admin changed it; 200–4000).</span>
   </div>
   <div class="prow">
+    <span class="p-name">scope</span>
+    <span class="p-type">object</span>
+    <span class="p-desc">Hard boundary for this review; scheduling and changes to other routines are rejected.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">scope.kind<em class="p-req" title="required">required</em></span>
+    <span class="p-type">always &quot;routine&quot;</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">scope.routineId<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(&le; 128 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
     <span class="p-name">lang</span>
     <span class="p-type">string</span>
     <span class="p-desc">The language the app is showing, which the Coach writes in. Absent or not a language tag, the profile's stored <code>lang</code> is used.</span>
@@ -2249,22 +2276,89 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   </div>
 </details>
 
+<details class="ep" id="op-postCoachAsk">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/coach/ask</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Ask the Coach a question</span>
+  </summary>
+  <div class="ep-body">
+<p>Queues an <code>ask</code> job: a question from the chat, answered in plain text. It changes nothing; the answer arrives as a pending proposal of kind <code>ask</code> with an <code>answer</code> string, which the client writes into the chat and resolves. The running session, which the server never holds, may ride along as <code>today</code>; the payload builder bounds it like a logged workout.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+<p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">text<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string</span>
+    <span class="p-desc">The question. Cut at the instance's message length.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">today</span>
+    <span class="p-type">object</span>
+    <span class="p-desc">The session running on the device (<code>entries</code> with their sets), or absent.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">lang</span>
+    <span class="p-type">string</span>
+    <span class="p-desc">The language the app is showing, which the Coach answers in.</span>
+  </div>
+</div>
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">202</span>
+    <span class="p-desc">Queued. The job runs in the background; its outcome arrives through <code>GET /api/coach/status</code>, which the client polls.<span class="r-sig">{ job: object }</span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc">No question in the body (<code>code</code> is <code>invalid</code>).</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">403</span>
+    <span class="p-desc">The Coach will not take this job, and says which reason in <code>code</code>: - <code>busy</code> (409): a job for this profile is already running. - <code>shared</code> (409): instance mode, and the credential belongs to another profile. - <code>cap</code> (429): this profile's or the instance's daily limit is spent. - <code>consent</code> (403): no consent recorded for this profile. - <code>unprivileged</code> (503): the privilege drop cannot be performed, so no job runs. The message is the one to show; the raw provider detail never reaches the user.<span class="r-sig"><code>{&quot;error&quot;:&quot;the Coach is already thinking about your training&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">409</span>
+    <span class="p-desc">The Coach will not take this job, and says which reason in <code>code</code>: - <code>busy</code> (409): a job for this profile is already running. - <code>shared</code> (409): instance mode, and the credential belongs to another profile. - <code>cap</code> (429): this profile's or the instance's daily limit is spent. - <code>consent</code> (403): no consent recorded for this profile. - <code>unprivileged</code> (503): the privilege drop cannot be performed, so no job runs. The message is the one to show; the raw provider detail never reaches the user.<span class="r-sig"><code>{&quot;error&quot;:&quot;the Coach is already thinking about your training&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">429</span>
+    <span class="p-desc">The Coach will not take this job, and says which reason in <code>code</code>: - <code>busy</code> (409): a job for this profile is already running. - <code>shared</code> (409): instance mode, and the credential belongs to another profile. - <code>cap</code> (429): this profile's or the instance's daily limit is spent. - <code>consent</code> (403): no consent recorded for this profile. - <code>unprivileged</code> (503): the privilege drop cannot be performed, so no job runs. The message is the one to show; the raw provider detail never reaches the user.<span class="r-sig"><code>{&quot;error&quot;:&quot;the Coach is already thinking about your training&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">The Coach is not set up on this instance (switched off, or no provider connected). Every Coach route answers this rather than pretending, so an unconfigured instance renders exactly the app it was before the feature existed. <code>code</code> is <code>off</code>, the class a job refused at enqueue for the same reason carries; the app shows its own line for it.<span class="r-sig"><code>{&quot;error&quot;:&quot;the Coach is not set up on this instance&quot;}</code></span></span>
+  </div>
+    </div>
+  </div>
+</details>
+
 <details class="ep" id="op-postCoachDebrief">
   <summary>
     <span class="m post">POST</span>
     <span class="ep-path"><code>/api/coach/debrief</code></span>
     <span class="ep-chev" aria-hidden="true"></span>
-    <span class="ep-sum">Ask for a read of one session</span>
+    <span class="ep-sum">Review a selected session or recent sessions from a plan</span>
   </summary>
   <div class="ep-body">
-<p>Queues a <code>debrief</code> job: one workout, read closely. It changes nothing; the card it produces is kept in the profile's log. With no <code>workoutId</code> the most recent session is read.</p>
+<p>Queues a read-only debrief. Version 2 freezes exact typed workout references and a hash of the analysis input. Plan mode filters by stable routine id before selecting 3, 5 or 10 recent sessions. Changed, missing or ambiguous input returns 409 instead of selecting a different workout. Legacy workoutId selects exactly that id; only an omitted id defaults to the latest saved session.</p>
     <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
 
 <p class="ep-h">Request body <span class="p-hint">(JSON)</span> <span class="p-hint">(optional)</span></p><div class="ptab">
   <div class="prow">
     <span class="p-name">workoutId</span>
-    <span class="p-type">string <span class="p-hint">(&le; 40 chars)</span> | null</span>
+    <span class="p-type">string <span class="p-hint">(&le; 64 chars)</span> | null</span>
     <span class="p-desc">The workout to read; null or absent means the latest.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">debriefSelection</span>
+    <span class="p-type"><a href="#schema-CoachDebriefSelection">CoachDebriefSelection</a></span>
+    <span class="p-desc"></span>
   </div>
   <div class="prow">
     <span class="p-name">lang</span>
@@ -2310,10 +2404,20 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
     <span class="ep-sum">Apply or discard the waiting proposal</span>
   </summary>
   <div class="ep-body">
-<p>The client applies the accepted changes to its own state and syncs them through <code>PUT /api/data</code>; this only records the decision and clears the proposal. Sending it when nothing is waiting is a no-op, not an error.</p>
+<p>The client applies the accepted changes to its own state and syncs them through <code>PUT /api/data</code>; this only records the decision and clears the proposal. Sending it again for a previously resolved proposal is idempotent. A different pending proposal is never cleared; a mismatch returns 409.</p>
     <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
 
-<p class="ep-h">Request body <span class="p-hint">(JSON)</span> <span class="p-hint">(optional)</span></p><div class="ptab">
+<p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">proposalId<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(&le; 128 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">requestId<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(&le; 128 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
   <div class="prow">
     <span class="p-name">accepted</span>
     <span class="p-type">string[]</span>
@@ -2339,6 +2443,10 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <div class="prow rrow">
     <span class="r-code s4">401</span>
     <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">409</span>
+    <span class="p-desc">The Coach will not take this job, and says which reason in <code>code</code>: - <code>busy</code> (409): a job for this profile is already running. - <code>shared</code> (409): instance mode, and the credential belongs to another profile. - <code>cap</code> (429): this profile's or the instance's daily limit is spent. - <code>consent</code> (403): no consent recorded for this profile. - <code>unprivileged</code> (503): the privilege drop cannot be performed, so no job runs. The message is the one to show; the raw provider detail never reaches the user.<span class="r-sig"><code>{&quot;error&quot;:&quot;the Coach is already thinking about your training&quot;}</code></span></span>
   </div>
   <div class="prow rrow">
     <span class="r-code s5">503</span>
@@ -4496,6 +4604,59 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   </div>
 </details>
 
+<details class="ep sch" id="schema-CoachDebriefSelection">
+  <summary>
+    <span class="sch-name"><code>CoachDebriefSelection</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum"></span>
+  </summary>
+  <div class="ep-body">
+
+<div class="ptab">
+  <div class="prow">
+    <span class="p-name">version<em class="p-req" title="required">required</em></span>
+    <span class="p-type">always 2</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">mode<em class="p-req" title="required">required</em></span>
+    <span class="p-type">&quot;single&quot; | &quot;plan&quot;</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">planId</span>
+    <span class="p-type">string | null</span>
+    <span class="p-desc">Required stable routine id in plan mode.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">limit</span>
+    <span class="p-type">1 | 3 | 5 | 10</span>
+    <span class="p-desc">Single mode uses 1; plan mode uses 3</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">inputHash<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(&le; 128 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">refs<em class="p-req" title="required">required</em></span>
+    <span class="p-type">object[]</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">refs[].type<em class="p-req" title="required">required</em></span>
+    <span class="p-type">&quot;id&quot; | &quot;legacy&quot;</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">refs[].value<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(&le; 128 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+</div>
+  </div>
+</details>
+
 <details class="ep sch" id="schema-CoachStatus">
   <summary>
     <span class="sch-name"><code>CoachStatus</code></span>
@@ -4505,6 +4666,21 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <div class="ep-body">
 
 <div class="ptab">
+  <div class="prow">
+    <span class="p-name">debriefSelectionVersion</span>
+    <span class="p-type">always 2</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">decisionVersion</span>
+    <span class="p-type">always 2</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">scopeVersion</span>
+    <span class="p-type">always 2</span>
+    <span class="p-desc"></span>
+  </div>
   <div class="prow">
     <span class="p-name">job</span>
     <span class="p-type">object | null</span>
@@ -4572,6 +4748,11 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
     <span class="p-name">iteration</span>
     <span class="p-type">integer</span>
     <span class="p-desc">1, or higher after a refine.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">trigger</span>
+    <span class="p-type">&quot;scheduled&quot;</span>
+    <span class="p-desc">Present when an automatic review made it, which nobody was watching for.</span>
   </div>
   <div class="prow">
     <span class="p-name">summary</span>

@@ -38,6 +38,9 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Calendar fixtures assert local dates; keep their timezone deterministic on every runner.
+    env:
+      TZ: Europe/Zurich
     steps:
       - uses: actions/checkout@v7
       # node:22-alpine in web/Dockerfile and api/Dockerfile — CI must match production.

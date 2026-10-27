@@ -57,6 +57,11 @@ export function applyEdit(state, ev) {
       row.done = ev.t === 'set'; row.at = row.done ? ev.at : 0
       if (ev.weight != null) row.w = eventWeight(ev.weight, ev.weightUnit, state.weightUnit)
       if (ev.reps != null) row.r = ev.reps
+      // Completing a set and starting its rest are one optimistic edit. Replaying only
+      // done over an older snapshot would hide rest until the phone commits the set.
+      if (ev.t === 'set' && ev.rest) applyRest(state, ev.rest)
+      // Match toggleSet(false): undo also cancels the rest started by that completion.
+      if (ev.t === 'unset') state.restUntil = 0
     }
   }
   workout.exercises[exIndex].sets = workout.rows[exIndex].length

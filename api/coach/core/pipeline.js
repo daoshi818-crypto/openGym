@@ -14,7 +14,7 @@ import { CONTRACT } from './payload.js';
 import { buildPrompt, buildPromptParts } from './prompt.js';
 import { SCHEMAS } from './schemas.js';
 import { extractJSON, contractOK } from './parse.js';
-import { validatePlan, validateReview, validateDebrief } from './validate.js';
+import { validatePlan, validateReview, validateDebrief, validateAsk } from './validate.js';
 import { isChangeList, changesOntoPlan } from './refine-changes.js';
 
 /**
@@ -42,7 +42,12 @@ export async function attemptOnce({ adapter, cfg, kind, payload, model, timeoutM
   if (r.spawnError) return { ok: false, errorClass: 'missing', detail: r.stderr?.slice(0, 300) };
   if (r.code !== 0) {
     const err = (r.stderr || r.text || '').toLowerCase();
-    const authish = /unauthor|invalid.?api.?key|invalid.?credential|invalid.?token|authentication|\b401\b|\b403\b|login required/.test(err);
+    // An HTTP adapter's stderr starts with the status, and the status is the answer: once a
+    // provider's own words ride along ("the input token count exceeds…"), a word match would
+    // call a budget error a rejected key. The CLIs have no status, so they keep the words.
+    const status = /^(\d{3})\b/.exec(err);
+    const authish = status ? status[1] === '401' || status[1] === '403'
+      : /unauthor|invalid.?api.?key|invalid.?credential|invalid.?token|authentication|\b401\b|\b403\b|login required/.test(err);
     return { ok: false, errorClass: authish ? 'auth' : 'provider', detail: (r.stderr || r.text || '').slice(0, 300) };
   }
 
@@ -74,6 +79,9 @@ export async function attemptOnce({ adapter, cfg, kind, payload, model, timeoutM
     ? validateReview(parsed.value, payload.plan, { customIds, equipment, offered, lang: payload.meta?.lang, scope: payload.scope })
     : kind === 'debrief'
       ? validateDebrief(parsed.value, { scope: payload.debriefScope, sessions: payload.sessions })
+      : kind === 'ask'
+      ? validateAsk(parsed.value)
+
       : validatePlan(answer, {
       customIds, equipment, offered,
       lang: payload.meta?.lang,

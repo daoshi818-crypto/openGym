@@ -9,6 +9,7 @@ import {
   planHasRoutines, exportPlanFile, printWholePlan, importPlanFile,
 } from '../sheets.jsx'
 import Icon from '../components/Icon.jsx'
+import { SeasonDeco } from '../components/Seasonal.jsx'
 import { Button, Row, Section, Segmented } from '../components/ui.jsx'
 import SwipeRow from '../components/SwipeRow.jsx'
 import { copyRoutine, deleteRoutine, restoreRoutine, routineSnapshot } from '../lib/routines.js'
@@ -162,6 +163,7 @@ export default function Plan() {
 
   return <div className="narrow plan">
     <div className="hdr">
+      <SeasonDeco spot="header-bats" />
       <div><h1>{t('Plan')}</h1><div className="sub">{mode === 'rotation' ? t('Your routines in a loop') : t('Your weekly routine')}</div></div>
       <div className="hdr-actions">
         {showCoach && <Button size="sm" variant="tinted" icon="sparkles" onClick={() => nav('/coach')}>{t('Coach')}</Button>}
@@ -286,6 +288,8 @@ function Schedule({ S, update, nav, mode }) {
           : <Segmented className="seg-inline" value={mode} onChange={setMode}
               options={[{ value: 'week', label: t('Fixed Week') }, { value: 'rotation', label: t('Rotation') }]} />}
       </Row>
+      {/* a cobweb in the card's empty top corner, in season (components/Seasonal.jsx) */}
+      <SeasonDeco spot="plan-card" />
     </Section>
 
     {!S.routines.length && <div className="empty plan-empty">

@@ -79,3 +79,59 @@ run in JS after it resumes; no new native business executor or background servic
 Physical WATCH GT background, force-stop, power-loss, latency, battery and clock-adjustment
 acceptance remains necessary. New phone features require the production APK signed with
 the existing production key; the local .test APK has a different pairing identity.
+
+
+## On-demand uplink diagnostics
+
+Transport metadata is kept in memory only (latest 40 entries), separately from the durable
+outbox. It records enqueue, connection/readiness, send attempt/success/failure/exception/
+callback timeout, and received/committed stages. Event/session identities and bounded error
+strings are retained; workout payload fields are not copied. SDK callbacks that return an
+error object or separate message/code arguments are supported. Logging failures are ignored
+and no extra training-storage writes, ACKs, retry-policy or ordering changes are introduced.
+
+Opening the phone watch-log panel issues `watch_diagnostics_request` with a unique requestId.
+The watch replies with `watch_diagnostics` over the existing control path, not the durable
+training queue, so a blocked queue head does not suppress the diagnostic attempt. Replies
+include queue/head/readiness state and up to eight recent entries, trimmed oldest-first to
+fit the existing 6000-byte UTF-8 wire budget. Phone export includes `lastWatchTransport`
+with receivedAt and `watchDiagnosticRequest` with sentAt/status/completedAt. Only a matching
+requestId confirms the probe; SDK send success alone does not. After 2.5 seconds without
+a reply, the probe times out and the phone still displays its local native logs. Older
+watch builds do not implement this request; timeout alone cannot distinguish an old build
+from an unavailable uplink. Diagnostics are not dispatched as training events.
+
+If the uplink is unavailable, tap the sync status at the top of the watch workout/rest
+screen to view a fixed local snapshot, then use Next page to photograph the entries. Times
+are UTC (Z), two entries per page. Back exits without changing the session. This fallback
+is necessary because a diagnostic response uses the same potentially failing transport.
+Memory traces are lost if the watch process restarts; preserve screenshots before restarting.
+
+These paths require new phone/watch builds containing the diagnostic changes. They are not
+retroactively available in already installed 0.6.13 release packages. To investigate, keep
+both applications in the foreground, record the time, complete one set on the watch and
+skip rest, then collect same-session phone logs and watch diagnostic pages. Do not clear
+app data or delete pending records. Mock transport tests are not real-device confirmation.
+
+
+## Optimistic rest and per-set effort display
+
+A pending set completion replays both the completed row and its embedded rest event over
+the phone snapshot. This preserves the local rest deadline while the phone commits the
+completion; an older snapshot must not briefly remove rest and advance the displayed set.
+Rest version guards and event order still apply, so a later local skip is not undone by
+replaying the completion. A pending unset clears the rest started by that completion,
+matching the local undo operation. No transport timing, queue, ACK or commit rule changes.
+
+The training effort entry targets the displayed set; the rest entry targets the latest
+completed set. Scores are never copied from the previous set. The picker pins its target
+by entryInstanceId and setId even if the timer expires or exercises are reordered. A
+removed target, or an undo of a target that was completed when the picker opened, closes
+the editor. An unfinished training set may be rated without completing it or starting
+rest. RPE/RIR explanations appear only inside the picker after a rating is selected;
+training/rest entries show only the score or an unregistered state.
+
+Regression tests cover delayed/repeated snapshots, completion then skip/undo, current-set
+effort isolation, timer expiry while editing, reorder and RIR zero. Compiled square and
+round panel heights are checked statically; real-device transport delay and rendering
+remain device acceptance checks rather than outcomes proven by these tests.

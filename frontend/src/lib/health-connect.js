@@ -85,7 +85,7 @@ export function healthRecords(S, { nameOf, speedUnit }) {
   const unit = S?.unit === 'lb' ? 'lb' : 'kg'
   return {
     sessions: (S?.workouts || []).map(w => sessionRecord(w, { unit, nameOf, speedUnit })).filter(Boolean),
-    weights: (S?.bodyweight || []).map(b => weightRecord(b, unit)).filter(Boolean),
+    weights: (S?.bodyweight || []).filter(b => !b.src || b.src === 'manual').map(b => weightRecord(b, unit)).filter(Boolean),
   }
 }
 

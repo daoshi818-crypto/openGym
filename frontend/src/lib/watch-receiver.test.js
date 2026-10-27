@@ -995,3 +995,60 @@ describe('watch business message boundary', () => {
     expect(context.WATCH_VERSION).toBe(manifest.versionName)
   })
 })
+
+
+describe('watch local diagnostic viewer', () => {
+  function viewer(events = []) {
+    const snapshot = { connected: true, readyState: 1, peerProtocol: 3, pending: 2, phonePending: 0,
+      head: { type: 'set', attempts: 3 }, events }
+    const deps = { transportDiagnostics: vi.fn(() => snapshot), sendEvent: vi.fn(), save: vi.fn() }
+    const watch = page('Workout/index.ux', deps)
+    watch.focusCrown = vi.fn()
+    return { watch, deps, snapshot }
+  }
+  const event = (stage, extra = {}) => ({ at: Date.parse('2026-10-27T10:10:00Z'), stage, type: 'set', ...extra })
+
+  it('shows a fixed newest-first snapshot, error code, UTC time and wrapping pages', () => {
+    const { watch, deps, snapshot } = viewer([event('send_attempt'), event('send_success'), event('send_fail', { code: '77', detail: 'offline' })])
+    watch.showDiagnostics()
+    expect(watch.diagnosticOn).toBe(true)
+    expect(watch.diagnosticTitle).toContain('1/2')
+    expect(watch.diagnosticText).toContain('10:10:00Z send_fail set')
+    expect(watch.diagnosticText).toContain('code=77')
+    expect(watch.diagnosticText).toContain('offline')
+    expect(watch.diagnosticText).not.toContain('send_attempt')
+    watch.nextDiagnostic()
+    expect(watch.diagnosticTitle).toContain('2/2')
+    expect(watch.diagnosticText).toContain('send_attempt')
+    watch.nextDiagnostic()
+    expect(watch.diagnosticTitle).toContain('1/2')
+    expect(deps.transportDiagnostics).toHaveBeenCalledOnce()
+    expect(snapshot.events[0].stage).toBe('send_attempt')
+    expect(deps.sendEvent).not.toHaveBeenCalled()
+    expect(deps.save).not.toHaveBeenCalled()
+  })
+
+  it('handles an empty snapshot and closes with the back key', () => {
+    const { watch, deps } = viewer()
+    watch.showDiagnostics()
+    expect(watch.diagnosticTitle).toContain('1/1')
+    expect(watch.onBackPress()).toBe(true)
+    expect(watch.diagnosticOn).toBe(false)
+    expect(watch.focusCrown).toHaveBeenCalledOnce()
+    expect(deps.sendEvent).not.toHaveBeenCalled()
+    expect(deps.save).not.toHaveBeenCalled()
+  })
+
+  it('blocks crown and swipe workout actions while viewing diagnostics', () => {
+    const { watch, deps } = viewer()
+    watch.showDiagnostics()
+    watch.touch = { x: 100, y: 100 }
+    watch.touchLast = { x: 0, y: 100 }
+    watch.onRotation({ state: 1, delta: 1 })
+    watch.touchEnd({ changedTouches: [{ clientX: 0, clientY: 100 }] })
+    expect(watch.touch).toBeNull()
+    expect(watch.diagnosticOn).toBe(true)
+    expect(deps.sendEvent).not.toHaveBeenCalled()
+    expect(deps.save).not.toHaveBeenCalled()
+  })
+})

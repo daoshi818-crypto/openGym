@@ -118,4 +118,11 @@ export const PLAN_DEBRIEF_SCHEMA = { type: 'object', properties: {
     text: STR, sessionRefs: STRINGS, exerciseId: STR
   }, required: ['text', 'sessionRefs'] } }
 }, required: ['coach_contract', 'summary', 'trends', 'dataLimitations'] };
-export const SCHEMAS = { review: REVIEW_SCHEMA, create: CREATE_SCHEMA, refine: CREATE_SCHEMA, debrief: DEBRIEF_SCHEMA, debriefPlan: PLAN_DEBRIEF_SCHEMA };
+// A question in the chat: one plain-text answer, nothing to apply.
+export const ASK_SCHEMA = {
+  type: 'object',
+  properties: { coach_contract: { type: 'integer' }, answer: STR },
+  required: ['coach_contract', 'answer']
+};
+
+export const SCHEMAS = { review: REVIEW_SCHEMA, create: CREATE_SCHEMA, refine: CREATE_SCHEMA, debrief: DEBRIEF_SCHEMA, debriefPlan: PLAN_DEBRIEF_SCHEMA, ask: ASK_SCHEMA };
