@@ -31,7 +31,20 @@
 - 万圣节主题动态模块正常加载，页面 `data-season=halloween`；两个浏览器
   用户环境均无未捕获的 JavaScript 异常。
 - 通过表单录入 72.5 kg 体重，重载后保存记录的日期、数值、时间戳保持一致。
-- CI 签名构建和最终 APK 的版本、证书与内置资源检查待发布流程完成后记录。
+- GitHub Tests（40539495262）及 Build signed APK（40539495248）均成功；
+  CI 的移动环境启动回归两项通过，前端、API、MCP 及容器检查全通过。
+- 已下载实际发布的 APK：包名 `ch.duartesantos.opengym`，版本 1.6.7、
+  versionCode 53，v1/v2/v3 签名均验证通过。
+- 证书 SHA-256：`8bf64970048540fe913005d05becee1ecad819e7171518dabcd15817301a0149`，
+  与 1.6.5、1.6.6 正式手机包一致。
+- APK SHA-256：`f6165983784f3fef3adc1fa621bc4b512fab49da5b3b3a5b33a9506c44b4a371`，
+  与发布的校验文件一致。安装包位于本机
+  `D:/openGym-black-screen-20261027/installers/openGym.apk`。
+- 从实际发布的 1.6.6 APK 提取资源，在两种尺寸下再次复现相同错误；从实际
+  1.6.7 APK 提取资源，在 412×915 与 1440×1000 下均通过首次引导、四个页签
+  切换、体重录入、重载及数据保留检查，无未捕获异常，万圣节模块正常。
+- 原始结果和截图：`D:/openGym-black-screen-20261027/released-apk-smoke/`。
+  复现脚本：同目录上层的 `production-smoke.cjs`。更新清单已指向 v1.6.7。
 
 浏览器验证不代表 Android 真机验收，本次未连接用户手机。无需卸载或清除数据，
 直接安装同签名修复版。
