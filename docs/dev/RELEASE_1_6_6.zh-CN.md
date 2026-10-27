@@ -28,6 +28,16 @@
 
 API 六项 Windows 失败涉及 POSIX 文件权限、目录 fsync，以及 chmod 模拟不可读/不可写场景。私网推送端点被拒绝后仍会清理并尝试保存；不更改 SSRF 防护以迎合测试。Linux CI 结果以该发布提交的实际工作流为准。
 
+## 正式发布结果
+
+- 发布代码提交：`b572d4b40dd594c670cc1012e349abe95744e828`，对应 tag `v1.6.6`。发布于 2026-10-27，非草稿、非预发布。
+- Tests 工作流 `40525921332` 全部成功（Linux / Node 22）：前端 5,761/5,761，API 628/628，MCP 95/95；API 两种镜像构建/启动检查、生成文件及 plain-node 检查通过。Windows 六项失败未在 Linux 复现。
+- Build signed APK 工作流 `40525921173` 成功：Android 原生 release、移动资源三份检查、手机签名验证及手表包 manifest/hash 校验通过。
+- 自动更新元数据提交 `4013cd688` 已推送 `main`，本地已快进；`update.json` 与 CDN 检查均指向 v1.6.6。
+- 已下载全部六个发布资产逐一校验 SHA-256。手机 APK 为 222,521,738 字节，SHA-256 `1fe2242f84352a5c9ab070f37eee5bff6b657e3194d9e4d4422317d63e8da47c`。
+- 下载后的 APK 再次通过 apksig 校验 v1/v2/v3，证书 SHA-256 `8bf64970048540fe913005d05becee1ecad819e7171518dabcd15817301a0149`，与下载校验的上一版 1.6.5 一致。aapt 确认包名 `ch.duartesantos.opengym`、版本 1.6.6/code 52。APK 内含 mobile flavor 标记及本次中文要领修订锚点。
+- 安装包与校验文件保存在 `D:/openGym-release-20261027/installers/`；构建和测试日志保存在该目录的上一级。本地 K 盘空间有限，因此未将大型 APK 复制回 K 盘。
+
 ## 手表签名与校验
 
 方屏 SHA-256：`33d14ec0683f89b0bf218cd069bba8c77329253711bd270ff38cc5533db2afe8`。
