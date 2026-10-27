@@ -329,7 +329,7 @@ function Shell() {
       <TimerFlash />
       {/* Seasonal decoration (lib/seasonal.js): nothing, and nothing loaded, out of season. Never
           over a running workout or the first-launch screens. */}
-      {authed && !needsMobileOnboarding && !permSteps && <SeasonalLayer hidden={inWorkout || loc.pathname === '/workout'} />}
+      {authed && !needsMobileOnboarding && <SeasonalLayer hidden={inWorkout || loc.pathname === '/workout'} />}
     </>
   )
 }

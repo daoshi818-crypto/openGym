@@ -72,11 +72,12 @@ jobs:
           name: openGym custom v${{ env.APP_VERSION }}
           body: |
             手机：${{ env.APP_VERSION }}；手表：${{ env.WATCH_VERSION }}。
+            1.6.7 修复手机启动黑屏：万圣节主题接入时引用了当前分支不存在的权限引导变量，已有用户打开及首次选择本地模式后会触发渲染异常。新增真实 App 主界面回归测试；修复不更改训练数据，手机可直接覆盖升级。手表仍为 0.6.14。
             新增 4,130 个动作的简体中文要领（22,032 条步骤），保留 178 个源文冲突动作待复核；统一动作中文名并修订腰背反弓方向提示。
             选择性合入官方 v1.4.3：相对力量、体重趋势、疲劳百分比、测量单位与 CSV、总训练容量、体重删除撤销、动作别名、AI 教练修复及万圣节主题。
             修复手机回传导致手表休息消失又恢复的状态回放；训练页和休息页按目标组登记 RPE/RIR，避免跨组继承，并增加自动切换后的防误触。
             手机 openGym.apk 沿用本仓库正式签名。vivo WATCH GT 安装 opengym-watch-${{ env.WATCH_VERSION }}.rpk；圆屏安装 opengym-watch-round-${{ env.WATCH_VERSION }}.rpk。手表沿用 2026-10-27 newsig 测试包证书，与旧正式版 0.6.13 不同；旧签名设备可能需要卸载重装，请先确保待上传记录已同步。
-            自动化验证与范围限制见 docs/dev/RELEASE_1_6_6.zh-CN.md；CI 使用仓库正式手机签名，手表为 BlueOS 方屏和圆屏独立安装包。
+            黑屏修复与启动验证见 docs/dev/RELEASE_1_6_7.zh-CN.md；1.6.6 功能范围见 docs/dev/RELEASE_1_6_6.zh-CN.md。CI 使用仓库正式手机签名，手表为 BlueOS 方屏和圆屏独立安装包。
             WATCH GT 真机同步、息屏/后台恢复和休息页显示仍需验收；手机 JS 未运行时先缓存操作，恢复后处理。协议细节见 watch-app/SYNC_PROTOCOL.md。
           files: |
             openGym.apk
