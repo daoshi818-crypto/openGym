@@ -18,11 +18,13 @@ import { startSessionHr, stopSessionHr, tick, restOver } from '../lib/sensors.js
 import { startServer, sendEvent, sendControl, pendingCount, isConnected, persistenceStatus, synchronizationStatus, transportDiagnostics } from '../lib/rpc.js'
 import { storageStatus } from '../lib/persistence.js'
 import { applyEdit, applyFocus, applyRest, restOf } from '../lib/protocol.js'
+import { openWatchMedia } from '../lib/watch-media.js'
 import { lastTimeView } from '../lib/watch-last-time.js'
 
 export default {
   data: {
     exName: '', syncWarning: false,
+    mediaOn: false, mediaAvailable: false, mediaStatus: '', mediaState: '', mediaFrames: [], mediaPoster: '', mediaPlaying: false, mediaFrameDuration: '84ms',
     selectedField: null, setDots: [], dotSegmented: false, dotHasPrev: false, dotHasNext: false, inputNotice: '',
     groupLabel: '',
     setProgressLabel: '',
@@ -154,6 +156,7 @@ export default {
     try { this.$element('training').requestFocus(true) } catch (e) {}
   },
   onRotation(ev) {
+    if (this.mediaOn) return
     if (this.diagnosticOn) return
     if (ev && this.effortOn && ev.state !== 3) {
       const d = Number(ev.delta) || (ev.direction === true ? 1 : ev.direction === false ? -1 : 0)
@@ -167,6 +170,7 @@ export default {
     else this.adjustSelectedField(rotationStep(ev))
   },
   onBackPress() {
+    if (this.mediaOn) { this.closeMedia(); return true }
     if (this.diagnosticOn) { this.closeDiagnostics(); return true }
     if (this.effortOn) { this.closeEffort(); return true }
     // 详情/结束入口只关闭自己，不切组、不停表、不退出会话。
@@ -180,7 +184,7 @@ export default {
   },
   openMenu() { this.menuOn = true; this.leaveChoice = false },
   openActions() { if (!this.isRest) this.pageIndex = 1; this.menuOn = false },
-  interactionBlocked() { return !!this.touchAxis || Date.now() < (this.trailingTapBlockedUntil || 0) || Date.now() < (this.autoFocusIgnoreUntil || 0) },
+  interactionBlocked() { return this.mediaOn || !!this.touchAxis || Date.now() < (this.trailingTapBlockedUntil || 0) || Date.now() < (this.autoFocusIgnoreUntil || 0) },
   openExercises(fromGesture) {
     if (fromGesture !== true && this.interactionBlocked()) return
     this.clearFieldSelection(); router.push({ uri: '/ExerciseList' })
@@ -211,6 +215,7 @@ export default {
       return this[method](...args)
     }
     startServer({
+      onMedia: msg => { if (this.mediaClient) this.mediaClient.receive(msg).catch(() => {}) },
       onPlan: (msg) => handle('onPlanUpdate', msg),
       onSync: (msg) => handle('onSyncUpdate', msg),
       onRest: (msg) => handle('onRemoteRest', msg),
@@ -231,7 +236,58 @@ export default {
     })
   },
 
+  mediaKey() {
+    const s = this.state, ex = s && s.workout && s.workout.exercises[s.exIdx]
+    return s && ex ? [s.sid,ex.entryInstanceId,ex.mediaRef && ex.mediaRef.sourceId].join(':') : ''
+  },
+  openMedia() {
+    if (!this.mediaAvailable || this.interactionBlocked() || this.effortOn || this.lastOpen || this.finishOn || this.closeMode) return
+    this.clearFieldSelection(); this.touchCancel()
+    this.mediaOn = true
+    this.loadMedia()
+  },
+  loadMedia() {
+    if (!this.mediaOn) return
+    this.stopMediaAnimation()
+    if (this.mediaClient) this.mediaClient.close()
+    this.mediaFrames = []; this.mediaPoster = ''; this.mediaState = 'loading'
+    const s = this.state, ex = s.workout.exercises[s.exIdx], key = this.mediaKey()
+    this.mediaTargetKey = key
+    this.mediaClient = openWatchMedia({ sid:s.sid, entryInstanceId:ex.entryInstanceId, sourceId:ex.mediaRef.sourceId }, sendControl, value => {
+      if (!this.mediaOn || key !== this.mediaKey()) return
+      this.mediaState = value.status; this.mediaStatus = value.label
+      if (value.poster != null) this.mediaPoster = value.poster
+      if (value.frames) this.mediaFrames = value.frames
+      if (value.status === 'ready') { this.mediaFrameDuration = Math.round(value.duration/value.frames.length)+'ms'; this.playMedia(0) }
+    })
+  },
+  playMedia(attempt) {
+    if (!this.mediaOn || this.mediaState !== 'ready') return
+    clearTimeout(this.mediaStartTimer)
+    this.mediaStartTimer = setTimeout(() => {
+      if (!this.mediaOn || this.visible === false || this.mediaState !== 'ready') return
+      try {
+        this.$element('demo-animation').start(); this.mediaPlaying = true
+        clearTimeout(this.mediaStopTimer)
+        this.mediaStopTimer = setTimeout(() => this.stopMediaAnimation(),60000)
+      } catch (e) { if (attempt < 4) this.playMedia(attempt+1); else { this.mediaState='error';this.mediaStatus='动画暂不可用，请重试' } }
+    },100)
+  },
+  stopMediaAnimation() {
+    clearTimeout(this.mediaStartTimer); clearTimeout(this.mediaStopTimer)
+    try { this.$element('demo-animation').stop() } catch (e) {}
+    this.mediaPlaying = false
+  },
+  toggleMedia() { if (this.mediaPlaying) this.stopMediaAnimation(); else this.playMedia(0) },
+  closeMedia() {
+    this.stopMediaAnimation()
+    if (this.mediaClient) this.mediaClient.close()
+    this.mediaClient = null; this.mediaOn = false; this.mediaFrames = []; this.mediaPoster = ''
+    this.touchCancel()
+  },
+
   onHide() {
+    this.closeMedia()
     this.visible = false
     this.flushRestNudge()
     this.setRestScreenLock(false)
@@ -240,6 +296,7 @@ export default {
   },
 
   onDestroy() {
+    this.closeMedia()
     if (this.timer) clearInterval(this.timer)
     this.flushRestNudge()
     this.setRestScreenLock(false)
@@ -263,6 +320,7 @@ export default {
   stopHrCapture() { stopSessionHr() },
 
   touchStart(e) {
+    if (this.mediaOn) { this.touchCancel(); return }
     const t = e.touches && e.touches[0]
     if (t) { this.autoFocusIgnoreUntil = 0; this.trailingTapBlockedUntil = 0 }
     this.touch = t ? { x: t.clientX, y: t.clientY } : null
@@ -272,6 +330,7 @@ export default {
   },
 
   touchMove(e) {
+    if (this.mediaOn) { this.touchCancel(); return }
     if (!this.touch) return
     const t = e.touches && e.touches[0]
     if (t) {
@@ -284,6 +343,7 @@ export default {
   },
 
   touchEnd(e) {
+    if (this.mediaOn) { this.touchCancel(); return }
     if (this.diagnosticOn) { this.touchCancel(); return }
     if (!this.touch) return
     // 固件触摸回调未必带 changedTouches，用最后一次 move 的坐标兜底。
@@ -615,6 +675,7 @@ export default {
   },
 
   onRemoteEnded() {
+    this.closeMedia()
     this.cancelRestNudge()
     this.setRestScreenLock(false)
     this.hrDirty = false
@@ -974,6 +1035,8 @@ export default {
     this.setRestScreenLock(this.visible !== false && !!s.restUntil)
     this.rowDone = this.isDoneRowCur()
     const ex = s.workout.exercises[s.exIdx]
+    this.mediaAvailable = !!(ex && ex.mediaRef && ex.mediaRef.format === 'png-v1' && ex.entryInstanceId)
+    if (this.mediaOn && this.mediaTargetKey !== this.mediaKey()) this.closeMedia()
     const row = s.workout.rows[s.exIdx] && s.workout.rows[s.exIdx][s.setIdx]
     if (this.fieldTarget) {
       const target = rowTarget(s, this.fieldTarget)
@@ -1237,6 +1300,7 @@ export default {
   discardEnd() { this.onEnd('discarded') },
   abandonEnd() { this.onEnd('abandoned') },
   onEnd(reason, notifyPhone = true) {
+    this.closeMedia()
     if (typeof reason !== 'string') reason = 'manual'
     const s = this.state
     if (!s || !s.active) return
@@ -1259,7 +1323,7 @@ export default {
 
 <template>
 <div class="page" id="training" touch-focusable="true" onrotation="onRotation" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
-  <div class="screen" if="{{ pageIndex === 0 && !closeMode }}">
+  <div class="screen" if="{{ pageIndex === 0 && !closeMode && !mediaOn }}">
     <div class="topbar">
       <div class="st" if="{{ syncWarning }}" onclick="showDiagnostics"><div class="dot"></div><text class="status">{{ syncLabel }}</text></div>
       <text class="clock now">{{ clockLabel }}</text>
@@ -1292,6 +1356,7 @@ export default {
         </div>
         <input class="set-hit segment" if="{{ dotSegmented }}" type="button" value="›" disabled="{{ !dotHasNext }}" onclick="nextDotSegment" />
       </div>
+      <input class="demo-entry" if="{{ mediaAvailable }}" type="button" value="动作示范 ›" onclick="openMedia" />
       </list-item></list>
     </div>
 
@@ -1308,6 +1373,7 @@ export default {
       <text class="next-details">{{ nextDetails }}</text>
       <input class="effort-row" type="button" if="{{ effortEntryOn }}" value="{{ effortEntryLabel + '  ' + effortEntryText + '  ›' }}" onclick="openEffort" />
       <input class="skip" type="button" value="跳过休息" onclick="onSkipRest" />
+      <input class="demo-entry" if="{{ mediaAvailable }}" type="button" value="动作示范 ›" onclick="openMedia" />
       </list-item></list>
     </div>
 
@@ -1317,7 +1383,7 @@ export default {
     </div>
   </div>
 
-  <div class="screen operation-screen" if="{{ pageIndex === 1 && !closeMode }}">
+  <div class="screen operation-screen" if="{{ pageIndex === 1 && !closeMode && !mediaOn }}">
     <div class="topbar">
       <div class="st" onclick="showDiagnostics"><div class="dot"></div><text class="status">{{ syncLabel }}</text></div>
       <text class="clock now">{{ clockLabel }}</text>
@@ -1332,6 +1398,7 @@ export default {
       <div class="op-row"><text class="op-k">重量</text><text class="op-v">{{ weightNum }}</text><text class="op-u">{{ weightSuffix }}</text></div>
       <div class="op-row"><text class="op-k">次数</text><text class="op-v">{{ repsNum }}</text><text class="op-u">{{ repsSuffix }}</text></div>
     </div>
+      <input class="demo-entry" if="{{ mediaAvailable }}" type="button" value="动作示范 ›" onclick="openMedia" />
     <text class="volume-line">已完成容量 {{ volumeLabel }} {{ weightUnit }}·次</text>
     <input class="effort-row" type="button" if="{{ effortEntryOn }}" value="{{ effortEntryLabel + '  ' + effortEntryText + '  ›' }}" onclick="openEffort" />
     <div class="mrow">
@@ -1414,6 +1481,19 @@ export default {
     <text class="effort-clear" if="{{ effortHasSaved }}" onclick="clearEffort">清除登记</text>
     </list-item></list>
   </div>
+  <div class="media-layer" if="{{ mediaOn }}">
+    <div class="media-card">
+      <text class="media-title">{{ exName }}</text>
+      <image-animator class="media-image" id="demo-animation" if="{{ mediaState === 'ready' }}" images="{{ mediaFrames }}" duration="{{ mediaFrameDuration }}" poster="first" predecode="1" iteration="infinite" fixedsize="true" />
+      <image class="media-image" if="{{ mediaState !== 'ready' && mediaPoster }}" src="{{ mediaPoster }}" />
+      <div class="media-placeholder" if="{{ mediaState !== 'ready' && !mediaPoster }}"><text class="media-placeholder-text">动作示范</text></div>
+      <text class="media-status">{{ mediaStatus }}{{ isRest ? ' · 休息 ' + restLabel : '' }}</text>
+      <input class="media-control" type="button" if="{{ mediaState === 'ready' }}" value="{{ mediaPlaying ? '停止播放' : '重新播放' }}" onclick="toggleMedia" />
+      <input class="media-control" type="button" if="{{ mediaState === 'error' }}" value="重试" onclick="loadMedia" />
+      <text class="media-back" onclick="closeMedia">‹ 返回训练</text>
+    </div>
+  </div>
+
 </div>
 </template>
 
@@ -1740,4 +1820,32 @@ export default {
   .complete { width: 90px; height: 90px; border-radius: 45px; }
   .navrow { height: 100px; }
 }
+.demo-entry { width: 336px; height: 44px; font-size: 20px; border-radius: 20px; color: #30D158; background-color: #16331E; }
+.media-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; justify-content: center; }
+.media-card { width: 350px; height: 390px; flex-direction: column; align-items: center; justify-content: center; }
+.media-title { width: 336px; height: 40px; font-size: 24px; color: #FFFFFF; lines: 1; text-align: center; }
+.media-image { width: 180px; height: 180px; object-fit: contain; }
+.media-placeholder { width: 180px; height: 180px; background-color: #1C1C1E; align-items: center; justify-content: center; }
+.media-placeholder-text { color: #929297; font-size: 22px; }
+.media-status { width: 336px; height: 48px; font-size: 17px; color: #929297; lines: 2; text-align: center; }
+.media-control { width: 240px; height: 48px; border-radius: 24px; font-size: 20px; color: #30D158; background-color: #16331E; }
+.media-back { width: 240px; height: 48px; line-height: 48px; font-size: 20px; color: #30D158; text-align: center; }
+@media (min-width: 450px) {
+  .demo-entry { width: 260px; height: 44px; font-size: 18px; }
+  .media-layer { justify-content: flex-start; }
+  .media-card { width: 280px; height: 300px; margin-top: 70px; }
+  .media-title { width: 260px; height: 24px; font-size: 19px; }
+  .media-status { width: 260px; height: 32px; font-size: 13px; }
+  .media-control { width: 220px; height: 36px; font-size: 17px; }
+  .media-back { width: 220px; height: 28px; line-height: 28px; font-size: 17px; }
+}
+
+@media screen and (max-height: 420px) {
+  .media-card { height: 350px; }
+  .media-title { height: 32px; }
+  .media-status { height: 40px; }
+  .media-control { height: 44px; }
+  .media-back { height: 44px; line-height: 44px; }
+}
+
 </style>

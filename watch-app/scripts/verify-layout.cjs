@@ -53,11 +53,22 @@ for (const page of Object.keys(manifest.router.pages)) {
       assert.ok(px('.set-dots', 'height') >= 2 * px('.set-hit', 'height'), 'Wrapped set targets clip the second row')
       assert.ok(px('.set-dots', 'width') <= px('.screen', 'width'), 'Set dots exceed safe area')
     }
+    const checkDemo = sheet => {
+      const px = (selector, field) => parseFloat(sheet[selector]?.[field] || 0)
+      assert.equal(px('.media-image', 'width'),180,'Demo must use bounded 180px PNGs')
+      assert.equal(px('.media-image', 'height'),180,'Demo must not crop PNG frames')
+      assert.ok(px('.media-card','width') <= px('.screen','width'),'Demo exceeds safe width')
+      assert.ok(px('.media-card','height') <= px('.screen','height'),'Demo exceeds safe height')
+      const sum = ['.media-title','.media-image','.media-status','.media-control','.media-back'].reduce((n,c)=>n+px(c,'height'),0)
+      assert.ok(sum <= px('.media-card','height'),'Demo controls clip')
+    }
+    checkDemo(styles)
     checkScrollableViews(styles)
     for (const media of styles['@MEDIA'] || []) {
       const merged = { ...styles }
       for (const [selector, rule] of Object.entries(media)) if (selector !== 'condition') merged[selector] = { ...(styles[selector] || {}), ...rule }
       checkScrollableViews(merged)
+      checkDemo(merged)
     }
     if (target === 'watch-round') {
       const media = styles['@MEDIA']?.find(item => item.condition === 'screen and (min-width: 450px)')

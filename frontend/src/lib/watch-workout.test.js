@@ -88,7 +88,7 @@ describe('Last time travels through plan, snapshot and catalog', () => {
 
   it('adds lastTime without disturbing the existing fields, protocol or stable identity', () => {
     const ex = watchPlanOf(S).workout.exercises[0]
-    expect(Object.keys(ex).sort()).toEqual(['entryInstanceId', 'id', 'lastTime', 'name', 'reps', 'restSec',
+    expect(Object.keys(ex).sort()).toEqual(['entryInstanceId', 'id', 'lastTime', 'mediaRef', 'name', 'reps', 'restSec',
       'setIds', 'sets', 'weight', 'weightUnit'])
     const plan = watchPlanOf(S)
     expect(plan.protocolVersion).toBe(2)

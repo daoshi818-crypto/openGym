@@ -6,14 +6,15 @@
 import { MOBILE, isAndroid } from './mobile.js'
 import { isWarmupRow } from './workout-model.js'
 import { wireHash, splitWire, diffWire } from '../../../watch-app/src/lib/sync-wire.js'
-import { watchSnapshotOf } from './watch-workout.js'
+import { createWatchMediaResponder } from './watch-media.js'
+import { watchPlanOf, watchSnapshotOf } from './watch-workout.js'
 
 let pluginP = null
 const watchPlugin = () => pluginP || (pluginP = (async () => {
   if (!(await isAndroid())) return null
   try {
     const { registerPlugin } = await import('@capacitor/core')
-    return { WatchRpc: registerPlugin('WatchRpc') }
+    return { WatchRpc: registerPlugin('WatchRpc'), WatchMedia: registerPlugin('WatchMedia') }
   } catch { return null }
 })().catch(() => null))
 
@@ -181,9 +182,18 @@ function onNativeWatchState(ev) {
   }
 }
 
+const respondWatchMedia = createWatchMediaResponder({
+  getPlan: () => { const S = trainingStore?.getState(); return S ? watchPlanOf(S) : null },
+  prepare: async sourceId => (await watchPlugin()).WatchMedia.prepare({ sourceId }),
+  readChunk: async args => (await watchPlugin()).WatchMedia.readChunk(args),
+  // Dedicated transient lane: training barriers/checkpoints and durable queues are untouched.
+  send: async obj => { const p = await watchPlugin(); if (p) await p.WatchRpc.sendEvent({ json:JSON.stringify(obj) }) },
+})
+
 function onNativeWatchEvent(ev) {
   try {
     if (!ev) return
+    if (ev.t?.startsWith('media_')) { respondWatchMedia(ev).catch(() => {}); return }
     for (const cb of receiptListeners) { try { cb(ev) } catch { /* Status subscribers must not interrupt delivery. */ } }
     if (ev.t === 'device') {
       device = { ...(device || {}), ...ev }

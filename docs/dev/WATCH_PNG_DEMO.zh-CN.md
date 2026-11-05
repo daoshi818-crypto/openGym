@@ -1,0 +1,31 @@
+# BlueOS PNG帧动作示范：实现、边界与真机验收
+
+## 调用链
+1. `frontend/src/lib/watch-workout.js` → `watchMediaRef`：目录MP4文件名/figure映射生成`mediaRef:{sourceId,format:"png-v1"}`，经现有计划/快照传到手表；不修改运动ID。
+2. 手表`Workout/index.ux`在主训练页、休息页和操作页中的独立「动作示范 ›」按钮打开同页覆盖层，`openWatchMedia`创建临时客户端；同sourceId完整缓存逐帧校验通过则直接播放。
+3. 无缓存发送`media_request`（sid、entryInstanceId、sourceId、requestId）。手机`watch-link.js`在训练事件处理前截获`media_*`，交给`createWatchMediaResponder`，验证当前活动训练条目。
+4. `WatchMediaPlugin.prepare`在单原生worker读取APK `public/exercise-media/clip/<sourceId>.mp4`，复制到有界私有缓存供MediaMetadataRetriever解码。等比绘制到180×180白底PNG，保留循环时长。资产key是配置+素材内容的SHA-256。
+5. `media_info`返回有界header；`media_get_index`/`media_index`每次传16帧的长度、hash、毫秒时长，避免大JSON包。
+6. `media_get`/`media_chunk`按帧号/偏移单包拉取2048原始字节；只接受当前expected offset，同步校验长度、SHA、PNG签名和180×180尺寸后写文件。
+7. 手表受控目录`internal://files/watch-demo-v1`仅固定数字文件名和ready.json；不接受远端路径。最长35秒，目标12fps且最多96帧/4MiB（长于8秒时降低采样帧率以保留完整周期），缓存只保留最近一个动作，写ready前所有帧都已完成。
+8. 原生`image-animator`：逐帧duration（ms），同时设置required全局duration字符串作为默认；predecode=1、poster=first、fixedsize=true。定时60秒停止；返回/离页/变更目标/远端结束清理。
+
+## 可靠性与训练隔离
+- 控制包使用`sendControl`，不使用训练`sendEvent`；手机响应直接使用WatchRpc，不走checkpoint/训练outboundBarrier。
+- 一个媒体请求、一个手机原生任务；忙时不排队，手表有限重试。准备30秒/普通块6秒超时，各至多3次重试。失联显示重试，不写训练存储。
+- 磁盘操作跨覆盖层串行；旧代已取消的排队操作不能写入新代缓存。文件回调5秒未返回则poison媒体磁盘通道，避免超时后迟到写入破坏新代；重启应用解除。
+- 只读面板不会暂停训练或休息；只是屏蔽底层交互，不离开Workout路由。休息铃/振动继续沿用训练逻辑。
+- Android缓存最多3个动作。损坏的原生缓存会重建，手表不将partial当作ready。手表每次读缓存均校验全部帧，不信任ready文件本身。
+- 老手表忽略新增mediaRef；新手表收到老手机不带mediaRef的计划时隐藏入口。
+
+## 真机验收（待执行，不冒充已通过）
+1. 手机与方屏手表直接覆盖安装新版本，确认旧历史/计划仍存在；同步包含动作素材的训练。
+2. 点动作名仍进入动作列表；点组圆点仍选组；选中字段转表冠仍改值，组完成正常。
+3. 点「示范」，看到准备、接收进度、首帧和循环。核对动作/男女样式；测试横屏/竖长素材留白而非裁切。
+4. 演示内转表冠、横滑、点击原数字所在区域，不改变任何训练字段；返回训练组号/重量/次数保持一致。
+5. 休息倒计时中打开，验证剩余时间继续减少且到时提醒正常。连续播放60秒自动停止，重播可用。
+6. 首次下载拔连接→有限超时和重试，训练事件仍可在重连后同步；下载中返回不继续拉包。
+7. 重新打开同一动作（断连状态）可读缓存；切换其他动作重新下载并替换缓存。核对内存、总存储受限。
+8. 下载中结束训练/手机切动作/更换人物样式，旧媒体包不可覆盖新训练；锁屏和抬腕后没有后台动画/幽灵请求。
+9. 自定义动作/无短片动作无入口。存储不足、坏包、手机未就绪有可恢复失败态。
+10. 圆屏另包验证安全区、按钮点击、图片不变形；记录首次传输秒数、循环实际帧率、发热耗电。固件不支持本地路径动画时须根据真机日志适配，不声明测试通过。
