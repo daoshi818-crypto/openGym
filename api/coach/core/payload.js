@@ -376,6 +376,11 @@ function cleanSet(s) {
   if (isWarmupSet(s)) o.warmup = true;
   else if (s.failure === true) o.failure = true;
   for (const k of ['w', 'r', 'sec', 'min', 'speed', 'rir', 'rpe']) if (num(s[k]) !== undefined) o[k] = s[k];
+  // A note on the set itself (upstream v1.4.4, the CSV's set_note): the Coach reads the
+  // workouts the way the app keeps them, so a set's own note travels with the set. Bounded like
+  // every other text field here, and passed as the user's own words, never interpreted.
+  const note = typeof s.note === 'string' ? s.note.trim() : '';
+  if (note) o.note = note.slice(0, NOTE_MAX);
   return o;
 }
 const entriesOf = w => list(w.entries).filter(en => en && typeof en === 'object');

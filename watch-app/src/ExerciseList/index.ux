@@ -6,7 +6,7 @@ import { loadState, save, endSession, closeSession } from '../lib/session.js'
 import { sendEvent } from '../lib/rpc.js'
 
 export default {
-  data: { list: [], expanded: -1, endOn: false, hint: '' },
+  data: { list: [], expanded: -1, endOn: false, hint: '', trainName: '', abandonArmed: false },
 
   onInit() {
     if (this.$app && this.$app.$def) bindRuntime(this.$app.$def)
@@ -31,17 +31,25 @@ export default {
     this.rebuild()
   },
 
-  onHide() { this.navPending = false; this.gesture = null },
+  onHide() { this.navPending = false; this.gesture = null; this.abandonArmed = false },
 
   rebuild() {
     const s = this.state
-    this.list = s.workout.exercises.map((ex, i) => ({
-      name: ex.name,
-      idx: i,
-      rows: (s.workout.rows[i] || []).map((row, j) => ({
-        no: String(j + 1), txt: this.rowTxt(row, ex), done: row.done, exIdx: i, setIdx: j, setId: row.setId,
-      })),
-    }))
+    this.trainName = s.workout.name || '训练动作'
+    this.list = s.workout.exercises.map((ex, i) => {
+      const rows = s.workout.rows[i] || []
+      return {
+        name: ex.name,
+        idx: i,
+        // 官方 Overview 的右侧“已完成/总数”与当前动作高亮：只影响展示，不改完成语义。
+        doneCount: rows.filter(r => r.done).length,
+        totalCount: rows.length,
+        current: i === s.exIdx,
+        rows: rows.map((row, j) => ({
+          no: String(j + 1), txt: this.rowTxt(row, ex), done: row.done, exIdx: i, setIdx: j, setId: row.setId,
+        })),
+      }
+    })
   },
   onReady() { this.focusPanel() },
   focusPanel() { try { this.$element('page').requestFocus(true) } catch (e) {} },
@@ -98,7 +106,7 @@ export default {
   interactionBlocked() { return !!(this.gesture && this.gesture.consumed) || Date.now() < (this.trailingTapBlockedUntil || 0) },
   backToExercises() {
     if (this.interactionBlocked()) return
-    this.endOn = false; this.focusPanel()
+    this.endOn = false; this.abandonArmed = false; this.hint = ''; this.focusPanel()
   },
   onBackPress() {
     if (this.interactionBlocked()) return true
@@ -158,28 +166,39 @@ export default {
       ...(session ? { workout: s.workout, startedAt: s.startedAt, weightUnit: s.weightUnit || 'kg', summary: { minutes: session.minutes, avgHr: session.avgHr, maxHr: session.maxHr, calories: session.calories, volume: session.volume }, completedSets: session.sets } : {}) })
     router.replace({ uri: disposition === 'saved' ? '/Summary' : '/Index' })
   },
-  abandonWorkout() { if (!this.interactionBlocked()) this.closeWorkout('abandoned') },
+  // 放弃不可逆：第一次点击只进入武装态并给出警告，第二次才真的放弃（官方 Finish 的二次确认）。
+  abandonWorkout() {
+    if (this.interactionBlocked()) return
+    if (!this.abandonArmed) {
+      this.abandonArmed = true
+      this.hint = '再次点击“确认放弃”才会丢弃本次训练'
+      return
+    }
+    this.abandonArmed = false
+    this.hint = ''
+    this.closeWorkout('abandoned')
+  },
   saveWorkout() { if (!this.interactionBlocked()) this.closeWorkout('saved') },
 
 }
 </script>
 
 <template>
-  <div class="page" id="page" touch-focusable="true" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
-    <div class="content" if="{{ !endOn }}">
-    <text class="title" if="{{ !hint }}">训练动作</text>
+<div class="page" id="page" touch-focusable="true" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
+  <div class="content" if="{{ !endOn }}">
+    <text class="title" if="{{ !hint }}">{{ trainName }}</text>
     <text class="hint-line" if="{{ hint }}">{{ hint }}</text>
     <div class="body">
       <list class="scroll" id="exercises" touch-focusable="true" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
-        <list-item class="exrow" type="exercise" for="{{ item in list }}" tid="idx">
+        <list-item class="exrow {{ item.current ? 'current' : '' }}" type="exercise" for="{{ item in list }}" tid="idx">
           <div class="exhead" onclick="toggleEx(item.idx)">
-            <text class="exname">{{ item.name }}</text>
-            <text class="cnt">{{ item.rows.length }}组</text>
+            <text class="exname {{ item.current ? 'current-name' : '' }}">{{ item.name }}</text>
+            <text class="cnt {{ item.doneCount === item.totalCount && item.totalCount > 0 ? 'cnt-done' : '' }}">{{ item.doneCount }}/{{ item.totalCount }}</text>
           </div>
           <div class="rows" if="{{ expanded === item.idx }}">
             <div class="rrow" for="{{ r in item.rows }}" onclick="pickRow(r)">
               <text class="rno {{ r.done ? 'done-no' : '' }}">{{ r.done ? '✓' : r.no }}</text>
-              <text class="rtxt {{ r.done ? 'done' : '' }}">{{ r.txt }}{{ r.done ? ' · 已完成' : '' }}</text>
+              <text class="rtxt {{ r.done ? 'done' : '' }}">{{ r.txt }}</text>
               <text class="chev">›</text>
             </div>
           </div>
@@ -188,68 +207,74 @@ export default {
     </div>
 
     <div class="foot">
-      <div class="exit-row">
-        <input class="endbtn save" type="button" value="保存结束" onclick="saveWorkout" />
-        <input class="endbtn abandon" type="button" value="放弃训练" onclick="abandonWorkout" />
-      </div>
-      <input class="back" type="button" value="返回训练" onclick="onExit" />
-    </div>
-    </div>
-    <div class="end-panel" id="end-panel" touch-focusable="true" if="{{ endOn }}">
-      <text class="title">结束本次训练</text>
-      <text class="hint">保存训练记录，或放弃本次训练</text>
       <input class="endbtn save" type="button" value="保存结束" onclick="saveWorkout" />
-      <input class="endbtn abandon" type="button" value="放弃训练" onclick="abandonWorkout" />
-      <input class="endbtn" type="button" value="返回动作" onclick="backToExercises" />
+      <div class="exit-row">
+        <input class="endbtn back" type="button" value="返回训练" onclick="onExit" />
+        <input class="endbtn abandon {{ abandonArmed ? 'armed' : '' }}" type="button" value="放弃训练" onclick="abandonWorkout" />
+      </div>
     </div>
   </div>
+  <div class="end-panel" id="end-panel" touch-focusable="true" if="{{ endOn }}">
+    <text class="title">结束本次训练</text>
+    <text class="hint">保存训练记录，或放弃本次训练</text>
+    <input class="endbtn save" type="button" value="保存结束" onclick="saveWorkout" />
+    <input class="endbtn abandon {{ abandonArmed ? 'armed' : '' }}" type="button" value="放弃训练" onclick="abandonWorkout" />
+    <input class="endbtn back" type="button" value="返回动作" onclick="backToExercises" />
+  </div>
+</div>
 </template>
 
 <style>
+/* v1.4.4 Wear OS 视觉令牌（逐页同值声明）：#000000 底 / #30D158 主操作 / #1C1C1E 卡片
+   #2C2C2E 选中卡片 / #FFFFFF 主文字 / #A1A1A6 辅助 / #FF9F0A 提示 / #FF453A 危险 */
 .page { flex-direction: column; align-items: center; width: 100%; height: 100%; background-color: #000000; }
 .content { width: 350px; height: 414px; margin-top: 18px; flex-direction: column; align-items: center; }
-.title { height: 36px; width: 350px; font-size: 26px; color: #ffffff; text-align: center; }
-.hint-line { height: 36px; width: 350px; font-size: 18px; color: #ff7d93; text-align: center; lines: 2; }
+.title { height: 34px; width: 350px; font-size: 23px; color: #FFFFFF; text-align: center; lines: 1; }
+.hint-line { height: 34px; width: 350px; font-size: 16px; color: #FF9F0A; text-align: center; lines: 2; }
 .body { width: 350px; height: 274px; }
 .scroll { width: 350px; height: 274px; }
-.exrow { flex-direction: column; width: 350px; padding: 8px 10px; margin-bottom: 6px; border-radius: 12px; background-color: #12171a; border: 1px solid #1f262a; }
-.exhead { flex-direction: column; min-height: 48px; }
-.exname { width: 342px; font-size: 23px; color: #ffffff; lines: 2; }
-.cnt { font-size: 16px; color: #8b9497; margin-top: 1px; }
+.exrow { flex-direction: column; width: 350px; padding: 8px 12px; margin-bottom: 6px; border-radius: 14px; background-color: #1C1C1E; }
+.exrow.current { background-color: #2C2C2E; border: 1px solid #30D158; }
+.exhead { flex-direction: row; align-items: center; justify-content: space-between; min-height: 48px; }
+.exname { width: 250px; font-size: 21px; color: #FFFFFF; lines: 2; }
+.current-name { color: #30D158; }
+.cnt { width: 62px; font-size: 16px; color: #A1A1A6; text-align: right; }
+.cnt-done { color: #30D158; }
 .rows { flex-direction: column; margin-top: 4px; }
-.rrow { flex-direction: row; align-items: center; min-height: 48px; padding: 6px 6px; border-radius: 10px; }
-.rno { font-size: 20px; color: #30d158; width: 38px; }
-.rtxt { font-size: 20px; color: #ffffff; flex: 1; }
-.rtxt.done { color: #63dfb1; }
-.done-no { color: #63dfb1; }
-.chev { font-size: 22px; color: #48484a; }
-.foot { width: 350px; height: 104px; flex-direction: column; align-items: center; justify-content: space-between; padding-top: 4px; }
+.rrow { flex-direction: row; align-items: center; min-height: 48px; padding: 6px 6px; border-radius: 12px; }
+.rno { font-size: 19px; color: #A1A1A6; width: 38px; text-align: center; }
+.rtxt { font-size: 19px; color: #FFFFFF; flex: 1; }
+.rtxt.done { color: #A1A1A6; }
+.done-no { color: #30D158; }
+.chev { font-size: 20px; color: #A1A1A6; }
+.foot { width: 350px; height: 106px; flex-direction: column; align-items: center; justify-content: space-between; padding-top: 2px; }
 .exit-row { width: 326px; height: 48px; flex-direction: row; justify-content: space-between; }
-.back { width: 180px; height: 42px; font-size: 18px; color: #8b9497; background-color: transparent; }
 .end-panel { width: 350px; height: 414px; margin-top: 18px; flex-direction: column; align-items: center; justify-content: center; }
-.hint { width: 350px; height: 48px; font-size: 18px; color: #aeb9bd; text-align: center; lines: 2; }
-.endbtn { width: 310px; height: 52px; margin-top: 14px; font-size: 23px; border-radius: 12px; background-color: #1c2226; color: #ffffff; }
-.exit-row .endbtn { width: 156px; height: 46px; margin-top: 0; font-size: 18px; }
-.abandon { background-color: #3a3a3c; }
-.save { background-color: #30d158; }
+.hint { width: 350px; height: 48px; font-size: 16px; color: #A1A1A6; text-align: center; lines: 2; }
+.endbtn { width: 326px; height: 48px; margin-top: 10px; font-size: 20px; border-radius: 14px; color: #FFFFFF; }
+.save { background-color: #30D158; color: #000000; }
+.back { background-color: #1C1C1E; color: #FFFFFF; }
+.abandon { background-color: #1C1C1E; color: #FF453A; }
+.abandon.armed { background-color: #FF453A; color: #000000; }
+.exit-row .endbtn { width: 156px; height: 48px; margin-top: 0; font-size: 17px; }
 @media screen and (min-width: 450px) {
   .content { width: 280px; height: 300px; margin-top: 70px; }
-  .title { width: 280px; height: 32px; font-size: 22px; }
-  .hint-line { width: 280px; height: 32px; font-size: 15px; }
-  .body, .scroll { width: 280px; height: 190px; }
-  .exrow { width: 280px; padding: 5px 3px; }
-  .exname { width: 274px; font-size: 20px; }
-  .cnt { font-size: 15px; }
-  .rrow { min-height: 38px; padding: 4px 0; }
-  .rno { width: 30px; font-size: 18px; }
-  .rtxt { font-size: 18px; }
-  .chev { font-size: 20px; }
-  .foot { width: 280px; height: 76px; }
-  .exit-row { width: 260px; height: 38px; }
-  .exit-row .endbtn { width: 124px; height: 36px; font-size: 16px; }
-  .back { width: 150px; height: 34px; font-size: 16px; }
+  .title { width: 280px; height: 30px; font-size: 19px; }
+  .hint-line { width: 280px; height: 30px; font-size: 14px; }
+  .body, .scroll { width: 280px; height: 168px; }
+  .exrow { width: 280px; padding: 5px 8px; margin-bottom: 4px; }
+  .exhead { min-height: 40px; }
+  .exname { width: 196px; font-size: 17px; }
+  .cnt { width: 52px; font-size: 13px; }
+  .rrow { min-height: 38px; padding: 4px 4px; }
+  .rno { width: 30px; font-size: 16px; }
+  .rtxt { font-size: 16px; }
+  .chev { font-size: 17px; }
+  .foot { width: 280px; height: 96px; }
+  .exit-row { width: 264px; height: 40px; }
   .end-panel { width: 280px; height: 300px; margin-top: 70px; }
-  .hint { width: 280px; height: 36px; font-size: 15px; }
-  .endbtn { width: 250px; height: 42px; margin-top: 10px; font-size: 20px; }
+  .hint { width: 280px; height: 40px; font-size: 14px; }
+  .endbtn { width: 264px; height: 40px; margin-top: 8px; font-size: 17px; }
+  .exit-row .endbtn { width: 126px; height: 40px; font-size: 15px; }
 }
 </style>

@@ -25,6 +25,7 @@ import { durationSheet } from './components/DurationWheel.jsx'
 import { normalizeAliases } from './lib/exercise-aliases.js'
 import ExerciseAliasesEditor, { ExerciseAliasesField, ExerciseAliasesLink } from './components/ExerciseAliases.jsx'
 import { SG_NAME_MAX } from './lib/superset-meta.js'
+import { setNoteOf, withSetNote } from './lib/set-notes.js'
 import { REST_MAX, fmtRest } from './lib/duration.js'
 import Icon from './components/Icon.jsx'
 import { SeasonDeco } from './components/Seasonal.jsx'
@@ -2527,6 +2528,19 @@ function WorkoutDetail({ w, close }) {
       {ex && <Thumb ex={ex} />}
       <div className="grow"><div className={`tt ${exerciseNameClass(ex)}`} style={{ fontWeight: 600 }}>{nameOf(e)} {w.prs && w.prs.includes(e.id) && <span className="pr"><Icon name="trophy" />PR</span>}</div>
         <div className="ss">{e.sets.filter(hasCompletedWork).map(s => setLabel(e.id, s, e.target, speedUnitOf(st))).join('  ·  ') || t('no sets')}</div>
+        {/* A note on one set (lib/set-notes.js) reads back here, under the session it belongs to:
+            the workout screen edits it, the history has to show it again or it was never kept. */}
+        {e.sets.some(s => setNoteOf(s)) && <div className="small dim" style={{ marginTop: 3 }}>
+          {(() => {
+            let n = 0
+            return e.sets.map((s, si) => {
+              if (!hasCompletedWork(s)) return null
+              n++
+              const note = setNoteOf(s)
+              return note ? <div key={si}>{t('Set {0}', n)} · {note}</div> : null
+            })
+          })()}
+        </div>}
         {e.note && <div className="small dim" style={{ marginTop: 3 }}>
           {e.notePin && <Icon name="pin" style={{ fontSize: 12, marginInlineEnd: 4, verticalAlign: '-1px', color: 'var(--yellow)' }} />}{e.note}
         </div>}</div>
@@ -3118,12 +3132,13 @@ function SetNote({ entryIdx, setIdx, close }) {
   if (!row) return null
 
   const save = () => {
-    const text = note.trim().slice(0, NOTE_MAX)
     update(s => {
-      const set = s.active?.entries?.[entryIdx]?.sets?.[setIdx]
-      if (!set) return
-      if (text) set.note = text
-      else delete set.note
+      const entry = s.active?.entries?.[entryIdx]
+      if (!entry?.sets?.[setIdx]) return
+      // One writer for the field (lib/set-notes.js): the same trimming, the same NOTE_MAX and the
+      // same "a blank note drops the key" rule that the CSV export, the import and the MCP bridge
+      // read a set note back with.
+      entry.sets[setIdx] = withSetNote(entry.sets[setIdx], note)
     }, true)
     close()
   }

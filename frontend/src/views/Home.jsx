@@ -9,6 +9,7 @@ import LineChart from '../components/LineChart.jsx'
 import Icon from '../components/Icon.jsx'
 import QueueRow from '../components/QueueRow.jsx'
 import { queueOf, queueView, weekTally, pinState } from '../lib/queue.js'
+import { workoutsLeft } from '../lib/week-left.js'
 import { scheduleModeOf } from '../lib/rotation.js'
 import { useConnectionTrouble } from '../components/SyncBanner.jsx'
 import { Button } from '../components/ui.jsx'
@@ -95,6 +96,9 @@ export default function Home() {
   // The streak card's fraction: this calendar week's workouts over the weekdays with a plan, or,
   // in a coach week, the queue's sessions and your own days together (lib/queue.js weekTally).
   const { done: doneThisWeek, planned: plannedPerWeek } = weekTally(S, todayISO())
+  // The week as a countdown (#753): "2 of 4 left this week", from the same tally the streak card
+  // shows, or from the rotation's own weekly target. Null when there is nothing to count.
+  const weekLeft = workoutsLeft(S)
   const bwPoints = S.bodyweight.slice(-30).map(b => ({ t: b.t || new Date(b.d).getTime(), y: b.w, d: b.d }))
 
   // today's session shown right under the week strip
@@ -239,6 +243,11 @@ export default function Home() {
             {t('{0} week streak', streakWeeks(S))}
           </div>
           <div className="muted small" style={{ marginTop: 2 }}>{doneThisWeek}{plannedPerWeek ? ' / ' + plannedPerWeek : ''} {t('this week')} · {tn('{0} workout total', '{0} workouts total', S.workouts.length)}</div>
+          {weekLeft && <div className="muted small" style={{ marginTop: 2 }}>
+            {weekLeft.left > 0
+              ? t('{0} of {1} left this week', weekLeft.left, weekLeft.of)
+              : t('All done this week. Nice.')}
+          </div>}
         </div>
         <Icon name="calendar" className="chev" style={{ fontSize: 20 }} />
       </div>

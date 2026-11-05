@@ -8,6 +8,7 @@ import { formulaOf, FORMULA_NAMES } from '../lib/onerm.js'
 import { copyText } from '../lib/clipboard.js'
 import { useUI } from '../store/useUI.js'
 import { ACCENTS, ACCENT_NAMES, todayISO, localTZ, weekStartOf, MONDAY, SUNDAY, fmtPlate } from '../lib/format.js'
+import { WEEK_TARGET_MAX, weekTargetOf } from '../lib/week-left.js'
 import { inventoryFor, ownsPlates } from '../lib/plates.js'
 import { dumbbellsOf } from '../lib/dumbbells.js'
 import { effortOf } from '../lib/history.js'
@@ -718,6 +719,14 @@ export default function Settings({ page = null, find = null, via = null }) {
               { value: 'plan', label: t('Your plan'), subtitle: t('The routine’s sets and reps. Your history decides the weight.') },
               { value: 'last', label: t('Your last session'), subtitle: t('The reps you logged last time in that routine, carried over.') },
             ]} />
+          {/* The arrow beside a finished set (#907, lib/set-trend.js). On unless switched off; off
+              also takes the sentence out of the set number's own label, so a screen reader hears
+              no comparison either. */}
+          <Row icon="arrowUp" iconTint="var(--green)" title={t('Compare sets with last time')}
+            subtitle={t('A small arrow on a finished set: up, same or down against the same set last time.')}>
+            <Switch aria-label={t('Compare sets with last time')} checked={S.setTrend !== false}
+              onChange={v => update(s => { s.setTrend = v })} />
+          </Row>
           <Row icon="stopwatch" iconTint="var(--orange)" title={t('Keep timing after target')}
             subtitle={t('Timed sets continue up to 15 extra minutes. Tap Done to log the actual duration.')}>
             <Switch aria-label={t('Keep timing after target')} checked={!!S.timedSetOvertime}
@@ -825,6 +834,14 @@ export default function Settings({ page = null, find = null, via = null }) {
             options={[{ value: MONDAY, label: t('Monday') }, { value: SUNDAY, label: t('Sunday') }]}
             value={weekStartOf(S)} onChange={v => update(s => { s.weekStart = v })} />
         </Row>
+        {/* A rotation has no week of its own (#753): it runs by order, not by weekday. This is the
+            target Home counts down to. Off says nothing, and the loop's own progress row still
+            shows where it stands. A fixed week ignores it: it counts its own planned days. */}
+        <SelectRow icon="target" iconTint="var(--orange)" title={t('Workouts per week')}
+          value={weekTargetOf(S) ? String(weekTargetOf(S)) : 'off'}
+          onChange={v => update(s => { if (v === 'off') delete s.weekTarget; else s.weekTarget = Number(v) })}
+          options={[{ value: 'off', label: t('Off'), subtitle: t('Nothing is counted down. A rotation shows its own progress instead.') },
+            ...Array.from({ length: WEEK_TARGET_MAX }, (_, i) => ({ value: String(i + 1), label: String(i + 1) }))]} />
       </Section>
       <Section>
         <Row icon="clipboard" iconTint="var(--green)" title={t('Load starter plan')} accessory="chevron" onClick={starterPlanSheet} />

@@ -5,18 +5,28 @@ import { exOr } from './exercises.js'
 import { exerciseNameFor } from './i18n-core.js'
 import { watchSidOf, elapsedMsOf } from './session-resume.js'
 import { buildSessionEntries } from './session-start.js'
-import { effectiveRoutineIds, effortOf } from './history.js'
+import { effectiveRoutineIds, effortOf, entryRoutineId } from './history.js'
 import { todayISO } from './format.js'
 import { EFFORT_CAPABILITY } from '../../../watch-app/src/lib/effort-scale.js'
+import { watchLastTimeOf } from './watch-last-time.js'
 
-/** 活动条目只存 id；计划与重连快照必须和手机界面解析出相同名称。 */
-export function watchExercisesOf(S, entries) {
+/**
+ * 活动条目只存 id；计划与重连快照必须和手机界面解析出相同名称。
+ *
+ * `routineId` / `sourceWorkout` 只用来解析「上次」该查哪个计划的历史：目录条目由
+ * buildSessionEntries 产出、不带 rid，所以要显式给 routine.id；活动训练按
+ * entryRoutineId 解析每条自己的来源（合并日里同一个动作可以属于两个计划）。
+ */
+export function watchExercisesOf(S, entries, { routineId = null, sourceWorkout = null } = {}) {
   return entries.map(e => {
     const ex = S.customEx?.find(x => x.id === e.id) || exOr(e.id)
     const rows = e.sets.filter(x => !isWarmupRow(x))
+    // 条目自带的 rid 优先于外层默认计划：合并日的自由动作因此仍查它自己的计划历史。
+    const source = sourceWorkout ? entryRoutineId(sourceWorkout, e) : (e.rid || routineId || null)
     return { id: e.id, entryInstanceId: e.entryInstanceId, weightUnit: S.unit || 'kg', setIds: rows.map(r => r.setId), name: e.id ? exerciseNameFor(ex) : e.name || '', sets: rows.length,
       reps: rows[0]?.sec != null ? rows[0].sec + '秒' : rows[0]?.r ?? rows[0]?.reps ?? '',
-      restSec: e.target?.restSec > 0 ? e.target.restSec : S.restSec || 60, weight: rows[0]?.w ?? '' }
+      restSec: e.target?.restSec > 0 ? e.target.restSec : S.restSec || 60, weight: rows[0]?.w ?? '',
+      lastTime: watchLastTimeOf(S, e, source) }
   })
 }
 
@@ -30,7 +40,7 @@ export function watchPlanOf(S) {
     // 强度量表跟随手机设置；手表只显示这一种，关闭（'none'）时隐藏入口。
     effortScale: effortOf(S), capabilities: { setEffort: EFFORT_CAPABILITY },
     profile,
-    workout: { name: A.name, exercises: watchExercisesOf(S, A.entries) },
+    workout: { name: A.name, exercises: watchExercisesOf(S, A.entries, { sourceWorkout: A }) },
   }
 }
 
@@ -69,7 +79,8 @@ export function watchCatalogOf(S, date = todayISO()) {
     if (!routine) return null
     const entries = buildSessionEntries(S, routine)
     ensureWatchIdentity({ entries }, 'catalog:' + routine.id + ':' + fingerprint(routine.ex || []))
-    const exercises = watchExercisesOf(S, entries)
+    // 目录条目不写 rid，来源只能是这个计划本身；不能拿 S.active 推断。
+    const exercises = watchExercisesOf(S, entries, { routineId: routine.id })
     return { protocolVersion: 2, weightUnit: S.unit || 'kg', effortScale: effortOf(S), capabilities: { setEffort: EFFORT_CAPABILITY },
       id: routine.id, name: routine.name, today: today.includes(id), available: exercises.length > 0,
       exercises, entries, profile, rows: entries.map(e => e.sets.filter(r => !isWarmupRow(r)).map(r => ({ setId: r.setId, w: r.w ?? '', r: r.sec ?? r.r ?? '', done: false, at: 0 }))) }

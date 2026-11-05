@@ -5,12 +5,16 @@ import { MOBILE } from '../lib/mobile.js'
 import SwipeRow from '../components/SwipeRow.jsx'
 import { useNavigate } from 'react-router-dom'
 import { watchSidOf } from '../lib/session-resume.js'
+import { setNoteOf } from '../lib/set-notes.js'
+import { bestsFor, lastRowFor, oddValues } from '../lib/typo-check.js'
+import { formulaOf } from '../lib/onerm.js'
+import { setTrendOn, setTrendsFor, trendGlyph, trendLabel } from '../lib/set-trend.js'
 import { sendToWatch } from '../lib/watch-link.js'
 import { useStore } from '../store/useStore.js'
 import { workoutControls } from '../lib/workout-controls.js'
 import { useUI } from '../store/useUI.js'
 import { bindWatchSync, bindWatchEvents, pushRestToWatch, pushWeightToWatch, pushRepsToWatch, pushEffortToWatch, pushSetToWatch, pushUnsetToWatch, pushAddSetToWatch, pushRemoveSetToWatch, pushFocusToWatch, pushAckToWatch, pushSyncToWatch } from '../lib/watch-link.js'
-import { exOr, betterWeight } from '../lib/exercises.js'
+import { exOr, betterWeight, isAssisted } from '../lib/exercises.js'
 import { watchExercisesOf } from '../lib/watch-workout.js'
 import { usesBar } from '../lib/bar.js'
 import { loadKindFor, baseWeightFor, inventoryFor, rowLoad, sameLoad, plateDelta, dropGrid } from '../lib/plates.js'
@@ -32,7 +36,7 @@ import WorkoutThumb, { hasWorkoutMedia } from '../components/WorkoutThumb.jsx'
 import { workoutSettingsSheet } from '../components/WorkoutSettingsSheet.jsx'
 import { durationSheet } from '../components/DurationWheel.jsx'
 import { REST_MAX, fmtRest } from '../lib/duration.js'
-import { startFlow, exercisePicker, exConfigSheet, exerciseDetailSheet, finishWorkout, exitWorkoutEdit, workoutCompleteSheet, confirmSheet, exerciseNoteSheet, sessionNoteSheet, renameWorkoutSheet, swapActiveWorkoutExercise, barWeightSheet, menuSheet, effortPickerSheet, exerciseHistorySheet, addRoutineToSessionSheet, finishWorkoutSheet } from '../sheets.jsx'
+import { startFlow, exercisePicker, exConfigSheet, exerciseDetailSheet, finishWorkout, exitWorkoutEdit, workoutCompleteSheet, confirmSheet, exerciseNoteSheet, sessionNoteSheet, renameWorkoutSheet, swapActiveWorkoutExercise, barWeightSheet, menuSheet, effortPickerSheet, exerciseHistorySheet, addRoutineToSessionSheet, finishWorkoutSheet, setNoteSheet } from '../sheets.jsx'
 import { afterScrollRestore, scrollRestorePending } from '../components/Modals.jsx'
 import { effortColor } from '../lib/effort.js'
 import Elapsed from '../components/Elapsed.jsx'
@@ -199,6 +203,11 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
   // The routine's own last session of this exercise (or any, for a routine that has none), the
   // same one the rows and the progression line were built from (#216).
   const last = lastEntryFor(H, entry.id, entry.rid)
+  // Each finished set against the same set last time (#907, lib/set-trend.js): a small arrow on the
+  // set's number, aligned with `entry.sets`. Nothing is stored: it is worked out from the log
+  // whenever a row is drawn, so an edited or unticked row re-reads it with no bookkeeping.
+  // Settings - Workout - Compare sets with last time switches it off, screen reader text included.
+  const trends = setTrendOn(S) ? setTrendsFor(entry, last, { formula: formulaOf(S), assisted: isAssisted(entry.id) }) : null
   const standingNote = exNoteFor(S, entry.id)
   // Only worth surfacing while there is still work left: once the exercise is finished, a note
   // telling you what to do in it is behind you, and the block is already long.
@@ -451,6 +460,10 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
         // only, the kind a warm-up is added as; one work set always stays, and a per-side
         // exercise's work sets keep their sides, so a warm-up there is not made one again.
         { items: [
+          // A note on this set (lib/set-notes.js): the sheet, the stored field, the history and the
+          // CSV belong to one feature, and this is the only way in. First in the menu, where it is
+          // reached for mid-set, with the note already there to edit.
+          { icon: 'note', label: t('Note'), sub: setNoteOf(s) || undefined, onClick: () => setNoteSheet(entryIdx, i) },
           !warm && mode === 'reps' && canBeWarmup(s) && entry.sets.some((x, j) => j !== i && !isWarmupRow(x)) && { icon: 'sunrise', label: t('Make it a warm-up set'), onClick: () => setPhaseAt(i, true) },
           warm && mode === 'reps' && !perSide && { icon: 'dumbbell', label: t('Count it as a working set'), onClick: () => setPhaseAt(i, false) },
           // Taken to failure: a toggle with its check, like the menu's other on/off rows. It counts
@@ -586,9 +599,21 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
   // from. The button's own label speaks for it, so a screen reader hears it with the set number.
   const failMark = s => isFailureSet(s) ? <span className="failmark" aria-hidden="true">{t('F')}</span> : null
   const failSay = (s, label) => isFailureSet(s) ? label + ', ' + t('Taken to failure') : label
+  // The set against last time (#907). The arrow is for the eye; the button's own label carries the
+  // same thing in words ("2.5 kg more than last time"), so a screen reader hears it where the row
+  // is, and hears nothing at all when Settings switches the comparison off.
+  const trendMark = i => {
+    const tr = trends?.[i]
+    if (!tr) return null
+    return <span className={'trendmark ' + (tr.dir > 0 ? 'up' : tr.dir < 0 ? 'down' : 'same')} aria-hidden="true" title={trendLabel(tr, S.unit)}>{trendGlyph(tr)}</span>
+  }
+  const trendSay = (i, label) => {
+    const tr = trends?.[i]
+    return tr ? label + ', ' + trendLabel(tr, S.unit) : label
+  }
   const plainRow = (s, i) => (
     <div ref={el => onSetRowRef?.(i, el)} className={'setrow' + (s.done ? ' done' : '') + (col3 ? ' eff3' : '') + (timed ? ' timed' : '')}>
-      <button type="button" className="n" aria-label={failSay(s, sideTagOf(s) ? t('Set {0} ({1})', setNumOf(s, i), sideTagOf(s)) : t('Set {0}', setNumOf(s, i)))} aria-describedby={optsId} title={t('More')} onClick={() => openSetMenu(s, i)}>{setNumOf(s, i)}{failMark(s)}</button>
+      <button type="button" className="n" aria-label={trendSay(i, failSay(s, sideTagOf(s) ? t('Set {0} ({1})', setNumOf(s, i), sideTagOf(s)) : t('Set {0}', setNumOf(s, i))))} aria-describedby={optsId} title={t('More')} onClick={() => openSetMenu(s, i)}>{setNumOf(s, i)}{failMark(s)}{trendMark(i)}</button>
       {/* Both words sit in the pill's one grid cell (::before/::after, hidden), so Left and
           Right are as wide as the longer of the two in every language and the inputs
           after them line up (#322). */}
@@ -715,7 +740,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
             // ticked on its own (issue #60). Warm-ups split the same way as the work sets they
             // ramp toward, so a warm-up side set shows L/R too (#388).
             <div ref={el => onSetRowRef?.(i, el)} className={'setrow-side' + (s.done ? ' done' : '')}>
-              <button type="button" className="n" aria-label={failSay(s, t('Set {0}', phaseNum))} aria-describedby={optsId} title={t('More')} onClick={() => openSetMenu(s, i)}>{phaseNum}{failMark(s)}</button>
+              <button type="button" className="n" aria-label={trendSay(i, failSay(s, t('Set {0}', phaseNum)))} aria-describedby={optsId} title={t('More')} onClick={() => openSetMenu(s, i)}>{phaseNum}{failMark(s)}{trendMark(i)}</button>
               <div className="side-rows">
                 {sideRow(s, i, 'L', col1, col2, col3)}
                 {sideExtras(s, i, 'L')}
@@ -729,6 +754,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
               <Icon name="swap" /><span>{t('Psst: swipe a set. Left deletes, right copies.')}</span><Icon name="xmark" />
             </button>
           </div>}
+          {setNoteOf(s) && <button type="button" className="setnote small dim" onClick={() => setNoteSheet(entryIdx, i)}>{setNoteOf(s)}</button>}
           {loadLine(String(i))}
           {/* Drop-sets and rest-pause bursts extend this same row — no long rest, no new set.
               A planned exercise arrives with these already filled in (applyIntensifierPlan);
@@ -1691,10 +1717,47 @@ function ActiveWorkout() {
   // `quiet`: the hold that ticks this set has just ended with the chime and its buzz pattern
   // (store/useUI.js). The tick's own beep would sound over the chime's first note and clip it,
   // and its short buzz would cut the pattern off: a new vibrate call replaces the running one.
-  const toggle = (idx, i, side, { quiet = false, onFocusProgress } = {}) => {
+  // The numbers of the row about to be ticked, as a typo check reads them (#811): the exercise's
+  // own best ever, and the same set last time (warm-ups against warm-ups), both from the history
+  // the rows were built from. Empty when there is nothing to question.
+  const typoOdds = (entry, i, side, S) => {
+    const row = side ? entry?.sets?.[i]?.sides?.[side] : entry?.sets?.[i]
+    if (!row || isWarmupRow(entry.sets[i])) return []
+    const last = lastEntryFor(sessionHistory(S), entry.id, entry.rid)
+    return oddValues(row, bestsFor(S.workouts, entry.id), {
+      unit: S.unit,
+      assisted: isAssisted(entry.id),
+      last: lastRowFor(last?.sets, entry.sets, i, side),
+    })
+  }
+  const toggle = (idx, i, side, { quiet = false, onFocusProgress, fromWatch = false, typedOk = false } = {}) => {
     const S = useStore.getState().S
     const A = S.active
     if (!A?.entries[idx]?.sets[i]) return
+    // A slip of one digit is worth one question before it is logged (#811): whatever gets ticked
+    // becomes last time's numbers, the next target and possibly a record. Only a tick by hand:
+    // never an untick, never a hold's own completion (quiet), never a history edit, never the
+    // watch, whose tick arrives while the phone is in a pocket, and never once the user has said
+    // "I really did" (typedOk).
+    if (!editing && !quiet && !fromWatch && !typedOk && !A.entries[idx].sets[i].done) {
+      const odd = typoOdds(A.entries[idx], i, side, S)
+      if (odd.length) {
+        const unit = S.unit
+        const said = odd.map(o => o.f === 'w'
+          ? o.low ? t('{0} {1} is far below the {2} {1} of that set last time.', fmtNum(o.typed), unit, fmtNum(o.ref))
+            : t('{0} {1} is far above your best of {2} {1}.', fmtNum(o.typed), unit, fmtNum(o.ref))
+          : o.low ? t('{0} reps is far below the {1} of that set last time.', o.typed, o.ref)
+            : t('{0} reps is far above your best of {1}.', o.typed, o.ref)).join(' ')
+        confirmSheet({
+          title: t('Is that right?'),
+          message: said + ' ' + t('It becomes last time’s numbers, the next target and maybe a record.'),
+          confirmText: t('Log as typed'),
+          cancelText: t('Fix it'),
+          onConfirm: () => toggle(idx, i, side, { quiet, onFocusProgress, typedOk: true }),
+        })
+        return
+      }
+    }
     // Ticking a set ends the typing in that row: drop the keyboard before the rest timer, the
     // effort sheet or the next exercise moves in. WebKit keeps the input focused across the
     // button tap, and a focused input with its keyboard gone is what leaves the tab bar
@@ -1977,7 +2040,7 @@ function ActiveWorkout() {
           if (Number.isFinite(w) && w > 0) r2.w = w
           if (reps != null) { r2.r = reps; r2.reps = reps }
         })
-        watchActions.current.toggle(ev.ex, entry.sets.indexOf(row), undefined, {})
+        watchActions.current.toggle(ev.ex, entry.sets.indexOf(row), undefined, { fromWatch: true })
         acknowledge()
         return
       }
@@ -1987,7 +2050,7 @@ function ActiveWorkout() {
         if (!entry) return
         const row = entry.sets.filter(x => !isWarmupRow(x))[ev.set - 1]
         if (!row) return
-        if (row.done) watchActions.current.toggle(ev.ex, entry.sets.indexOf(row), undefined, {})
+        if (row.done) watchActions.current.toggle(ev.ex, entry.sets.indexOf(row), undefined, { fromWatch: true })
         acknowledge()
         return
       }

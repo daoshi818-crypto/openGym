@@ -1,38 +1,84 @@
 <script>
 import { bindRuntime } from '../lib/runtime.js'
-// 结束页：本次训练摘要。手机是数据源，这里只展示手表本地结算的紧凑结果。
+// 结束页：本次训练摘要。手机是数据源，这里只展示手表本地结算的结果。
+// V4：左对齐、纵向滚动、标签在上、大数值在下；顶部与底部是同一个页面的上下半屏，
+// 不是两个结算步骤。所有字段来自 summary_last，同步文案只读同 sid 的关闭日志。
 import storage from '@blueos.storage.storage'
 import router from '@blueos.app.appmanager.router'
 import { startServer, pendingCount, isConnected } from '../lib/rpc.js'
 import { startSession, applySync } from '../lib/session.js'
+import { journalEntry } from '../lib/close-journal.js'
+import {
+  summaryDurationLabel, summaryMinutesOf, summaryNameLabel, summarySetsLabel,
+  summaryVolumeOf, summaryHeartOf, summaryCaloriesOf, summarySyncLabel,
+} from '../lib/summary-view.js'
 
 export default {
-  data: { minutes: '', sets: '', kcal: '', hr: '', volume: '', syncLabel: '', weightUnit: 'kg' },
+  data: {
+    blocks: [],
+    syncLabel: '',
+    clockLabel: '',
+  },
 
   onInit() {
     if (this.$app && this.$app.$def) bindRuntime(this.$app.$def)
     this.bindRpc()
+    this.load()
+  },
+
+  // 只读 summary_last：字段缺失就隐藏或写“未记录”，不补示例值，也不重新核算业务。
+  load() {
     try {
       const s = storage.getSync({ key: 'summary_last' })
-      if (s && typeof s === 'object') {
-        this.minutes = this.fmtDur(s.totalMinutes != null ? s.totalMinutes : s.minutes)
-        this.sets = String(s.sets || 0)
-        this.kcal = String(Math.round(s.totalCalories != null ? s.totalCalories : s.calories || 0))
-        this.hr = s.avgHr ? String(s.avgHr) : '--'
-        this.weightUnit = s.weightUnit || 'kg'
-        this.volume = s.volume ? String(Math.round(s.volume)) : ''
-      }
-    } catch (e) {}
+      this.summary = s && typeof s === 'object' ? s : null
+    } catch (e) { this.summary = null }
+    // 同步文案必须匹配本总结自己的 sid：旧摘要没有 sid 就只能保守显示待确认。
+    this.sid = this.summary ? (this.summary.sid || this.summary.id || '') : ''
+    this.blocks = this.buildBlocks()
+    this.updateSync()
+  },
+
+  buildBlocks() {
+    const s = this.summary
+    const blocks = [{ kind: 'saved', key: 'saved' },
+      { kind: 'name', key: 'name', label: summaryNameLabel(s) },
+      { kind: 'metric', key: 'dur', label: '时长', value: summaryDurationLabel(summaryMinutesOf(s)) },
+      { kind: 'metric', key: 'sets', label: '完成组数', value: summarySetsLabel(s) }]
+    // 缺失的统计整块隐藏，合法的 0 照常显示。
+    const volume = summaryVolumeOf(s)
+    if (volume) blocks.push({ kind: 'metric', key: 'vol', label: '训练容量', value: volume.text, unit: volume.unit })
+    const heart = summaryHeartOf(s)
+    if (heart) blocks.push({ kind: 'metric', key: 'hr', label: '心率', value: heart.text, cls: 'hr-value' })
+    const kcal = summaryCaloriesOf(s)
+    if (kcal) blocks.push({ kind: 'metric', key: 'kcal', label: '估算热量', value: kcal, unit: 'kcal' })
+    // 本地没有真实 PR 数据来源：不渲染奖杯，也不自己算 PR。
+    blocks.push({ kind: 'sync', key: 'sync' }, { kind: 'done', key: 'done' })
+    return blocks
   },
 
   onShow() {
     this.bindRpc()
-    this.updateSync()
-    if (!this.timer) this.timer = setInterval(() => this.updateSync(), 1000)
+    this.load()
+    if (!this.timer) this.timer = setInterval(() => this.tick(), 1000)
   },
-  updateSync() { const n = pendingCount(); this.syncLabel = n ? '待上传 ' + n + ' 条' : isConnected() ? '已上传' : '离线保存' },
   onHide() { if (this.timer) clearInterval(this.timer); this.timer = null },
   onDestroy() { this.onHide() },
+  tick() {
+    const d = new Date()
+    const clock = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0')
+    if (this.clockLabel !== clock) this.clockLabel = clock
+    this.updateSync()
+  },
+  updateSync() {
+    // 只读关闭日志的送达状态：不调用 markDelivered，也不把 session_close_ack 当汇总确认，
+    // 更不会为了“显示已上传”去清空 outbox 或关闭日志。
+    let delivered = false
+    try {
+      const entry = this.sid ? journalEntry(this.sid) : null
+      delivered = !!(entry && entry.delivery === 'delivered')
+    } catch (e) { delivered = false }
+    this.syncLabel = summarySyncLabel({ delivered, pending: pendingCount(), connected: isConnected() })
+  },
   bindRpc() {
     const next = msg => {
       const s = startSession({ name: msg.workout, sid: msg.sid, exercises: msg.exercises }, msg.profile)
@@ -43,11 +89,7 @@ export default {
     startServer({ onPlan: next, onSync: next })
   },
 
-  fmtDur(min) {
-    const m = Math.max(0, Math.round(min))
-    return Math.floor(m / 60) + ':' + String(m % 60).padStart(2, '0')
-  },
-
+  // “完成”只返回首页：不结算、不发事件、不重复关闭。
   onBack() {
     router.replace({ uri: '/Index' })
   },
@@ -55,53 +97,74 @@ export default {
 </script>
 
 <template>
-  <div class="page">
-    <text class="title">训练完成</text>
-
-    <text class="kcal">{{ kcal }}</text>
-    <text class="kcal-lbl">估算千卡</text>
-
-    <div class="row">
-      <div class="cell">
-        <text class="num">{{ minutes }}</text>
-        <text class="lbl">时长</text>
+<div class="page">
+  <div class="top"><text class="clock">{{ clockLabel }}</text></div>
+  <list class="scroll" id="summary" touch-focusable="true">
+    <list-item class="row" type="block" for="{{ item in blocks }}" tid="key">
+      <div class="saved" if="{{ item.kind === 'saved' }}">
+        <text class="check">✓</text>
+        <text class="saved-text">训练已本地保存</text>
       </div>
-      <div class="cell">
-        <text class="num">{{ sets }}</text>
-        <text class="lbl">组数</text>
+      <text class="workoutname" if="{{ item.kind === 'name' }}">{{ item.label }}</text>
+      <div class="metric" if="{{ item.kind === 'metric' }}">
+        <text class="label">{{ item.label }}</text>
+        <div class="values">
+          <text class="metric-value {{ item.cls || '' }}">{{ item.value }}</text>
+          <text class="metric-unit" if="{{ item.unit }}">{{ item.unit }}</text>
+        </div>
       </div>
-      <div class="cell">
-        <text class="num">{{ hr }}</text>
-        <text class="lbl">平均心率</text>
-      </div>
-    </div>
-    <text class="volume" if="{{ volume }}">训练量 {{ volume }} {{ weightUnit }}</text>
-    <text class="volume">{{ syncLabel }}</text>
-
-    <input class="btn" type="button" value="完成" onclick="onBack" />
-  </div>
+      <text class="sync" if="{{ item.kind === 'sync' }}">{{ syncLabel }}</text>
+      <input class="done" type="button" if="{{ item.kind === 'done' }}" value="完成" onclick="onBack" />
+    </list-item>
+  </list>
+</div>
 </template>
 
 <style>
-.page { flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%; background-color: #000000; }
-.title { font-size: 26px; color: #63dfb1; margin-bottom: 6px; }
-.kcal { font-size: 64px; color: #ffffff; margin-top: 4px; }
-.kcal-lbl { font-size: 18px; color: #8b9497; margin-bottom: 8px; }
-.row { flex-direction: row; justify-content: center; width: 350px; margin-top: 2px; }
-.cell { flex-direction: column; align-items: center; width: 116px; }
-.num { font-size: 26px; color: #ffffff; }
-.lbl { font-size: 15px; color: #8b9497; margin-top: 1px; }
-.volume { font-size: 16px; color: #8b9497; margin-top: 8px; }
-.btn { width: 350px; height: 52px; font-size: 23px; border-radius: 12px; background-color: #63dfb1; color: #001b12; margin-top: 12px; }
+/* V4 总结页令牌：#000000 底 / #FFFFFF 主数值 / #929297 次标签 / #30D158 绿勾与按钮字
+   #0A3418 完成按钮底 / #FF453A 心率。左对齐、单列、纵向滚动；删除卡片底板与左右双列。 */
+.page { flex-direction: column; align-items: center; width: 100%; height: 100%; background-color: #000000; }
+.top { width: 390px; height: 32px; margin-top: 18px; flex-direction: row; align-items: center; justify-content: flex-end; padding-right: 27px; }
+.clock { font-size: 26px; color: #FFFFFF; lines: 1; }
+.scroll { width: 336px; height: 376px; margin-top: 6px; }
+.row { width: 336px; flex-direction: column; align-items: flex-start; }
+.saved { width: 336px; height: 34px; flex-direction: row; align-items: center; margin-top: 6px; }
+.check { width: 29px; height: 29px; border-radius: 15px; background-color: #30D158; color: #000000; font-size: 22px; text-align: center; line-height: 29px; }
+.saved-text { margin-left: 12px; font-size: 26px; color: #FFFFFF; lines: 1; }
+.workoutname { width: 336px; font-size: 24px; color: #929297; lines: 1; margin-top: 16px; margin-bottom: 21px; }
+.metric { width: 336px; flex-direction: column; align-items: flex-start; margin-bottom: 22px; }
+.label { font-size: 21px; color: #929297; lines: 1; margin-bottom: 4px; }
+.values { flex-direction: row; align-items: flex-end; }
+.metric-value { font-size: 48px; color: #FFFFFF; lines: 1; }
+.hr-value { font-size: 39px; color: #FF453A; }
+.metric-unit { font-size: 29px; color: #929297; margin-left: 8px; }
+.sync { width: 336px; font-size: 18px; color: #929297; lines: 2; margin-bottom: 20px; }
+.done { width: 336px; height: 64px; font-size: 23px; border-radius: 32px; background-color: #0A3418; color: #30D158; margin-bottom: 18px; }
 @media screen and (min-width: 450px) {
-  .title { font-size: 22px; margin-bottom: 4px; }
-  .kcal { font-size: 52px; }
-  .kcal-lbl { font-size: 15px; margin-bottom: 6px; }
-  .row { width: 280px; }
-  .cell { width: 93px; }
-  .num { font-size: 22px; }
-  .lbl { font-size: 13px; }
-  .volume { font-size: 14px; margin-top: 5px; }
-  .btn { width: 280px; height: 44px; font-size: 20px; margin-top: 9px; }
+  .top { width: 280px; margin-top: 70px; padding-right: 20px; }
+  .clock { font-size: 20px; }
+  .scroll { width: 264px; height: 244px; margin-top: 4px; }
+  .row { width: 264px; }
+  .saved { width: 264px; height: 26px; }
+  .check { width: 22px; height: 22px; border-radius: 11px; font-size: 16px; line-height: 22px; }
+  .saved-text { margin-left: 8px; font-size: 19px; }
+  .workoutname { width: 264px; font-size: 17px; margin-top: 10px; margin-bottom: 12px; }
+  .metric { width: 264px; margin-bottom: 14px; }
+  .label { font-size: 16px; margin-bottom: 2px; }
+  .metric-value { font-size: 34px; }
+  .hr-value { font-size: 27px; }
+  .metric-unit { font-size: 20px; margin-left: 6px; }
+  .sync { width: 264px; font-size: 13px; margin-bottom: 12px; }
+  .done { width: 264px; height: 46px; font-size: 18px; border-radius: 23px; margin-bottom: 12px; }
+}
+/* 390 × 390（紧凑高度）：主要数字 44 / 心率 37 / 标签 21 不变；若设备不支持 max-height 则不生效。 */
+@media screen and (max-height: 420px) {
+  .top { height: 28px; margin-top: 12px; }
+  .clock { font-size: 24px; }
+  .scroll { height: 316px; margin-top: 4px; }
+  .metric-value { font-size: 44px; }
+  .hr-value { font-size: 37px; }
+  .metric { margin-bottom: 18px; }
+  .done { height: 60px; }
 }
 </style>

@@ -354,3 +354,28 @@ describe('Home: your own loop', () => {
     expect(host.querySelector('.queue .row .small').textContent).toBe('US W1')
   })
 })
+
+// #753: Home counts the week down under the streak's own fraction.
+describe('workouts left this week on Home', () => {
+  const clone = v => JSON.parse(JSON.stringify(v))
+  const mountHome = async () => { await act(async () => { root.render(React.createElement(Home)) }) }
+  // The day the workout would be planned on, so the test does not depend on which day it runs.
+  const today = new Date(todayISO() + 'T12:00:00').getDay()
+
+  it('says how many of the week\'s planned sessions are left', async () => {
+    const st = clone(useStore.getState().S)
+    Object.assign(st, { unit: 'kg', routines: [routines[0]], workouts: [], week: { [today]: ['d1'] }, weekStart: 1, queue: null, rotation: null })
+    useStore.setState({ S: st })
+    await mountHome()
+    expect(host.textContent).toContain('1 of 1 left this week')
+  })
+
+  it('says nothing when the week has no plan', async () => {
+    const st = clone(useStore.getState().S)
+    Object.assign(st, { unit: 'kg', routines: [], workouts: [], week: {}, queue: null, rotation: null })
+    useStore.setState({ S: st })
+    await mountHome()
+    expect(host.textContent).not.toContain('left this week')
+    expect(host.textContent).not.toContain('All done this week')
+  })
+})

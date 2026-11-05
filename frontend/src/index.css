@@ -1293,6 +1293,14 @@ body.chips-dragging *{cursor:inherit}
 /* A set taken to failure: a small "F" on the number's corner, in the colour the effort scale
    gives "nothing left" (effort.js EFFORT_BANDS). */
 .setrow .n .failmark,.setrow-side>.n .failmark{position:absolute;top:-5px;inset-inline-end:-6px;min-width:13px;height:13px;padding:0 2px;border-radius:7px;background:var(--purple);color:#fff;font-size:9px;font-weight:700;line-height:13px;text-align:center;pointer-events:none}
+/* The set against last time (#907): a small arrow on the set's number, next to the failure mark.
+   Green up, muted =, orange down, and readable on a ticked row (the row's own tint is light). */
+.setrow .n .trendmark,.setrow-side>.n .trendmark{position:absolute;bottom:-5px;inset-inline-end:-7px;min-width:13px;height:13px;padding:0 2px;border-radius:7px;background:var(--surface-2);color:var(--text-2);font-size:10px;font-weight:700;line-height:13px;text-align:center;pointer-events:none;box-shadow:0 0 0 1.5px var(--bg)}
+.setrow .n .trendmark.up,.setrow-side>.n .trendmark.up{color:var(--green)}
+.setrow .n .trendmark.down,.setrow-side>.n .trendmark.down{color:var(--orange)}
+/* A note on one set (lib/set-notes.js): a quiet line under its row, tap to change it. */
+.setnote{display:block;margin:-4px 0 6px 32px;padding:0;border:0;background:none;text-align:start;font:inherit;color:var(--dim);cursor:pointer;line-height:1.35}
+.setnote:hover,.setnote:focus-visible{color:var(--text-2)}
 /* No +/- buttons: the number field takes the whole cell and is the tap target. */
 .stp.plain{grid-template-columns:1fr}
 .stp.plain .val{width:100%}

@@ -2915,8 +2915,11 @@ describe('workout controls: the more menu and the set menu', () => {
   it('opens a per-set menu from the set number with drop, burst and remove', async () => {
     await mount([exercise('plain-bench', [false, false])])
     await act(async () => { container.querySelector('button[aria-label="Set 2"]').dispatchEvent(new dom.Event('click', { bubbles: true })) })
-    expect(menuItemsOf(lastMenu()).map(it => it.label)).toEqual(['Make it a warm-up set', 'Taken to failure', 'Drop set', 'Rest-pause burst', 'Copy this set', 'Remove this set'])
+    // Note comes first (v1.4.4, A note on any set): the one thing reached for mid-set, ahead of
+    // the warm-up switch and the intensifiers.
+    expect(menuItemsOf(lastMenu()).map(it => it.label)).toEqual(['Note', 'Make it a warm-up set', 'Taken to failure', 'Drop set', 'Rest-pause burst', 'Copy this set', 'Remove this set'])
     expect(item('Make it a warm-up set').icon).toBe('sunrise')
+    expect(item('Note').icon).toBe('note')
 
     await act(async () => { item('Drop set').onClick() })
     expect(mocks.S.active.entries[0].sets[1].drops?.length).toBe(1)
@@ -3504,5 +3507,126 @@ describe('the workout screen chrome (v1.3.11)', () => {
     await unmount()
     await mount([exercise('plain-bench', [false])], 0, { gifSize: 'mini', active: { workoutView: 'compact' } })
     expect(container.querySelector('.wthumb')).toBeNull()
+  })
+})
+
+// ---- v1.4.4 selective integration ----------------------------------------------------------
+// The three behaviours adapted this round, driven through the real screen: a note on one set
+// (upstream "A note on any set"), the per-set comparison with last time (#907) and one question
+// before a likely typo is logged (#811).
+describe('v1.4.4: set notes, set trends and the typo question', () => {
+  const clickEl = async el => { await act(async () => { el.dispatchEvent(new dom.Event('click', { bubbles: true })) }) }
+  const lastMenu = () => mocks.menuSheet.mock.calls.at(-1)[0]
+  const menuItem = label => menuItemsOf(lastMenu()).find(it => it.label === label)
+  const tickOf = label => container.querySelector(`[role="checkbox"][aria-label="${label}"]`)
+
+  // A saved session of the same exercise, the log the arrows and the question read.
+  const before = (w = 57.5) => ({
+    id: 'w-before', d: '2026-10-01', start: new Date('2026-10-01T18:00:00').getTime(),
+    entries: [{ id: 'plain-bench', target: { mode: 'reps', reps: 5, weight: w }, sets: [{ w, r: 5, done: true }] }],
+  })
+
+  describe('a note on any set', () => {
+    it('opens the set note editor from the set menu, for that row', async () => {
+      await mount([exercise('plain-bench', [false, false])])
+      await clickEl(container.querySelector('button[aria-label="Set 2"]'))
+      await act(async () => { menuItem('Note').onClick() })
+      expect(mocks.setNoteSheet).toHaveBeenCalledWith(0, 1)
+    })
+
+    it('shows a kept note under its row, and a tap opens it again', async () => {
+      const entry = exercise('plain-bench', [false])
+      entry.sets[0].note = 'grip slipped'
+      await mount([entry])
+      const line = container.querySelector('.setnote')
+      expect(line.textContent).toBe('grip slipped')
+      await clickEl(line)
+      expect(mocks.setNoteSheet).toHaveBeenCalledWith(0, 0)
+    })
+
+    it('shows nothing under a row with no note', async () => {
+      await mount([exercise('plain-bench', [false])])
+      expect(container.querySelector('.setnote')).toBeNull()
+    })
+  })
+
+  describe('every set against last time', () => {
+    it('marks a finished set up against the same set last time, in words too', async () => {
+      await mount([exercise('plain-bench', [true])], 0, { workouts: [before(57.5)] })
+      const mark = container.querySelector('.trendmark')
+      expect(mark).toBeTruthy()
+      expect(mark.className).toContain('up')
+      expect(mark.textContent).toBe('↑')
+      // The set's own button says it out loud, where the row is.
+      expect(container.querySelector('.setrow button.n').getAttribute('aria-label'))
+        .toBe('Set 1, 2.5 kg more than last time')
+    })
+
+    it('marks a lighter set down, and says nothing about an undone one', async () => {
+      await mount([exercise('plain-bench', [false])], 0, { workouts: [before(62.5)] })
+      expect(container.querySelector('.trendmark')).toBeNull()
+      expect(container.querySelector('.setrow button.n').getAttribute('aria-label')).toBe('Set 1')
+    })
+
+    it('has nothing to compare on a first time', async () => {
+      await mount([exercise('plain-bench', [true])], 0, { workouts: [] })
+      expect(container.querySelector('.trendmark')).toBeNull()
+    })
+
+    it('leaves no comparison on screen or in the label when the switch is off', async () => {
+      await mount([exercise('plain-bench', [true])], 0, { workouts: [before(57.5)], setTrend: false })
+      expect(container.querySelector('.trendmark')).toBeNull()
+      expect(container.querySelector('.setrow button.n').getAttribute('aria-label')).toBe('Set 1')
+    })
+  })
+
+  describe('a likely typo', () => {
+    const heavy = () => {
+      const entry = exercise('plain-bench', [false])
+      entry.sets[0] = { w: 300, r: 5, done: false }
+      return entry
+    }
+
+    it('asks before logging a weight far above the best, and logs it as typed when told', async () => {
+      await mount([heavy()], 0, { workouts: [before(60)] })
+      await clickEl(tickOf('Set 1 done'))
+      const asked = mocks.confirmSheet.mock.calls.at(-1)[0]
+      expect(asked.title).toBe('Is that right?')
+      expect(asked.confirmText).toBe('Log as typed')
+      expect(asked.cancelText).toBe('Fix it')
+      expect(asked.message).toContain('300 kg is far above your best of 60 kg.')
+      // Nothing is logged while the question is open.
+      expect(mocks.S.active.entries[0].sets[0].done).toBe(false)
+      await act(async () => { asked.onConfirm() })
+      expect(mocks.S.active.entries[0].sets[0].done).toBe(true)
+      // And it is not asked a second time on the same tick.
+      expect(mocks.confirmSheet).toHaveBeenCalledTimes(1)
+    })
+
+    it('leaves the set open when the answer is "Fix it"', async () => {
+      await mount([heavy()], 0, { workouts: [before(60)] })
+      await clickEl(tickOf('Set 1 done'))
+      const asked = mocks.confirmSheet.mock.calls.at(-1)[0]
+      await act(async () => { asked.onCancel?.() })
+      expect(mocks.S.active.entries[0].sets[0].done).toBe(false)
+    })
+
+    it('asks nothing on an untick, or about an assisted machine\'s help', async () => {
+      // Unticking a set that is already logged is a correction, never a typo question.
+      const done = exercise('plain-bench', [true])
+      done.sets[0] = { w: 300, r: 5, done: true }
+      await mount([done], 0, { workouts: [before(60)] })
+      const calls = mocks.confirmSheet.mock.calls.length
+      await clickEl(tickOf('Set 1 done'))
+      expect(mocks.S.active.entries[0].sets[0].done).toBe(false)
+      expect(mocks.confirmSheet.mock.calls.length).toBe(calls)
+    })
+
+    it('asks nothing about a normal session', async () => {
+      await mount([exercise('plain-bench', [false])], 0, { workouts: [before(60)] })
+      await clickEl(tickOf('Set 1 done'))
+      expect(mocks.confirmSheet).not.toHaveBeenCalled()
+      expect(mocks.S.active.entries[0].sets[0].done).toBe(true)
+    })
   })
 })

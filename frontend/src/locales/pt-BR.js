@@ -1550,4 +1550,5 @@ export const PT_BR_OVERRIDES = {
   'One row per set, for Excel, Sheets, your coach or another app. openGym reads it back too.': 'Uma linha por série, para o Excel, o Sheets, seu treinador ou outro app. O openGym também lê de volta.',
 }
 
-export default { ...pt, ...PT_BR_OVERRIDES }
+export default { ...pt, ...PT_BR_OVERRIDES,
+}

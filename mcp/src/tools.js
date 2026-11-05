@@ -73,7 +73,10 @@ function entryView(e, S) {
       r: Number(s.r) || 0,
       sec: Number(s.sec) || 0,
       min: Number(s.min) || 0,
-      speed: Number(s.speed) || 0
+      speed: Number(s.speed) || 0,
+      // A note on the set itself (upstream v1.4.4 set_note; lib/set-notes.js in the app): the
+      // bridge reports it where the set is, next to the numbers it is about. Absent, never ''.
+      ...(typeof s.note === 'string' && s.note.trim() ? { note: s.note.trim().slice(0, 500) } : {})
     }))
   }
 }

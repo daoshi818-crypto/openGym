@@ -179,3 +179,32 @@ describe('export as .fit', () => {
     expect(toast).toHaveBeenCalledWith('Could not create the file')
   })
 })
+
+// v1.4.4: a set's own note reads back in the past workout it belongs to, under that exercise's
+// sets, and only for the sets that have one.
+describe('a set note in a past workout (v1.4.4)', () => {
+  it('shows each note under its exercise, numbered by the sets that were logged', async () => {
+    const id = lifts[0]
+    const w = workout([{
+      id, target: { mode: 'reps', reps: 5, weight: 60 },
+      sets: [done(60, 5, { note: 'grip slipped' }), done(60, 5), done(60, 4)],
+    }])
+    useStore.setState(s => ({ S: { ...s.S, workouts: [w] } }))
+    workoutDetailSheet(w)
+    const host = mountTopSheet()
+    const text = host.textContent
+    expect(text).toContain('Set 1 · grip slipped')
+    // The exercise's own note line is a different thing and stays empty here.
+    expect(text).not.toContain('Set 2 ·')
+  })
+
+  it('shows nothing when no set carries a note', async () => {
+    const id = lifts[0]
+    const w = workout([{ id, target: { mode: 'reps', reps: 5, weight: 60 }, sets: [done(60, 5)] }])
+    useStore.setState(s => ({ S: { ...s.S, workouts: [w] } }))
+    workoutDetailSheet(w)
+    const host = mountTopSheet()
+    expect(host.textContent).not.toContain('grip slipped')
+    expect(host.textContent).not.toContain('Set 1 ·')
+  })
+})

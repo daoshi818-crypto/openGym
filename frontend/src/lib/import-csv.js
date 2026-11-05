@@ -28,6 +28,7 @@ import {
   emptyMeasurement, measurementEntryHasValues, normalizeMeasurementEntry, normalizeMeasurementsState,
 } from './measurements.js'
 import { isWarmupRow, completedVolumeOf, syncSideAggregate } from './workout-model.js'
+import { withSetNote } from './set-notes.js'
 import { HEVY_TITLE_MAP } from './hevy-id-map.js'
 import { clampIncline, inclineFrom } from './incline.js'
 
@@ -116,6 +117,10 @@ const COLUMNS = [
   // description.
   ['workoutNote', ['workout notes', 'workout note', 'description']],
   ['note', ['comment', 'comments', 'notes', 'note', 'exercise notes']],
+  // A note on the set itself (our own export since v1.4.4, `set_note`), which is not the
+  // exercise's note: it stays with its set instead of being folded into the entry's one. Listed
+  // after `note`, so a file with a single "Note" column keeps meaning the exercise's.
+  ['setNote', ['set note']],
 ]
 
 function mapHeader(header) {
@@ -554,6 +559,9 @@ export function parseWorkoutCSV(text, { unit = 'kg', customEx = [] } = {}) {
     const reps = Math.round(num(cell(r, 'reps')))
     const secs = num(cell(r, 'seconds'))
     const setNote = cell(r, 'note')
+    // The set's own note, a different column from the exercise's (`set_note`).
+    const rowSetNote = cell(r, 'setNote')
+    let pushed = null
     // Ours keeps cardio minutes to hundredths, the way the app stores them.
     const mins = secs > 0 ? Math.round(secs / 60 * (own ? 100 : 10)) / (own ? 100 : 10) : toMinutes(cell(r, 'time'))
     const km = map.distanceKm !== undefined && cell(r, 'distanceKm')
@@ -688,7 +696,11 @@ export function parseWorkoutCSV(text, { unit = 'kg', customEx = [] } = {}) {
       if (set.phase) row.phase = set.phase
       if (set.failure) row.failure = true
       list.push(row)
-    } else list.push(set)
+      pushed = row
+    } else { list.push(set); pushed = set }
+    // A note on the set itself (`set_note`) belongs to that set, not to the exercise: it is put
+    // back on the row it was written from, the way the workout screen keeps it (lib/set-notes.js).
+    if (rowSetNote && pushed) Object.assign(pushed, withSetNote(pushed, rowSetNote))
     // A note written against a set belongs to the exercise that day; the app keeps one per entry.
     if (setNote) {
       const list = day.notes.get(id) || []

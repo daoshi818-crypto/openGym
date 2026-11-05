@@ -102,46 +102,51 @@ export default {
 </script>
 
 <template>
-  <div class="page" id="keypad" touch-focusable="true" onrotation="onRotation">
-    <text class="label">{{ label }}（{{ unit }}）</text>
-    <text class="show">{{ show }}</text>
+<div class="page" id="keypad" touch-focusable="true" onrotation="onRotation">
+  <text class="label">{{ label }} · {{ unit }}</text>
+  <text class="show">{{ show }}</text>
 
-    <div class="grid">
-      <input class="k" type="button" value="1" onclick="onKey1" />
-      <input class="k" type="button" value="2" onclick="onKey2" />
-      <input class="k" type="button" value="3" onclick="onKey3" />
-      <input class="k" type="button" value="4" onclick="onKey4" />
-      <input class="k" type="button" value="5" onclick="onKey5" />
-      <input class="k" type="button" value="6" onclick="onKey6" />
-      <input class="k" type="button" value="7" onclick="onKey7" />
-      <input class="k" type="button" value="8" onclick="onKey8" />
-      <input class="k" type="button" value="9" onclick="onKey9" />
-      <input class="k" type="button" value="." onclick="onKeyDot" if="{{ field === 'w' }}" />
-      <input class="k" type="button" value="0" onclick="onKey0" />
-      <input class="k c" type="button" value="C" onclick="onKeyC" />
-    </div>
-
-    <div class="actions"><input class="cancel" type="button" value="取消" onclick="onCancel" /><input class="ok" type="button" value="保存" onclick="onKeyOk" /></div>
+  <div class="grid">
+    <input class="k" type="button" value="1" onclick="onKey1" />
+    <input class="k" type="button" value="2" onclick="onKey2" />
+    <input class="k" type="button" value="3" onclick="onKey3" />
+    <input class="k" type="button" value="4" onclick="onKey4" />
+    <input class="k" type="button" value="5" onclick="onKey5" />
+    <input class="k" type="button" value="6" onclick="onKey6" />
+    <input class="k" type="button" value="7" onclick="onKey7" />
+    <input class="k" type="button" value="8" onclick="onKey8" />
+    <input class="k" type="button" value="9" onclick="onKey9" />
+    <input class="k" type="button" value="." onclick="onKeyDot" if="{{ field === 'w' }}" />
+    <input class="k" type="button" value="0" onclick="onKey0" />
+    <input class="k c" type="button" value="C" onclick="onKeyC" />
   </div>
+
+  <div class="actions">
+    <input class="cancel" type="button" value="取消" onclick="onCancel" />
+    <input class="ok" type="button" value="保存" onclick="onKeyOk" />
+  </div>
+</div>
 </template>
 
 <style>
+/* v1.4.4 Wear OS 视觉令牌（逐页同值声明）：#000000 底 / #30D158 主操作 / #1C1C1E 按键
+   #FFFFFF 数字 / #A1A1A6 标签 / #FF453A 清除。数值用固定宽高容器，避免位数变化时跳动。 */
 .page { flex-direction: column; align-items: center; justify-content: flex-start; width: 100%; height: 100%; background-color: #000000; }
-.label { height: 26px; font-size: 21px; color: #8b9497; margin-top: 18px; }
-.show { height: 52px; font-size: 46px; color: #ffffff; margin: 3px 0 8px; }
+.label { height: 26px; font-size: 18px; color: #A1A1A6; margin-top: 16px; lines: 1; }
+.show { height: 58px; width: 350px; font-size: 48px; color: #FFFFFF; text-align: center; line-height: 58px; margin: 2px 0 8px; lines: 1; }
 .grid { flex-direction: row; flex-wrap: wrap; justify-content: center; width: 350px; }
-.k { width: 112px; height: 58px; font-size: 26px; border-radius: 12px; background-color: #1c2226; color: #ffffff; margin: 2px; }
-.c { color: #ff453a; }
+.k { width: 112px; height: 58px; font-size: 26px; border-radius: 14px; background-color: #1C1C1E; color: #FFFFFF; margin: 2px; }
+.c { color: #FF453A; }
 .actions { width: 350px; height: 52px; flex-direction: row; justify-content: space-between; margin-top: 8px; }
-.ok { width: 232px; height: 52px; font-size: 23px; border-radius: 12px; background-color: #63dfb1; color: #001b12; }
-.cancel { width: 110px; height: 52px; font-size: 21px; border-radius: 12px; background-color: #12171a; border: 1px solid #232b2f; color: #ffffff; }
+.ok { width: 232px; height: 52px; font-size: 21px; border-radius: 14px; background-color: #30D158; color: #000000; }
+.cancel { width: 110px; height: 52px; font-size: 19px; border-radius: 14px; background-color: #1C1C1E; color: #FFFFFF; }
 @media screen and (min-width: 450px) {
-  .label { margin-top: 14px; font-size: 18px; }
-  .show { height: 44px; font-size: 38px; margin: 2px 0 6px; }
+  .label { margin-top: 12px; font-size: 15px; height: 22px; }
+  .show { height: 46px; width: 280px; font-size: 38px; line-height: 46px; margin: 2px 0 6px; }
   .grid { width: 280px; }
   .k { width: 88px; height: 44px; font-size: 22px; margin: 2px; }
   .actions { width: 280px; height: 44px; margin-top: 6px; }
-  .ok { width: 184px; height: 44px; font-size: 20px; }
-  .cancel { width: 88px; height: 44px; font-size: 18px; }
+  .ok { width: 184px; height: 44px; font-size: 18px; }
+  .cancel { width: 88px; height: 44px; font-size: 17px; }
 }
 </style>
