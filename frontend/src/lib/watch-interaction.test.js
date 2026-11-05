@@ -110,6 +110,19 @@ function keypad(s = makeState(), params = {}) {
   return { page, ctx, s }
 }
 describe('actual watch focused editor', () => {
+  it('backspaces one repetition digit instead of silently clearing the whole field', () => {
+    const s = makeState(); s.workout.rows[0][0].r = '125'
+    const { page, ctx } = keypad(s, { field: 'r' })
+    page.decimalOrClear(); expect(page.show).toBe('12')
+    page.decimalOrClear(); expect(page.show).toBe('1')
+    page.decimalOrClear(); expect(page.show).toBe('—')
+    expect(ctx.setRowValue).not.toHaveBeenCalled()
+  })
+  it('keeps the weight decimal key distinct from explicit clear', () => {
+    const { page, ctx } = keypad()
+    page.onKey1(); page.decimalOrClear(); page.onKey2()
+    expect(page.show).toBe('1.2'); expect(ctx.setRowValue).not.toHaveBeenCalled()
+  })
   it('does not write an empty field on unchanged Save or cancel', () => {
     const a = keypad(); a.page.commit(); expect(a.ctx.setRowValue).not.toHaveBeenCalled()
     const b = keypad(); b.page.plus(); b.page.onCancel(); expect(b.ctx.setRowValue).not.toHaveBeenCalled()

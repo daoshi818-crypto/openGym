@@ -18,13 +18,11 @@ import { startSessionHr, stopSessionHr, tick, restOver } from '../lib/sensors.js
 import { startServer, sendEvent, sendControl, pendingCount, isConnected, persistenceStatus, synchronizationStatus, transportDiagnostics } from '../lib/rpc.js'
 import { storageStatus } from '../lib/persistence.js'
 import { applyEdit, applyFocus, applyRest, restOf } from '../lib/protocol.js'
-import { openWatchMedia } from '../lib/watch-media.js'
 import { lastTimeView } from '../lib/watch-last-time.js'
 
 export default {
   data: {
     exName: '', syncWarning: false,
-    mediaOn: false, mediaAvailable: false, mediaStatus: '', mediaState: '', mediaFrames: [], mediaPoster: '', mediaPlaying: false, mediaFrameDuration: '84ms',
     selectedField: null, setDots: [], dotSegmented: false, dotHasPrev: false, dotHasNext: false, inputNotice: '',
     groupLabel: '',
     setProgressLabel: '',
@@ -38,7 +36,7 @@ export default {
     restProgLabel: '',
     restExerciseName: '',
     nextLabel: '',
-    nextDetails: '',
+    nextDetails: '', nextTargetLabel: '', nextValuesLabel: '', effortNumber: '—',
     hrLabel: '♥ --', weightUnit: 'kg',
     syncLabel: '',
     diagnosticOn: false, diagnosticPage: 0, diagnosticTitle: '', diagnosticText: '',
@@ -156,7 +154,6 @@ export default {
     try { this.$element('training').requestFocus(true) } catch (e) {}
   },
   onRotation(ev) {
-    if (this.mediaOn) return
     if (this.diagnosticOn) return
     if (ev && this.effortOn && ev.state !== 3) {
       const d = Number(ev.delta) || (ev.direction === true ? 1 : ev.direction === false ? -1 : 0)
@@ -170,7 +167,6 @@ export default {
     else this.adjustSelectedField(rotationStep(ev))
   },
   onBackPress() {
-    if (this.mediaOn) { this.closeMedia(); return true }
     if (this.diagnosticOn) { this.closeDiagnostics(); return true }
     if (this.effortOn) { this.closeEffort(); return true }
     // 详情/结束入口只关闭自己，不切组、不停表、不退出会话。
@@ -182,9 +178,10 @@ export default {
     else this.openExercises()
     return true
   },
+  showCurrent() { this.pageIndex = 0; this.focusCrown() },
   openMenu() { this.menuOn = true; this.leaveChoice = false },
   openActions() { if (!this.isRest) this.pageIndex = 1; this.menuOn = false },
-  interactionBlocked() { return this.mediaOn || !!this.touchAxis || Date.now() < (this.trailingTapBlockedUntil || 0) || Date.now() < (this.autoFocusIgnoreUntil || 0) },
+  interactionBlocked() { return !!this.touchAxis || Date.now() < (this.trailingTapBlockedUntil || 0) || Date.now() < (this.autoFocusIgnoreUntil || 0) },
   openExercises(fromGesture) {
     if (fromGesture !== true && this.interactionBlocked()) return
     this.clearFieldSelection(); router.push({ uri: '/ExerciseList' })
@@ -215,7 +212,6 @@ export default {
       return this[method](...args)
     }
     startServer({
-      onMedia: msg => { if (this.mediaClient) this.mediaClient.receive(msg).catch(() => {}) },
       onPlan: (msg) => handle('onPlanUpdate', msg),
       onSync: (msg) => handle('onSyncUpdate', msg),
       onRest: (msg) => handle('onRemoteRest', msg),
@@ -236,58 +232,7 @@ export default {
     })
   },
 
-  mediaKey() {
-    const s = this.state, ex = s && s.workout && s.workout.exercises[s.exIdx]
-    return s && ex ? [s.sid,ex.entryInstanceId,ex.mediaRef && ex.mediaRef.sourceId].join(':') : ''
-  },
-  openMedia() {
-    if (!this.mediaAvailable || this.interactionBlocked() || this.effortOn || this.lastOpen || this.finishOn || this.closeMode) return
-    this.clearFieldSelection(); this.touchCancel()
-    this.mediaOn = true
-    this.loadMedia()
-  },
-  loadMedia() {
-    if (!this.mediaOn) return
-    this.stopMediaAnimation()
-    if (this.mediaClient) this.mediaClient.close()
-    this.mediaFrames = []; this.mediaPoster = ''; this.mediaState = 'loading'
-    const s = this.state, ex = s.workout.exercises[s.exIdx], key = this.mediaKey()
-    this.mediaTargetKey = key
-    this.mediaClient = openWatchMedia({ sid:s.sid, entryInstanceId:ex.entryInstanceId, sourceId:ex.mediaRef.sourceId }, sendControl, value => {
-      if (!this.mediaOn || key !== this.mediaKey()) return
-      this.mediaState = value.status; this.mediaStatus = value.label
-      if (value.poster != null) this.mediaPoster = value.poster
-      if (value.frames) this.mediaFrames = value.frames
-      if (value.status === 'ready') { this.mediaFrameDuration = Math.round(value.duration/value.frames.length)+'ms'; this.playMedia(0) }
-    })
-  },
-  playMedia(attempt) {
-    if (!this.mediaOn || this.mediaState !== 'ready') return
-    clearTimeout(this.mediaStartTimer)
-    this.mediaStartTimer = setTimeout(() => {
-      if (!this.mediaOn || this.visible === false || this.mediaState !== 'ready') return
-      try {
-        this.$element('demo-animation').start(); this.mediaPlaying = true
-        clearTimeout(this.mediaStopTimer)
-        this.mediaStopTimer = setTimeout(() => this.stopMediaAnimation(),60000)
-      } catch (e) { if (attempt < 4) this.playMedia(attempt+1); else { this.mediaState='error';this.mediaStatus='动画暂不可用，请重试' } }
-    },100)
-  },
-  stopMediaAnimation() {
-    clearTimeout(this.mediaStartTimer); clearTimeout(this.mediaStopTimer)
-    try { this.$element('demo-animation').stop() } catch (e) {}
-    this.mediaPlaying = false
-  },
-  toggleMedia() { if (this.mediaPlaying) this.stopMediaAnimation(); else this.playMedia(0) },
-  closeMedia() {
-    this.stopMediaAnimation()
-    if (this.mediaClient) this.mediaClient.close()
-    this.mediaClient = null; this.mediaOn = false; this.mediaFrames = []; this.mediaPoster = ''
-    this.touchCancel()
-  },
-
   onHide() {
-    this.closeMedia()
     this.visible = false
     this.flushRestNudge()
     this.setRestScreenLock(false)
@@ -296,7 +241,6 @@ export default {
   },
 
   onDestroy() {
-    this.closeMedia()
     if (this.timer) clearInterval(this.timer)
     this.flushRestNudge()
     this.setRestScreenLock(false)
@@ -320,7 +264,6 @@ export default {
   stopHrCapture() { stopSessionHr() },
 
   touchStart(e) {
-    if (this.mediaOn) { this.touchCancel(); return }
     const t = e.touches && e.touches[0]
     if (t) { this.autoFocusIgnoreUntil = 0; this.trailingTapBlockedUntil = 0 }
     this.touch = t ? { x: t.clientX, y: t.clientY } : null
@@ -330,7 +273,6 @@ export default {
   },
 
   touchMove(e) {
-    if (this.mediaOn) { this.touchCancel(); return }
     if (!this.touch) return
     const t = e.touches && e.touches[0]
     if (t) {
@@ -343,7 +285,6 @@ export default {
   },
 
   touchEnd(e) {
-    if (this.mediaOn) { this.touchCancel(); return }
     if (this.diagnosticOn) { this.touchCancel(); return }
     if (!this.touch) return
     // 固件触摸回调未必带 changedTouches，用最后一次 move 的坐标兜底。
@@ -675,7 +616,6 @@ export default {
   },
 
   onRemoteEnded() {
-    this.closeMedia()
     this.cancelRestNudge()
     this.setRestScreenLock(false)
     this.hrDirty = false
@@ -1035,8 +975,6 @@ export default {
     this.setRestScreenLock(this.visible !== false && !!s.restUntil)
     this.rowDone = this.isDoneRowCur()
     const ex = s.workout.exercises[s.exIdx]
-    this.mediaAvailable = !!(ex && ex.mediaRef && ex.mediaRef.format === 'png-v1' && ex.entryInstanceId)
-    if (this.mediaOn && this.mediaTargetKey !== this.mediaKey()) this.closeMedia()
     const row = s.workout.rows[s.exIdx] && s.workout.rows[s.exIdx][s.setIdx]
     if (this.fieldTarget) {
       const target = rowTarget(s, this.fieldTarget)
@@ -1087,12 +1025,15 @@ export default {
       const w = nr && nr.w !== '' && nr.w != null ? nr.w + (s.weightUnit || 'kg') : ''
       const timed = ne && String(ne.reps || '').indexOf('秒') >= 0
       const r = nr && nr.r !== '' && nr.r != null ? nr.r + (timed ? '秒' : '次') : ''
+      this.nextTargetLabel = '下一组 · ' + ne.name + ' · 第 ' + (next.setIdx + 1) + ' 组'
+      this.nextValuesLabel = w && r ? w + ' × ' + r : (w || r || '待填写')
       this.nextLabel = next.exIdx !== (completed ? completed.exIdx : s.exIdx) ? '下一动作 · ' + ne.name : '下一组'
       this.nextDetails = '第 ' + (next.setIdx + 1) + ' / ' + (s.workout.rows[next.exIdx] || []).length + ' 组 · ' + (w && r ? w + ' × ' + r : (w || r || '待填写'))
-    } else { this.nextLabel = '本次训练已完成'; this.nextDetails = this.restProgLabel }
+    } else { this.nextLabel = '本次训练已完成'; this.nextDetails = this.restProgLabel; this.nextTargetLabel = this.nextLabel; this.nextValuesLabel = this.nextDetails }
 
     // 展示目标跟随当前页面，编辑目标只在打开时固定，绝不把上一组评分带入下一组。
     this.effortScale = s.effortScale === 'rpe' || s.effortScale === 'rir' ? s.effortScale : 'none'
+    if (!this.effortOn) this.effortScaleLabel = effortScaleOf(this.effortScale)?.label || ''
     if (!this.effortOn) {
       if (this.isRest || this.closeMode === 'complete') {
         this.effortTarget = this.lastCompletedFromState(s)
@@ -1110,6 +1051,7 @@ export default {
     this.effortEntryText = targetKind && targetValue != null
       ? effortScaleOf(targetKind).label + ' ' + formatEffort(targetValue)
       : '未登记'
+    this.effortNumber = targetValue != null ? formatEffort(targetValue) : '—'
     this.effortEntryOn = this.effortScale !== 'none' && !!target
     if (this.effortOn) {
       if (!this.effortTargetValid()) { this.effortNotice = '目标组已变化，已停止编辑' ; this.effortOn = false }
@@ -1300,7 +1242,6 @@ export default {
   discardEnd() { this.onEnd('discarded') },
   abandonEnd() { this.onEnd('abandoned') },
   onEnd(reason, notifyPhone = true) {
-    this.closeMedia()
     if (typeof reason !== 'string') reason = 'manual'
     const s = this.state
     if (!s || !s.active) return
@@ -1323,529 +1264,247 @@ export default {
 
 <template>
 <div class="page" id="training" touch-focusable="true" onrotation="onRotation" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
-  <div class="screen" if="{{ pageIndex === 0 && !closeMode && !mediaOn }}">
+  <div class="screen" if="{{ pageIndex === 0 && !closeMode && !effortOn && !lastOpen && !finishOn && !diagnosticOn }}">
     <div class="topbar">
-      <div class="st" if="{{ syncWarning }}" onclick="showDiagnostics"><div class="dot"></div><text class="status">{{ syncLabel }}</text></div>
-      <text class="clock now">{{ clockLabel }}</text>
+      <text class="heart" if="{{ !syncWarning }}">{{ hrLabel }}</text>
+      <text class="status" if="{{ syncWarning }}" onclick="showDiagnostics">{{ syncLabel }} ›</text>
+      <text class="clock">{{ clockLabel }}</text>
     </div>
-
     <div class="training-panel compact" if="{{ !isRest }}">
       <list class="training-scroll"><list-item type="current-group" class="training-content">
-      <text class="ex" onclick="openExercises">{{ exName }} ›</text>
-      <text class="group {{ rowDone ? 'group-done' : '' }}">{{ groupLabel }}{{ rowDone ? ' · 已完成' : '' }}</text>
-      <div class="inputs">
-        <div class="field {{ rowDone ? 'field-done' : selectedField === 'w' ? 'field-selected' : '' }}" onclick="editWeight">
-          <text class="fval">{{ weightNum }}</text>
-          <text class="funit">{{ weightSuffix }}</text>
+        <text class="ex" onclick="openExercises">{{ exName }} ›</text>
+        <text class="group {{ rowDone ? 'group-done' : '' }}">{{ groupLabel }}{{ rowDone ? ' · 已完成' : ' · ' + finishName }}</text>
+        <div class="inputs">
+          <div class="field weight-field {{ rowDone ? 'field-done' : selectedField === 'w' ? 'field-selected' : '' }}" onclick="editWeight">
+            <text class="fval {{ weightNum.length > 7 ? 'extra-long-value' : weightNum.length > 4 ? 'long-value' : '' }}">{{ weightNum }}</text><text class="funit">{{ weightSuffix }}</text>
+          </div>
+          <text class="times">×</text>
+          <div class="field reps-field {{ rowDone ? 'field-done' : selectedField === 'r' ? 'field-selected' : '' }}" onclick="editReps">
+            <text class="fval {{ repsSuffix === '秒' && repsNum.length > 3 ? 'timed-long-value' : repsNum.length > 3 || repsSuffix === '秒' && repsNum.length > 2 ? 'long-value' : '' }}">{{ repsNum }}</text><text class="funit" if="{{ repsSuffix === '秒' }}">{{ repsSuffix }}</text>
+          </div>
         </div>
-        <div class="field {{ rowDone ? 'field-done' : selectedField === 'r' ? 'field-selected' : '' }}" onclick="editReps">
-          <text class="fval">{{ repsNum }}</text>
-          <text class="funit">{{ repsSuffix }}</text>
+        <text class="input-notice" if="{{ inputNotice }}">{{ inputNotice }}</text>
+        <div class="last-row" if="{{ lastOn }}" onclick="openLast"><text class="last-text">{{ lastLine }}</text></div><div class="last-space" if="{{ !lastOn }}"></div>
+        <div class="navrow">
+          <input class="complete {{ rowDone || paused ? 'secondary' : '' }}" type="button" value="{{ paused ? 'Ⅱ' : rowDone ? '↶' : '✓' }}" disabled="{{ paused }}" onclick="onCurrentSetAction" />
+          <div class="effort-circle" if="{{ effortEntryOn }}" onclick="openEffort"><text class="effort-caption">{{ effortScaleLabel }}</text><text class="effort-entry-value">{{ effortNumber }}</text></div>
         </div>
-      </div>
-      <text class="input-notice" if="{{ inputNotice }}">{{ inputNotice }}</text>
-      <div class="last-row" if="{{ lastOn }}" onclick="openLast"><text class="last-text">{{ lastLine }}</text></div>
-      <div class="navrow">
-        <input class="complete {{ rowDone || paused ? 'secondary' : '' }}" type="button" value="{{ paused ? '暂停' : rowDone ? '撤销完成' : '完成' }}" disabled="{{ paused }}" onclick="onCurrentSetAction" />
-        <input class="effort-circle" type="button" if="{{ effortEntryOn }}" value="{{ effortScaleLabel + ' ' + effortEntryText }}" onclick="openEffort" />
-      </div>
-      <div class="set-dots">
-        <input class="set-hit segment" if="{{ dotSegmented }}" type="button" value="‹" disabled="{{ !dotHasPrev }}" onclick="prevDotSegment" />
-        <div class="set-hit" for="{{ item in setDots }}" onclick="pickSetDot(item)">
-          <text class="set-dot {{ item.current ? 'set-current' : item.done ? 'set-done' : '' }}">{{ item.done ? '✓' : item.number }}</text>
+        <text class="undo-label" if="{{ rowDone }}">点击 ↶ 撤销完成</text>
+        <div class="set-dots">
+          <input class="set-hit segment" if="{{ dotSegmented }}" type="button" value="‹" disabled="{{ !dotHasPrev }}" onclick="prevDotSegment" />
+          <div class="set-hit" for="{{ item in setDots }}" onclick="pickSetDot(item)"><div class="set-dot {{ item.current ? 'set-current' : item.done ? 'set-done' : '' }}"></div></div>
+          <input class="set-hit segment" if="{{ dotSegmented }}" type="button" value="›" disabled="{{ !dotHasNext }}" onclick="nextDotSegment" />
         </div>
-        <input class="set-hit segment" if="{{ dotSegmented }}" type="button" value="›" disabled="{{ !dotHasNext }}" onclick="nextDotSegment" />
-      </div>
-      <input class="demo-entry" if="{{ mediaAvailable }}" type="button" value="动作示范 ›" onclick="openMedia" />
       </list-item></list>
     </div>
-
     <div class="training-panel rest-panel" if="{{ isRest }}">
       <list class="rest-scroll"><list-item type="rest-content" class="scroll-content">
-      <text class="rest-ex">{{ restExerciseName }}</text>
-      <text class="rest">{{ restLabel }}</text>
-      <div class="rrow">
-        <input class="rbtn" type="button" value="−15s" onclick="onRestMinus" />
-        <text class="rest-total">{{ restPctLabel }}</text>
-        <input class="rbtn" type="button" value="+15s" onclick="onRestPlus" />
-      </div>
-      <text class="next">{{ nextLabel }}</text>
-      <text class="next-details">{{ nextDetails }}</text>
-      <input class="effort-row" type="button" if="{{ effortEntryOn }}" value="{{ effortEntryLabel + '  ' + effortEntryText + '  ›' }}" onclick="openEffort" />
-      <input class="skip" type="button" value="跳过休息" onclick="onSkipRest" />
-      <input class="demo-entry" if="{{ mediaAvailable }}" type="button" value="动作示范 ›" onclick="openMedia" />
+        <text class="rest-ex" onclick="openExercises">{{ restExerciseName }}</text>
+        <text class="rest">{{ restLabel }}</text>
+        <text class="next">{{ nextTargetLabel }}</text>
+        <text class="next-details {{ nextValuesLabel.length > 26 ? 'extra-long-value' : nextValuesLabel.length > 18 ? 'long-next' : '' }}">{{ nextValuesLabel }}</text>
+        <input class="effort-row" type="button" if="{{ effortEntryOn }}" value="{{ effortEntryLabel + '  ' + effortEntryText + '  ›' }}" onclick="openEffort" />
+        <div class="rrow"><input class="rbtn" type="button" value="−15s" onclick="onRestMinus" /><input class="rbtn" type="button" value="+15s" onclick="onRestPlus" /><input class="skip" type="button" value="跳过" onclick="onSkipRest" /></div>
       </list-item></list>
     </div>
-
-    <div class="primary-footer">
-      <text class="progress">{{ setProgressLabel }}</text>
-      <text class="end-link" onclick="openFinish">结束 ›</text>
-    </div>
+    <div class="primary-footer" if="{{ !isRest }}"><text class="list-link" onclick="openExercises">动作列表</text><text class="end-link" onclick="openFinish">结束 ›</text></div>
   </div>
-
-  <div class="screen operation-screen" if="{{ pageIndex === 1 && !closeMode && !mediaOn }}">
-    <div class="topbar">
-      <div class="st" onclick="showDiagnostics"><div class="dot"></div><text class="status">{{ syncLabel }}</text></div>
-      <text class="clock now">{{ clockLabel }}</text>
-    </div>
+  <div class="screen operation-screen" if="{{ pageIndex === 1 && !closeMode && !effortOn && !lastOpen && !finishOn && !diagnosticOn }}">
+    <div class="topbar"><text class="status" onclick="showDiagnostics">{{ syncLabel }} ›</text><text class="clock">{{ clockLabel }}</text></div>
     <list class="operation-scroll"><list-item type="operation-content" class="scroll-content">
-    <text class="elapsed-label">已用时</text>
-    <text class="elapsed-value">{{ elapsedLabel }}</text>
-    <div class="metrics"><text class="energy">{{ kcalLabel }} 千卡</text><text class="hr">{{ hrLabel }}</text></div>
-    <div class="op-card">
-      <text class="op-title">{{ exName }}</text>
-      <text class="op-group">{{ groupLabel }}</text>
-      <div class="op-row"><text class="op-k">重量</text><text class="op-v">{{ weightNum }}</text><text class="op-u">{{ weightSuffix }}</text></div>
-      <div class="op-row"><text class="op-k">次数</text><text class="op-v">{{ repsNum }}</text><text class="op-u">{{ repsSuffix }}</text></div>
-    </div>
-      <input class="demo-entry" if="{{ mediaAvailable }}" type="button" value="动作示范 ›" onclick="openMedia" />
-    <text class="volume-line">已完成容量 {{ volumeLabel }} {{ weightUnit }}·次</text>
-    <input class="effort-row" type="button" if="{{ effortEntryOn }}" value="{{ effortEntryLabel + '  ' + effortEntryText + '  ›' }}" onclick="openEffort" />
-    <div class="mrow">
-      <input class="m" type="button" value="加组" onclick="onMenuAddSet" />
-      <input class="m" type="button" value="减组" onclick="onMenuRemoveSet" />
-    </div>
-    <div class="mrow op-row2">
-      <input class="m" type="button" value="{{ pauseLabel }}" onclick="onPause" />
-      <input class="m m-end" type="button" value="结束训练" onclick="openFinish" />
-    </div>
+      <text class="elapsed-label">已用时</text><text class="elapsed-value">{{ elapsedLabel }}</text>
+      <div class="metrics"><text class="hr">{{ hrLabel }}</text><text class="energy">{{ kcalLabel }} 千卡</text></div>
+      <text class="op-title" onclick="openExercises">{{ exName }} ›</text><text class="op-group">{{ groupLabel }}</text><div class="op-prescription"><text class="op-label">重量</text><text class="op-detail">{{ weightNum }} {{ weightSuffix }}</text><text class="op-label">次数</text><text class="op-detail">{{ repsNum }} {{ repsSuffix }}</text></div><text class="op-group">容量 {{ volumeLabel }} {{ weightUnit }}</text>
+      <div class="mrow"><input class="m" type="button" value="上一组" onclick="onPrevSet" /><input class="m" type="button" value="下一组" onclick="onNextSet" /></div>
+      <div class="mrow"><input class="m" type="button" value="加组" onclick="onMenuAddSet" /><input class="m" type="button" value="减组" onclick="onMenuRemoveSet" /></div>
+      <div class="mrow"><input class="m" type="button" value="{{ pauseLabel }}" onclick="onPause" /><input class="m m-end" type="button" value="结束训练" onclick="openFinish" /></div>
+      <input class="return-button" type="button" value="返回当前组" onclick="showCurrent" />
     </list-item></list>
   </div>
-
-  <div class="pageIndicators" if="{{ !isRest && !closeMode }}"><div class="dot {{ pageIndex === 0 ? 'selected' : '' }}"></div><div class="dot {{ pageIndex === 1 ? 'selected' : '' }}"></div></div>
-
-  <div class="completion-panel" if="{{ closeMode === 'complete' }}">
-    <text class="completion-title">全部组已完成</text>
-    <text class="completion-progress">{{ setProgressLabel }}</text>
+  <div class="completion-panel" if="{{ closeMode === 'complete' && !effortOn }}">
+    <text class="completion-title">全部组已完成</text><text class="completion-progress">{{ setProgressLabel }}</text>
     <input class="completion-btn effort" type="button" if="{{ effortEntryOn }}" value="{{ '登记本组强度 · ' + effortEntryText }}" onclick="openEffort" />
-    <input class="completion-btn finish" type="button" value="保存结束" onclick="saveEnd" />
-    <input class="completion-btn continue" type="button" value="继续训练" onclick="cancelClose" />
+    <input class="completion-btn finish" type="button" value="保存结束" onclick="saveEnd" /><input class="completion-btn continue" type="button" value="继续训练" onclick="cancelClose" />
   </div>
-
   <div class="completion-panel confirm-panel" if="{{ closeMode === 'end' }}">
-    <text class="confirm-title">结束本次训练？</text>
-    <text class="confirm-remain">{{ confirmRemain }}</text>
-    <text class="confirm-note">保留已记录的 RPE / RIR</text>
-    <input class="pill confirm-save" type="button" value="保存并结束" onclick="saveEnd" />
-    <input class="pill confirm-back" type="button" value="继续训练" onclick="cancelClose" />
+    <text class="confirm-title">结束本次训练？</text><text class="confirm-remain">{{ confirmRemain }}</text><text class="confirm-note">保留已记录的 RPE / RIR</text>
+    <input class="pill confirm-save" type="button" value="保存并结束" onclick="saveEnd" /><input class="pill confirm-back" type="button" value="继续训练" onclick="cancelClose" />
   </div>
-
-  <div class="effort-layer finish-layer" if="{{ finishOn && !closeMode }}">
+  <div class="effort-layer finish-layer" if="{{ finishOn && !closeMode && !effortOn }}">
+    <div class="topbar"><text class="heart">{{ hrLabel }}</text><text class="clock">{{ clockLabel }}</text></div>
     <text class="finish-name">{{ finishName }}</text>
-    <div class="flag" onclick="askEnd">
-      <div class="flag-inner"><div class="pole"></div><div class="pennant"></div></div>
-    </div>
-    <text class="finish-title" onclick="askEnd">结束训练</text>
-    <text class="finish-count">{{ finishCount }}</text>
-    <input class="last-effort" type="button" if="{{ lastEffortOn }}" value="{{ lastEffortText + '  ›' }}" onclick="openLastEffort" />
-    <text class="finish-back" onclick="closeFinish">继续训练</text>
+    <div class="flag" onclick="askEnd"><div class="flag-inner"><div class="pole"></div><div class="pennant"></div></div></div>
+    <text class="finish-title" onclick="askEnd">结束训练</text><text class="finish-count">{{ finishCount }}</text>
+    <input class="last-effort" type="button" if="{{ lastEffortOn }}" value="{{ lastEffortText + '  ›' }}" onclick="openLastEffort" /><text class="finish-back" onclick="closeFinish">继续训练</text>
   </div>
-
   <div class="effort-layer last-layer" if="{{ lastOpen && !closeMode && !finishOn }}">
-    <div class="last-head"><text class="last-back" onclick="closeLast">‹ 返回训练</text></div>
-    <text class="last-title">{{ lastTitle }}</text>
-    <text class="last-meta">{{ lastMeta }}</text>
-    <list class="last-list" id="history" touch-focusable="true">
-      <list-item class="last-item" type="historyRow" for="{{ r in lastRows }}" tid="key">
-        <text class="last-no">{{ r.no }}</text>
-        <text class="last-value">{{ r.label }}</text>
-      </list-item>
-    </list>
+    <div class="last-head"><text class="last-back" onclick="closeLast">‹ 返回训练</text></div><text class="last-title">{{ lastTitle }}</text><text class="last-meta">{{ lastMeta }}</text>
+    <list class="last-list" id="history" touch-focusable="true"><list-item class="last-item" type="historyRow" for="{{ r in lastRows }}" tid="key"><text class="last-no">{{ r.no }}</text><text class="last-value">{{ r.label }}</text></list-item></list>
     <text class="last-hint">仅显示实际完成的工作组 · 不影响本次记录</text>
   </div>
-
-  <div class="effort-layer diagnostic-layer" if="{{ diagnosticOn }}">
-    <text class="effort-target">{{ diagnosticTitle }}</text>
-    <text class="diagnostic-text">{{ diagnosticText }}</text>
-    <div class="diagnostic-buttons">
-      <input class="rbtn" type="button" value="返回" onclick="closeDiagnostics" />
-      <input class="rbtn" type="button" value="下一页" onclick="nextDiagnostic" />
-    </div>
-  </div>
+  <div class="effort-layer diagnostic-layer" if="{{ diagnosticOn }}"><text class="effort-target">{{ diagnosticTitle }}</text><list class="diagnostic-scroll"><list-item type="diagnostic"><text class="diagnostic-text">{{ diagnosticText }}</text></list-item></list><div class="diagnostic-buttons"><input class="m" type="button" value="返回" onclick="closeDiagnostics" /><input class="m" type="button" value="下一页" onclick="nextDiagnostic" /></div></div>
   <div class="effort-layer" if="{{ effortOn && !diagnosticOn }}">
     <list class="effort-scroll"><list-item type="effort-content" class="scroll-content">
-    <div class="effort-head">
-      <text class="effort-back" onclick="closeEffort">‹ 返回</text>
-      <text class="effort-timer">{{ effortRestLabel }}</text>
-    </div>
-    <text class="effort-target">{{ effortTargetLabel }}</text>
-    <text class="effort-scale">{{ effortScaleLabel }}</text>
-    <div class="effort-pick">
-      <text class="effort-arrow" onclick="effortMinus">−</text>
-      <text class="effort-value">{{ effortDraftLabel }}</text>
-      <text class="effort-arrow" onclick="effortPlus">+</text>
-    </div>
-    <text class="effort-hint">{{ effortNotice || effortHint }}</text>
-    <text class="effort-meaning" if="{{ effortDraft != null }}">{{ effortMeaning }}</text>
-    <input class="effort-ok" type="button" value="确认登记" onclick="confirmEffort" />
-    <text class="effort-clear" if="{{ effortHasSaved }}" onclick="clearEffort">清除登记</text>
+      <div class="effort-head"><text class="effort-back" onclick="closeEffort">‹ 返回</text><text class="effort-timer">{{ effortRestLabel }}</text></div>
+      <text class="effort-target">{{ effortTargetLabel }}</text><text class="effort-scale">{{ effortScaleLabel }}</text>
+      <div class="effort-pick"><input class="effort-arrow" type="button" value="−" onclick="effortMinus" /><text class="effort-value">{{ effortDraftLabel }}</text><input class="effort-arrow" type="button" value="+" onclick="effortPlus" /></div>
+      <text class="effort-meaning" if="{{ effortDraft != null }}">{{ effortMeaning }}</text><text class="effort-meaning" if="{{ effortDraft == null }}">尚未登记</text><text class="effort-hint">{{ effortNotice || effortHint }}</text>
+      <div class="effort-actions"><input class="effort-cancel" type="button" value="取消" onclick="closeEffort" /><input class="effort-ok" type="button" value="保存" onclick="confirmEffort" /></div>
+      <text class="effort-clear" if="{{ effortHasSaved }}" onclick="clearEffort">清除评分</text>
     </list-item></list>
   </div>
-  <div class="media-layer" if="{{ mediaOn }}">
-    <div class="media-card">
-      <text class="media-title">{{ exName }}</text>
-      <image-animator class="media-image" id="demo-animation" if="{{ mediaState === 'ready' }}" images="{{ mediaFrames }}" duration="{{ mediaFrameDuration }}" poster="first" predecode="1" iteration="infinite" fixedsize="true" />
-      <image class="media-image" if="{{ mediaState !== 'ready' && mediaPoster }}" src="{{ mediaPoster }}" />
-      <div class="media-placeholder" if="{{ mediaState !== 'ready' && !mediaPoster }}"><text class="media-placeholder-text">动作示范</text></div>
-      <text class="media-status">{{ mediaStatus }}{{ isRest ? ' · 休息 ' + restLabel : '' }}</text>
-      <input class="media-control" type="button" if="{{ mediaState === 'ready' }}" value="{{ mediaPlaying ? '停止播放' : '重新播放' }}" onclick="toggleMedia" />
-      <input class="media-control" type="button" if="{{ mediaState === 'error' }}" value="重试" onclick="loadMedia" />
-      <text class="media-back" onclick="closeMedia">‹ 返回训练</text>
-    </div>
-  </div>
-
 </div>
 </template>
 
 <style>
-/* v1.4.4 Wear OS 视觉令牌（逐页同值声明，BlueOS 无全局变量）
-   background #000000 · primary #30D158 · primaryText #000000 · tile #1C1C1E · tileHigh #2C2C2E
-   text #FFFFFF · muted #A1A1A6 · warm #FF9F0A · danger #FF453A · effort #E0C775
-   方屏触控目标 48；圆屏沿用已验证的紧凑尺寸（280x300 安全区放不下 48 高的 7 行）。 */
-.diagnostic-layer { padding-top: 24px; }
-.diagnostic-text { width: 326px; height: 264px; font-size: 16px; line-height: 18px; color: #FFFFFF; lines: 14; }
-.diagnostic-buttons { width: 326px; flex-direction: row; justify-content: space-between; }
-.page { flex-direction: column; align-items: center; width: 100%; height: 100%; background-color: #000000; }
-.screen { width: 350px; height: 414px; margin-top: 18px; flex-direction: column; align-items: center; justify-content: space-between; }
-
-.topbar { width: 326px; height: 24px; flex-direction: row; align-items: center; justify-content: space-between; }
-.st { flex-direction: row; align-items: center; }
-.dot { width: 7px; height: 7px; border-radius: 4px; background-color: #30D158; margin-right: 7px; }
-.status { font-size: 14px; color: #30D158; lines: 1; }
-.clock { font-size: 15px; color: #A1A1A6; lines: 1; }
-.now { color: #FFFFFF; font-size: 17px; }
-.metabar { width: 326px; height: 20px; flex-direction: row; align-items: center; justify-content: space-between; }
-.metabar-r { flex-direction: row; align-items: center; }
-.metabar-r .energy { margin-right: 10px; }
-
-.training-panel { width: 350px; flex-direction: column; align-items: center; justify-content: center; }
-/* 330 = 动作名 40 + 组数 26 + 主数值 112 + 上/完成/下 56 + 上次 40 + 评分入口 52。
-   主数值 60、动作名 28 是 V4 的字号硬指标，不能为了塞下“上次”把主数字缩小。 */
-.compact { height: 330px; }
-.ex { width: 350px; height: 40px; font-size: 28px; color: #FFFFFF; lines: 1; text-align: center; }
-.group { width: 350px; height: 26px; font-size: 20px; color: #30D158; text-align: center; lines: 1; }
-.group-done { color: #A1A1A6; }
-.inputs { flex-direction: row; justify-content: space-between; width: 350px; height: 88px; margin-top: 10px; margin-bottom: 10px; }
-.field { flex-direction: column; align-items: center; justify-content: center; width: 170px; height: 88px; border-radius: 16px; background-color: #1C1C1E; }
-.field-done { border: 2px solid #30D158; background-color: #2C2C2E; }
-.fval { font-size: 60px; color: #FFFFFF; width: 166px; text-align: center; lines: 1; }
-.funit { font-size: 14px; color: #A1A1A6; margin-top: 2px; lines: 1; }
-.navrow { flex-direction: row; align-items: center; justify-content: space-between; width: 350px; height: 56px; }
-.nav { width: 70px; height: 56px; font-size: 22px; border-radius: 14px; background-color: #1C1C1E; color: #FFFFFF; }
-.complete { width: 186px; height: 56px; font-size: 25px; border-radius: 14px; background-color: #30D158; color: #000000; }
-.secondary { background-color: #2C2C2E; color: #A1A1A6; }
-
-.rest-panel { height: 336px; justify-content: flex-start; background-color: #1C1C1E; border-radius: 20px; padding-top: 8px; }
-.rest-ex { width: 350px; height: 48px; line-height: 24px; font-size: 20px; color: #FFFFFF; text-align: center; lines: 2; }
-.rest { width: 350px; height: 76px; line-height: 72px; font-size: 58px; color: #FFFFFF; text-align: center; lines: 1; }
-.rrow { flex-direction: row; align-items: center; justify-content: space-between; width: 350px; height: 48px; margin-top: 8px; }
-.rbtn { width: 92px; height: 48px; font-size: 19px; border-radius: 12px; background-color: #2C2C2E; color: #FFFFFF; }
-.rest-total { width: 150px; font-size: 16px; color: #A1A1A6; text-align: center; lines: 1; }
-.next { width: 350px; height: 22px; line-height: 22px; margin-top: 4px; font-size: 16px; color: #30D158; text-align: center; lines: 1; }
-.next-details { width: 350px; height: 22px; line-height: 22px; font-size: 17px; color: #FFFFFF; text-align: center; lines: 1; }
-.skip { width: 350px; height: 48px; font-size: 19px; border-radius: 12px; background-color: #2C2C2E; color: #FFFFFF; margin-top: 6px; }
-.rest-panel .effort-row { height: 44px; margin-top: 6px; font-size: 16px; }
-
-.effort-row { width: 350px; height: 48px; font-size: 18px; color: #E0C775; background-color: #1C1C1E; border: 1px solid #2C2C2E; border-radius: 12px; text-align: left; padding-left: 14px; }
-.compact .effort-row { height: 48px; margin-top: 4px; }
-/* 上次：只读摘要行，整行可点，超长省略；打开的是同页详情，不是新路由。 */
-.last-row { width: 350px; height: 36px; flex-direction: row; align-items: center; margin-top: 4px; }
-.last-text { width: 350px; font-size: 20px; color: #929297; lines: 1; }
-.primary-footer { width: 326px; height: 24px; flex-direction: row; align-items: center; justify-content: space-between; }
-.progress { font-size: 15px; color: #A1A1A6; }
-.end-link { font-size: 18px; color: #30D158; }
-.footer-metrics { width: 326px; height: 20px; flex-direction: row; align-items: center; justify-content: space-between; }
-.hr { font-size: 15px; color: #FF9F0A; }
-.energy { font-size: 15px; color: #FF9F0A; }
-
-.pageIndicators { position: absolute; right: 10px; top: 96px; width: 8px; height: 30px; flex-direction: column; justify-content: space-between; }
-.pageIndicators .dot { width: 7px; height: 7px; border-radius: 4px; background-color: #3A3A3C; margin-right: 0; }
-.pageIndicators .selected { background-color: #30D158; }
-
-.operation-screen { justify-content: flex-start; }
-.op-card { width: 350px; height: 186px; flex-direction: column; background-color: #1C1C1E; border-radius: 16px; padding: 12px 14px; margin-top: 6px; }
-.op-title { width: 318px; height: 50px; font-size: 22px; color: #FFFFFF; lines: 2; }
-.op-group { width: 318px; height: 22px; font-size: 16px; color: #30D158; }
-.op-row { width: 318px; height: 40px; flex-direction: row; align-items: center; justify-content: space-between; margin-top: 4px; }
-.op-k { font-size: 16px; color: #A1A1A6; }
-.op-v { font-size: 26px; color: #FFFFFF; }
-.op-u { font-size: 13px; color: #A1A1A6; }
-.volume-line { width: 350px; height: 26px; font-size: 16px; color: #A1A1A6; text-align: center; margin-top: 6px; }
-.operation-screen .effort-row { margin-top: 4px; }
-.operation-screen .metrics { margin-top: 4px; }
-.metrics { width: 326px; height: 24px; flex-direction: row; align-items: center; justify-content: space-between; }
-.mrow { width: 350px; height: 52px; flex-direction: row; justify-content: space-between; }
-.op-row2 { margin-top: 6px; }
-.m { width: 170px; height: 52px; font-size: 20px; border-radius: 14px; background-color: #1C1C1E; color: #FFFFFF; }
-.m-end { color: #30D158; }
-.operation { width: 350px; height: 52px; margin-top: 6px; border-radius: 14px; font-size: 20px; background-color: #1C1C1E; color: #FFFFFF; }
-
-.completion-panel { width: 350px; height: 414px; margin-top: 18px; flex-direction: column; align-items: center; justify-content: center; }
-.completion-title { width: 350px; height: 40px; font-size: 26px; color: #FFFFFF; text-align: center; }
-.completion-progress { width: 350px; height: 28px; font-size: 16px; color: #A1A1A6; text-align: center; }
-.completion-btn { width: 310px; height: 52px; margin-top: 12px; font-size: 21px; border-radius: 14px; }
-.completion-btn.effort { background-color: #1C1C1E; color: #E0C775; border: 1px solid #2C2C2E; }
-.finish { background-color: #30D158; color: #000000; }
-.continue { background-color: #1C1C1E; color: #FFFFFF; }
-
-/* 结束确认：先说明还有几组没做，只有“保存并结束”才走既有结算。 */
-.confirm-title { width: 350px; height: 44px; font-size: 29px; color: #FFFFFF; text-align: center; lines: 1; margin-top: 8px; }
-.confirm-remain { width: 336px; height: 56px; font-size: 20px; color: #B5B5BD; text-align: center; lines: 2; margin-top: 10px; }
-.confirm-note { width: 336px; height: 26px; font-size: 18px; color: #929297; text-align: center; lines: 1; margin-top: 2px; }
-.pill { width: 336px; height: 60px; margin-top: 12px; font-size: 23px; border-radius: 30px; background-color: #0A3418; color: #30D158; }
-.pill.confirm-back { background-color: #202023; color: #DDDDDD; }
-
-/* 结束入口：计划名 / 大绿圆旗帜 / 结束训练 / 已完成组数 / 末组评分 / 继续训练。
-   旗帜只发起确认：模板里它调用 askEnd()，从不直接 endSession。 */
-.finish-layer { justify-content: flex-start; }
-.finish-name { width: 350px; height: 34px; font-size: 24px; color: #AAAAAA; text-align: center; lines: 1; margin-top: 26px; }
-.flag { width: 132px; height: 132px; border-radius: 66px; background-color: #30D158; margin-top: 12px; flex-direction: row; align-items: center; justify-content: center; }
-.flag-inner { width: 54px; height: 68px; flex-direction: row; align-items: flex-start; }
-.pole { width: 8px; height: 64px; background-color: #000000; }
-.pennant { width: 44px; height: 38px; background-color: #000000; border-radius: 0 10px 10px 0; margin-top: 2px; }
-.finish-title { width: 350px; height: 44px; font-size: 29px; color: #30D158; text-align: center; lines: 1; margin-top: 8px; }
-.finish-count { width: 350px; height: 28px; font-size: 20px; color: #939399; text-align: center; lines: 1; margin-top: 4px; }
-.last-effort { width: 336px; height: 52px; margin-top: 12px; font-size: 19px; border-radius: 26px; background-color: #171719; color: #CCCCCC; }
-.finish-back { width: 336px; height: 44px; margin-top: 8px; font-size: 19px; color: #30D158; text-align: center; line-height: 44px; }
-
-/* 上次详情：同页只读覆盖层，纵向滚到底，所有已完成工作组按原序列出。 */
-.last-layer { justify-content: flex-start; }
-.last-head { width: 350px; height: 40px; flex-direction: row; align-items: center; margin-top: 14px; }
-.last-back { font-size: 20px; color: #30D158; }
-.last-title { width: 350px; height: 38px; font-size: 28px; color: #FFFFFF; lines: 1; margin-top: 2px; }
-.last-meta { width: 350px; height: 26px; font-size: 19px; color: #929297; lines: 1; margin-top: 2px; }
-.last-list { width: 350px; height: 224px; margin-top: 6px; }
-.last-item { width: 350px; height: 56px; flex-direction: row; align-items: center; border-bottom: 1px solid #212124; }
-.last-no { width: 108px; font-size: 17px; color: #929297; }
-.last-value { width: 242px; font-size: 28px; color: #FFFFFF; lines: 1; }
-.last-hint { width: 330px; height: 44px; font-size: 18px; color: #929297; text-align: center; lines: 2; margin-top: 6px; }
-
+/* GT1 390×450 · V4 hierarchy + Apple set dots. Full viewport; only inner content has safe padding.
+   One definition per selector; overflowing content scrolls, footer never shrinks the numbers. */
+.page { width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
+.screen { width: 100%; height: 100%; flex-direction: column; align-items: center; }
+.topbar { width: 338px; height: 44px; margin-top: 8px; flex-direction: row; align-items: center; justify-content: space-between; flex-shrink: 0; }
+.clock { width: 92px; font-size: 26px; color: #FFFFFF; text-align: right; lines: 1; }
+.heart { width: 230px; font-size: 18px; color: #FF453A; lines: 1; }
+.status { width: 238px; height: 44px; line-height: 44px; font-size: 16px; color: #FF9F0A; lines: 1; }
+.training-panel { width: 338px; flex: 1; min-height: 0px; }
+.training-scroll { width: 338px; height: 100%; }
+.training-content { width: 338px; flex-direction: column; align-items: flex-start; }
+.ex { width: 338px; height: 56px; line-height: 28px; font-size: 27px; color: #FFFFFF; font-weight: bold; lines: 2; }
+.group { width: 338px; height: 22px; font-size: 18px; color: #929297; lines: 1; }
+.group-done { color: #30D158; }
+.inputs { width: 338px; height: 76px; flex-direction: row; align-items: center; }
+.field { height: 76px; flex-direction: row; align-items: center; border-radius: 16px; background-color: #000000; }
+.weight-field { width: 156px; }
+.reps-field { width: 116px; }
+.field-selected { background-color: #1C1C1E; border: 1px solid #30D158; }
+.field-done { background-color: #161618; }
+.fval { font-size: 60px; font-weight: bold; color: #FFFFFF; lines: 1; flex-shrink: 1; }
+.long-value { font-size: 36px; }
+.extra-long-value { font-size: 22px; }
+.timed-long-value { font-size: 28px; }
+.long-next { font-size: 26px; }
+.funit { font-size: 18px; color: #929297; margin-left: 6px; }
+.times { width: 24px; font-size: 29px; color: #929297; text-align: center; }
+.input-notice { width: 338px; min-height: 32px; font-size: 17px; color: #FF9F0A; lines: 2; }
+.last-space { width: 338px; height: 44px; }
+.last-row { width: 338px; height: 44px; align-items: center; }
+.last-text { width: 338px; font-size: 18px; color: #929297; lines: 1; }
+.navrow { width: 338px; height: 94px; flex-direction: row; align-items: center; justify-content: center; }
+.complete { width: 94px; height: 94px; border-radius: 47px; font-size: 70px; color: #000000; background-color: #30D158; }
+.secondary { background-color: #242725; color: #30D158; }
+.effort-circle { width: 108px; height: 80px; margin-left: 34px; border-radius: 24px; background-color: #1C1C1E; flex-direction: column; align-items: center; justify-content: center; }
+.effort-caption { font-size: 17px; color: #929297; }
+.effort-entry-value { font-size: 28px; color: #FFFFFF; }
+.undo-label { width: 338px; height: 28px; font-size: 17px; color: #929297; text-align: center; }
+.set-dots { width: 338px; min-height: 44px; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: center; }
+.set-hit { width: 44px; height: 44px; align-items: center; justify-content: center; }
+.set-dot { width: 10px; height: 10px; border-radius: 5px; background-color: #333638; }
+.set-current { width: 14px; height: 14px; border-radius: 7px; background-color: #000000; border: 2px solid #FFFFFF; }
+.set-done { background-color: #FFFFFF; }
+.segment { background-color: #000000; color: #929297; font-size: 26px; }
+.primary-footer { width: 338px; height: 44px; margin-bottom: 18px; flex-direction: row; align-items: center; justify-content: space-between; flex-shrink: 0; }
+.list-link { width: 170px; height: 44px; line-height: 44px; font-size: 20px; color: #30D158; }
+.end-link { width: 110px; height: 44px; line-height: 44px; font-size: 20px; color: #30D158; text-align: right; }
+.rest-panel { margin-bottom: 18px; }
+.rest-scroll { width: 338px; height: 100%; }
+.scroll-content { width: 338px; flex-direction: column; align-items: center; }
+.rest-ex { width: 338px; height: 28px; line-height: 24px; font-size: 18px; color: #FF9F0A; lines: 1; }
+.rest { width: 338px; height: 126px; line-height: 126px; font-size: 104px; color: #FFFFFF; text-align: center; lines: 1; }
+.next { width: 338px; height: 48px; font-size: 18px; color: #929297; text-align: center; lines: 2; }
+.next-details { width: 338px; height: 48px; font-size: 36px; color: #FFFFFF; text-align: center; lines: 1; }
+.effort-row { width: 338px; height: 56px; border-radius: 18px; background-color: #1C1C1E; color: #FFFFFF; font-size: 19px; }
+.rrow { width: 338px; height: 56px; margin-top: 8px; flex-direction: row; justify-content: space-between; }
+.rbtn { width: 102px; height: 52px; border-radius: 26px; font-size: 20px; background-color: #242725; color: #FFFFFF; }
+.skip { width: 118px; height: 52px; border-radius: 26px; font-size: 20px; background-color: #0A3418; color: #30D158; }
+.rest-total { width: 338px; height: 28px; font-size: 16px; color: #929297; text-align: center; }
+.operation-scroll { width: 338px; flex: 1; margin-bottom: 18px; }
+.elapsed-label { height: 28px; font-size: 19px; color: #929297; }
+.elapsed-value { width: 338px; height: 104px; font-size: 84px; line-height: 104px; color: #FFFFFF; text-align: center; lines: 1; }
+.metrics { width: 338px; height: 52px; flex-direction: row; justify-content: space-between; align-items: center; }
+.hr { font-size: 22px; color: #FF453A; }
+.energy { font-size: 22px; color: #FFFFFF; }
+.op-title { width: 338px; min-height: 32px; font-size: 24px; color: #FFFFFF; lines: 2; }
+.op-prescription { width: 338px; min-height: 44px; flex-direction: row; align-items: center; justify-content: space-between; }
+.op-label { font-size: 18px; color: #929297; }
+.op-detail { font-size: 22px; color: #FFFFFF; }
+.op-group { width: 338px; height: 26px; font-size: 18px; color: #929297; }
+.mrow { width: 338px; height: 58px; flex-direction: row; justify-content: space-between; align-items: center; }
+.m { width: 164px; height: 52px; border-radius: 26px; background-color: #242725; font-size: 20px; color: #FFFFFF; }
+.m-end { background-color: #0A3418; color: #30D158; }
+.return-button { width: 338px; height: 48px; background-color: #000000; color: #30D158; font-size: 20px; }
+.completion-panel { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; justify-content: center; }
+.completion-title { width: 338px; height: 52px; font-size: 30px; color: #FFFFFF; text-align: center; }
+.completion-progress { width: 338px; height: 44px; font-size: 21px; color: #929297; text-align: center; }
+.completion-btn { width: 338px; height: 56px; margin-top: 12px; border-radius: 28px; font-size: 22px; background-color: #1C1C1E; color: #FFFFFF; }
+.finish { background-color: #0A3418; color: #30D158; }
+.confirm-title { width: 338px; height: 56px; font-size: 28px; color: #FFFFFF; text-align: center; }
+.confirm-remain { width: 338px; height: 64px; font-size: 21px; color: #FFFFFF; text-align: center; lines: 2; }
+.confirm-note { width: 338px; height: 42px; font-size: 18px; color: #929297; text-align: center; }
+.pill { width: 338px; height: 60px; margin-top: 12px; border-radius: 30px; font-size: 22px; }
+.confirm-save { background-color: #0A3418; color: #30D158; }
+.confirm-back { background-color: #242725; color: #FFFFFF; }
 .effort-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
-.effort-head { width: 350px; height: 34px; margin-top: 18px; flex-direction: row; align-items: center; justify-content: space-between; }
-.effort-back { font-size: 17px; color: #A1A1A6; }
-.effort-timer { font-size: 17px; color: #30D158; }
-.effort-target { width: 350px; height: 48px; font-size: 17px; color: #A1A1A6; text-align: center; lines: 2; }
-.effort-scale { width: 350px; height: 20px; font-size: 14px; color: #A1A1A6; text-align: center; }
-.effort-pick { width: 350px; height: 108px; flex-direction: row; align-items: center; justify-content: space-between; }
-.effort-arrow { width: 64px; height: 108px; font-size: 40px; color: #30D158; text-align: center; line-height: 108px; }
-.effort-value { width: 170px; font-size: 66px; color: #FFFFFF; text-align: center; lines: 1; }
-.effort-hint { width: 350px; height: 22px; font-size: 15px; color: #A1A1A6; text-align: center; lines: 1; }
-.effort-meaning { width: 330px; height: 44px; font-size: 18px; color: #E0C775; text-align: center; lines: 2; margin-top: 4px; }
-.effort-ok { width: 300px; height: 52px; margin-top: 10px; font-size: 21px; border-radius: 14px; background-color: #30D158; color: #000000; }
-.effort-clear { width: 300px; height: 40px; font-size: 16px; color: #FF453A; text-align: center; line-height: 40px; }
-
+.finish-name { width: 338px; height: 48px; font-size: 24px; color: #929297; text-align: center; lines: 2; }
+.flag { width: 132px; height: 132px; border-radius: 66px; background-color: #30D158; align-items: center; justify-content: center; margin-top: 8px; }
+.flag-inner { width: 44px; height: 52px; flex-direction: row; }
+.pole { width: 5px; height: 52px; background-color: #000000; }
+.pennant { width: 34px; height: 29px; background-color: #000000; border-radius: 4px; margin-left: 3px; }
+.finish-title { width: 338px; height: 48px; line-height: 48px; font-size: 30px; color: #30D158; text-align: center; font-weight: bold; }
+.finish-count { width: 338px; height: 38px; font-size: 20px; color: #929297; text-align: center; }
+.last-effort { width: 338px; height: 52px; border-radius: 26px; background-color: #1C1C1E; color: #FFFFFF; font-size: 20px; }
+.finish-back { width: 338px; height: 48px; line-height: 48px; color: #30D158; text-align: center; font-size: 20px; }
+.last-head { width: 338px; height: 52px; margin-top: 8px; align-items: center; }
+.last-back { width: 338px; height: 44px; line-height: 44px; color: #30D158; font-size: 21px; }
+.last-title { width: 338px; min-height: 42px; font-size: 26px; color: #FFFFFF; lines: 2; }
+.last-meta { width: 338px; height: 32px; font-size: 19px; color: #929297; }
+.last-list { width: 338px; flex: 1; }
+.last-item { width: 338px; min-height: 56px; flex-direction: row; align-items: center; }
+.last-no { width: 80px; font-size: 20px; color: #929297; }
+.last-value { width: 258px; font-size: 23px; color: #FFFFFF; lines: 2; }
+.last-hint { width: 338px; height: 54px; font-size: 16px; color: #929297; lines: 2; }
+.effort-scroll { width: 338px; height: 100%; }
+.effort-head { width: 338px; height: 52px; margin-top: 8px; flex-direction: row; align-items: center; justify-content: space-between; }
+.effort-back { width: 126px; height: 44px; line-height: 44px; font-size: 21px; color: #30D158; }
+.effort-timer { font-size: 17px; color: #FF9F0A; }
+.effort-target { width: 338px; min-height: 44px; font-size: 20px; color: #FFFFFF; lines: 2; }
+.effort-scale { width: 338px; height: 30px; font-size: 20px; color: #929297; text-align: center; }
+.effort-pick { width: 338px; height: 118px; flex-direction: row; align-items: center; justify-content: space-between; }
+.effort-arrow { width: 56px; height: 56px; border-radius: 28px; font-size: 34px; background-color: #242725; color: #FFFFFF; }
+.effort-value { width: 210px; height: 110px; line-height: 110px; font-size: 88px; color: #30D158; text-align: center; lines: 1; }
+.effort-meaning { width: 338px; height: 40px; font-size: 22px; color: #FFFFFF; text-align: center; }
+.effort-hint { width: 338px; height: 48px; font-size: 18px; color: #929297; text-align: center; lines: 2; }
+.effort-actions { width: 338px; height: 60px; flex-direction: row; justify-content: space-between; }
+.effort-cancel { width: 146px; height: 56px; border-radius: 28px; font-size: 22px; background-color: #242725; color: #FFFFFF; }
+.effort-ok { width: 182px; height: 56px; border-radius: 28px; font-size: 22px; background-color: #0A3418; color: #30D158; }
+.effort-clear { width: 338px; height: 44px; line-height: 44px; font-size: 18px; color: #FF9F0A; text-align: center; }
+.diagnostic-layer { justify-content: center; }
+.diagnostic-scroll { width: 338px; height: 280px; }
+.diagnostic-text { width: 338px; font-size: 18px; color: #FFFFFF; }
+.diagnostic-buttons { width: 338px; height: 56px; flex-direction: row; justify-content: space-between; }
 @media screen and (min-width: 450px) {
-  .diagnostic-layer { padding-top: 70px; }
-  .diagnostic-text { width: 280px; height: 232px; font-size: 13px; line-height: 16px; }
-  .diagnostic-buttons { width: 280px; }
-  .screen { width: 280px; height: 300px; margin-top: 70px; }
-  .topbar, .metabar, .primary-footer, .footer-metrics, .metrics { width: 260px; }
-  .topbar { height: 20px; }
-  .metabar { height: 18px; }
-  .training-panel { width: 280px; }
-  .compact { height: 240px; }
-  .compact .effort-row { height: 38px; }
-  .rest-panel { height: 230px; padding-top: 4px; border-radius: 16px; }
-  .ex { width: 280px; height: 32px; font-size: 18px; }
-  .group { width: 280px; height: 20px; font-size: 16px; }
-  .inputs { width: 280px; height: 54px; margin-top: 4px; margin-bottom: 6px; }
-  .field { width: 136px; height: 54px; border-radius: 12px; }
-  .fval { width: 132px; font-size: 26px; }
-  .funit { font-size: 12px; }
-  .navrow { width: 280px; height: 44px; }
-  .nav { width: 56px; height: 44px; font-size: 19px; }
-  .complete { width: 150px; height: 44px; font-size: 20px; }
-  .rest-ex { width: 280px; height: 36px; line-height: 18px; font-size: 15px; }
-  .rest { width: 280px; height: 52px; line-height: 52px; font-size: 42px; }
-  .rrow { width: 280px; height: 32px; margin-top: 8px; }
-  .rbtn { width: 84px; height: 32px; font-size: 15px; }
-  .rest-total { width: 100px; font-size: 13px; }
-  .next { width: 280px; height: 18px; line-height: 18px; margin-top: 2px; font-size: 14px; }
-  .next-details { width: 280px; height: 18px; line-height: 18px; font-size: 14px; }
-  .skip { width: 280px; height: 30px; margin-top: 2px; font-size: 16px; }
-  .rest-panel .effort-row { height: 28px; margin-top: 2px; font-size: 13px; }
-  .effort-row { width: 280px; height: 34px; font-size: 15px; padding-left: 10px; }
-  .primary-footer { height: 20px; }
-  .progress { font-size: 13px; }
-  .footer-metrics { height: 16px; }
-  .hr, .energy { font-size: 13px; }
-  .pageIndicators { right: 22px; top: 104px; }
-  .op-card { width: 280px; height: 150px; padding: 8px 10px; border-radius: 14px; }
-  .op-title { width: 256px; height: 40px; font-size: 18px; }
-  .op-group { width: 256px; height: 18px; font-size: 14px; }
-  .op-row { width: 256px; height: 30px; }
-  .op-v { font-size: 20px; }
-  .volume-line { width: 280px; height: 20px; font-size: 14px; }
-  .m { width: 136px; height: 42px; font-size: 18px; }
-  .operation { width: 280px; height: 42px; font-size: 19px; }
-  .mrow { width: 280px; height: 42px; }
-  .metrics { height: 20px; }
-  .completion-panel { width: 280px; height: 300px; margin-top: 70px; }
-  .completion-title { width: 280px; height: 34px; font-size: 22px; }
-  .completion-progress { width: 280px; height: 22px; font-size: 15px; }
-  .completion-btn { width: 250px; height: 42px; margin-top: 8px; font-size: 19px; }
-  .confirm-title { width: 280px; height: 34px; font-size: 22px; }
-  .confirm-remain { width: 264px; height: 40px; font-size: 15px; }
-  .confirm-note { width: 264px; height: 20px; font-size: 13px; }
-  .pill { width: 264px; height: 40px; margin-top: 8px; font-size: 18px; }
-  .finish-name { width: 280px; height: 26px; font-size: 19px; margin-top: 14px; }
-  .flag { width: 114px; height: 114px; border-radius: 57px; margin-top: 8px; }
-  .flag-inner { width: 46px; height: 58px; }
-  .pole { width: 7px; height: 54px; }
-  .pennant { width: 38px; height: 32px; }
-  .finish-title { width: 280px; height: 34px; font-size: 22px; margin-top: 6px; }
-  .finish-count { width: 280px; height: 22px; font-size: 15px; }
-  .last-effort { width: 264px; height: 38px; font-size: 14px; margin-top: 8px; }
-  .finish-back { width: 264px; height: 34px; font-size: 15px; line-height: 34px; margin-top: 4px; }
-  .last-head { width: 280px; height: 30px; margin-top: 10px; }
-  .last-back { font-size: 15px; }
-  .last-title { width: 280px; height: 28px; font-size: 20px; }
-  .last-meta { width: 280px; height: 20px; font-size: 14px; }
-  .last-list { width: 280px; height: 150px; margin-top: 4px; }
-  .last-item { width: 280px; height: 42px; }
-  .last-no { width: 86px; font-size: 13px; }
-  .last-value { width: 194px; font-size: 20px; }
-  .last-hint { width: 264px; height: 32px; font-size: 13px; margin-top: 4px; }
-  .last-text { width: 280px; font-size: 15px; }
-  .last-row { width: 280px; height: 28px; margin-top: 2px; }
-  .end-link { font-size: 15px; }
-  .effort-head { width: 280px; height: 28px; margin-top: 14px; }
-  .effort-back, .effort-timer { font-size: 14px; }
-  .effort-target { width: 280px; height: 38px; font-size: 14px; }
-  .effort-scale { width: 280px; height: 18px; font-size: 12px; }
-  .effort-pick { width: 280px; height: 78px; }
-  .effort-arrow { width: 52px; height: 78px; font-size: 30px; line-height: 78px; }
-  .effort-value { width: 140px; font-size: 48px; }
-  .effort-hint { width: 280px; height: 18px; font-size: 13px; }
-  .effort-meaning { width: 270px; height: 34px; font-size: 15px; }
-  .effort-ok { width: 240px; height: 40px; font-size: 18px; }
-  .effort-clear { width: 240px; height: 32px; font-size: 14px; line-height: 32px; }
+  .topbar { width: 280px; margin-top: 58px; }
+  .training-panel, .training-scroll, .rest-scroll, .operation-scroll, .effort-scroll, .scroll-content, .training-content, .primary-footer, .inputs, .last-space, .last-row, .last-text, .navrow, .set-dots, .ex, .group, .next, .next-details, .rest-ex, .rest, .effort-row, .rrow, .rest-total, .elapsed-value, .metrics, .op-title, .op-group, .mrow, .op-prescription, .return-button, .effort-head, .effort-target, .effort-scale, .effort-pick, .effort-meaning, .effort-hint, .effort-actions, .effort-clear { width: 280px; }
+  .primary-footer { margin-bottom: 58px; }
+  .weight-field { width: 160px; }
+  .reps-field { width: 96px; }
+  .fval { font-size: 48px; }
+  .long-value { font-size: 30px; }
+  .timed-long-value { font-size: 22px; }
+  .rbtn { width: 84px; }
+  .skip { width: 104px; }
+  .m { width: 134px; }
+  .effort-value { width: 164px; font-size: 80px; }
+  .effort-cancel { width: 126px; }
+  .effort-ok { width: 144px; }
+  .finish-name { width: 280px; }
+  .finish-title, .finish-count, .last-effort, .finish-back, .last-head, .last-title, .last-meta, .last-list, .last-hint, .last-item { width: 280px; }
+  .last-value { width: 200px; }
+  .flag { width: 110px; height: 110px; border-radius: 55px; }
+  .finish-name { height: 36px; }
+  .finish-count { height: 30px; }
+  .finish-title { height: 42px; line-height: 42px; }
+  .finish-back { height: 44px; line-height: 44px; }
+  .last-effort { height: 44px; }
+  .effort-head { margin-top: 58px; }
+  .completion-btn, .completion-title, .completion-progress, .confirm-title, .confirm-remain, .confirm-note, .pill { width: 280px; }
 }
-
-/* 390 × 390（紧凑高度）：同一套结构只收紧高度和数值，不按表形猜测新增分流。
-   只覆盖本轮引入的元素（当前组、上次摘要与详情、结束入口与确认）；休息/评分/编辑的
-   紧凑排版属于 V3 任务书，本轮不改，也不假装已在真机验证。若设备不支持 max-height，
-   这一段不生效，排版退回上面的 390×450。 */
-@media screen and (max-height: 420px) {
-  .screen { height: 354px; margin-top: 12px; }
-  .topbar { height: 22px; }
-  .now { font-size: 24px; }
-  .ex { height: 36px; font-size: 26px; }
-  .group { height: 24px; font-size: 18px; }
-  .inputs { height: 80px; margin-top: 8px; margin-bottom: 8px; }
-  .field { height: 80px; }
-  .fval { font-size: 56px; }
-  .navrow { height: 52px; }
-  .nav { height: 52px; }
-  .complete { height: 52px; }
-  .compact { height: 286px; }
-  .last-row { height: 32px; }
-  .last-text { font-size: 18px; }
-  .effort-row { height: 44px; }
-  .flag { width: 114px; height: 114px; border-radius: 57px; }
-  .flag-inner { width: 46px; height: 58px; }
-  .pole { width: 7px; height: 54px; }
-  .pennant { width: 38px; height: 32px; }
-  .completion-panel { height: 390px; margin-top: 0; }
-  .last-list { height: 200px; }
-}
-/* V5: scrollable current group; retain readable numbers instead of squeezing every row. */
-.training-scroll { width: 350px; height: 330px; }
-.training-content { width: 350px; flex-direction: column; align-items: center; }
-.ex { height: 68px; line-height: 34px; lines: 2; color: #F4F7F5; }
-.field { background-color: #242725; border-radius: 20px; }
-.field-selected { border: 2px solid #30D158; }
-.input-notice { width: 350px; height: 44px; font-size: 18px; color: #E9BD70; lines: 2; }
-.navrow { height: 100px; justify-content: center; margin-top: 4px; }
-.complete { width: 96px; height: 96px; border-radius: 48px; font-size: 23px; }
-.effort-circle { width: 72px; height: 72px; border-radius: 36px; margin-left: 20px; font-size: 15px; background-color: #242725; color: #E0C775; }
-.set-dots { width: 350px; height: 88px; flex-direction: row; flex-wrap: wrap; justify-content: center; align-items: center; margin-top: 6px; }
-.set-hit { width: 44px; height: 44px; justify-content: center; align-items: center; }
-.set-dot { width: 28px; height: 28px; line-height: 28px; border-radius: 14px; font-size: 15px; text-align: center; background-color: #242725; color: #F4F7F5; }
-.set-current { border: 2px solid #30D158; color: #30D158; }
-.set-done { color: #929297; }
-.segment { background-color: #000000; color: #929297; font-size: 24px; }
-.now { font-size: 26px; }
-@media screen and (max-height: 420px) {
-  .training-scroll { height: 286px; }
-  .complete { width: 90px; height: 90px; border-radius: 45px; }
-  .ex { height: 64px; line-height: 32px; }
-  .now { font-size: 24px; }
-}
-@media screen and (min-width: 450px) {
-  .training-scroll { width: 280px; height: 240px; }
-  .training-content { width: 280px; }
-  .ex { width: 280px; }
-  .set-dots { width: 280px; }
-}
-/* V5 readable values. Lists intentionally scroll; content must not be squeezed into the viewport. */
-.scroll-content { width: 350px; flex-direction: column; align-items: center; }
-.rest-scroll { width: 350px; height: 328px; }
-.operation-scroll { width: 350px; height: 382px; }
-.effort-scroll { width: 350px; height: 414px; margin-top: 18px; }
-.effort-head { margin-top: 0; height: 44px; }
-.rest { height: 130px; line-height: 130px; font-size: 104px; }
-.next-details { height: 48px; line-height: 48px; font-size: 36px; }
-.effort-pick { height: 112px; }
-.effort-value { font-size: 88px; height: 112px; line-height: 112px; }
-.effort-clear { height: 44px; line-height: 44px; }
-.elapsed-label { width: 350px; height: 28px; font-size: 20px; color: #929297; }
-.elapsed-value { width: 350px; height: 106px; line-height: 106px; font-size: 84px; color: #F4F7F5; lines: 1; }
-@media screen and (max-height: 420px) {
-  .rest-panel { height: 300px; }
-  .rest-scroll { height: 292px; }
-  .operation-scroll { height: 330px; }
-  .effort-scroll { height: 354px; margin-top: 12px; }
-  .rest { height: 120px; line-height: 120px; font-size: 96px; }
-  .next-details { font-size: 34px; }
-  .effort-value { font-size: 80px; }
-  .elapsed-value { font-size: 76px; height: 96px; line-height: 96px; }
-}
-@media screen and (min-width: 450px) {
-  .scroll-content, .rest-scroll, .operation-scroll, .effort-scroll, .elapsed-label, .elapsed-value { width: 280px; }
-  .rest-scroll { height: 226px; }
-  .operation-scroll { height: 266px; }
-  .effort-scroll { height: 300px; margin-top: 70px; }
-  .ex { font-size: 26px; height: 68px; line-height: 34px; }
-  .inputs { height: 88px; }
-  .field { height: 88px; }
-  .fval { font-size: 52px; }
-  .funit { font-size: 14px; }
-  .rrow, .rbtn, .skip, .rest-panel .effort-row { height: 44px; }
-  .rrow { width: 280px; }
-  .rest { font-size: 96px; height: 120px; line-height: 120px; }
-  .next-details { font-size: 34px; height: 44px; line-height: 44px; }
-  .effort-pick { height: 112px; }
-  .effort-value { font-size: 80px; height: 112px; line-height: 112px; }
-  .complete { width: 90px; height: 90px; border-radius: 45px; }
-  .navrow { height: 100px; }
-}
-.demo-entry { width: 336px; height: 44px; font-size: 20px; border-radius: 20px; color: #30D158; background-color: #16331E; }
-.media-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; justify-content: center; }
-.media-card { width: 350px; height: 390px; flex-direction: column; align-items: center; justify-content: center; }
-.media-title { width: 336px; height: 40px; font-size: 24px; color: #FFFFFF; lines: 1; text-align: center; }
-.media-image { width: 180px; height: 180px; object-fit: contain; }
-.media-placeholder { width: 180px; height: 180px; background-color: #1C1C1E; align-items: center; justify-content: center; }
-.media-placeholder-text { color: #929297; font-size: 22px; }
-.media-status { width: 336px; height: 48px; font-size: 17px; color: #929297; lines: 2; text-align: center; }
-.media-control { width: 240px; height: 48px; border-radius: 24px; font-size: 20px; color: #30D158; background-color: #16331E; }
-.media-back { width: 240px; height: 48px; line-height: 48px; font-size: 20px; color: #30D158; text-align: center; }
-@media (min-width: 450px) {
-  .demo-entry { width: 260px; height: 44px; font-size: 18px; }
-  .media-layer { justify-content: flex-start; }
-  .media-card { width: 280px; height: 300px; margin-top: 70px; }
-  .media-title { width: 260px; height: 24px; font-size: 19px; }
-  .media-status { width: 260px; height: 32px; font-size: 13px; }
-  .media-control { width: 220px; height: 36px; font-size: 17px; }
-  .media-back { width: 220px; height: 28px; line-height: 28px; font-size: 17px; }
-}
-
-@media screen and (max-height: 420px) {
-  .media-card { height: 350px; }
-  .media-title { height: 32px; }
-  .media-status { height: 40px; }
-  .media-control { height: 44px; }
-  .media-back { height: 44px; line-height: 44px; }
-}
-
 </style>

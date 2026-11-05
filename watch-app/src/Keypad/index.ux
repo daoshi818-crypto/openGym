@@ -14,7 +14,7 @@ export default {
     unit: 'kg',
     exIdx: 0,
     setIdx: 0,
-    field: 'w', inputMode: 'quick', notice: '',
+    field: 'w', inputMode: 'quick', notice: '', targetName: '', stepLabel: '0.5',
   },
 
   onInit(params) {
@@ -29,6 +29,7 @@ export default {
     this.exIdx = target.exIdx; this.setIdx = target.setIdx
     this.field = (p.field != null ? p.field : this.field) === 'r' ? 'r' : 'w'
     this.inputMode = p.inputMode === 'keypad' ? 'keypad' : 'quick'
+    this.targetName = s.workout.exercises[target.exIdx].name
     const row = target.row
 
     this.entryInstanceId = s.workout.exercises[this.exIdx].entryInstanceId
@@ -46,6 +47,8 @@ export default {
       this.label = timed ? '时长' : '次数'
       this.unit = timed ? '秒' : '次'
     }
+    const step = Number(storage.getSync({ key: 'weight_step' }))
+    this.stepLabel = this.field === 'w' ? String(Number.isFinite(step) && step >= 0.001 ? Math.round(step * 1000) / 1000 : 0.5) : '1'
   },
 
   onKey(k) {
@@ -64,6 +67,11 @@ export default {
     this.show = this.buffer.endsWith('.') ? this.buffer : String(parseFloat(this.buffer))
   },
 
+  decimalOrClear() {
+    if (this.field === 'w') { this.onKey('.'); return }
+    this.buffer = this.buffer.slice(0, -1); this.changed = true; this.replaceOnDigit = false
+    this.show = this.buffer || '—'
+  },
   onKey1() { this.onKey('1') },
   onKey2() { this.onKey('2') },
   onKey3() { this.onKey('3') },
@@ -111,73 +119,54 @@ export default {
 <template>
 <div class="page" id="keypad" touch-focusable="true" onrotation="onRotation">
   <list class="editor-scroll"><list-item class="editor-content" type="editor">
-  <text class="label">{{ label }} · {{ unit }}</text>
-  <text class="show">{{ show }}</text>
-
-  <div class="quick" if="{{ inputMode === 'quick' }}">
-    <div class="step-row"><input class="step" type="button" value="−" onclick="minus" /><input class="step" type="button" value="+" onclick="plus" /></div>
-    <text class="step-hint">每次 {{ field === 'w' ? '按重量步长' : '1' }} · 仅保存后生效</text>
-    <input class="switch" type="button" value="数字键盘" onclick="useKeyboard" />
-  </div>
-  <div class="grid" if="{{ inputMode === 'keypad' }}">
-    <input class="k" type="button" value="1" onclick="onKey1" />
-    <input class="k" type="button" value="2" onclick="onKey2" />
-    <input class="k" type="button" value="3" onclick="onKey3" />
-    <input class="k" type="button" value="4" onclick="onKey4" />
-    <input class="k" type="button" value="5" onclick="onKey5" />
-    <input class="k" type="button" value="6" onclick="onKey6" />
-    <input class="k" type="button" value="7" onclick="onKey7" />
-    <input class="k" type="button" value="8" onclick="onKey8" />
-    <input class="k" type="button" value="9" onclick="onKey9" />
-    <input class="k" type="button" value="." onclick="onKeyDot" if="{{ field === 'w' }}" />
-    <input class="k" type="button" value="0" onclick="onKey0" />
-    <input class="k c" type="button" value="C" onclick="onKeyC" />
-  </div>
-
-  <input class="switch" type="button" if="{{ inputMode === 'keypad' }}" value="返回减加" onclick="useQuick" />
-  <text class="step-hint" if="{{ notice }}">{{ notice }}</text>
-  <div class="actions">
-    <input class="cancel" type="button" value="取消" onclick="onCancel" />
-    <input class="ok" type="button" value="保存" onclick="onKeyOk" />
-  </div>
+    <text class="label">编辑{{ label }} · {{ unit }}</text><text class="edit-target">{{ targetName }}</text><text class="edit-group">第 {{ setIdx + 1 }} 组</text>
+    <div class="quick" if="{{ inputMode === 'quick' }}"><div class="step-row"><input class="step" type="button" value="−" onclick="minus" /><text class="show {{ show.length > 8 ? 'extra-long-value' : show.length > 5 ? 'long-value' : '' }}">{{ show }}</text><input class="step" type="button" value="+" onclick="plus" /></div><text class="step-hint">{{ unit }} · 每次 ±{{ stepLabel }}</text><input class="switch" type="button" value="键盘精确输入" onclick="useKeyboard" /></div>
+    <text class="keyboard-value" if="{{ inputMode === 'keypad' }}">{{ show }} {{ unit }}</text>
+    <div class="grid" if="{{ inputMode === 'keypad' }}">
+      <input class="k" type="button" value="1" onclick="onKey1" /><input class="k" type="button" value="2" onclick="onKey2" /><input class="k" type="button" value="3" onclick="onKey3" /><input class="k" type="button" value="4" onclick="onKey4" /><input class="k" type="button" value="5" onclick="onKey5" /><input class="k" type="button" value="6" onclick="onKey6" /><input class="k" type="button" value="7" onclick="onKey7" /><input class="k" type="button" value="8" onclick="onKey8" /><input class="k" type="button" value="9" onclick="onKey9" /><input class="k" type="button" value="{{ field === 'w' ? '.' : '⌫' }}" onclick="decimalOrClear" /><input class="k" type="button" value="0" onclick="onKey0" /><input class="k c" type="button" value="C" onclick="onKeyC" />
+    </div>
+    <input class="switch" type="button" if="{{ inputMode === 'keypad' }}" value="返回减加" onclick="useQuick" /><text class="notice" if="{{ notice }}">{{ notice }}</text>
+    <div class="actions"><input class="cancel" type="button" value="取消" onclick="onCancel" /><input class="ok" type="button" value="保存" onclick="onKeyOk" /></div>
   </list-item></list>
 </div>
 </template>
 
 <style>
-/* v1.4.4 Wear OS 视觉令牌（逐页同值声明）：#000000 底 / #30D158 主操作 / #1C1C1E 按键
-   #FFFFFF 数字 / #A1A1A6 标签 / #FF453A 清除。数值用固定宽高容器，避免位数变化时跳动。 */
-.page { flex-direction: column; align-items: center; justify-content: flex-start; width: 100%; height: 100%; background-color: #000000; }
-.label { height: 26px; font-size: 18px; color: #A1A1A6; margin-top: 16px; lines: 1; }
-.show { height: 58px; width: 350px; font-size: 48px; color: #FFFFFF; text-align: center; line-height: 58px; margin: 2px 0 8px; lines: 1; }
-.grid { flex-direction: row; flex-wrap: wrap; justify-content: center; width: 350px; }
-.k { width: 112px; height: 58px; font-size: 26px; border-radius: 14px; background-color: #1C1C1E; color: #FFFFFF; margin: 2px; }
-.c { color: #FF453A; }
-.actions { width: 350px; height: 52px; flex-direction: row; justify-content: space-between; margin-top: 8px; }
-.ok { width: 232px; height: 52px; font-size: 21px; border-radius: 14px; background-color: #30D158; color: #000000; }
-.cancel { width: 110px; height: 52px; font-size: 19px; border-radius: 14px; background-color: #1C1C1E; color: #FFFFFF; }
-@media screen and (min-width: 450px) {
-  .label { margin-top: 12px; font-size: 15px; height: 22px; }
-  .show { height: 46px; width: 280px; font-size: 38px; line-height: 46px; margin: 2px 0 6px; }
-  .grid { width: 280px; }
-  .k { width: 88px; height: 44px; font-size: 22px; margin: 2px; }
-  .actions { width: 280px; height: 44px; margin-top: 6px; }
-  .ok { width: 184px; height: 44px; font-size: 18px; }
-  .cancel { width: 88px; height: 44px; font-size: 17px; }
-}
-.quick { width: 350px; flex-direction: column; align-items: center; }
-.step-row { width: 350px; height: 82px; flex-direction: row; justify-content: space-between; }
-.step { width: 164px; height: 76px; font-size: 38px; border-radius: 20px; background-color: #242725; color: #F4F7F5; }
-.step-hint { width: 350px; height: 44px; font-size: 18px; text-align: center; color: #929297; lines: 2; }
-.switch { width: 350px; height: 44px; font-size: 18px; border-radius: 14px; background-color: #242725; color: #F4F7F5; }
-.show { font-size: 76px; height: 92px; line-height: 92px; }
-@media screen and (max-height: 420px) { .show { font-size: 72px; height: 88px; line-height: 88px; } .k { height: 44px; } }
-@media screen and (min-width: 450px) {
-  .quick, .step-row, .switch, .step-hint { width: 280px; }
-  .step { width: 132px; height: 52px; }
-  .step-row { height: 56px; }
-  .show { font-size: 52px; height: 66px; line-height: 66px; }
-}
+/* Explicit-save drafts; crown and touch share step logic. Long keypad form scrolls. */
+.page { width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
 .editor-scroll { width: 100%; height: 100%; }
-.editor-content { width: 100%; flex-direction: column; align-items: center; padding-bottom: 16px; }
+.editor-content { width: 100%; min-height: 450px; flex-direction: column; align-items: center; padding-bottom: 18px; }
+.label { width: 338px; height: 44px; margin-top: 8px; font-size: 19px; color: #929297; }
+.edit-target { width: 338px; height: 56px; line-height: 28px; font-size: 27px; font-weight: bold; color: #FFFFFF; lines: 2; }
+.edit-group { width: 338px; height: 28px; font-size: 18px; color: #929297; }
+.quick { width: 338px; flex-direction: column; align-items: center; }
+.step-row { width: 358px; height: 120px; flex-direction: row; justify-content: space-between; align-items: center; }
+.step { width: 56px; height: 56px; border-radius: 28px; font-size: 36px; background-color: #242725; color: #FFFFFF; }
+.show { width: 246px; height: 100px; line-height: 100px; font-size: 76px; color: #30D158; text-align: center; lines: 1; }
+.long-value { font-size: 46px; }
+.extra-long-value { font-size: 30px; }
+.step-hint { width: 338px; height: 36px; font-size: 20px; color: #929297; text-align: center; }
+.switch { width: 338px; height: 52px; border-radius: 24px; font-size: 20px; background-color: #161D18; color: #FFFFFF; }
+.actions { width: 338px; height: 64px; margin-top: 22px; flex-direction: row; justify-content: space-between; }
+.cancel { width: 146px; height: 56px; border-radius: 28px; font-size: 22px; background-color: #242725; color: #FFFFFF; }
+.ok { width: 182px; height: 56px; border-radius: 28px; font-size: 22px; background-color: #0A3418; color: #30D158; }
+.keyboard-value { width: 338px; height: 66px; font-size: 48px; color: #30D158; text-align: center; lines: 1; }
+.grid { width: 338px; flex-direction: row; flex-wrap: wrap; justify-content: space-between; }
+.k { width: 108px; height: 52px; margin-bottom: 6px; font-size: 28px; border-radius: 22px; background-color: #1C1C1E; color: #FFFFFF; }
+.c { color: #FF453A; }
+.notice { width: 338px; min-height: 44px; color: #FF9F0A; font-size: 19px; lines: 2; }
+@media screen and (min-width: 450px) {
+ .label { margin-top: 58px; }
+ .editor-content { min-height: 466px; padding-bottom: 58px; }
+ .label, .edit-target, .edit-group, .quick, .step-hint, .switch, .actions, .keyboard-value, .grid, .notice { width: 280px; }
+ .step-row { width: 280px; }
+ .show { width: 168px; font-size: 56px; }
+ .long-value { font-size: 32px; }
+ .extra-long-value { font-size: 22px; }
+ .step { width: 56px; }
+ .cancel { width: 126px; }
+ .ok { width: 144px; }
+ .k { width: 88px; }
+}
+
 </style>

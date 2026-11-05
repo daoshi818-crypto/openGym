@@ -385,10 +385,6 @@ export function startServer(h) {
     }
     // 能收到有效业务包就是连接已恢复的证据，不依赖遗漏的 onOpen。
     if (!rpcState().connected) resumeConnection()
-    if (msg.t && msg.t.indexOf('media_') === 0) {
-      if (rpcState().handlers.onMedia) rpcState().handlers.onMedia(msg)
-      return
-    }
     if (msg.t === 'watch_diagnostics_request') {
       const snapshot = { t: 'watch_diagnostics', watchVersion: WATCH_VERSION,
         sid: String(loadState().sid || '').slice(0, 80),

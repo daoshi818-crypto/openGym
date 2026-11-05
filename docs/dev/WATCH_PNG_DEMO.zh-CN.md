@@ -1,5 +1,7 @@
 # BlueOS PNG帧动作示范：实现、边界与真机验收
 
+> 历史设计，仅适用于手机 1.6.10 / 手表 0.6.16。因图片帧传输耗时，手机 1.6.11 / 手表 0.6.17 已移除本文件描述的入口、传输插件、播放器及缓存代码。下文仅保留用于追溯，不是当前功能或待执行任务。手机原有动作视频不受影响。
+
 ## 调用链
 1. `frontend/src/lib/watch-workout.js` → `watchMediaRef`：目录MP4文件名/figure映射生成`mediaRef:{sourceId,format:"png-v1"}`，经现有计划/快照传到手表；不修改运动ID。
 2. 手表`Workout/index.ux`在主训练页、休息页和操作页中的独立「动作示范 ›」按钮打开同页覆盖层，`openWatchMedia`创建临时客户端；同sourceId完整缓存逐帧校验通过则直接播放。

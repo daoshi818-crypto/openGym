@@ -120,51 +120,33 @@ export default {
 </div>
 </template>
 
+
 <style>
-/* V4 总结页令牌：#000000 底 / #FFFFFF 主数值 / #929297 次标签 / #30D158 绿勾与按钮字
-   #0A3418 完成按钮底 / #FF453A 心率。左对齐、单列、纵向滚动；删除卡片底板与左右双列。 */
-.page { flex-direction: column; align-items: center; width: 100%; height: 100%; background-color: #000000; }
-.top { width: 390px; height: 32px; margin-top: 18px; flex-direction: row; align-items: center; justify-content: flex-end; padding-right: 27px; }
-.clock { font-size: 26px; color: #FFFFFF; lines: 1; }
-.scroll { width: 336px; height: 376px; margin-top: 6px; }
-.row { width: 336px; flex-direction: column; align-items: flex-start; }
-.saved { width: 336px; height: 34px; flex-direction: row; align-items: center; margin-top: 6px; }
-.check { width: 29px; height: 29px; border-radius: 15px; background-color: #30D158; color: #000000; font-size: 22px; text-align: center; line-height: 29px; }
-.saved-text { margin-left: 12px; font-size: 26px; color: #FFFFFF; lines: 1; }
-.workoutname { width: 336px; font-size: 24px; color: #929297; lines: 1; margin-top: 16px; margin-bottom: 21px; }
-.metric { width: 336px; flex-direction: column; align-items: flex-start; margin-bottom: 22px; }
-.label { font-size: 21px; color: #929297; lines: 1; margin-bottom: 4px; }
-.values { flex-direction: row; align-items: flex-end; }
-.metric-value { font-size: 48px; color: #FFFFFF; lines: 1; }
-.hr-value { font-size: 39px; color: #FF453A; }
-.metric-unit { font-size: 29px; color: #929297; margin-left: 8px; }
-.sync { width: 336px; font-size: 18px; color: #929297; lines: 2; margin-bottom: 20px; }
-.done { width: 336px; height: 64px; font-size: 23px; border-radius: 32px; background-color: #0A3418; color: #30D158; margin-bottom: 18px; }
+/* V4 same single left-aligned scroll, top and bottom are not separate results. */
+.page { width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
+.top { width: 338px; height: 44px; margin-top: 8px; flex-direction: row; justify-content: flex-end; align-items: center; }
+.clock { font-size: 26px; color: #FFFFFF; }
+.scroll { width: 338px; flex: 1; margin-bottom: 18px; }
+.row { width: 338px; flex-direction: column; align-items: flex-start; }
+.saved { width: 338px; min-height: 44px; flex-direction: row; align-items: center; }
+.check { width: 29px; height: 29px; line-height: 29px; border-radius: 15px; background-color: #30D158; color: #000000; font-size: 22px; text-align: center; }
+.saved-text { width: 297px; margin-left: 12px; font-size: 26px; color: #FFFFFF; lines: 2; }
+.workoutname { width: 338px; min-height: 32px; font-size: 24px; color: #929297; lines: 2; margin-top: 16px; margin-bottom: 21px; }
+.metric { width: 338px; flex-direction: column; align-items: flex-start; margin-bottom: 22px; }
+.label { min-height: 28px; font-size: 21px; color: #929297; margin-bottom: 4px; }
+.values { width: 338px; flex-direction: row; align-items: flex-end; flex-wrap: wrap; }
+.metric-value { max-width: 338px; font-size: 48px; color: #FFFFFF; lines: 2; }
+.hr-value { font-size: 34px; color: #FF453A; }
+.metric-unit { font-size: 29px; color: #FFFFFF; margin-left: 8px; }
+.sync { width: 338px; min-height: 44px; font-size: 18px; color: #929297; lines: 3; margin-bottom: 20px; }
+.done { width: 338px; height: 64px; border-radius: 32px; font-size: 23px; background-color: #0A3418; color: #30D158; margin-bottom: 18px; }
 @media screen and (min-width: 450px) {
-  .top { width: 280px; margin-top: 70px; padding-right: 20px; }
-  .clock { font-size: 20px; }
-  .scroll { width: 264px; height: 244px; margin-top: 4px; }
-  .row { width: 264px; }
-  .saved { width: 264px; height: 26px; }
-  .check { width: 22px; height: 22px; border-radius: 11px; font-size: 16px; line-height: 22px; }
-  .saved-text { margin-left: 8px; font-size: 19px; }
-  .workoutname { width: 264px; font-size: 17px; margin-top: 10px; margin-bottom: 12px; }
-  .metric { width: 264px; margin-bottom: 14px; }
-  .label { font-size: 16px; margin-bottom: 2px; }
-  .metric-value { font-size: 34px; }
-  .hr-value { font-size: 27px; }
-  .metric-unit { font-size: 20px; margin-left: 6px; }
-  .sync { width: 264px; font-size: 13px; margin-bottom: 12px; }
-  .done { width: 264px; height: 46px; font-size: 18px; border-radius: 23px; margin-bottom: 12px; }
+ .top { width: 280px; margin-top: 58px; }
+ .scroll { width: 280px; margin-bottom: 58px; }
+ .row, .saved, .workoutname, .metric, .values, .sync, .done { width: 280px; }
+ .saved-text { width: 239px; font-size: 22px; }
+ .metric-value { max-width: 280px; font-size: 40px; }
+ .hr-value { font-size: 28px; }
 }
-/* 390 × 390（紧凑高度）：主要数字 44 / 心率 37 / 标签 21 不变；若设备不支持 max-height 则不生效。 */
-@media screen and (max-height: 420px) {
-  .top { height: 28px; margin-top: 12px; }
-  .clock { font-size: 24px; }
-  .scroll { height: 316px; margin-top: 4px; }
-  .metric-value { font-size: 44px; }
-  .hr-value { font-size: 37px; }
-  .metric { margin-bottom: 18px; }
-  .done { height: 60px; }
-}
+
 </style>

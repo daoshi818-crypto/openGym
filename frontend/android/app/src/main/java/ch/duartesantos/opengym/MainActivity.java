@@ -27,7 +27,6 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(BackupFolderPlugin.class);
         registerPlugin(SystemBarsPlugin.class);
         registerPlugin(WatchRpcPlugin.class);
-        registerPlugin(WatchMediaPlugin.class);
         super.onCreate(savedInstanceState);
         passSystemBarsToPage();
     }

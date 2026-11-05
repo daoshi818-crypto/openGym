@@ -195,7 +195,7 @@ describe('watch completed sets and rest clock', () => {
     expect([workout.state.exIdx, workout.state.setIdx]).toEqual(position)
     expect(router.push).not.toHaveBeenCalled()
     expect(sessions.loadState().active).toBe(true)
-    expect(source('Workout/index.ux')).toContain('if="{{ closeMode === \'complete\' }}"')
+    expect(source('Workout/index.ux')).toContain('if="{{ closeMode === \'complete\' && !effortOn }}"')
     expect(source('Workout/index.ux')).toContain('value="继续训练" onclick="cancelClose"')
   })
 
@@ -604,7 +604,7 @@ describe('watch business message boundary', () => {
     const trainingPage = ux.slice(ux.indexOf('<div class="screen"'), ux.indexOf('<div class="screen operation-screen"'))
     const operationPage = ux.slice(ux.indexOf('<div class="screen operation-screen"'))
     expect(trainingPage).not.toContain('{{ kcalLabel }} 千卡')
-    expect(trainingPage).not.toContain('{{ hrLabel }}')
+    expect(trainingPage).toContain('class="heart"') // V4 sampled HR in the top bar, not a metrics dashboard
     expect(trainingPage).not.toContain('估算')
     expect(operationPage).toContain('{{ clockLabel }}')
     expect(operationPage).toContain('class="elapsed-value"')

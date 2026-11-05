@@ -116,94 +116,56 @@ export default {
 <template>
 <div class="page">
   <div class="content">
-    <div class="brand">
-      <image class="logo" src="/assets/images/logo.png" />
-      <text class="title">opengym</text>
-    </div>
+    <div class="topbar"><text class="brand">opengym</text><text class="version">v{{ version }}</text></div>
     <text class="status">{{ status }}</text>
-
-    <div class="card resume" if="{{ canResume }}">
-      <text class="card-lbl">进行中的训练</text>
-      <text class="card-name">{{ workoutName }}</text>
-      <text class="card-meta">{{ exerciseCount }} 个动作</text>
-      <input class="btn" type="button" value="继续当前训练" onclick="onResume" />
-    </div>
-
-    <div class="card today" if="{{ !canResume && selected }}">
-      <text class="card-lbl">{{ todayLabel }}</text>
-      <text class="card-name">{{ selected.name }}</text>
-      <text class="card-meta">{{ exerciseCount }} 个动作</text>
-      <input class="btn" type="button" value="{{ startLabel }}" onclick="onStart" />
-    </div>
-
-    <list class="plans" if="{{ !canResume && plans.length }}">
-      <list-item class="plan {{ selected && selected.id === p.id ? 'selected' : '' }}" type="plan" for="{{ p in plans }}" tid="id" onclick="choose(p)">
-        <text class="plan-name">{{ p.name }}</text>
-        <text class="plan-preview">{{ p.preview }}</text>
-      </list-item>
-    </list>
-
-    <text class="empty" if="{{ !canResume && !plans.length }}">{{ needSync ? '请先打开手机应用同步计划' : '暂无可用训练计划' }}</text>
-
-    <div class="links"><input class="link" type="button" value="最近结果" onclick="showSummary" if="{{ hasSummary }}" /></div>
+    <div class="hero" if="{{ canResume }}"><text class="card-name">{{ workoutName }}</text><text class="card-meta">{{ exerciseCount }} 个动作 · 训练进行中</text><input class="start-circle" type="button" value="▶" onclick="onResume" /><text class="start-label" onclick="onResume">继续当前训练</text></div>
+    <div class="hero" if="{{ !canResume && selected }}"><text class="card-name">{{ selected.name }}</text><text class="card-meta">{{ exerciseCount }} 个动作</text><input class="start-circle" type="button" value="▶" onclick="onStart" /><text class="start-label" onclick="onStart">{{ startLabel }}</text></div>
+    <list class="plans" if="{{ !canResume && plans.length }}"><list-item class="plan {{ selected && selected.id === p.id ? 'selected' : '' }}" type="plan" for="{{ p in plans }}" tid="id" onclick="choose(p)"><text class="plan-name">{{ p.name }} ›</text><text class="plan-preview">{{ p.preview }}</text></list-item></list>
+    <div class="empty-state" if="{{ !canResume && !plans.length }}"><text class="empty-icon">＋</text><text class="empty-title">{{ needSync ? '尚未同步' : '暂无可用计划' }}</text><text class="empty">{{ needSync ? '请先打开手机应用同步计划' : '在手机上创建训练计划后同步至手表' }}</text></div>
+    <div class="links" if="{{ hasSummary }}"><input class="link" type="button" value="最近训练结果 ›" onclick="showSummary" if="{{ hasSummary }}" /></div>
   </div>
-  <div class="overlay" if="{{ conflict }}">
-    <text class="overlay-title">手机已有活动训练</text>
-    <text class="overlay-text">继续手机训练将丢弃本地未保存训练</text>
-    <input class="btn" type="button" value="继续手机训练" onclick="acceptConflict" />
-    <input class="link" type="button" value="返回" onclick="keepConflict" />
-  </div>
+  <div class="overlay" if="{{ conflict }}"><text class="overlay-title">手机已有活动训练</text><text class="overlay-text">继续手机训练将丢弃本地未保存训练</text><input class="btn" type="button" value="继续手机训练" onclick="acceptConflict" /><input class="link" type="button" value="返回" onclick="keepConflict" /></div>
 </div>
 </template>
+
 <style>
-/* v1.4.4 Wear OS 视觉令牌（BlueOS 不支持全局 CSS 变量，逐页同值声明）
-   background #000000 · primary #30D158 · primaryText #000000 · tile #1C1C1E · tileHigh #2C2C2E
-   text #FFFFFF · muted #A1A1A6 · warm #FF9F0A · danger #FF453A · effort #E0C775
-   触控目标 ≥48：主按钮 48，行内次要按钮 48。 */
-.page { width: 100%; height: 100%; flex-direction: column; align-items: center; background-color: #000000; }
-.content { width: 350px; height: 414px; margin-top: 18px; flex-direction: column; align-items: center; }
-.brand { width: 350px; height: 34px; flex-direction: row; align-items: center; justify-content: center; }
-.logo { width: 26px; height: 26px; margin-right: 8px; }
-.title { font-size: 22px; color: #A1A1A6; }
-.status { width: 350px; height: 28px; font-size: 15px; color: #A1A1A6; text-align: center; lines: 2; }
-.card { width: 350px; flex-direction: column; align-items: center; border-radius: 16px; background-color: #1C1C1E; padding: 10px 12px 12px; margin-top: 8px; }
-.resume { height: 150px; border: 1px solid #30D158; }
-.today { height: 150px; }
-.card-lbl { width: 326px; height: 20px; font-size: 14px; color: #30D158; text-align: center; lines: 1; }
-.card-name { width: 326px; height: 44px; font-size: 24px; color: #FFFFFF; text-align: center; lines: 2; }
-.card-meta { width: 326px; height: 18px; font-size: 14px; color: #A1A1A6; text-align: center; lines: 1; }
-.plans { width: 350px; height: 150px; margin-top: 6px; }
-.plan { width: 350px; height: 70px; flex-direction: column; justify-content: center; padding: 6px 12px; margin-bottom: 6px; border-radius: 14px; background-color: #1C1C1E; }
-.plan.selected { background-color: #2C2C2E; border: 1px solid #30D158; }
-.plan-name { width: 326px; height: 26px; font-size: 20px; color: #FFFFFF; lines: 1; }
-.plan-preview { width: 326px; height: 20px; font-size: 13px; color: #A1A1A6; lines: 1; }
-.empty { width: 350px; height: 60px; font-size: 16px; color: #A1A1A6; text-align: center; lines: 2; margin-top: 10px; }
-.btn { width: 326px; height: 48px; font-size: 20px; border-radius: 12px; margin-top: 8px; background-color: #30D158; color: #000000; }
-.links { width: 350px; height: 48px; flex-direction: row; align-items: center; justify-content: center; margin-top: 4px; }
-.link { width: 170px; height: 48px; font-size: 16px; background-color: transparent; color: #A1A1A6; }
-.overlay { position: absolute; left: 0; top: 0; width: 100%; height: 100%; flex-direction: column; align-items: center; justify-content: center; background-color: #000000; }
-.overlay-title { width: 350px; height: 40px; font-size: 24px; color: #FFFFFF; text-align: center; lines: 2; }
-.overlay-text { width: 350px; height: 52px; font-size: 15px; color: #A1A1A6; text-align: center; lines: 3; margin-bottom: 10px; }
+/* Full viewport; Apple-style routine hero, circular start, scrollable alternate plans. */
+.page { width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
+.content { width: 100%; height: 100%; flex-direction: column; align-items: center; }
+.topbar { width: 338px; height: 44px; margin-top: 8px; flex-direction: row; justify-content: space-between; align-items: center; }
+.brand { font-size: 23px; color: #FFFFFF; }
+.version { font-size: 16px; color: #929297; }
+.status { width: 338px; height: 32px; font-size: 17px; color: #FF9F0A; lines: 1; }
+.hero { width: 338px; height: 228px; flex-direction: column; align-items: center; }
+.card-name { width: 338px; height: 56px; line-height: 28px; font-size: 27px; font-weight: bold; color: #FFFFFF; text-align: center; lines: 2; }
+.card-meta { width: 338px; height: 26px; font-size: 18px; color: #929297; text-align: center; lines: 1; }
+.start-circle { width: 104px; height: 104px; border-radius: 52px; font-size: 56px; background-color: #30D158; color: #000000; }
+.start-label { width: 338px; height: 42px; line-height: 42px; font-size: 24px; font-weight: bold; color: #30D158; text-align: center; }
+.plans { width: 358px; flex: 1; margin-bottom: 18px; }
+.plan { width: 358px; min-height: 74px; padding: 10px 14px; margin-bottom: 8px; border-radius: 22px; background-color: #1C1C1E; flex-direction: column; }
+.selected { background-color: #242725; }
+.plan-name { width: 330px; min-height: 28px; font-size: 23px; color: #FFFFFF; lines: 2; }
+.plan-preview { width: 330px; min-height: 24px; font-size: 17px; color: #929297; lines: 2; }
+.empty-state { width: 338px; flex: 1; flex-direction: column; justify-content: center; align-items: center; }
+.empty-icon { width: 100px; height: 94px; font-size: 80px; color: #30D158; text-align: center; }
+.empty-title { width: 338px; height: 48px; font-size: 27px; color: #FFFFFF; text-align: center; }
+.empty { width: 310px; min-height: 72px; font-size: 22px; color: #929297; text-align: center; lines: 3; }
+.links { width: 338px; height: 44px; margin-bottom: 18px; justify-content: center; }
+.link { width: 338px; height: 44px; background-color: #000000; color: #30D158; font-size: 19px; }
+.overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; justify-content: center; }
+.overlay-title { width: 338px; height: 60px; font-size: 27px; color: #FFFFFF; text-align: center; lines: 2; }
+.overlay-text { width: 338px; height: 86px; font-size: 21px; color: #929297; text-align: center; lines: 3; }
+.btn { width: 338px; height: 60px; border-radius: 30px; background-color: #0A3418; color: #30D158; font-size: 22px; }
 @media screen and (min-width: 450px) {
-  .content { width: 280px; height: 300px; margin-top: 70px; }
-  .brand { width: 280px; height: 30px; }
-  .logo { width: 22px; height: 22px; margin-right: 6px; }
-  .title { font-size: 19px; }
-  .status { width: 280px; height: 24px; font-size: 13px; }
-  .card { width: 280px; padding: 8px 8px 10px; border-radius: 14px; margin-top: 6px; }
-  .resume, .today { height: 124px; }
-  .card-lbl { width: 264px; height: 18px; font-size: 13px; }
-  .card-name { width: 264px; height: 38px; font-size: 20px; }
-  .card-meta { width: 264px; height: 16px; font-size: 12px; }
-  .btn { width: 264px; height: 44px; font-size: 17px; margin-top: 6px; }
-  .plans { width: 280px; height: 104px; margin-top: 4px; }
-  .plan { width: 280px; height: 56px; padding: 4px 8px; margin-bottom: 4px; }
-  .plan-name { width: 264px; height: 22px; font-size: 17px; }
-  .plan-preview { width: 264px; height: 16px; font-size: 12px; }
-  .empty { width: 280px; height: 48px; font-size: 14px; margin-top: 6px; }
-  .links { width: 280px; height: 40px; margin-top: 2px; }
-  .link { width: 150px; height: 40px; font-size: 14px; }
-  .overlay-title { width: 280px; height: 34px; font-size: 19px; }
-  .overlay-text { width: 280px; height: 44px; font-size: 13px; }
+ .topbar { width: 280px; margin-top: 58px; }
+ .status, .hero, .card-name, .card-meta, .start-label, .plans, .plan, .links, .link, .overlay-title, .overlay-text, .btn { width: 280px; }
+ .hero { height: 208px; }
+ .card-name { height: 48px; font-size: 24px; line-height: 24px; }
+ .start-circle { width: 92px; height: 92px; border-radius: 46px; }
+ .plan-name, .plan-preview { width: 252px; }
+ .links { margin-bottom: 58px; }
+ .empty-state { width: 280px; }
+ .empty { width: 264px; font-size: 20px; }
 }
+
 </style>

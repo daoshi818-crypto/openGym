@@ -2,8 +2,8 @@
   "package": "com.zcode.gymtimer",
   "name": "opengym",
   "icon": "/assets/images/logo.png",
-  "versionName": "0.6.16",
-  "versionCode": 31,
+  "versionName": "0.6.17",
+  "versionCode": 32,
   "appCategory": ["health"],
   "deviceTypeList": ["watch"],
   "config": {
@@ -14,7 +14,6 @@
   },
   "features": [
     { "name": "blueos.storage.storage" },
-    { "name": "blueos.storage.file" },
     { "name": "blueos.network.fetch" },
     { "name": "blueos.hardware.vibrator.vibrator" },
     { "name": "blueos.hardware.display.brightness" },

@@ -8,7 +8,6 @@ import { buildSessionEntries } from './session-start.js'
 import { effectiveRoutineIds, effortOf, entryRoutineId } from './history.js'
 import { todayISO } from './format.js'
 import { EFFORT_CAPABILITY } from '../../../watch-app/src/lib/effort-scale.js'
-import { watchMediaRef } from './watch-media.js'
 import { watchLastTimeOf } from './watch-last-time.js'
 
 /**
@@ -27,7 +26,7 @@ export function watchExercisesOf(S, entries, { routineId = null, sourceWorkout =
     return { id: e.id, entryInstanceId: e.entryInstanceId, weightUnit: S.unit || 'kg', setIds: rows.map(r => r.setId), name: e.id ? exerciseNameFor(ex) : e.name || '', sets: rows.length,
       reps: rows[0]?.sec != null ? rows[0].sec + '秒' : rows[0]?.r ?? rows[0]?.reps ?? '',
       restSec: e.target?.restSec > 0 ? e.target.restSec : S.restSec || 60, weight: rows[0]?.w ?? '',
-      mediaRef: watchMediaRef(S, ex), lastTime: watchLastTimeOf(S, e, source) }
+      lastTime: watchLastTimeOf(S, e, source) }
   })
 }
 

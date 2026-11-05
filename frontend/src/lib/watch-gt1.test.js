@@ -1,0 +1,79 @@
+// @vitest-environment node
+import { describe, expect, it } from 'vitest'
+import { readFileSync, existsSync } from 'node:fs'
+import { runInNewContext } from 'node:vm'
+import { watchSource, stripImports, watchInteractionDeps, watchPersistence, loadWatchModule } from './watch-test-harness.js'
+import * as effort from '../../../watch-app/src/lib/effort-scale.js'
+import * as protocol from '../../../watch-app/src/lib/protocol.js'
+import { lastTimeView } from '../../../watch-app/src/lib/watch-last-time.js'
+
+function training(scale) {
+  const { ctx } = watchPersistence()
+  Object.assign(ctx, { ...protocol, console, Date })
+  loadWatchModule('event-id', ctx, ['allocateEventIdentity', 'rememberEventAt'])
+  loadWatchModule('session', ctx, ['loadState', 'save', 'startSession', 'nextUndone', 'calories'])
+  const s = ctx.startSession({ sid: 'gt1', name: '推日', exercises: [{ entryInstanceId: 'e', name: '卧推', sets: 4, reps: '8', weight: '62.5' }] })
+  s.effortScale = scale; ctx.save(s)
+  Object.assign(ctx, watchInteractionDeps, effort, { lastTimeView,
+    startServer() {}, sendEvent() {}, pendingCount: () => 0, isConnected: () => true,
+    persistenceStatus: () => ({}), synchronizationStatus: () => ({}),
+    startSessionHr() {}, stopSessionHr() {}, tick() {}, restOver() {},
+    setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
+    router: { push() {}, replace() {} }, brightness: {} })
+  runInNewContext(stripImports(watchSource('Workout/index.ux').match(/<script>([\s\S]*?)<\/script>/)[1]).replace('export default', 'this.page ='), ctx)
+  const p = Object.assign(ctx.page, ctx.page.data)
+  p.onInit({})
+  return { p, s, ctx }
+}
+
+describe('GT1 complete-screen rebuild contracts', () => {
+  it.each(['Index','Workout','Keypad','ExerciseList','Summary'])('%s has a full viewport, not the former fixed safe-area shell', name => {
+    const src = watchSource(name + '/index.ux'), css = src.match(/<style>([\s\S]*?)<\/style>/)[1]
+    const root = css.match(/\.page\s*\{([^}]+)\}/)[1]
+    expect(root).toContain('width: 100%'); expect(root).toContain('height: 100%')
+    expect(root).not.toMatch(/padding|margin|top:|left:/)
+    expect(src).toContain('<list ')
+    for (const wrapper of ['screen','content']) {
+      const rules = css.match(new RegExp('\\.' + wrapper + '\\s*\\{([^}]+)\\}'))
+      if (rules) { expect(rules[1]).toContain('width: 100%'); expect(rules[1]).toContain('height: 100%') }
+    }
+  })
+  it.each(['rpe','rir','none'])('initial render handles %s scale without opening the picker', scale => {
+    const { p } = training(scale)
+    expect(p.effortScaleLabel).toBe(scale === 'none' ? '' : scale.toUpperCase())
+    expect(p.effortEntryOn).toBe(scale !== 'none')
+    expect(p.effortOn).toBe(false)
+  })
+  it('shows RIR zero and preserves its identity during rest', () => {
+    const { p, s, ctx } = training('rir')
+    Object.assign(s.workout.rows[0][0], { done: true, at: Date.now(), effortKind: 'rir', rir: 0 })
+    s.setIdx = 1; s.restUntil = Date.now() + 90000; ctx.save(s); p.state = s; p.refresh()
+    expect(p.effortEntryText).toBe('RIR 0'); expect(p.effortNumber).toBe('0')
+    expect(p.effortTarget.setId).toBe(s.workout.rows[0][0].setId)
+    expect(p.nextTargetLabel).toContain('第 2 组')
+  })
+  it('return from operations does not switch or complete a set', () => {
+    const { p, s } = training('none'), before = JSON.stringify(s.workout.rows)
+    p.pageIndex = 1; p.showCurrent()
+    expect(p.pageIndex).toBe(0); expect(JSON.stringify(s.workout.rows)).toBe(before)
+  })
+  it('renders small unlabelled set dots, not numbered completion buttons', () => {
+    const src = watchSource('Workout/index.ux')
+    expect(src).toContain('onclick="pickSetDot(item)"')
+    expect(src).not.toContain('{{ item.number }}')
+    expect(src).toMatch(/class="set-dot [\s\S]*?<\/div>/)
+    expect(src).toContain('onclick="openExercises">{{ exName }}')
+  })
+  it('removes all frame transport/player entry points, not just hiding the button', () => {
+    const removed = ['watch-app/src/lib/watch-media.js','watch-app/src/lib/media-client.js','watch-app/src/lib/media-format.js',
+      'frontend/src/lib/watch-media.js','frontend/android/app/src/main/java/ch/duartesantos/opengym/WatchMediaPlugin.java']
+    const repo = new URL('../../../', import.meta.url)
+    for (const name of removed) expect(existsSync(new URL(name, repo)), name).toBe(false)
+    for (const name of ['frontend/src/lib/watch-link.js','frontend/src/lib/watch-workout.js',
+      'watch-app/src/lib/rpc.js','watch-app/src/Workout/index.ux',
+      'frontend/android/app/src/main/java/ch/duartesantos/opengym/MainActivity.java']) {
+      expect(readFileSync(new URL(name, repo), 'utf8')).not.toMatch(/WatchMedia|watch-media|mediaRef|media_request|media_chunk|openDemo/)
+    }
+    expect(watchSource('manifest.json')).not.toContain('blueos.storage.file')
+  })
+})

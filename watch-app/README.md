@@ -5,6 +5,14 @@ BlueOS watch companion for openGym. Display name: `opengym`; package identity:
 
 ## Training
 
+Watch 0.6.17 / phone 1.6.11 rebuild all five routes for the GT1 390x450 viewport.
+The approved V3/V4 Apple-style layouts guide the typography, circular completion,
+rest countdown and left-aligned scrolling summary. Set dots have no numeric labels:
+white outline=current, white fill=completed, dark fill=unfinished. Exercise navigation
+uses title-tap, with a separate disclosure button to expand each exercise's sets.
+Every route fills the viewport; native lists absorb overflow rather than extending
+the page or pushing the fixed footer off screen. See [GT1 rebuild and acceptance](../docs/dev/WATCH_GT1_UI_REBUILD.zh-CN.md).
+
 - Swipe left to switch between training and operations; swipe right to open the exercise list.
   Vertical gestures scroll the native lists. Tap the exercise name to open the exercise list and jump to its first unfinished set.
 - Tap an unfinished set dot to select that set. Completed sets are not editable through the dots.
@@ -28,8 +36,9 @@ BlueOS watch companion for openGym. Display name: `opengym`; package identity:
   phone must confirm conflicts before an offline watch save changes an already closed record.
 - Unsaved watch sessions expire after six hours from the current training segment's start.
   Previously saved history is retained. The close event is queued for reconnection.
-- Embedded demonstration media and a new skip/hold protocol are not enabled by these changes.
-  Media rights/device support and peer protocol capability must be verified separately.
+- Watch exercise demonstrations were removed in 0.6.17: no frame requests, native
+  extraction plugin, player or demo file capability. Phone exercise videos remain.
+  Old demo cache files are not actively deleted; training storage is untouched.
 
 ## Transport and Persistence
 
@@ -64,8 +73,8 @@ $env:BLUEOS_PACK = 'path/to/blueos-debugger/node_modules/blueos-pack/bin/index.j
 ```
 
 The script builds both `watch-square` and `watch-round` targets, verifies each VRU payload,
-and writes both RPKs/checksums into `releases/`. The square layout keeps the 390x450 baseline
-and scales naturally to the 432x514 vivo WATCH GT 2. The round target adds a circular safe-area
+and writes both RPKs/checksums into `releases/`. The square layout uses the 390x450 baseline;
+larger devices still require physical-device verification. The round target adds a circular safe-area
 layout for vivo WATCH 4/5. Watch-only releases can ship independently of the phone APK.
 Development keys and Studio output are ignored. Current validation uses blueos-pack
 `1.0.12-beta.13`.
