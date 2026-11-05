@@ -1,3 +1,4 @@
+import { bindChatRequest, assertChatBase, chatPending, validateChat, replayChatRequest, rememberChatRequest } from '../../../api/coach/core/chat.js'
 import { build as buildPayload } from '../../../api/coach/core/payload.js'
 import { legacySelection, resolveDebriefSelection, sortedWorkouts } from '../../../api/coach/core/debrief-selection.js'
 import { debriefMetadata } from '../../../api/coach/core/debrief-report.js'
@@ -175,7 +176,7 @@ export function demoCohort(S) {
 
 /* ---------------- the API surface the demo stands in for ---------------- */
 
-export const demoStatus = () => ({ job, pending, cap: { used: 0, limit: 0 }, lastError })
+export const demoStatus = () => ({ chatActionsVersion: 1, job, pending, cap: { used: 0, limit: 0 }, lastError })
 
 function start(kind, make) {
   if (job) throw Object.assign(new Error(t('The Coach is already thinking about your training.')), { status: 409 })
@@ -225,10 +226,36 @@ export const demoDebrief = (S, selectionOrId) => {
   })
 }
 export const demoResolve = body => {
+  if (body && pending?.source === 'chat' && pending.kind === 'review' && body.revision !== pending.revision) throw Object.assign(new Error('pending_mismatch'), { code: 'pending_mismatch' })
   if (body && pending && body.proposalId !== pending.id) throw Object.assign(new Error('pending_mismatch'), { code: 'pending_mismatch' })
   pending = pending?.kind === 'ask' ? waitingProposal(pending.prev) : null; return { ok: true }
 }
 // The demo has no model behind it: a question gets a sample answer that says so.
+let chatRequests = []
+export const demoChat = (S, body) => {
+  const options = { ...body, note: body.text }
+  const replay = replayChatRequest(chatRequests, options, 'demo')
+  if (replay) return replay
+  const opts = bindChatRequest(pending, options, S.coach?.log || [])
+  const snapshot = JSON.parse(JSON.stringify(S))
+  const started = start('chat', () => {
+    assertChatBase(pending, opts)
+    const payload = buildPayload(snapshot, { ...opts, handle: 'demo', kind: 'chat' })
+    const routine = opts.scope && payload.plan.routines.find(r => r.id === opts.scope.routineId)
+    const ex = routine?.ex?.find(e => e.sets >= 1 && e.sets <= 10)
+    const answer = ex ? {
+      coach_contract: 1, chat_actions_contract: 1, replyType: 'proposal', answer: t('Demo suggestion only. Nothing has been applied.'),
+      summary: t('Demo plan adjustment'), targetRoutineId: routine.id, clarification: '', notes: [],
+      changes: [{ id: 'sample', type: 'sets', target: { routineId: routine.id, exId: ex.id }, after: ex.sets === 10 ? 9 : ex.sets + 1, why: t('This is a demo, not a training recommendation.') }]
+    } : { coach_contract: 1, chat_actions_contract: 1, replyType: 'clarify', answer: t('The demo does not interpret messages. Select a routine to preview an adjustment.'), clarification: payload.plan.routines.map(r => r.name).join(' / ') || t('Build a routine first.'), changes: [] }
+    const checked = validateChat(answer, payload.plan, { scope: opts.scope, customIds: (snapshot.customEx || []).map(e => e.id) })
+    if (!checked.ok) throw new Error(checked.errors.join('; '))
+    return chatPending(checked.proposal, { kind: 'review', id: job.id, createdAt: Date.now(), expiresAt: Date.now() + 864e5,
+      planHash: planHash(snapshot), context: coachContext(snapshot, planHash(snapshot), opts.scope), scope: opts.scope || null }, opts)
+  })
+  chatRequests = rememberChatRequest(chatRequests, options, started.job.id, 'demo')
+  return started
+}
 export const demoAsk = (S, text) => start('ask', () => ({
   id: 'demo-ask-' + Date.now().toString(36), kind: 'ask', createdAt: Date.now(), expiresAt: Date.now() + 864e5,
   planHash: planHash(S), iteration: 1, prev: waitingProposal(pending),

@@ -91,7 +91,7 @@ describe('a phone paired with a server', () => {
     mocks.coachLocal = { mode: 'off' }
     mocks.status = { job: null, pending: proposal('p1') }
     expect(await scheduledNotice()).toMatchObject({ id: 'p1' })
-    expect(api).toHaveBeenCalledWith('/api/coach/status')
+    expect(api).toHaveBeenCalledWith('/api/coach/status?chatActionsVersion=1')
     expect(mocks.toast).toHaveBeenCalledTimes(1)
     expect(mocks.toast.mock.calls[0][0]).toMatch(/1 suggestion/)
     expect(await scheduledNotice()).toBeNull()

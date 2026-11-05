@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { applyEdit, applyRest, restOf, applyFocus } from '../../../watch-app/src/lib/protocol.js'
-import { loadWatchModule, watchPersistence } from './watch-test-harness.js'
+import { loadWatchModule, watchPersistence, watchInteractionDeps } from './watch-test-harness.js'
 import { effortScaleOf, effortValueOf, effortKindOf, stepEffortValue, effortMeaning, effortSummaryText, formatEffort } from '../../../watch-app/src/lib/effort-scale.js'
 
 const source = path => readFileSync(new URL('../../../watch-app/src/' + path, import.meta.url), 'utf8')
@@ -14,7 +14,7 @@ const imports = /^import[\s\S]*?from ['"][^'"]+['"]\r?$/gm
 
 function page(path, deps) {
   const script = source(path).match(/<script>([\s\S]*?)<\/script>/)[1]
-  const context = { console, WATCH_VERSION: 'test-watch', applyEdit, applyRest, restOf, applyFocus,
+  const context = { ...watchInteractionDeps, console, WATCH_VERSION: 'test-watch', applyEdit, applyRest, restOf, applyFocus,
     persistenceStatus: () => ({}), storageStatus: () => ({}), synchronizationStatus: () => ({}),
     storage: { getSync: () => null, set() {} },
     effortScaleOf, effortValueOf, effortKindOf, stepEffortValue, effortMeaning, effortSummaryText, formatEffort,
@@ -95,12 +95,13 @@ describe('ExerciseList 动作总览（官方 OverviewScreen 映射）', () => {
   const listPage = () => {
     const state = sessionState()
     const sendEvent = vi.fn()
+    const router = { back: vi.fn(), replace: vi.fn(), push: vi.fn() }
     const p = page('ExerciseList/index.ux', {
       loadState: () => state, save: vi.fn(), endSession: vi.fn(), closeSession: vi.fn(), sendEvent,
-      router: { back: vi.fn(), replace: vi.fn(), push: vi.fn() },
+      router,
     })
     p.onInit()
-    return { p, sendEvent, state }
+    return { p, sendEvent, state, router }
   }
 
   it('每个动作显示已完成/总数，并高亮当前动作', () => {
@@ -123,10 +124,11 @@ describe('ExerciseList 动作总览（官方 OverviewScreen 映射）', () => {
     expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({ t: 'session_close', disposition: 'abandoned' }))
   })
 
-  it('保存训练仍然一次生效，语义不变', () => {
-    const { p, sendEvent } = listPage()
+  it('保存入口回到统一结束确认，不在列表直接关闭会话', () => {
+    const { p, sendEvent, router } = listPage()
     p.saveWorkout()
-    expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({ t: 'session_close', disposition: 'saved' }))
+    expect(sendEvent).not.toHaveBeenCalled()
+    expect(router.replace).toHaveBeenCalledWith({ uri: '/Workout', params: { requestFinish: true } })
   })
 
   it('从结束区返回会清掉二次确认状态', () => {

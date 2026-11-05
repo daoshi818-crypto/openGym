@@ -1,3 +1,6 @@
+import { isOn } from '../lib/modules.js'
+import { StrengthLevelsCard } from '../components/StrengthLevel.jsx'
+import WeeklyTargetsCard from '../components/WeeklyTargetsCard.jsx'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
@@ -267,6 +270,9 @@ function MuscleBalance({ S }) {
   </>
 
   return <div className="card">
+    <div className="feature-presets"><Button onClick={() => nav('/reports')}>{t('Performance report')}</Button></div>
+    <WeeklyTargetsCard S={S} />
+    {isOn(S, 'strength') && <StrengthLevelsCard S={S} />}
     <Segmented className="seg-range" value={view} onChange={setView}
       options={[{ value: 'balance', label: t('Muscle balance') }, { value: 'fatigue', label: t('Fatigue') }, { value: 'strength', label: t('Strength') }]} />
     {view === 'balance' ? <>
@@ -706,6 +712,9 @@ export default function Stats() {
     <div className="hdr"><SeasonDeco spot="stats-hdr" /><div><h1>{t('Stats')}</h1><div className="sub">{t('Progress & history')}</div></div>
       <button className="iconbtn" onClick={() => nav('/history')} aria-label={t('History')}><Icon name="history" /></button></div>
 
+    <div className="feature-presets"><Button onClick={() => nav('/reports')}>{t('Performance report')}</Button></div>
+    <WeeklyTargetsCard S={S} />
+    {isOn(S, 'strength') && <StrengthLevelsCard S={S} />}
     <Segmented className="seg-range" value={view} onChange={setView}
       options={[{ value: 'calendar', label: t('Training calendar') }, { value: 'trends', label: t('Trends') }]} />
 
@@ -744,23 +753,23 @@ export default function Stats() {
         <div className="muted small" style={{ marginTop: 4 }}>{t('See which lift is holding back the rest.')}</div></div>
       <Button size="sm" variant="tinted" trailingIcon="chevronRight" style={{ flexShrink: 0 }} onClick={() => nav('/structural-balance')}>{t('Open')}</Button>
     </div>}
-    {workouts.length > 0 && <div className="card row between" style={{ alignItems: 'center', gap: 12 }}>
+    {isOn(S, 'body') && workouts.length > 0 && <div className="card row between" style={{ alignItems: 'center', gap: 12 }}>
       <div style={{ minWidth: 0 }}><h2 style={{ margin: 0 }}>{t('Progress photos')}</h2>
         <div className="muted small" style={{ marginTop: 4 }}>{t('Every photo you kept with a workout, lined up by date. Plus a before/after slider.')}</div></div>
       <Button size="sm" variant="tinted" trailingIcon="chevronRight" style={{ flexShrink: 0 }} onClick={() => nav('/progress-photos')}>{t('Open')}</Button>
     </div>}
-    <div className="card row between" style={{ alignItems: 'center', gap: 12 }}>
+    {isOn(S, 'body') && <div className="card row between" style={{ alignItems: 'center', gap: 12 }}>
       <SeasonDeco spot="stats-peek" />
       <div style={{ minWidth: 0 }}><h2 style={{ margin: 0 }}>{t('Body measurements')}</h2>
         <div className="muted small" style={{ marginTop: 4 }}>{(S.measurements || []).length
           ? t('Last check-in {0}', fmtDate(S.measurements[S.measurements.length - 1].d, true))
           : t('Waist, arms, body fat and anything else you measure, each with its own curve.')}</div></div>
       <Button size="sm" variant="tinted" trailingIcon="chevronRight" style={{ flexShrink: 0 }} onClick={() => nav('/measurements')}>{t('Open')}</Button>
-    </div>
-    {(hasEffort(S) || hasEstimableEffort(S)) && <EffortCard S={S} />}
+    </div>}
+    {isOn(S, 'effort') && (hasEffort(S) || hasEstimableEffort(S)) && <EffortCard S={S} />}
 
     <div className="cols">
-      <div className="card">
+      {isOn(S, 'body') && <div className="card">
         <div className="row between bw-head" style={{ marginBottom: 8 }}>
           <h2 style={{ margin: 0 }}>{t('Body weight')}</h2>
           <div className="row" style={{ gap: 8 }}>
@@ -778,7 +787,7 @@ export default function Stats() {
           <Button size="sm" variant="ghost" trailingIcon="chevronRight" onClick={weighInsSheet}>{t('All weigh-ins')}</Button>
         </div>}
         <SeasonDeco spot="stats-web" />
-      </div>
+      </div>}
 
       <div className="card">
         <h2>{t('Exercise progress')}</h2>

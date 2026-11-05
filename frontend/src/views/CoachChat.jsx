@@ -30,8 +30,9 @@ import {
   changeTitle, changeValues, exName, canRevert, revertLast, acknowledgeDecision
 } from '../lib/coach.js'
 import { insightsFor, sessionInsights } from '../lib/coach-insights.js'
-import { useCoachStatus, requestReview, requestDebrief, requestPlan, refinePlan, askCoach, resolvePending, cohortStats, setCohortShare, jobErrorText, awaitedJob, settleAwaited, JOB_ERRORS } from '../lib/coach-api.js'
+import { useCoachStatus, requestReview, requestDebrief, requestPlan, refinePlan, chatCoach, coachStatus, coachRuntimeIdentity, resolvePending, cohortStats, setCohortShare, jobErrorText, awaitedJob, settleAwaited, JOB_ERRORS } from '../lib/coach-api.js'
 
+import { chatCommand } from '../lib/coach-chat-command.js'
 import { confirmSheet } from '../sheets.jsx'
 import { NATIVE_KEYBOARD_EVENT, viewportBox, boxBelow } from '../lib/native-keyboard.js'
 import Icon from '../components/Icon.jsx'
@@ -56,6 +57,8 @@ export default function CoachChat() {
   const { job, pending, cap, loading, lastError, last, refresh, maxMessageLen, isStale, lastSuccessfulAt } = useCoachStatus(true)
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
+  const [reviewCommand, setReviewCommand] = useState(null)
+  const composerRef = useRef(null)
   const chatRef = useRef(null)
   const msgsRef = useRef(null)
   const prevJob = useRef(null)
@@ -216,7 +219,7 @@ export default function CoachChat() {
     if (!pending || pending.kind !== 'ask' || job) return
     update(s => {
       if ((s.coach?.chat || []).some(m => m.pid === pending.id)) return
-      appendChat(s, { role: 'coach', kind: 'text', text: String(pending.answer || ''), pid: pending.id })
+      appendChat(s, { role: 'coach', kind: 'text', text: [pending.answer, pending.clarification].filter((v, i, arr) => v && arr.indexOf(v) === i).join('\n\n'), pid: pending.id })
     })
     resolvePending({ proposalId: pending.id, requestId: 'ask-read-' + pending.id, accepted: ['ask'] }).catch(() => {}).finally(() => refresh())
   }, [pending?.id, !!job])
@@ -233,13 +236,14 @@ export default function CoachChat() {
     stick.current = true   // their own message: follow it, and the reply
     setBusy(true)
     try {
-      // A message about a proposed plan refines it. With no plan at all — the first attempt
-      // failed, or nothing was ever built — the message asks for one; a review would only
-      // answer that there is no workout to look at, which is how people got stuck. Anything else
-      // is a question, answered in words (`ask`): "how long should I rest?" is not a request to
-      // review the whole plan. A review is the chip and the menu's, as it always was.
-      if (pending?.kind === 'create' || !(S.routines || []).length) await refinePlan(msg)
-      else await askCoach(msg)
+      const command = chatCommand(msg)
+      if (command && pending?.kind === 'review' && !job && !isStale) {
+        setReviewCommand({ kind: command, id: pending.id, revision: pending.revision || 1, token: Date.now() })
+      } else if (pending?.kind === 'create' || !(S.routines || []).length) await refinePlan(msg)
+      else {
+        const result = await chatCoach(msg, pending?.kind === 'review' ? { proposalRef: { id: pending.id, revision: pending.revision || 1 }, ...(pending.scope ? { scope: pending.scope } : {}) } : {})
+        if (result?.readOnly) toast(t('This Coach supports answers only. Use Improve a routine to request plan changes.'))
+      }
       update(s => appendChat(s, { role: 'user', kind: 'text', text: msg }))
       setText('')
       refresh()
@@ -344,10 +348,12 @@ export default function CoachChat() {
         ? <PlanCard p={pending} S={S} update={update} toast={toast} nav={nav} refresh={refresh} />
         : pending.kind === 'debrief'
           ? <DebriefCard p={pending} S={S} update={update} toast={toast} refresh={refresh} />
-          : <ReviewCard p={pending} S={S} update={update} toast={toast} refresh={refresh} />)}
+          : <ReviewCard key={pending.id + ":" + (pending.revision || 1)} command={reviewCommand} onContinue={() => composerRef.current?.focus()} p={pending} S={S} update={update} toast={toast} refresh={refresh} />)}
     </div>
 
     <div className="composer">
+      {DEMO && !pending && !job && <div className="chips-row">{(S.routines || []).map(r => <button key={r.id} className="qchip" disabled={busy}
+        onClick={() => ask(() => chatCoach(t('Preview a demo adjustment'), { scope: { kind: 'routine', routineId: r.id } }), r.name)}>{r.name}</button>)}</div>}
       {idle && !busy && <div className="chips-row">
         <button className="qchip" onClick={askReview}><Icon name="sparkles" />{t('Review my training')}</button>
         {!!lastWorkout && <button className="qchip" onClick={askDebrief}><Icon name="checkCircle" />{t('Last workout')}</button>}
@@ -356,7 +362,7 @@ export default function CoachChat() {
         {community && <button className="qchip" onClick={showCohort}><Icon name="person" />{t('Compare')}</button>}
       </div>}
       <div className="composer-in">
-        <textarea rows={1} value={text} maxLength={maxMessageLen || 1000} placeholder={placeholder} disabled={!!job}
+        <textarea ref={composerRef} rows={1} value={text} maxLength={maxMessageLen || 1000} placeholder={placeholder} disabled={!!job}
           onChange={e => setText(e.target.value)}
           onCompositionStart={() => { composing.current = true }}
           onCompositionEnd={() => { composing.current = false; compositionEndedAt.current = Date.now() }}
@@ -518,24 +524,40 @@ const RoutineBlock = ({ r, S, unit, speedUnit }) => <div className="pcard-rt">
 
 /* ---------------------------------- a review ---------------------------------- */
 
-function ReviewCard({ p, S, update, toast, refresh }) {
+let applyingReview = false
+async function applyReview(p, ids, update, toast, refresh) {
+  if (applyingReview) return
+  applyingReview = true
+  try {
+    const authority = p.source === 'chat' ? await coachStatus() : undefined
+    if (authority) authority.currentRuntimeIdentity = coachRuntimeIdentity()
+    let result
+    update(s => {
+      result = applyChangeSet(s, p, ids, authority)
+      if (result.applied > 0 && !result.alreadyApplied) appendChat(s, { role: 'coach', kind: 'applied', ref: result.logId,
+        text: tn('Applied {0} change to your plan.', 'Applied {0} changes to your plan.', result.applied) })
+    })
+    if (result.applied > 0) {
+      await flushDecisions(update, toast, refresh)
+      toast(tn('{0} change applied', '{0} changes applied', result.applied))
+      refresh()
+    }
+  } catch (e) { toast(e.message || t('Could not apply those changes')) }
+  finally { applyingReview = false }
+}
+
+function ReviewCard({ p, S, update, toast, refresh, command, onContinue }) {
   const marked = useMemo(() => markStale(p, S), [p, S])
   const usable = applicable(marked)
   const [accepted, setAccepted] = useState(() => new Set(usable.map(c => c.id)))
   const toggle = id => setAccepted(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
 
-  const apply = () => {
-    const ids = [...accepted].filter(id => usable.some(c => c.id === id))
-    if (!ids.length) { discard(); return }
-    try {
-      update(s => {
-        const res = applyChangeSet(s, marked, ids)
-        appendChat(s, { role: 'coach', kind: 'applied', ref: res.logId, text: tn('Applied {0} change to your plan.', 'Applied {0} changes to your plan.', ids.length) })
-      })
-      flushDecisions(update, toast, refresh)
-      toast(tn('{0} change applied', '{0} changes applied', ids.length))
-      refresh()
-    } catch (e) { toast(e.message || t('Could not apply those changes')) }
+  const [applying, setApplying] = useState(false)
+  const apply = async (ids = [...accepted].filter(id => usable.some(c => c.id === id))) => {
+    if (!ids.length || applying) return
+    setApplying(true)
+    try { await applyReview(p, ids, update, toast, refresh) }
+    finally { setApplying(false) }
   }
   const discard = () => confirmSheet({
     title: t('Dismiss these suggestions?'), message: t('Nothing changes, and the Coach will remember you turned these down.'),
@@ -547,10 +569,22 @@ function ReviewCard({ p, S, update, toast, refresh }) {
     }
   })
 
+  const consumed = useRef(null)
+  useEffect(() => {
+    if (!command || consumed.current === command.token || command.id !== p.id || command.revision !== (p.revision || 1)) return
+    consumed.current = command.token
+    if (command.kind === 'dismiss') { discard(); return }
+    confirmSheet({ title: t('Apply this plan adjustment?'),
+      message: t('Only the routine template changes. Your current workout and logged history stay unchanged.'),
+      confirmText: t('Apply all'), onConfirm: () => { void apply(usable.map(c => c.id)) } })
+  }, [command?.token])
+
   return <div className="msg coach" style={{ maxWidth: '100%', width: '100%' }}>
     <div className="pcard">
       <div className="pcard-hd">
-        <div className="pcard-eyebrow">{t('Suggestions')}</div>
+        <div className="pcard-eyebrow">{p.source === 'chat' ? t('Plan adjustment · Awaiting confirmation') : t('Suggestions')}</div>
+        {p.source === 'chat' && <p className="pcard-sum">{S.routines.find(r => r.id === p.scope?.routineId)?.name}</p>}
+        {p.source === 'chat' && <p className="pcard-sum">{p.answer}</p>}
         <h2 className="pcard-h">{tn('{0} suggestion', '{0} suggestions', marked.changes.length)}</h2>
         {!!marked.summary && <p className="pcard-sum">{marked.summary}</p>}
         {!!marked.evidence?.sessions && <p className="pcard-sum" style={{ fontSize: 13 }}>
@@ -572,12 +606,14 @@ function ReviewCard({ p, S, update, toast, refresh }) {
 
       <Notes notes={marked.notes} />
 
+      {p.source === 'chat' && <div className="pcard-note">{t('Only the routine template changes. Your current workout and logged history stay unchanged.')}</div>}
       <div className="pcard-note">{t('The Coach is not a doctor or a physiotherapist. If something hurts, ask a professional.')}</div>
       <div className="pcard-ft">
-        <Button variant="primary" icon="check" onClick={apply}>
+        <Button variant="primary" icon="check" disabled={applying || !usable.length || !accepted.size} onClick={() => void apply()}>
           {accepted.size ? tn('Apply {0} change', 'Apply {0} changes', accepted.size) : t('Apply nothing')}
         </Button>
-        <Button onClick={discard}>{t('Dismiss all')}</Button>
+        {onContinue && <Button onClick={onContinue}>{t('Continue adjusting')}</Button>}
+        <Button disabled={applying} onClick={discard}>{t('Dismiss all')}</Button>
       </div>
     </div>
   </div>
@@ -702,6 +738,14 @@ const DebriefList = ({ icon, tint, title, items }) => !!items?.length && <div cl
 const scoreWord = s => s >= 9 ? t('Excellent session') : s >= 7 ? t('Good session') : s >= 5 ? t('Solid session') : t('Tough session')
 
 function DebriefCard({ p, S, update, toast, refresh }) {
+  const [generating, setGenerating] = useState(false)
+  const adjust = async () => {
+    if (generating) return
+    setGenerating(true)
+    try { const result = await chatCoach(t('Suggest template adjustments based on this debrief.'), { contextRef: { kind: 'debrief', id: p.id } }); if (result?.readOnly) toast(t('This Coach supports answers only. Use Improve a routine to request plan changes.')); refresh() }
+    catch (e) { toast(e.message || t('Could not ask the Coach')) }
+    finally { setGenerating(false) }
+  }
   const done = () => {
     update(s => { const ref = recordDebrief(s, p); appendChat(s, { role: 'coach', kind: 'debrief', ref, text: '' }) })
     flushDecisions(update, toast, refresh)
@@ -717,7 +761,8 @@ function DebriefCard({ p, S, update, toast, refresh }) {
       </div>
       <DebriefBody p={p} S={S} />
       <div className="pcard-ft">
-        <Button variant="primary" icon="check" onClick={done}>{t('Got it')}</Button>
+        <Button disabled={generating} variant="primary" icon="check" onClick={done}>{t('Got it')}</Button>
+        <Button disabled={generating} onClick={() => void adjust()}>{t('Suggest changes from this debrief')}</Button>
       </div>
     </div>
     <div className="msg-t">{t('Want changes to the plan from this? Ask for a review below.')}</div>
@@ -791,10 +836,25 @@ function ProposalDetail({ entry, S }) {
     </>}
     {kind === 'create' && !b && <p className="pcard-sum">{t('This plan was imported before the app kept proposals; only its summary is left.')}</p>}
 
-    {kind === 'debrief' && <DebriefBody p={entry} S={S} />}
+    {kind === 'debrief' && <><DebriefBody p={entry} S={S} /><HistoricalDebriefAdjust entry={entry} /></>}
     {kind === 'revert' && <p className="pcard-sum">{t('Reverted the last Coach changes.')}</p>}
     <div style={{ height: 10 }} />
   </div>
+}
+
+function HistoricalDebriefAdjust({ entry }) {
+  const [busy, setBusy] = useState(false)
+  const toast = useUI(s => s.toast)
+  const adjust = async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      const result = await chatCoach(t('Suggest template adjustments based on this debrief.'), { contextRef: { kind: 'debrief', id: entry.id } })
+      toast(result?.readOnly ? t('This Coach supports answers only. Use Improve a routine to request plan changes.') : t('Return to the Coach chat to view the adjustment.'))
+    } catch (e) { toast(JOB_ERRORS[e.data?.code] || e.message || t('Could not ask the Coach')) }
+    finally { setBusy(false) }
+  }
+  return <Button disabled={busy} onClick={() => void adjust()}>{t('Suggest changes from this debrief')}</Button>
 }
 
 /** Every proposal ever made, newest first. Nothing the Coach said is gone after a decision. */

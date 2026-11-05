@@ -58,7 +58,7 @@ afterEach(() => { vi.useRealTimers() })
 
 describe('coach-demo — the job machine', () => {
   it('is idle until asked, and reports the same cap shape the real status does', () => {
-    expect(demoStatus()).toEqual({ job: null, pending: null, cap: { used: 0, limit: 0 }, lastError: null })
+    expect(demoStatus()).toEqual({ chatActionsVersion: 1, job: null, pending: null, cap: { used: 0, limit: 0 }, lastError: null })
   })
 
   it('answers 2.2 s later, not before — the job is visible for the whole wait', () => {
@@ -95,7 +95,7 @@ describe('coach-demo — the job machine', () => {
     vi.advanceTimersByTime(864e5)
     expect(demoStatus().pending).toBeTruthy()
     expect(demoResolve()).toEqual({ ok: true })
-    expect(demoStatus()).toEqual({ job: null, pending: null, cap: { used: 0, limit: 0 }, lastError: null })
+    expect(demoStatus()).toEqual({ chatActionsVersion: 1, job: null, pending: null, cap: { used: 0, limit: 0 }, lastError: null })
   })
 
   it('a question gets a sample answer, and the review it was asked beside comes back once read (#660)', () => {

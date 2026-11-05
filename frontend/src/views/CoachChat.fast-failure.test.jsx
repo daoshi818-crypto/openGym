@@ -41,8 +41,8 @@ vi.mock('../lib/api.js', () => ({
   IS_APPLE: false, IS_ANDROID: false, BIO: 'biometrics',
   api: vi.fn(async (path, opts) => {
     const srv = mocks.server
-    if (path === '/api/coach/status') {
-      const snap = { job: null, pending: null, cap: { used: srv.used, limit: 10 }, last: srv.last, maxMessageLen: 1000 }
+    if (path === '/api/coach/status?chatActionsVersion=1') {
+      const snap = { chatActionsVersion: 1, job: null, pending: null, cap: { used: srv.used, limit: 10 }, last: srv.last, maxMessageLen: 1000 }
       if (mocks.statusGate) { const gate = mocks.statusGate; mocks.statusGate = null; await gate }
       return snap
     }

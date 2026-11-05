@@ -17,6 +17,7 @@
 //   - the pseudonym is drawn at random once and kept, rather than derived from a secret.
 //   - a proposal waits in the device file, not in S, so it survives an app kill without
 //     riding into a backup or a sync.
+import { bindChatRequest, assertChatBase, chatPending, replayChatRequest, rememberChatRequest } from '../../../api/coach/core/chat.js'
 import * as payloadLib from '../../../api/coach/core/payload.js'
 import { runPipeline } from '../../../api/coach/core/pipeline.js'
 import { waitingProposal } from '../../../api/coach/core/pending.js'
@@ -106,7 +107,7 @@ export async function localStatus() {
       last = ended
     } else last = d.last || last
   }
-  return { job, pending: (await loadCoachDevice()).pending || null, cap: await capState(), lastError, last, debriefSelectionVersion: 2, decisionVersion: 2, maxMessageLen: coachLimits(d).maxMessageLen }
+  return { executionModeFingerprint: fingerprint({ mode: d.mode, provider: d.provider, baseUrl: d.baseUrl, model: d.model }), job, pending: (await loadCoachDevice()).pending || null, cap: await capState(), lastError, last, debriefSelectionVersion: 2, decisionVersion: 2, chatActionsVersion: 1, maxMessageLen: coachLimits(d).maxMessageLen }
 }
 
 export const localReview = async (S, note, scope) => { const d = await loadCoachDevice(); return start(S, 'review', { note: note ? String(note).slice(0, coachLimits(d).maxMessageLen) : null, scope }) }
@@ -125,13 +126,16 @@ export async function localResolve(body = {}) {
   const d = await loadCoachDevice()
   if ([body.proposalId, body.requestId].some(id => typeof id !== 'string' || !id.trim() || id.length > 128)) throw Object.assign(new Error('pending_mismatch'), { code: 'pending_mismatch', data: { code: 'pending_mismatch' } })
   if (Object.hasOwn(d.resolved || {}, body.proposalId)) return { ok: true, alreadyResolved: true }
+  if (d.pending?.source === 'chat' && d.pending.kind === 'review' && body.revision !== d.pending.revision) throw Object.assign(new Error('pending_mismatch'), { code: 'pending_mismatch' })
   if (d.pending?.id !== body.proposalId) throw Object.assign(new Error('pending_mismatch'), { code: 'pending_mismatch', data: { code: 'pending_mismatch' } })
   await saveCoachDevice(current => {
     if (current.resolved?.[body.proposalId]) return null
+    if (current.pending?.source === 'chat' && current.pending.kind === 'review' && body.revision !== current.pending.revision) throw Object.assign(new Error('pending_mismatch'), { code: 'pending_mismatch' })
     if (current.pending?.id !== body.proposalId) throw Object.assign(new Error('pending_mismatch'), { code: 'pending_mismatch' })
     return { pending: current.pending?.kind === 'ask' ? waitingProposal(current.pending.prev) : null, resolved: { ...Object.fromEntries(Object.entries(current.resolved || {}).filter(([, at]) => Date.now() - at < 21 * 864e5)), [body.proposalId]: Date.now() } } })
   return { ok: true, proposalId: body.proposalId }
 }
+export const localChat = (S, body) => start(S, 'chat', { ...body, note: body.text, lang: getLang() })
 export const localAsk = async (S, text, today) => {
 
   const d = await loadCoachDevice()
@@ -201,13 +205,20 @@ const hostOf = url => { try { return new URL(url).host } catch { return url || '
 /* ---------- running a job ---------- */
 
 async function start(S, kind, options) {
+  if (S?.modules?.coach === false) throw Object.assign(new Error(t('The Coach is paused in Modules.')), { code: 'off' })
+  const requestDevice = kind === 'chat' ? await loadCoachDevice() : null
+  const requestMode = requestDevice ? fingerprint({ mode: requestDevice.mode, provider: requestDevice.provider, baseUrl: requestDevice.baseUrl, model: requestDevice.model }) : null
+  if (kind === 'chat') {
+    const replay = replayChatRequest(requestDevice.chatRequests, options, requestMode)
+    if (replay) return replay
+  }
   if (starting || job) throw Object.assign(new Error(t('The Coach is already thinking about your training.')), { status: 409, code: 'busy' })
   starting = true
   const mine = generation
   try {
     const snapshot = JSON.parse(JSON.stringify(S))
-    const opts = prepareCoachRequest(snapshot, kind, options)
     const d = await loadCoachDevice()
+    const opts = prepareCoachRequest(snapshot, kind, kind === 'chat' ? bindChatRequest(d.pending, options, snapshot.coach?.log || []) : options)
     const adapter = ADAPTERS[d.provider]
     if (mine !== generation) throw Object.assign(new Error('cancelled'), { code: 'cancelled' })
     if (d.mode !== 'byok' || !adapter) throw Object.assign(new Error(t('The Coach isn’t set up on this phone.')), { code: 'off' })
@@ -223,7 +234,10 @@ async function start(S, kind, options) {
     const ctx = { id: 'local-' + (globalThis.crypto?.randomUUID?.() || startedAt.toString(36) + Math.random().toString(36).slice(2)), kind, state: 'running', startedAt, ...(opts.scheduled ? { trigger: 'scheduled' } : {}),
       generation: mine, modeFingerprint: fingerprint({ mode: d.mode, provider: d.provider, baseUrl: d.baseUrl, model: d.model }), deadlineAt: startedAt + timeoutFor(d.provider) }
     const ctl = new AbortController()
-    await saveCoachDevice(current => mine === generation ? { daily: { d: todayISO(), n: (current.daily?.d === todayISO() ? current.daily.n : 0) + 1 }, current: ctx } : null)
+    await saveCoachDevice(current => {
+      if (mine !== generation) return null
+      if (kind === 'chat') assertChatBase(current.pending, opts)
+      return { ...(kind === 'chat' ? { chatRequests: rememberChatRequest(current.chatRequests, options, ctx.id, ctx.modeFingerprint) } : {}), daily: { d: todayISO(), n: (current.daily?.d === todayISO() ? current.daily.n : 0) + 1 }, current: ctx } })
     if (mine !== generation) { await saveCoachDevice(current => current.current?.id === ctx.id ? { current: null } : null); throw Object.assign(new Error('cancelled'), { code: 'cancelled' }) }
     job = ctx; controller = ctl; lastError = null; recovered = true
     const owns = () => generation === ctx.generation && job?.id === ctx.id
@@ -257,7 +271,12 @@ async function run(S, kind, opts, d, adapter, payload, key, ctx, ctl, owns) {
   // The saved model was refused and another one answered (#758): keep that one, so the next
   // launch does not pay for the same 404 again. The setup screen shows the new name.
   const swapped = model && modelSubstitute(d.provider, cfgOf(d), model)
-  if (swapped && swapped !== d.model) await saveCoachDevice({ model: swapped })
+  if (swapped && swapped !== d.model) await saveCoachDevice(current => {
+    if (!owns() || fingerprint({ mode: current.mode, provider: current.provider, baseUrl: current.baseUrl, model: current.model }) !== ctx.modeFingerprint) throw Object.assign(new Error('Configuration changed'), { code: 'cancelled' })
+    const previous = ctx.modeFingerprint
+    ctx.modeFingerprint = fingerprint({ mode: current.mode, provider: current.provider, baseUrl: current.baseUrl, model: swapped })
+    return { model: swapped, chatRequests: (current.chatRequests || []).map(x => x.mode === previous && x.jobId === ctx.id ? { ...x, mode: ctx.modeFingerprint } : x) }
+  })
 
   if (!attempt.ok) {
     const detail = attempt.detail || (attempt.errors || []).slice(0, 3).map(String).join(' · ').slice(0, 300) || null
@@ -274,7 +293,7 @@ async function run(S, kind, opts, d, adapter, payload, key, ctx, ctl, owns) {
 
     return
   }
-  const pending = {
+  let pending = {
     ...(kind === 'ask' ? { prev: waitingProposal((await loadCoachDevice()).pending) } : {}),
     ...attempt.result, id: ctx.id, kind, createdAt: Date.now(), expiresAt: Date.now() + PENDING_DAYS * 86400000,
     planHash: planHash(S), context: coachContext(S, planHash(S), opts.scope), scope: opts.scope || null, iteration: opts.iteration || 1,
@@ -282,8 +301,14 @@ async function run(S, kind, opts, d, adapter, payload, key, ctx, ctl, owns) {
     ...(kind === 'create' ? { bundle: { ...attempt.result.bundle, unit: payload.meta.unit } } : {})
 
   }
+  if (kind === 'chat') pending = chatPending(attempt.result, { ...pending, executionModeFingerprint: ctx.modeFingerprint }, opts)
   last = { id: ctx.id, kind, outcome: 'ready', errorClass: null, at: Date.now() }
-  await saveCoachDevice(current => owns() ? { pending, current: null, last, ...(kind === 'review' ? { reviewedAt: Date.now() } : {}) } : null)
+  await saveCoachDevice(current => {
+    if (!owns()) return null
+    if (fingerprint({ mode: current.mode, provider: current.provider, baseUrl: current.baseUrl, model: current.model }) !== ctx.modeFingerprint) throw Object.assign(new Error('Configuration changed'), { code: 'cancelled' })
+    if (kind === 'chat') assertChatBase(current.pending, opts)
+    return { pending, current: null, last, ...(kind === 'review' ? { reviewedAt: Date.now() } : {}) }
+  })
   if (owns()) notify?.({ kind: 'ready', pending, scheduled: !!opts.scheduled })
 
 }

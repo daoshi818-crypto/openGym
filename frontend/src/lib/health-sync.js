@@ -1,3 +1,4 @@
+import { isOn } from './modules.js'
 // Health Connect on the Android app (#200): turning it on, and keeping it in step with the log.
 // What gets written is worked out in lib/health-connect.js; this file owns the native plugin
 // (HealthConnectPlugin.java) and the phone's own record of what it wrote.
@@ -70,6 +71,7 @@ const told = h => { listeners.forEach(cb => { try { cb(h) } catch { /* a closed 
  */
 export function syncHealth(S) {
   if (!MOBILE) return Promise.resolve(null)
+  if (!isOn(S, 'health')) { again = null; return Promise.resolve(cached) }
   // Not read yet: initHealthSync reads it at launch and syncs then, which covers a save made
   // before that; the save path itself never waits on the file.
   if (!cached || !cached.on) return Promise.resolve(cached)
@@ -79,7 +81,7 @@ export function syncHealth(S) {
     let h = await loadHealth()
     let next = S
     while (next) {
-      if (h.on) h = await syncOnce(next, h)
+      if (h.on && isOn(next, 'health')) h = await syncOnce(next, h)
       // A state that came in meanwhile, taken only now: cleared before a pass, it would lose a
       // change made while the pass was starting.
       next = again

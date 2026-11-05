@@ -4,6 +4,7 @@
  * are closures over the db and the session secret, and passing them in keeps this module free
  * of a cycle (and trivially testable against fakes).
  */
+import { containsChatProposal } from './core/chat.js';
 import * as cfgStore from './config.js';
 import * as jobs from './jobs.js';
 import { computeCohort } from './cohort.js';
@@ -24,7 +25,7 @@ const USER_ERROR = {
   shared: cfgStore.SHARED_ACCOUNT_REFUSAL,
   unprivileged: 'the Coach is switched off on this instance for safety reasons'
 };
-const HTTP_FOR = { off: 503, busy: 409, cap: 429, pending_mismatch: 409, selection_stale: 409, noworkout: 409, consent: 403, shared: 409, unprivileged: 503 };
+const HTTP_FOR = { off: 503, busy: 409, cap: 429, pending_mismatch: 409, selection_stale: 409, noworkout: 409, consent: 403, shared: 409, unprivileged: 503, upgrade_required: 409, scope_mismatch: 409, context_missing: 409 };
 
 export function coachRoutes({ json, readBody, readSession, requireAdmin }) {
   /** Every user route starts the same way: signed in, feature on, feature reachable. The class
@@ -63,7 +64,10 @@ export function coachRoutes({ json, readBody, readSession, requireAdmin }) {
       const user = guard(req, res); if (!user) return;
       // The chat composer's maxLength rides on this poll rather than a one-off fetch, so an
       // admin raising or lowering the limit reaches an open chat within one poll cycle.
-      json(res, 200, { ...jobs.status(user.id), debriefSelectionVersion: 2, decisionVersion: 2, scopeVersion: 2, maxMessageLen: cfgStore.load().maxMessageLen });
+      const status = jobs.status(user.id);
+      const supportsChat = new URL(req.url, 'http://x').searchParams.get('chatActionsVersion') === '1';
+      if (!supportsChat && (containsChatProposal(status.pending) || status.job?.kind === 'chat')) return json(res, 200, { ...status, pending: null, job: null, chatActionsVersion: 1, upgradeRequired: true, code: 'upgrade_required' });
+      json(res, 200, { ...status, chatActionsVersion: 1, debriefSelectionVersion: 2, decisionVersion: 2, scopeVersion: 2, maxMessageLen: cfgStore.load().maxMessageLen });
     },
 
     'POST /api/coach/plan': async (req, res) => {
@@ -74,7 +78,7 @@ export function coachRoutes({ json, readBody, readSession, requireAdmin }) {
         // enforced (it is the one place that already loads config for every job). This slice is
         // only a sanity ceiling so an oversized string is not carried further than it has to be.
         const job = jobs.enqueue(user.id, {
-          kind: 'create',
+          kind: 'create', chatActionsVersion: body.chatActionsVersion,
           intake: body.intake || null,
           lang: body.lang,
           refine: body.refine ? String(body.refine).slice(0, cfgStore.MAX_MESSAGE_LEN_CEILING) : null
@@ -88,7 +92,7 @@ export function coachRoutes({ json, readBody, readSession, requireAdmin }) {
       const body = await readBody(req);
       try {
         const job = jobs.enqueue(user.id, {
-          kind: 'review', scope: body.scope,
+          kind: 'review', chatActionsVersion: body.chatActionsVersion, scope: body.scope,
           lang: body.lang,
           note: body.note ? String(body.note).slice(0, cfgStore.MAX_MESSAGE_LEN_CEILING) : null
         });
@@ -102,7 +106,7 @@ export function coachRoutes({ json, readBody, readSession, requireAdmin }) {
       const body = await readBody(req);
       try {
         const selection = body.debriefSelection && typeof body.debriefSelection === 'object' ? body.debriefSelection : null;
-        const job = jobs.enqueue(user.id, { kind: 'debrief', lang: body.lang, workoutId: body.workoutId ? String(body.workoutId).slice(0, 64) : null, debriefSelection: selection });
+        const job = jobs.enqueue(user.id, { kind: 'debrief', chatActionsVersion: body.chatActionsVersion, lang: body.lang, workoutId: body.workoutId ? String(body.workoutId).slice(0, 64) : null, debriefSelection: selection });
         json(res, 202, { job });
       } catch (e) { failEnqueue(res, e); }
     },
@@ -116,11 +120,25 @@ export function coachRoutes({ json, readBody, readSession, requireAdmin }) {
       if (!text) return json(res, 400, { error: 'a question is required', code: 'invalid' });
       try {
         const job = jobs.enqueue(user.id, {
-          kind: 'ask',
+          kind: 'ask', chatActionsVersion: body.chatActionsVersion,
           lang: body.lang,
           note: text.slice(0, cfgStore.MAX_MESSAGE_LEN_CEILING),
           today: body.today && typeof body.today === 'object' && !Array.isArray(body.today) ? body.today : null
         });
+        json(res, 202, { job });
+      } catch (e) { failEnqueue(res, e); }
+    },
+
+    'POST /api/coach/chat': async (req, res) => {
+      const user = guard(req, res); if (!user) return;
+      const body = await readBody(req);
+      if (body.chatActionsVersion !== 1) return json(res, 409, { code: 'upgrade_required', error: 'update client first' });
+      const text = typeof body.text === 'string' ? body.text.trim() : '';
+      if (!text) return json(res, 400, { code: 'invalid', error: 'a question is required' });
+      try {
+        const job = jobs.enqueue(user.id, { kind: 'chat', chatActionsVersion: 1, note: text.slice(0, cfgStore.MAX_MESSAGE_LEN_CEILING), lang: body.lang,
+          clientRequestId: body.clientRequestId, proposalRef: body.proposalRef, scope: body.scope, contextRef: body.contextRef,
+          today: body.today && typeof body.today === 'object' && !Array.isArray(body.today) ? body.today : null });
         json(res, 202, { job });
       } catch (e) { failEnqueue(res, e); }
     },
@@ -143,7 +161,7 @@ export function coachRoutes({ json, readBody, readSession, requireAdmin }) {
       const user = guard(req, res); if (!user) return;
       const body = await readBody(req);
       try { json(res, 200, jobs.resolvePending(user.id, {
-        proposalId: body.proposalId, requestId: body.requestId,
+        chatActionsVersion: body.chatActionsVersion, revision: body.revision, proposalId: body.proposalId, requestId: body.requestId,
         accepted: Array.isArray(body.accepted) ? body.accepted : [],
         rejected: Array.isArray(body.rejected) ? body.rejected : [],
         dismissed: !!body.dismissed

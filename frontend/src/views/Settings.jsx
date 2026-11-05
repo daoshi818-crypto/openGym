@@ -1,3 +1,6 @@
+import { isOn } from '../lib/modules.js'
+import { muscleTargetsSheet } from '../components/WeeklySets.jsx'
+import { aboutYouSheet } from '../components/StrengthLevel.jsx'
 import { useEffect, useRef, useState, forwardRef, useSyncExternalStore } from 'react'
 import { useNavigate, useParams, useLocation, Navigate } from 'react-router-dom'
 import { useStore, DEF, hasData } from '../store/useStore.js'
@@ -72,7 +75,7 @@ let lastQuery = { q: '', key: null }
 export function SettingsRoute() {
   const { page } = useParams()
   const loc = useLocation()
-  const ctx = { user: useStore(s => s.user), mobile: MOBILE }
+  const ctx = { user: useStore(s => s.user), mobile: MOBILE, S: useStore(s => s.S) }
   if (page && (!PAGES[page] || !pageVisible(PAGES[page].parent || page, ctx))) return <Navigate to="/settings" replace />
   if (page === 'coach') return <Navigate to="/coach/setup" replace />
   return <Settings key={page || 'root'} page={page || null} find={loc.state?.find || null} via={loc.state?.via || null} />
@@ -537,7 +540,7 @@ export default function Settings({ page = null, find = null, via = null }) {
   /* ---------------- what the pages and the search need to know about this device ---------------- */
   const canVibrate = vibrateSupported()
   const ctx = {
-    user, mobile: MOBILE, android, demo: DEMO, wakeOK, hasMedia, pwOn, webauthn: webauthnOK(),
+    S, user, mobile: MOBILE, android, demo: DEMO, wakeOK, hasMedia, pwOn, webauthn: webauthnOK(),
     sound: !!S.sound, playOnSilent: playOnSilentSupported(), canVibrate, vibrate: S.vibrate !== false,
     profiles: (S.equipProfiles || []).length > 0, nameLang: EXERCISE_NAME_LANGS.includes(baseLang(lang)),
     pushOK: !MOBILE && pushSupported(), reminderOn: !!S.reminder?.on, nudge: !!S.reminder?.nudge,
@@ -563,6 +566,7 @@ export default function Settings({ page = null, find = null, via = null }) {
   }
 
   const open = id => {
+    if (id === 'modules' || id === 'integrations') { nav('/settings/' + id); return }
     if (id === 'coach') { nav('/coach/setup'); return }
     nav('/settings/' + id)
   }
@@ -601,12 +605,12 @@ export default function Settings({ page = null, find = null, via = null }) {
       <Section title={t('Logging')}>
         {/* Two names for the same judgement, so the column asks in the scale you already think in.
             The (i) sits before the control: you read it on the way to the choice, not after it. */}
-        <Row icon="gauge" iconTint="var(--purple)" title={t('Effort per set')}>
+        {isOn(S, 'effort') && <Row icon="gauge" iconTint="var(--purple)" title={t('Effort per set')}>
           <button className="helpbtn" aria-label={t('What are RIR and RPE?')} onClick={effortHelpSheet}><Icon name="info" /></button>
           <Segmented className="seg-inline"
             options={[{ value: 'none', label: t('Off') }, { value: 'rir', label: t('RIR') }, { value: 'rpe', label: t('RPE') }]}
             value={effortOf(S)} onChange={v => update(s => { s.effort = v; delete s.showRir })} />
-        </Row>
+        </Row>}
         {/* The line under each exercise that the rows are held against (#173). Tapping the line in
             a workout switches it too; this is where the choice can be found without knowing that. */}
         <SelectRow icon="history" iconTint="var(--blue)" title={t('Shown under each exercise')}
@@ -635,10 +639,10 @@ export default function Settings({ page = null, find = null, via = null }) {
       <Section title={t('Before and during')}>
         {/* The quick weigh-in that opens on Start (sheets.jsx startFlow, issue #137); off skips
             straight to the session. Home and Stats still log weight by hand. */}
-        <Row icon="scale" iconTint="var(--green)" title={t('Weigh in before workouts')}
+        {isOn(S, 'body') && <Row icon="scale" iconTint="var(--green)" title={t('Weigh in before workouts')}
           subtitle={t('Asks for your body weight when a workout starts. Off starts the session straight away.')}>
           <Switch checked={S.weighIn !== false} onChange={v => update(s => { s.weighIn = v })} />
-        </Row>
+        </Row>}
         {(wakeOK || !MOBILE) && (
           <Row icon="phoneScreen" iconTint="var(--yellow)" title={t('Keep screen awake')}
             subtitle={wakeOK ? t('The screen stays on while a workout is running, so you don’t have to unlock your phone between sets.') : t('Not supported in this browser.')}>
@@ -670,7 +674,7 @@ export default function Settings({ page = null, find = null, via = null }) {
         )}
         {/* 连接手表（vivo 智能终端 SDK）：设备发现/连接由运动健康完成。
             手机开始训练后计划自动推到手表，手表上的完成/调整实时回传。 */}
-        {android && (
+        {android && isOn(S, 'watch') && (
           <Row icon="dumbbell" iconTint="var(--green)" title={t('Connect watch')}
             subtitle={
               watchSt === 'connected' ? t('Connected. Start a workout and it lands on the watch.')
@@ -962,15 +966,15 @@ export default function Settings({ page = null, find = null, via = null }) {
       </Section>
       <Section title={t('On Home')}>
         {/* Membership QR codes on Home (views/CheckIn.jsx); off = no Home card, no route. */}
-        <Row icon="qr" iconTint="var(--blue)" title={t('Gym check-in')}
+        {isOn(S, 'checkin') && <Row icon="qr" iconTint="var(--blue)" title={t('Gym check-in')}
           subtitle={t('Show a card on Home with your membership QR codes.')}>
           <Switch checked={S.checkIn !== false} onChange={v => update(s => { s.checkIn = v })} />
-        </Row>
+        </Row>}
         {/* The Home summary is optional; hiding it leaves weight logging, history and Stats intact. */}
-        <Row icon="scale" iconTint="var(--green)" title={t('Body weight')}
+        {isOn(S, 'body') && <Row icon="scale" iconTint="var(--green)" title={t('Body weight')}
           subtitle={t('Show the body weight card on Home.')}>
           <Switch checked={S.showWeightCard !== false} onChange={v => update(s => { s.showWeightCard = v })} />
-        </Row>
+        </Row>}
         {/* The bar at the top that says the app is offline, kept local, or not synced (#369, #330).
             Here and not under Server & sync, which a phone kept local never shows. Switching it on
             also brings back the no-server line its × hid (#454). */}
@@ -1025,7 +1029,7 @@ export default function Settings({ page = null, find = null, via = null }) {
         {/* Android only: the system folder picker (#161). iOS shows Documents in Files already. */}
         {MOBILE && android && S.autoBackup && <BackupFolderRow />}
       </Section>
-      {MOBILE && android && <HealthConnectCard S={S} toast={toast} />}
+      {MOBILE && android && isOn(S, 'health') && <HealthConnectCard S={S} toast={toast} />}
       <Section title={t('Bring data in')}>
         <Row icon="download" iconTint="var(--teal)" title={t('Import backup')} accessory="chevron" onClick={() => fileRef.current.click()} />
         <Row icon="download" iconTint="var(--teal)" title={t('Import from another app')}
@@ -1162,6 +1166,7 @@ export default function Settings({ page = null, find = null, via = null }) {
 }
 
 function SettingsRoot({ ctx, preview, open, user, sync, home, go }) {
+  const S = ctx.S
   // The router's key for this history entry (what useLocation().key reads), taken once.
   const [key] = useState(() => window.history.state?.key || null)
   const [q, setQ] = useState(() => (key && lastQuery.key === key ? lastQuery.q : ''))
@@ -1180,7 +1185,7 @@ function SettingsRoot({ ctx, preview, open, user, sync, home, go }) {
   // Only while the server offers the Coach (the flag every Coach screen reads): on a box without
   // it the admin dashboard has no Coach card to land on.
   const config = useStore(s => s.config)
-  const adminCoach = !MOBILE && !DEMO && !!user?.admin && coachAvailable(config, user)
+  const adminCoach = isOn(S, 'coach') && !MOBILE && !DEMO && !!user?.admin && coachAvailable(config, user)
   return <div className="narrow">
     <div className="sp-nav">
       <button className="sp-back" onClick={home} aria-label={t('Home')}><Icon name="chevronLeft" /><span>{t('Home')}</span></button>
@@ -1201,6 +1206,14 @@ function SettingsRoot({ ctx, preview, open, user, sync, home, go }) {
           <span className="lrow-m"><span className="lrow-t">{acct.title}</span><span className="lrow-s">{acct.sub}</span></span>
           <Icon name="chevronRight" className="lrow-c" />
         </button>
+      </Section>
+      <Section title={t('Your openGym')}>
+        <Row title={t('Modules')} icon="layout" accessory="chevron" onClick={() => nav('/settings/modules')} />
+        <Row title={t('Integrations')} icon="share" accessory="chevron" onClick={() => nav('/settings/integrations')} />
+        <Row title={t('Merge exercises')} icon="dumbbell" accessory="chevron" onClick={() => nav('/exercise-merge')} />
+        <Row title={t('Performance report')} icon="chart" accessory="chevron" onClick={() => nav('/reports')} />
+        <Row title={t('Weekly sets per muscle')} icon="target" accessory="chevron" onClick={muscleTargetsSheet} />
+        {isOn(S, 'strength') && <Row title={t('About you')} icon="person" accessory="chevron" onClick={aboutYouSheet} />}
       </Section>
       {ROOT_GROUPS.map(g => g.filter(id => pageVisible(id, ctx))).filter(g => g.length).map(g => (
         <Section key={g[0]}>
@@ -1558,7 +1571,7 @@ function EquipmentCard({ S, update }) {
     ? bells.map(fmtPlate).join(' · ')
     : t('Any weight. Tap to list the ones you own.')
   return <Section title={t('Equipment')} footer={t('Filters the exercise library and picker, and flags routine exercises that need something you don’t have in the active profile.')}>
-    <Row icon="plate" iconTint="var(--orange)" title={t('Plates')} subtitle={plateSummary} accessory="chevron" onClick={() => plateInventorySheet()} />
+    {isOn(S, 'plates') && <Row icon="plate" iconTint="var(--orange)" title={t('Plates')} subtitle={plateSummary} accessory="chevron" onClick={() => plateInventorySheet()} />}
     <Row icon="dumbbell" iconTint="var(--teal)" title={t('Dumbbells')} subtitle={dumbbellSummary} accessory="chevron" onClick={() => dumbbellInventorySheet()} />
     {profiles.length > 0 && <Row icon="kettlebell" iconTint="var(--acc)" title={t('Filter by equipment')}>
       <Switch checked={!!S.equipFilterOn} onChange={v => update(s => { s.equipFilterOn = v })} />

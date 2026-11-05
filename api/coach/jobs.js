@@ -27,6 +27,7 @@ import { runPipeline } from './core/pipeline.js';
 import { extractJSON } from './core/parse.js';
 import { hashPlan } from './core/plan-hash.js';
 import { buildPrompt } from './core/prompt.js';
+import { bindChatRequest, assertChatBase, chatPending, containsChatProposal, replayChatRequest, rememberChatRequest } from './core/chat.js';
 import { waitingProposal } from './core/pending.js';
 import { handleFor } from './handle.js';
 import { fetchFor } from './node-fetch.js';
@@ -201,14 +202,22 @@ export function clampMessage(text) {
  */
 export function enqueue(uid, opts) {
   if (!cfgStore.isEnabled() || !cfgStore.isConnected()) throw new CoachError('off', 'the Coach is not set up on this instance');
+  if (opts.kind === 'chat') {
+    const replay = replayChatRequest(readUser(uid).chatRequests, opts);
+    if (replay) return replay.job;
+  }
+  if (containsChatProposal(readUser(uid).pending) && opts.chatActionsVersion !== 1) throw new CoachError('upgrade_required', 'update client to handle this pending proposal');
   if (inflight.has(uid)) throw new CoachError('busy', 'the Coach is already thinking about your training');
 
   const S = readState(uid);
+  if (S?.modules?.coach === false) throw new CoachError('off', 'the Coach is paused in Modules');
   // Consent is enforced here, server-side, not by the screen that collects it: a UI-only gate
   // is not a gate (FR-08/13).
   if (!hasCoachConsent(S)) throw new CoachError('consent', 'the Coach needs your go-ahead first');
 
+  const requestScope = opts.scope;
   try {
+    if (opts.kind === 'chat') opts = bindChatRequest(readUser(uid).pending, opts, S?.coach?.log || []);
     opts = prepareCoachRequest(S, opts.kind, opts);
     assertPayloadSize(payloadLib.build(S, { ...opts, handle: handleFor(uid) }));
   } catch (e) { throw new CoachError(e.code || 'invalid_selection', e.message); }
@@ -249,6 +258,7 @@ export function enqueue(uid, opts) {
     id: crypto.randomBytes(8).toString('hex'),
     uid,
     forgetSeq: forgetSeq.get(uid) || 0,
+    ...(opts.kind === 'chat' ? { chat: opts, chatActionsVersion: 1 } : {}),
     kind: opts.kind,                                  // 'create' | 'review' | 'debrief' | 'ask'
     trigger: opts.trigger || 'manual',                // 'manual' | 'scheduled'
     workoutId: opts.workoutId ? String(opts.workoutId).slice(0, 40) : null,
@@ -259,13 +269,13 @@ export function enqueue(uid, opts) {
     refine: clampMessage(opts.refine),
     // A question's running session, sent by the phone (the server never holds `active`). Kept on
     // the in-memory job only, never in the user's file; the payload builder bounds it.
-    today: opts.kind === 'ask' && opts.today && typeof opts.today === 'object' ? opts.today : null,
+    today: ['ask', 'chat'].includes(opts.kind) && opts.today && typeof opts.today === 'object' ? opts.today : null,
     lang: payloadLib.langTag(opts.lang),              // the language the app was showing (#303)
     state: 'queued',
     startedAt: Date.now(), deadlineAt: Date.now() + TIMEOUT_MS
   };
   inflight.add(uid);
-  patchUser(uid, { current: { id: job.id, kind: job.kind, state: 'queued', startedAt: job.startedAt } });
+  patchUser(uid, { ...(opts.kind === 'chat' ? { chatRequests: rememberChatRequest(readUser(uid).chatRequests, { ...opts, scope: requestScope }, job.id) } : {}), current: { id: job.id, kind: job.kind, state: 'queued', startedAt: job.startedAt } });
   queue.push(job);
   pump();
   return { id: job.id };
@@ -341,12 +351,13 @@ async function execute(job) {
   const adapter = adapterFor(cfg.provider);
   if (!adapter) return finish(job, { outcome: 'failed', errorClass: 'off' });
 
-  try { prepareCoachRequest(S, job.kind, job); }
+  try { if (job.kind === 'chat') assertChatBase(readUser(job.uid).pending, job.chat); prepareCoachRequest(S, job.kind, job); }
   catch (e) { return finish(job, { outcome: 'failed', errorClass: e.code || 'invalid_selection' }); }
 
   if (job.deadlineAt <= Date.now()) return finish(job, { outcome: 'failed', errorClass: 'timeout' });
   const pendingCreate = job.refine ? readUser(job.uid).pending : null;
   const payload = payloadLib.build(S, {
+    ...(job.chat || {}),
     handle: handleFor(job.uid),
     kind: job.kind,
     intake: job.intake,
@@ -395,7 +406,7 @@ async function execute(job) {
     if (attempt.nochange) {
       return finish(job, { outcome: 'nochange', pending: null, detail: null, reading: attempt.reading });
     }
-    const pending = {
+    let pending = {
       id: job.id,
       kind: job.kind,
       createdAt: Date.now(),
@@ -413,6 +424,10 @@ async function execute(job) {
       ...(job.kind === 'create' ? { bundle: { ...attempt.result.bundle, unit: payload.meta.unit } } : {})
 
     };
+    if (job.kind === 'chat') {
+      try { assertChatBase(readUser(job.uid).pending, job.chat); pending = chatPending(attempt.result, pending, job.chat); }
+      catch (e) { return finish(job, { outcome: 'failed', errorClass: e.code || 'pending_mismatch' }); }
+    }
     return finish(job, { outcome: 'ready', pending });
   } finally {
     aborts.delete(job.uid);
@@ -423,10 +438,12 @@ async function execute(job) {
 /* ---------- decisions ---------- */
 
 /** The client has applied (or discarded) the pending proposal. Record it and clear. */
-export function resolvePending(uid, { proposalId, requestId, accepted = [], rejected = [], dismissed = false } = {}) {
+export function resolvePending(uid, { chatActionsVersion, revision, proposalId, requestId, accepted = [], rejected = [], dismissed = false } = {}) {
   const rec = readUser(uid);
   if ([proposalId, requestId].some(id => typeof id !== 'string' || !id.trim() || id.length > 128)) throw new CoachError('pending_mismatch', 'proposalId and requestId are required');
   if (Object.hasOwn(rec.resolved || {}, proposalId)) return { ok: true, proposalId, alreadyResolved: true };
+  if (containsChatProposal(rec.pending) && chatActionsVersion !== 1) throw new CoachError('upgrade_required', 'update client first');
+  if (rec.pending?.source === 'chat' && rec.pending.kind === 'review' && revision !== rec.pending.revision) throw new CoachError('pending_mismatch', 'revision changed');
   if (rec.pending?.id !== proposalId) throw new CoachError('pending_mismatch', 'pending proposal changed; refresh first');
   const history = [...(rec.history || []), {
     id: proposalId, kind: rec.pending.kind, outcome: dismissed ? 'dismissed' : 'applied',

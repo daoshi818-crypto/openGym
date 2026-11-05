@@ -1,3 +1,8 @@
+import { isOn } from './lib/modules.js'
+import ModulesPage from './views/Modules.jsx'
+import IntegrationsPage from './views/Integrations.jsx'
+import ExerciseMergePage from './views/ExerciseMerge.jsx'
+import ReportsPage from './views/Reports.jsx'
 import { useEffect, useLayoutEffect, useRef, useMemo } from 'react'
 import { HashRouter, Routes, Route, Navigate, useNavigate, useLocation, useNavigationType } from 'react-router-dom'
 import { useStore } from './store/useStore.js'
@@ -10,7 +15,7 @@ import { setLang, useLang, baseLang } from './lib/i18n.js'
 import { effectiveLang } from './lib/default-lang.js'
 import { setPlayOnSilent, setVibrate, setAlarmBuzzer } from './lib/sound.js'
 import { buzzAsAlarm, getRestState, setOverlayStyle } from './lib/rest-alert.js'
-import { setNav } from './lib/nav.js'
+import { setNav, navToWorkout } from './lib/nav.js'
 import { setSystemBarsLight } from './lib/system-bars.js'
 import { initBackButton } from './lib/back.js'
 import { useWakeLock } from './lib/wakelock.js'
@@ -82,14 +87,16 @@ function Shell() {
   const loc = useLocation()
   const navType = useNavigationType()
   const { S, user, ready } = useStore()
-  const watchPlan = MOBILE ? JSON.stringify(watchPlanOf(S)) : 'null'
+  const watchOn = isOn(S, 'watch')
+  const watchPlan = MOBILE && watchOn ? JSON.stringify(watchPlanOf(S)) : 'null'
   useEffect(() => {
-    if (!MOBILE || !ready) return
+    if (!MOBILE || !ready || !watchOn) return
     const receive = createDurableWatchLifecycle({
       getState: () => useStore.getState().S,
       update: (fn, ev) => useStore.getState().update(fn, true, { watchActor: ev?.installationId || 'watch' }), getTimer: () => useUI.getState().timer,
       sendEnded: pushEndedToWatch, sendSync: pushSyncToWatch, sendAck: pushAckToWatch,
       finish: finishWorkoutFromWatch,
+      onStarted: () => navToWorkout(),
       send: sendToWatch, rest: ev => useUI.getState().followWatchRest(ev),
       pause: paused => useUI.getState()[paused ? 'pauseRest' : 'resumeRest'](),
       stop: () => { useUI.getState().stopRest(); useUI.getState().stopWork() },
@@ -103,25 +110,25 @@ function Shell() {
     onAppActive(() => { receive.retry(); drainWatchInbox() })
     watchAvailable().then(result => { if (result.available) connectWatch() })
     return () => { unbind(); receive.dispose() }
-  }, [ready])
+  }, [ready, watchOn])
   // 会话级生命周期：在设置页拉起手表时仍保留计划，结束/丢弃后才清除。
   useEffect(() => {
-    if (!MOBILE || !ready) return
+    if (!MOBILE || !ready || !watchOn) return
     const plan = JSON.parse(watchPlan)
-    if (plan) pushPlanToWatch({ ...plan.workout, protocolVersion: plan.protocolVersion, weightUnit: plan.weightUnit, structureRevision: plan.structureRevision }, plan.sid, plan.profile)
+    if (plan) pushPlanToWatch({ ...plan.workout, protocolVersion: plan.protocolVersion, weightUnit: plan.weightUnit, structureRevision: plan.structureRevision, effortScale: plan.effortScale, capabilities: plan.capabilities }, plan.sid, plan.profile)
     else clearWatchPlan(undefined, S.active?.editingWorkoutId ? 'history_editor' : 'no_active_session')
-  }, [watchPlan, ready])
+  }, [watchPlan, ready, watchOn])
   const watchCatalog = useMemo(() => MOBILE ? JSON.stringify({ ...watchCatalogOf(S), at: 0 }) : 'null', [S.routines, S.week, S.dayPlan, S.watchPlanIds, S.workouts])
   const restTimer = useUI(s => s.timer)
   useEffect(() => {
-    if (MOBILE && ready) sendToWatch({ ...JSON.parse(watchCatalog), at: Date.now() })
-  }, [watchCatalog, ready])
+    if (MOBILE && ready && watchOn) sendToWatch({ ...JSON.parse(watchCatalog), at: Date.now() })
+  }, [watchCatalog, ready, watchOn])
   useEffect(() => {
-    if (!MOBILE || !ready || !S.active?.start || restTimer?.source === 'watch') return
+    if (!MOBILE || !ready || !watchOn || !S.active?.start || restTimer?.source === 'watch') return
     const version = restTimer?.seq || Date.now()
     useStore.getState().update(s => { if (s.active) s.active.restVersion = version })
     pushRestToWatch(watchSidOf(S.active), restTimer && !restTimer.ready ? restTimer.paused ? restTimer.left : Math.max(0, Math.ceil((restTimer.endsAt - Date.now()) / 1000)) : 0, restTimer)
-  }, [ready, S.active?.start, restTimer?.endsAt, restTimer?.paused, restTimer?.ready, restTimer?.total])
+  }, [ready, watchOn, S.active?.start, restTimer?.endsAt, restTimer?.paused, restTimer?.ready, restTimer?.total])
   // 原生悬浮窗：启动/回前台恢复持久样式，并用原生休息状态裁决旧 WebView 计时。
   const overlayStyle = S.overlayStyle === 'ring' ? 'ring' : 'card'
   useEffect(() => {
@@ -292,7 +299,7 @@ function Shell() {
               <Route path="/home" element={<Home />} />
               {/* Gym check-in — switched off in Settings, the route falls through to the
                   catch-all redirect below. */}
-              {S.checkIn !== false && <Route path="/checkin" element={<CheckIn />} />}
+              {isOn(S, 'checkin') && <Route path="/checkin" element={<CheckIn />} />}
               <Route path="/plan" element={<Plan />} />
               <Route path="/plan/r/:id" element={<RoutineEdit />} />
               <Route path="/workout" element={<Workout />} />
@@ -301,17 +308,21 @@ function Shell() {
               <Route path="/library" element={<Library />} />
               <Route path="/muscles" element={<Muscles />} />
               <Route path="/structural-balance" element={<StructuralBalance />} />
-              <Route path="/progress-photos" element={<ProgressPhotos />} />
-              <Route path="/measurements" element={<Measurements />} />
+              <Route path="/progress-photos" element={isOn(S, 'body') ? <ProgressPhotos /> : <Navigate to="/settings/modules" replace />} />
+              <Route path="/measurements" element={isOn(S, 'body') ? <Measurements /> : <Navigate to="/settings/modules" replace />} />
+              <Route path="/settings/modules" element={<ModulesPage />} />
+              <Route path="/settings/integrations" element={<IntegrationsPage />} />
+              <Route path="/exercise-merge" element={<ExerciseMergePage />} />
+              <Route path="/reports" element={<ReportsPage />} />
               <Route path="/settings" element={<SettingsRoute />} />
               <Route path="/settings/:page" element={<SettingsRoute />} />
               {/* The Coach screens gate themselves on the instance config; the routes exist
                   unconditionally so a deep link from a notification lands somewhere sane
                   rather than on the catch-all. */}
-              <Route path="/coach" element={<CoachChat />} />
-              <Route path="/coach/intake" element={<CoachIntake />} />
+              <Route path="/coach" element={isOn(S, 'coach') ? <CoachChat /> : <Navigate to="/settings/modules" replace />} />
+              <Route path="/coach/intake" element={isOn(S, 'coach') ? <CoachIntake /> : <Navigate to="/settings/modules" replace />} />
               <Route path="/coach/proposal" element={<Navigate to="/coach" replace />} />
-              <Route path="/coach/setup" element={<CoachSetup />} />
+              <Route path="/coach/setup" element={isOn(S, 'coach') ? <CoachSetup /> : <Navigate to="/settings/modules" replace />} />
               <Route path="/admin" element={user?.admin ? <Admin /> : <Navigate to="/home" replace />} />
               <Route path="*" element={<Navigate to="/home" replace />} />
             </Routes>

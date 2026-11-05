@@ -72,6 +72,7 @@ function transmitSync(attempt) {
 let outboundBarrier = null
 let commitStatus = { phase: 'idle', pending: 0, error: '' }
 const commitListeners = new Set()
+export function hasPendingWatchWork() { return commitStatus.pending > 0 || commitStatus.phase === 'saving' || !!pendingSync || planPushInFlight || !!pendingPlan }
 export function onWatchCommitStatus(cb) { commitListeners.add(cb); cb(commitStatus); return () => commitListeners.delete(cb) }
 export function holdWatchOutbound() {
   if (outboundBarrier) return () => {}
@@ -440,9 +441,12 @@ async function flushPendingPlan() {
         planId: next.planId,
         workout: next.workout.name || '',
         profile: next.profile || null,
+        effortScale: next.workout.effortScale,
+        capabilities: next.workout.capabilities,
         exercises: (next.workout.exercises || []).map(e => ({
           ...(e.id ? { id: e.id } : {}), entryInstanceId: e.entryInstanceId, setIds: e.setIds, weightUnit: e.weightUnit,
           name: e.name || '',
+          lastTime: e.lastTime,
           sets: e.sets || 1,
           reps: e.reps != null ? String(e.reps) : '',
           restSec: e.restSec || 60,

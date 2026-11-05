@@ -10,6 +10,7 @@
  * handle stands in), passkey and credential material, push subscriptions, invite data, theme
  * and appearance settings, and every other profile's everything.
  */
+import { chatSnapshot, CHAT_TYPES } from './chat.js';
 import { sortedWorkouts, compareWorkouts, sameWorkoutFamily, legacySelection, resolveDebriefSelection, workoutRefOf, refKey } from './debrief-selection.js';
 import { reviewDay, localDay, daysBefore } from './dates.js';
 import { glyphStr } from './glyphs.js';
@@ -517,7 +518,7 @@ export function build(S, opts = {}) {
   const requestLang = langTag(opts.lang) || word(S.lang, 16) || 'en';
   const p = {
     coach_contract: CONTRACT,
-    task: opts.kind === 'review' ? 'review' : opts.kind === 'debrief' ? 'debrief' : opts.kind === 'ask' ? 'ask' : 'create',
+    task: opts.kind === 'chat' ? 'chat' : opts.kind === 'review' ? 'review' : opts.kind === 'debrief' ? 'debrief' : opts.kind === 'ask' ? 'ask' : 'create',
     meta: {
       profile: opts.handle,
       // Both are short codes in any real state; cut anyway, since the state is the client's.
@@ -579,7 +580,7 @@ export function build(S, opts = {}) {
     const on = day(w.d);
     p.bodyweight = { goal: num(S.targetW) ?? null, series: weighIns(S, daysBefore(on, 28), on) };
     if (opts.cohort) p.cohort = cleanCohort(opts.cohort, requestLang);
-  } else if (opts.kind === 'ask') {
+  } else if (opts.kind === 'ask' || opts.kind === 'chat') {
     // A question in the chat: the recent sessions (the newest in full), the stalls, and the
     // session running now when the phone sent it.
     p.question = String(opts.note || '').slice(0, MAX_NOTE_CHARS);
@@ -593,6 +594,16 @@ export function build(S, opts = {}) {
     p.aggregates = aggregates(S, workouts, requestLang);
     const today = cleanToday(S, opts.today, requestLang);
     if (today) p.today = today;
+    if (opts.kind === 'chat') {
+      p.chat_actions_contract = 1;
+      p.capabilities = { changeTypes: CHAT_TYPES, maxChanges: 10, routineLimit: 1, modifies: 'template_only', requiresConfirmation: true };
+      const ids = new Set(p.plan.routines.flatMap(r => r.ex.map(e => e.id)));
+      if (ids.size > 200) throw Object.assign(new Error('too many planned exercises'), { code: 'toolarge' });
+      p.library = [...ids].map(id => ({ id, n: word(libraryName(id) || exerciseName(S, id, requestLang), NAME_MAX),
+        displayName: word(exerciseName(S, id, requestLang), NAME_MAX), custom: !libraryHas(id) && list(S.customEx).some(e => e.id === id) }));
+      p.pendingProposal = chatSnapshot(opts.basePending);
+      if (opts.debriefContext) p.debriefContext = opts.debriefContext;
+    }
 
   } else if (opts.kind === 'review') {
     const workouts = reviewWindow(S, reviewDay(coach.lastReview?.at, opts.timeZone || S.reminder?.tz), { now: opts.now, today: opts.today, timeZone: opts.timeZone });

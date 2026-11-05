@@ -1,6 +1,7 @@
 import { createWatchLifecycle } from './watch-session.js'
 import { watchSnapshotOf } from './watch-workout.js'
 import { watchConflict } from './watch-revision.js'
+import { watchSidOf } from './session-resume.js'
 
 const TYPES = new Set(['hello', 'watch_start', 'session_close', 'session_close_ack', 'pause', 'rest',
   'effort', 'weight', 'reps', 'set', 'unset', 'add_set', 'remove_set', 'focus', 'end', 'summary'])
@@ -25,6 +26,7 @@ export function createDurableWatchLifecycle(deps) {
             else {
               const stage = () => {
               const replies = []
+              const starting = ev.t === 'watch_start' && !deps.getState().active
               const staged = { ...deps,
                 update: fn => deps.update(fn, ev),
                 send: msg => replies.push({ kind: 'send', msg: copy(msg) }),
@@ -62,6 +64,9 @@ export function createDurableWatchLifecycle(deps) {
               if (ev.t === 'hello') for (const record of Object.values(deps.getState().watchConflicts || {})) {
                 if (record.resolved) replies.push({ kind: 'send', msg: { t: 'conflict_reviewed', eventId: record.event.eventId } })
               }
+              // UI is a post-checkpoint effect, not a business ACK or replayable reply.
+              // Keep it on the queue item across a failed checkpoint, never in watchCommits.
+              if (starting && replies.some(r => r.msg?.t === 'watch_start_ack' && r.msg.status === 'started')) item.startedSid = ev.sid
               item.replies = replies
               deps.update(s => {
                 s.watchCommitRev = (s.watchCommitRev || 0) + 1
@@ -88,6 +93,14 @@ export function createDurableWatchLifecycle(deps) {
           for (const id of item.inboxIds) { try { await deps.completeInbox?.(id) } catch { /* retry on drain */ } }
           replying = true
           release?.(); release = null
+          if (item.startedSid) {
+            const sid = item.startedSid
+            item.startedSid = null
+            // A failed/duplicate/conflicting start must not steal navigation.
+            if (watchSidOf(deps.getState().active) === sid) {
+              try { deps.onStarted?.(sid) } catch { /* navigation cannot invalidate a durable commit */ }
+            }
+          }
           for (const reply of item.replies) {
             try {
               if (reply.kind === 'sync') {

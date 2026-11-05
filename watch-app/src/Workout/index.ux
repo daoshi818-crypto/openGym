@@ -2,6 +2,9 @@
 import { bindRuntime } from '../lib/runtime.js'
 // 主训练页（单屏 + 手势）：重量/次数保持可见，休息态只保留必要操作。
 import router from '@blueos.app.appmanager.router'
+import storage from '@blueos.storage.storage'
+import { rotationStep, valueStep } from '../lib/value-step.js'
+import { captureRow, rowTarget, setDotWindow } from '../lib/workout-interaction.js'
 import brightness from '@blueos.hardware.display.brightness'
 import {
   loadState, save, replacePlan, applySync, toggleSet, nextUndone, nextUndoneFrom,
@@ -19,7 +22,8 @@ import { lastTimeView } from '../lib/watch-last-time.js'
 
 export default {
   data: {
-    exName: '',
+    exName: '', syncWarning: false,
+    selectedField: null, setDots: [], dotSegmented: false, dotHasPrev: false, dotHasNext: false, inputNotice: '',
     groupLabel: '',
     setProgressLabel: '',
     elapsedLabel: '',
@@ -82,7 +86,7 @@ export default {
     lastEffortText: '',
   },
 
-  onInit() {
+  onInit(params) {
     if (this.$app && this.$app.$def) bindRuntime(this.$app.$def)
     const s = loadState()
     if (!s.active || !s.workout) { router.push({ uri: '/Index' }); return }
@@ -118,6 +122,7 @@ export default {
 
     this.startHrCapture()
     this.refresh()
+    if (params && params.requestFinish) this.openFinish()
   },
 
   onShow() {
@@ -127,15 +132,14 @@ export default {
     if (!latest.active || !latest.workout) { this.stopHrCapture(); router.replace({ uri: '/Index' }); return }
     if (latest.active && latest.workout) {
       this.state = latest
-      this.autoFocusEx = latest.exIdx; this.autoFocusIgnoreUntil = 0
+      this.autoFocusEx = latest.exIdx; this.autoFocusSet = latest.setIdx; this.autoFocusIgnoreUntil = 0
       this.profile = latest.profile || null
     }
     if (this.state) this.bindRpc()
     // 熄屏时系统可能暂停 JS 定时器，回到页面先按绝对截止时间校准。
     this.reconcileRestClock()
     // 与输入页通过持久化状态交接，使用当前连接的可靠事件队列发送。
-    const edits = this.state && this.state.pendingEdits || []
-    for (const edit of edits) this.emitEvent(edit)
+    this.flushPendingRowEdits()
     this.startHrCapture()
     this.refresh()
     this.focusCrown()
@@ -160,7 +164,7 @@ export default {
     const delta = Number(ev.delta) || (ev.direction === true ? 1 : ev.direction === false ? -1 : 0)
     if (!delta) return
     if (this.isRest || this.restCrownDirty) this.queueRestNudge(delta > 0 ? 5 : -5)
-    else this.stepSet(delta > 0 ? 1 : -1)
+    else this.adjustSelectedField(rotationStep(ev))
   },
   onBackPress() {
     if (this.diagnosticOn) { this.closeDiagnostics(); return true }
@@ -176,7 +180,11 @@ export default {
   },
   openMenu() { this.menuOn = true; this.leaveChoice = false },
   openActions() { if (!this.isRest) this.pageIndex = 1; this.menuOn = false },
-  openExercises() { router.push({ uri: '/ExerciseList' }) },
+  interactionBlocked() { return !!this.touchAxis || Date.now() < (this.trailingTapBlockedUntil || 0) || Date.now() < (this.autoFocusIgnoreUntil || 0) },
+  openExercises(fromGesture) {
+    if (fromGesture !== true && this.interactionBlocked()) return
+    this.clearFieldSelection(); router.push({ uri: '/ExerciseList' })
+  },
 
   bindRpc() {
     const handle = (method, ...args) => {
@@ -256,6 +264,7 @@ export default {
 
   touchStart(e) {
     const t = e.touches && e.touches[0]
+    if (t) { this.autoFocusIgnoreUntil = 0; this.trailingTapBlockedUntil = 0 }
     this.touch = t ? { x: t.clientX, y: t.clientY } : null
     this.touchLast = this.touch
     this.touchAxis = null
@@ -283,6 +292,7 @@ export default {
     const start = this.touch
     const axisAtRelease = this.touchAxis
     this.touchCancel()
+    if (axisAtRelease || (end && Math.max(Math.abs(end.x - start.x), Math.abs(end.y - start.y)) >= 24)) this.trailingTapBlockedUntil = Date.now() + 400
     if (!end) return
     // 评分层独占横滑：只移动一个步长，不切页、不切组、不碰休息。
     if (this.effortOn) {
@@ -300,7 +310,7 @@ export default {
     if (this.lastOpen) { if (dx > 60 && Math.abs(dx) > Math.abs(dy)) this.closeLast(); return }
     if (this.finishOn) { if (dy > 60) this.closeFinish(); return }
     if (this.isRest) {
-      if (dx > 60 && Math.abs(dx) > Math.abs(dy)) this.openExercises()
+      if (dx > 60 && Math.abs(dx) > Math.abs(dy)) this.openExercises(true)
       return
     }
     if (this.menuOn) {
@@ -310,13 +320,10 @@ export default {
     const axis = axisAtRelease || (Math.abs(dx) > Math.abs(dy) ? 'x' : 'y')
     if (axis === 'x') {
       // 右滑打开动作列表，左滑切换训练与操作页。
-      if (dx > 60) this.openExercises()
+      if (dx > 60) this.openExercises(true)
       else if (dx < -60) this.pageIndex = this.pageIndex ? 0 : 1
-    } else {
-      // 上下滑动切换两页。
-      if (dy < -60) this.pageIndex = 1
-      else if (dy > 60) this.pageIndex = 0
     }
+    // Vertical gestures belong to the visible native list; horizontal swipes navigate pages.
   },
 
   touchCancel() { this.touch = null; this.touchLast = null; this.touchAxis = null },
@@ -375,6 +382,7 @@ export default {
     }
     if (nx < 0 || nx >= s.workout.rows.length || ni < 0) return
     this.autoFocusEx = nx; this.autoFocusIgnoreUntil = 0
+    this.clearFieldSelection(); this.autoFocusSet = ni
     s.exIdx = nx; s.setIdx = ni
     s.focusAt = Date.now(); save(s)
     this.emitEvent({ t: 'focus', sid: s.sid, ex: nx, set: ni + 1, at: s.focusAt, source: 'watch' })
@@ -391,6 +399,7 @@ export default {
     this.autoFocusEx = nx; this.autoFocusIgnoreUntil = 0
     s.exIdx = nx
     s.setIdx = first >= 0 ? first : 0
+    this.clearFieldSelection(); this.autoFocusSet = s.setIdx
     save(s)
     this.emitEvent({ t: 'focus', sid: s.sid, ex: nx, set: s.setIdx + 1, at: Date.now(), source: 'watch' })
     this.refresh()
@@ -399,22 +408,68 @@ export default {
   onPrevSet() { this.stepSet(-1) },
   onNextSet() { this.stepSet(1) },
 
-  editWeight() {
-    if (this.isRest || this.paused || this.isDoneRowCur()) return
-    router.push({ uri: '/Keypad', params: { exIdx: this.state.exIdx, setIdx: this.state.setIdx, field: 'w' } })
+  clearFieldSelection() { this.selectedField = null; this.fieldTarget = null },
+  flushPendingRowEdits() {
+    // Reuse the original durable identities. RPC owns deduplication and ACK removal.
+    const edits = (this.state && this.state.pendingEdits || []).slice()
+    for (const edit of edits) this.emitEvent(edit)
   },
-
-  editReps() {
-    if (this.isRest || this.paused || this.isDoneRowCur()) return
-    router.push({ uri: '/Keypad', params: { exIdx: this.state.exIdx, setIdx: this.state.setIdx, field: 'r' } })
+  selectField(field) {
+    if (this.interactionBlocked() || this.isRest || this.paused || this.closeMode || this.effortOn || this.lastOpen || this.finishOn) return
+    const s = loadState(), target = captureRow(this.state), found = rowTarget(s, target)
+    if (!found || found.row.done || s.pausedAt || s.restUntil) { this.clearFieldSelection(); return }
+    if (target.weightUnit !== (s.weightUnit || 'kg')) { this.clearFieldSelection(); return }
+    this.state = s
+    if (this.selectedField === field && this.fieldTarget && this.fieldTarget.setId === target.setId) {
+      router.push({ uri: '/Keypad', params: { ...target, field, inputMode: 'quick' } }); return
+    }
+    this.selectedField = field; this.fieldTarget = target; this.inputNotice = ''
+    this.focusCrown()
+  },
+  editWeight() { this.selectField('w') },
+  editReps() { this.selectField('r') },
+  adjustSelectedField(direction) {
+    if (!direction || !this.selectedField || !this.fieldTarget || this.interactionBlocked()) return
+    const s = loadState(), found = rowTarget(s, this.fieldTarget)
+    if (!found || found.row.done || s.pausedAt || s.restUntil || this.fieldTarget.weightUnit !== (s.weightUnit || 'kg') || found.exIdx !== s.exIdx || found.setIdx !== s.setIdx) {
+      this.clearFieldSelection(); this.inputNotice = '目标已变化，请重新选择'; return
+    }
+    // Conservative input-only backpressure; never trim accepted edits or completion events.
+    if (persistenceStatus().failed || storageStatus().failed || pendingCount() >= 256 || (s.pendingEdits || []).length >= 256) {
+      this.inputNotice = '请先同步或恢复存储后再编辑'; return
+    }
+    const value = valueStep(found.row[this.selectedField], this.selectedField, direction, storage.getSync({ key: 'weight_step' }))
+    this.state = s
+    setRowValue(s, found.exIdx, found.setIdx, this.selectedField, value, true)
+    this.flushPendingRowEdits(); this.refresh()
+  },
+  refreshSetDots(page) {
+    const view = setDotWindow(this.state, page)
+    this.dotPage = view.page; this.setDots = view.dots; this.dotSegmented = view.segmented
+    this.dotHasPrev = view.hasPrev; this.dotHasNext = view.hasNext
+  },
+  prevDotSegment() { if (!this.interactionBlocked() && this.dotHasPrev) this.refreshSetDots(this.dotPage - 1) },
+  nextDotSegment() { if (!this.interactionBlocked() && this.dotHasNext) this.refreshSetDots(this.dotPage + 1) },
+  pickSetDot(target) {
+    if (this.interactionBlocked() || this.isRest || this.paused || this.closeMode || this.effortOn || this.lastOpen || this.finishOn) return
+    const s = loadState(), found = rowTarget(s, target)
+    if (!found || found.row.done || s.sid !== this.state.sid || s.pausedAt || s.restUntil) return
+    this.clearFieldSelection(); this.state = s
+    this.autoFocusEx = found.exIdx; this.autoFocusSet = found.setIdx; this.autoFocusIgnoreUntil = 0
+    s.exIdx = found.exIdx; s.setIdx = found.setIdx; s.focusAt = Date.now(); save(s)
+    this.emitEvent({ t: 'focus', sid: s.sid, entryInstanceId: s.workout.exercises[s.exIdx].entryInstanceId,
+      setId: found.row.setId, ex: s.exIdx, set: s.setIdx + 1, at: s.focusAt, source: 'watch' })
+    this.refresh()
   },
 
   onComplete() {
-    if (this.isRest || this.paused || this.closeMode || Date.now() < (this.autoFocusIgnoreUntil || 0)) return
+    if (this.isRest || this.paused || this.closeMode || this.interactionBlocked() || Date.now() < (this.completionIgnoreUntil || 0)) return
     const s = this.state
     const exIdx = s.exIdx, setIdx = s.setIdx
     const current = s.workout.rows[exIdx] && s.workout.rows[exIdx][setIdx]
     if (!current || current.done) return
+    this.completionIgnoreUntil = Date.now() + 700
+    this.clearFieldSelection()
     const row = toggleSet(s, true)
     if (!row) return
     // 评分归属必须在焦点前进之前捕获：完成后游标会去下一组，这里记住的是刚完成的这一组。
@@ -449,7 +504,7 @@ export default {
   },
 
   onCurrentSetAction() {
-    if (this.closeMode || Date.now() < (this.autoFocusIgnoreUntil || 0)) return
+    if (this.closeMode || this.paused || this.interactionBlocked() || Date.now() < (this.completionIgnoreUntil || 0)) return
     if (this.rowDone) this.onUndo()
     else this.onComplete()
   },
@@ -903,11 +958,11 @@ export default {
 
   // 自动切到另一动作后，挡住落在新“完成/跳过”按钮上的慢双击；手动切换立即放行。
   updateAutoFocusLock(s) {
-    if (this.autoFocusSid === s.sid && this.autoFocusEx != null && this.autoFocusEx !== s.exIdx) {
+    if (this.autoFocusSid === s.sid && this.autoFocusEx != null && (this.autoFocusEx !== s.exIdx || (this.autoFocusSet != null && this.autoFocusSet !== s.setIdx) || (this.autoFocusWasRest && !s.restUntil))) {
       this.autoFocusIgnoreUntil = Date.now() + 1000
     }
     this.autoFocusSid = s.sid
-    this.autoFocusEx = s.exIdx
+    this.autoFocusEx = s.exIdx; this.autoFocusSet = s.setIdx; this.autoFocusWasRest = !!s.restUntil
   },
 
   refresh() {
@@ -920,13 +975,19 @@ export default {
     this.rowDone = this.isDoneRowCur()
     const ex = s.workout.exercises[s.exIdx]
     const row = s.workout.rows[s.exIdx] && s.workout.rows[s.exIdx][s.setIdx]
+    if (this.fieldTarget) {
+      const target = rowTarget(s, this.fieldTarget)
+      if (!target || target.row.done || target.exIdx !== s.exIdx || target.setIdx !== s.setIdx || s.pausedAt || s.restUntil || this.fieldTarget.weightUnit !== (s.weightUnit || 'kg')) this.clearFieldSelection()
+    }
+    const cursorKey = s.sid + ':' + (ex && ex.entryInstanceId || s.exIdx) + ':' + (row && row.setId || s.setIdx)
+    this.refreshSetDots(cursorKey === this.dotCursorKey ? this.dotPage : undefined); this.dotCursorKey = cursorKey
     this.exName = ex ? ex.name : ''
     this.groupLabel = ex ? '第 ' + (s.setIdx + 1) + ' / ' + (ex.sets || 1) + ' 组' : ''
-    this.weightVal = row && row.w !== '' && row.w != null ? row.w + ' kg' : '—'
+    this.weightVal = row && row.w !== '' && row.w != null ? row.w + ' ' + (s.weightUnit || 'kg') : '—'
     this.repsVal = row && row.r !== '' && row.r != null ? row.r + (this.isTimed(ex) ? ' 秒' : ' 次') : '—'
     // 数值与单位分开渲染：数字大、单位弱一级。
     this.weightNum = row && row.w !== '' && row.w != null ? String(row.w) : '—'
-    this.weightSuffix = 'kg'
+    this.weightSuffix = s.weightUnit || 'kg'
     this.repsNum = row && row.r !== '' && row.r != null ? String(row.r) : '—'
     this.repsSuffix = this.isTimed(ex) ? '秒' : '次'
     this.isRest = !!s.restUntil
@@ -1100,6 +1161,7 @@ export default {
     this.kcalLabel = String((s.baseCalories || 0) + calories(s, s.profile, Math.max(0, ((s.pausedAt || Date.now()) - (s.segmentStartedAt || s.startedAt) - (s.pausedMs || 0)) / 60000)))
     const n = pendingCount()
     const sync = synchronizationStatus()
+    this.syncWarning = persistenceStatus().failed || storageStatus().failed || sync.conflicts > 0 || sync.phonePending > 0 || n > 0 || !isConnected()
     this.syncLabel = persistenceStatus().failed || storageStatus().failed ? '存储失败，请保留应用' : sync.conflicts > 0 ? '存在冲突，请核对手机' : sync.phonePending > 0 ? '手机待处理 ' + sync.phonePending + ' 条' : n > 0 ? '待上传 ' + n + ' 条' : isConnected() ? (sync.lastCommitAt ? '已同步' : '已连接') : '离线记录'
   },
 
@@ -1199,37 +1261,42 @@ export default {
 <div class="page" id="training" touch-focusable="true" onrotation="onRotation" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
   <div class="screen" if="{{ pageIndex === 0 && !closeMode }}">
     <div class="topbar">
-      <div class="st" onclick="showDiagnostics"><div class="dot"></div><text class="status">{{ syncLabel }}</text></div>
+      <div class="st" if="{{ syncWarning }}" onclick="showDiagnostics"><div class="dot"></div><text class="status">{{ syncLabel }}</text></div>
       <text class="clock now">{{ clockLabel }}</text>
-    </div>
-    <div class="metabar">
-      <text class="clock">已用 {{ elapsedLabel }}</text>
-      <div class="metabar-r"><text class="energy">{{ kcalLabel }} 千卡</text><text class="hr">{{ hrLabel }}</text></div>
     </div>
 
     <div class="training-panel compact" if="{{ !isRest }}">
-      <text class="ex">{{ exName }}</text>
+      <list class="training-scroll"><list-item type="current-group" class="training-content">
+      <text class="ex" onclick="openExercises">{{ exName }} ›</text>
       <text class="group {{ rowDone ? 'group-done' : '' }}">{{ groupLabel }}{{ rowDone ? ' · 已完成' : '' }}</text>
       <div class="inputs">
-        <div class="field {{ rowDone ? 'field-done' : '' }}" onclick="editWeight">
+        <div class="field {{ rowDone ? 'field-done' : selectedField === 'w' ? 'field-selected' : '' }}" onclick="editWeight">
           <text class="fval">{{ weightNum }}</text>
           <text class="funit">{{ weightSuffix }}</text>
         </div>
-        <div class="field {{ rowDone ? 'field-done' : '' }}" onclick="editReps">
+        <div class="field {{ rowDone ? 'field-done' : selectedField === 'r' ? 'field-selected' : '' }}" onclick="editReps">
           <text class="fval">{{ repsNum }}</text>
           <text class="funit">{{ repsSuffix }}</text>
         </div>
       </div>
-      <div class="navrow">
-        <input class="nav" type="button" value="上" onclick="onPrevSet" />
-        <input class="complete {{ rowDone || paused ? 'secondary' : '' }}" type="button" value="{{ paused ? '已暂停' : rowDone ? '已撤销' : '完成' }}" disabled="{{ paused }}" onclick="onCurrentSetAction" />
-        <input class="nav" type="button" value="下" onclick="onNextSet" />
-      </div>
+      <text class="input-notice" if="{{ inputNotice }}">{{ inputNotice }}</text>
       <div class="last-row" if="{{ lastOn }}" onclick="openLast"><text class="last-text">{{ lastLine }}</text></div>
-      <input class="effort-row" type="button" if="{{ effortEntryOn }}" value="{{ effortEntryLabel + '  ' + effortEntryText + '  ›' }}" onclick="openEffort" />
+      <div class="navrow">
+        <input class="complete {{ rowDone || paused ? 'secondary' : '' }}" type="button" value="{{ paused ? '暂停' : rowDone ? '撤销完成' : '完成' }}" disabled="{{ paused }}" onclick="onCurrentSetAction" />
+        <input class="effort-circle" type="button" if="{{ effortEntryOn }}" value="{{ effortScaleLabel + ' ' + effortEntryText }}" onclick="openEffort" />
+      </div>
+      <div class="set-dots">
+        <input class="set-hit segment" if="{{ dotSegmented }}" type="button" value="‹" disabled="{{ !dotHasPrev }}" onclick="prevDotSegment" />
+        <div class="set-hit" for="{{ item in setDots }}" onclick="pickSetDot(item)">
+          <text class="set-dot {{ item.current ? 'set-current' : item.done ? 'set-done' : '' }}">{{ item.done ? '✓' : item.number }}</text>
+        </div>
+        <input class="set-hit segment" if="{{ dotSegmented }}" type="button" value="›" disabled="{{ !dotHasNext }}" onclick="nextDotSegment" />
+      </div>
+      </list-item></list>
     </div>
 
     <div class="training-panel rest-panel" if="{{ isRest }}">
+      <list class="rest-scroll"><list-item type="rest-content" class="scroll-content">
       <text class="rest-ex">{{ restExerciseName }}</text>
       <text class="rest">{{ restLabel }}</text>
       <div class="rrow">
@@ -1241,6 +1308,7 @@ export default {
       <text class="next-details">{{ nextDetails }}</text>
       <input class="effort-row" type="button" if="{{ effortEntryOn }}" value="{{ effortEntryLabel + '  ' + effortEntryText + '  ›' }}" onclick="openEffort" />
       <input class="skip" type="button" value="跳过休息" onclick="onSkipRest" />
+      </list-item></list>
     </div>
 
     <div class="primary-footer">
@@ -1254,10 +1322,10 @@ export default {
       <div class="st" onclick="showDiagnostics"><div class="dot"></div><text class="status">{{ syncLabel }}</text></div>
       <text class="clock now">{{ clockLabel }}</text>
     </div>
-    <div class="metabar">
-      <text class="clock">已用 {{ elapsedLabel }}</text>
-      <div class="metabar-r"><text class="energy">{{ kcalLabel }} 千卡</text><text class="hr">{{ hrLabel }}</text></div>
-    </div>
+    <list class="operation-scroll"><list-item type="operation-content" class="scroll-content">
+    <text class="elapsed-label">已用时</text>
+    <text class="elapsed-value">{{ elapsedLabel }}</text>
+    <div class="metrics"><text class="energy">{{ kcalLabel }} 千卡</text><text class="hr">{{ hrLabel }}</text></div>
     <div class="op-card">
       <text class="op-title">{{ exName }}</text>
       <text class="op-group">{{ groupLabel }}</text>
@@ -1274,9 +1342,10 @@ export default {
       <input class="m" type="button" value="{{ pauseLabel }}" onclick="onPause" />
       <input class="m m-end" type="button" value="结束训练" onclick="openFinish" />
     </div>
+    </list-item></list>
   </div>
 
-  <div class="dots" if="{{ !isRest && !closeMode }}"><div class="dot {{ pageIndex === 0 ? 'selected' : '' }}"></div><div class="dot {{ pageIndex === 1 ? 'selected' : '' }}"></div></div>
+  <div class="pageIndicators" if="{{ !isRest && !closeMode }}"><div class="dot {{ pageIndex === 0 ? 'selected' : '' }}"></div><div class="dot {{ pageIndex === 1 ? 'selected' : '' }}"></div></div>
 
   <div class="completion-panel" if="{{ closeMode === 'complete' }}">
     <text class="completion-title">全部组已完成</text>
@@ -1327,6 +1396,7 @@ export default {
     </div>
   </div>
   <div class="effort-layer" if="{{ effortOn && !diagnosticOn }}">
+    <list class="effort-scroll"><list-item type="effort-content" class="scroll-content">
     <div class="effort-head">
       <text class="effort-back" onclick="closeEffort">‹ 返回</text>
       <text class="effort-timer">{{ effortRestLabel }}</text>
@@ -1342,6 +1412,7 @@ export default {
     <text class="effort-meaning" if="{{ effortDraft != null }}">{{ effortMeaning }}</text>
     <input class="effort-ok" type="button" value="确认登记" onclick="confirmEffort" />
     <text class="effort-clear" if="{{ effortHasSaved }}" onclick="clearEffort">清除登记</text>
+    </list-item></list>
   </div>
 </div>
 </template>
@@ -1407,9 +1478,9 @@ export default {
 .hr { font-size: 15px; color: #FF9F0A; }
 .energy { font-size: 15px; color: #FF9F0A; }
 
-.dots { position: absolute; right: 10px; top: 96px; width: 8px; height: 30px; flex-direction: column; justify-content: space-between; }
-.dots .dot { width: 7px; height: 7px; border-radius: 4px; background-color: #3A3A3C; margin-right: 0; }
-.dots .selected { background-color: #30D158; }
+.pageIndicators { position: absolute; right: 10px; top: 96px; width: 8px; height: 30px; flex-direction: column; justify-content: space-between; }
+.pageIndicators .dot { width: 7px; height: 7px; border-radius: 4px; background-color: #3A3A3C; margin-right: 0; }
+.pageIndicators .selected { background-color: #30D158; }
 
 .operation-screen { justify-content: flex-start; }
 .op-card { width: 350px; height: 186px; flex-direction: column; background-color: #1C1C1E; border-radius: 16px; padding: 12px 14px; margin-top: 6px; }
@@ -1518,7 +1589,7 @@ export default {
   .progress { font-size: 13px; }
   .footer-metrics { height: 16px; }
   .hr, .energy { font-size: 13px; }
-  .dots { right: 22px; top: 104px; }
+  .pageIndicators { right: 22px; top: 104px; }
   .op-card { width: 280px; height: 150px; padding: 8px 10px; border-radius: 14px; }
   .op-title { width: 256px; height: 40px; font-size: 18px; }
   .op-group { width: 256px; height: 18px; font-size: 14px; }
@@ -1597,5 +1668,76 @@ export default {
   .pennant { width: 38px; height: 32px; }
   .completion-panel { height: 390px; margin-top: 0; }
   .last-list { height: 200px; }
+}
+/* V5: scrollable current group; retain readable numbers instead of squeezing every row. */
+.training-scroll { width: 350px; height: 330px; }
+.training-content { width: 350px; flex-direction: column; align-items: center; }
+.ex { height: 68px; line-height: 34px; lines: 2; color: #F4F7F5; }
+.field { background-color: #242725; border-radius: 20px; }
+.field-selected { border: 2px solid #30D158; }
+.input-notice { width: 350px; height: 44px; font-size: 18px; color: #E9BD70; lines: 2; }
+.navrow { height: 100px; justify-content: center; margin-top: 4px; }
+.complete { width: 96px; height: 96px; border-radius: 48px; font-size: 23px; }
+.effort-circle { width: 72px; height: 72px; border-radius: 36px; margin-left: 20px; font-size: 15px; background-color: #242725; color: #E0C775; }
+.set-dots { width: 350px; height: 88px; flex-direction: row; flex-wrap: wrap; justify-content: center; align-items: center; margin-top: 6px; }
+.set-hit { width: 44px; height: 44px; justify-content: center; align-items: center; }
+.set-dot { width: 28px; height: 28px; line-height: 28px; border-radius: 14px; font-size: 15px; text-align: center; background-color: #242725; color: #F4F7F5; }
+.set-current { border: 2px solid #30D158; color: #30D158; }
+.set-done { color: #929297; }
+.segment { background-color: #000000; color: #929297; font-size: 24px; }
+.now { font-size: 26px; }
+@media screen and (max-height: 420px) {
+  .training-scroll { height: 286px; }
+  .complete { width: 90px; height: 90px; border-radius: 45px; }
+  .ex { height: 64px; line-height: 32px; }
+  .now { font-size: 24px; }
+}
+@media screen and (min-width: 450px) {
+  .training-scroll { width: 280px; height: 240px; }
+  .training-content { width: 280px; }
+  .ex { width: 280px; }
+  .set-dots { width: 280px; }
+}
+/* V5 readable values. Lists intentionally scroll; content must not be squeezed into the viewport. */
+.scroll-content { width: 350px; flex-direction: column; align-items: center; }
+.rest-scroll { width: 350px; height: 328px; }
+.operation-scroll { width: 350px; height: 382px; }
+.effort-scroll { width: 350px; height: 414px; margin-top: 18px; }
+.effort-head { margin-top: 0; height: 44px; }
+.rest { height: 130px; line-height: 130px; font-size: 104px; }
+.next-details { height: 48px; line-height: 48px; font-size: 36px; }
+.effort-pick { height: 112px; }
+.effort-value { font-size: 88px; height: 112px; line-height: 112px; }
+.effort-clear { height: 44px; line-height: 44px; }
+.elapsed-label { width: 350px; height: 28px; font-size: 20px; color: #929297; }
+.elapsed-value { width: 350px; height: 106px; line-height: 106px; font-size: 84px; color: #F4F7F5; lines: 1; }
+@media screen and (max-height: 420px) {
+  .rest-panel { height: 300px; }
+  .rest-scroll { height: 292px; }
+  .operation-scroll { height: 330px; }
+  .effort-scroll { height: 354px; margin-top: 12px; }
+  .rest { height: 120px; line-height: 120px; font-size: 96px; }
+  .next-details { font-size: 34px; }
+  .effort-value { font-size: 80px; }
+  .elapsed-value { font-size: 76px; height: 96px; line-height: 96px; }
+}
+@media screen and (min-width: 450px) {
+  .scroll-content, .rest-scroll, .operation-scroll, .effort-scroll, .elapsed-label, .elapsed-value { width: 280px; }
+  .rest-scroll { height: 226px; }
+  .operation-scroll { height: 266px; }
+  .effort-scroll { height: 300px; margin-top: 70px; }
+  .ex { font-size: 26px; height: 68px; line-height: 34px; }
+  .inputs { height: 88px; }
+  .field { height: 88px; }
+  .fval { font-size: 52px; }
+  .funit { font-size: 14px; }
+  .rrow, .rbtn, .skip, .rest-panel .effort-row { height: 44px; }
+  .rrow { width: 280px; }
+  .rest { font-size: 96px; height: 120px; line-height: 120px; }
+  .next-details { font-size: 34px; height: 44px; line-height: 44px; }
+  .effort-pick { height: 112px; }
+  .effort-value { font-size: 80px; height: 112px; line-height: 112px; }
+  .complete { width: 90px; height: 90px; border-radius: 45px; }
+  .navrow { height: 100px; }
 }
 </style>

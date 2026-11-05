@@ -69,23 +69,29 @@ const decisionIdentity = () => {
   const store = useStore.getState()
   return JSON.stringify([store.sync?.server || globalThis.location?.origin || 'web', store.user?.id || null])
 }
+export const coachRuntimeIdentity = () => runtimeModeKey()
 export const coachStatus = async () => {
-  if (DEMO) return (await demo()).demoStatus()
-  if (LOCAL()) return (await local()).localStatus()
-  const identity = decisionIdentity(), status = await api('/api/coach/status')
+  const runtimeIdentity = runtimeModeKey()
+  const decorate = status => {
+    if (runtimeIdentity !== runtimeModeKey()) throw new Error('Coach mode changed')
+    return { ...status, runtimeIdentity, ...(status.pending ? { pending: { ...status.pending, runtimeIdentity } } : {}) }
+  }
+  if (DEMO) return decorate((await demo()).demoStatus())
+  if (LOCAL()) return decorate(await (await local()).localStatus())
+  const identity = decisionIdentity(), status = await api('/api/coach/status?chatActionsVersion=1')
   if (identity !== decisionIdentity()) throw new Error('Coach account changed')
-  return status.pending ? { ...status, pending: { ...status.pending, originIdentity: identity } } : status
+  return decorate(status.pending ? { ...status, pending: { ...status.pending, originIdentity: identity } } : status)
 }
 const _requestReview = async (note, scope) => {
   if (DEMO) return (await demo()).demoReview(S(), scope)
   if (LOCAL()) return (await local()).localReview(S(), note, scope)
   if (scope && (await coachStatus()).scopeVersion !== 2) throw new Error(t('Upgrade the server to use this Coach feature.'))
-  return api('/api/coach/review', { method: 'POST', body: JSON.stringify({ note: note || '', scope, lang: getLang() }) })
+  return api('/api/coach/review', { method: 'POST', body: JSON.stringify({ chatActionsVersion: 1, note: note || '', scope, lang: getLang() }) })
 }
 export const requestReview = (...a) => { const identity = runtimeModeKey(); return _requestReview(...a).then(r => track(r, identity)) }
-const _requestPlan = async intake => DEMO ? (await demo()).demoPlan(S(), intake) : LOCAL() ? (await local()).localPlan(S(), intake) : api('/api/coach/plan', { method: 'POST', body: JSON.stringify({ intake, lang: getLang() }) })
+const _requestPlan = async intake => DEMO ? (await demo()).demoPlan(S(), intake) : LOCAL() ? (await local()).localPlan(S(), intake) : api('/api/coach/plan', { method: 'POST', body: JSON.stringify({ chatActionsVersion: 1, intake, lang: getLang() }) })
 export const requestPlan = (...a) => { const identity = runtimeModeKey(); return _requestPlan(...a).then(r => track(r, identity)) }
-const _refinePlan = async text => DEMO ? (await demo()).demoRefine(S()) : LOCAL() ? (await local()).localRefine(S(), text) : api('/api/coach/plan', { method: 'POST', body: JSON.stringify({ refine: text, lang: getLang() }) })
+const _refinePlan = async text => DEMO ? (await demo()).demoRefine(S()) : LOCAL() ? (await local()).localRefine(S(), text) : api('/api/coach/plan', { method: 'POST', body: JSON.stringify({ chatActionsVersion: 1, refine: text, lang: getLang() }) })
 export const refinePlan = (...a) => { const identity = runtimeModeKey(); return _refinePlan(...a).then(r => track(r, identity)) }
 const _requestDebrief = async selection => {
   const body = selection && typeof selection === 'object'
@@ -96,13 +102,36 @@ const _requestDebrief = async selection => {
   if (selection && typeof selection === 'object' && (await coachStatus()).debriefSelectionVersion !== 2) {
     throw new Error(t('Upgrade the server to use this Coach feature.'))
   }
-  return api('/api/coach/debrief', { method: 'POST', body: JSON.stringify(body) })
+  return api('/api/coach/debrief', { method: 'POST', body: JSON.stringify({ ...body, chatActionsVersion: 1 }) })
 }
 export const requestDebrief = (...a) => { const identity = runtimeModeKey(); return _requestDebrief(...a).then(r => track(r, identity)) }
 // A question in the chat, answered in words (the `ask` job). The session running here goes along
 // (lib/coach-context.js): the server never holds it.
-const _askCoach = async text => DEMO ? (await demo()).demoAsk(S(), text) : LOCAL() ? (await local()).localAsk(S(), text, todayForCoach(S())) : api('/api/coach/ask', { method: 'POST', body: JSON.stringify({ text, today: todayForCoach(S()), lang: getLang() }) })
+const _askCoach = async text => DEMO ? (await demo()).demoAsk(S(), text) : LOCAL() ? (await local()).localAsk(S(), text, todayForCoach(S())) : api('/api/coach/ask', { method: 'POST', body: JSON.stringify({ chatActionsVersion: 1, text, today: todayForCoach(S()), lang: getLang() }) })
 export const askCoach = (...a) => { const identity = runtimeModeKey(); return _askCoach(...a).then(r => track(r, identity)) }
+// Retain an ambiguous failed POST's id for an explicit retry; never retry by calling ask.
+let chatAttempt = null
+export async function chatCoach(text, options = {}) {
+  const identity = runtimeModeKey()
+  const status = await coachStatus()
+  if (identity !== runtimeModeKey()) throw new Error('Coach mode changed')
+  if (status.upgradeRequired || status.chatActionsVersion != null && status.chatActionsVersion !== 1) throw new Error(t('Update the Coach before requesting chat adjustments.'))
+  if (status.chatActionsVersion == null) {
+    const result = await askCoach(text)
+    return { ...result, readOnly: true }
+  }
+  const request = { text, ...options, lang: getLang() }
+  const signature = JSON.stringify([identity, request])
+  if (!chatAttempt || chatAttempt.signature !== signature) chatAttempt = { signature, body: { ...request, chatActionsVersion: 1, clientRequestId: globalThis.crypto?.randomUUID?.() || Date.now().toString(36) + '-' + Math.random().toString(36).slice(2), today: todayForCoach(S()) } }
+  const body = chatAttempt.body
+  let result
+  if (DEMO) result = await (await demo()).demoChat(S(), body)
+  else if (LOCAL()) result = await (await local()).localChat(S(), body)
+  else result = await api('/api/coach/chat', { method: 'POST', body: JSON.stringify(body) })
+  if (identity !== runtimeModeKey()) throw new Error('Coach mode changed')
+  if (chatAttempt?.body === body) chatAttempt = null
+  return track(result, identity)
+}
 // An automatic review, if one is due (lib/coach-schedule.js asks while the app is open). Only a
 // phone with its own key runs them here; a server runs its own on its tick. The data-sharing
 // question was asked when they were switched on, and nobody is there to ask it now: a "yes"
@@ -118,7 +147,7 @@ export async function scheduledReview() {
 const ANNOUNCED_KEY = 'gym_coach_announced'
 export async function scheduledNotice() {
   if (DEMO || LOCAL() || !MOBILE) return null
-  const p = (await api('/api/coach/status'))?.pending
+  const p = (await api('/api/coach/status?chatActionsVersion=1'))?.pending
   if (!p || p.trigger !== 'scheduled') return null
   try { if (localStorage.getItem(ANNOUNCED_KEY) === p.id) return null; localStorage.setItem(ANNOUNCED_KEY, p.id) } catch { /* said again next time, at worst */ }
   await announceProposal(p)
@@ -151,7 +180,7 @@ export const setCohortShare = async share => (DEMO || LOCAL()) ? { ok: true, sha
 export const resolvePending = async body => {
   const origin = DEMO ? 'demo' : LOCAL() ? 'local' : 'server'
   if (body?.origin && body.origin !== origin || body?.originIdentity && body.originIdentity !== decisionIdentity()) return { deferred: true }
-  return DEMO ? (await demo()).demoResolve(body) : LOCAL() ? (await local()).localResolve(body) : api('/api/coach/pending/resolve', { method: 'POST', body: JSON.stringify(body) })
+  return DEMO ? (await demo()).demoResolve(body) : LOCAL() ? (await local()).localResolve(body) : api('/api/coach/pending/resolve', { method: 'POST', body: JSON.stringify({ ...body, chatActionsVersion: 1 }) })
 }
 export const forgetCoach = async () => DEMO ? (await demo()).demoResolve() : LOCAL() ? (await local()).localForget() : api('/api/coach/forget', { method: 'POST', body: '{}' })
 export const disclosure = async () => DEMO ? (await demo()).demoDisclosure() : LOCAL() ? (await local()).localDisclosure() : api('/api/coach/disclosure')
@@ -236,6 +265,10 @@ export function useCoachStatus(active = true) {
 // module loads once, in English, before any locale pack has arrived, and a language picked later
 // would otherwise never reach these lines. The lookup is still JOB_ERRORS[cls].
 export const JOB_ERRORS = {
+  get upgrade_required() { return t('Update the Coach before requesting chat adjustments.') },
+  get pending_mismatch() { return t('The pending proposal changed. Refresh the Coach and try again.') },
+  get scope_mismatch() { return t('Finish or dismiss the current proposal before choosing another routine.') },
+  get context_missing() { return t('That debrief is no longer available. Choose it again.') },
   get off() { return t('The Coach isn’t set up on this instance.') },
   get busy() { return t('The Coach is already thinking about your training.') },
   get cap() { return t('The Coach is taking a rest day. Try again tomorrow.') },

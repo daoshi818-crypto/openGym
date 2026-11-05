@@ -5,20 +5,31 @@ BlueOS watch companion for openGym. Display name: `opengym`; package identity:
 
 ## Training
 
-- Swipe up/down between training and operations. Two dots at the right show the page.
-- Swipe right to select any exercise/set. Previous/next buttons
-  and the crown move within the current exercise; the crown adjusts rest in 5-second steps.
-- Heart rate stays on the training screen, including rest. Calories are estimates.
+- Swipe left to switch between training and operations; swipe right to open the exercise list.
+  Vertical gestures scroll the native lists. Tap the exercise name to open the exercise list and jump to its first unfinished set.
+- Tap an unfinished set dot to select that set. Completed sets are not editable through the dots.
+  Large sets of dots use bounded windows; selection keeps stable session and row IDs.
+- Tap weight/reps once to select the field. Rotate the crown to adjust the selected field only;
+  tap the selected field again for the keypad. Rest retains its own 5-second crown adjustment.
+  The keypad shares one draft between digit entry, +/- and crown; cancel does not save.
+- Last time appears before completion, when matching history exists. Training and rest details
+  scroll without shrinking the main digits or hiding the fixed primary action.
+- Heart rate stays on the training screen, including rest. Calories are estimates. Healthy sync
+  diagnostics do not occupy the main training area; connection failures remain visible.
 - Phone-started workouts open the training page directly, including an active session restored
-  at launch. End/abandon and conflicting-session confirmation remain in place.
-- Training shows completed/remaining sets, calories and heart rate; tap completion again to undo.
-- Operations shows the clock, elapsed time, completed volume, calories and heart rate, with
-  add/remove set and pause/resume controls. Swipe right again from the exercise list for
-  save/end, abandon and return; save/end and abandon also appear at the list bottom.
-- Plans sent from the phone are cached for offline starts. The phone must confirm conflicts
-  before an offline watch save changes an already closed phone record.
+  at launch. A newly committed watch start opens the phone workout route once while the phone
+  app is running. This is not an Android background/lock-screen Activity launch guarantee.
+- Training shows completed/remaining sets; tap completion again to undo. Operations shows the
+  clock, elapsed time, completed volume, calories and heart rate, with add/remove set and
+  pause/resume controls. Save/end uses the same confirmation flow from every entry point;
+  completion alone never silently saves. Conflicting-session and abandon confirmation remain.
+- Plans sent from the phone are cached for offline starts. AI plan changes affect routine
+  templates only: they must not truncate an active workout or rewrite logged history. The
+  phone must confirm conflicts before an offline watch save changes an already closed record.
 - Unsaved watch sessions expire after six hours from the current training segment's start.
   Previously saved history is retained. The close event is queued for reconnection.
+- Embedded demonstration media and a new skip/hold protocol are not enabled by these changes.
+  Media rights/device support and peer protocol capability must be verified separately.
 
 ## Transport and Persistence
 

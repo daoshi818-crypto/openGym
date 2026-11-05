@@ -4,6 +4,8 @@ import { bindRuntime } from '../lib/runtime.js'
 import router from '@blueos.app.appmanager.router'
 import storage from '@blueos.storage.storage'
 import { loadState, setRowValue } from '../lib/session.js'
+import { rotationStep, valueStep } from '../lib/value-step.js'
+import { rowTarget } from '../lib/workout-interaction.js'
 
 export default {
   data: {
@@ -12,7 +14,7 @@ export default {
     unit: 'kg',
     exIdx: 0,
     setIdx: 0,
-    field: 'w',
+    field: 'w', inputMode: 'quick', notice: '',
   },
 
   onInit(params) {
@@ -21,11 +23,13 @@ export default {
     const s = loadState()
     if (!s.active || !s.workout) { router.back(); return }
     this.state = s
-    this.exIdx = Number(p.exIdx != null ? p.exIdx : this.exIdx || 0)
-    this.setIdx = Number(p.setIdx != null ? p.setIdx : this.setIdx || 0)
+    this.editSid = s.sid; this.editUnit = s.weightUnit || 'kg'
+    const target = rowTarget(s, { ...p, exIdx: Number(p.exIdx != null ? p.exIdx : this.exIdx || 0), setIdx: Number(p.setIdx != null ? p.setIdx : this.setIdx || 0) })
+    if (!target || target.row.done || s.pausedAt || s.restUntil) { router.back(); return }
+    this.exIdx = target.exIdx; this.setIdx = target.setIdx
     this.field = (p.field != null ? p.field : this.field) === 'r' ? 'r' : 'w'
-    const row = s.workout.rows[this.exIdx] && s.workout.rows[this.exIdx][this.setIdx]
-    if (!row) { router.back(); return }
+    this.inputMode = p.inputMode === 'keypad' ? 'keypad' : 'quick'
+    const row = target.row
 
     this.entryInstanceId = s.workout.exercises[this.exIdx].entryInstanceId
     this.setId = row.setId
@@ -33,7 +37,8 @@ export default {
     this.changed = false
     const cur = this.field === 'w' ? row.w : row.r
     this.initVal = cur === '' || cur == null ? '' : String(cur)
-    this.show = this.initVal || '0'
+    this.buffer = this.initVal; this.replaceOnDigit = true
+    this.show = this.initVal || '—'
     if (this.field === 'w') { this.label = '重量'; this.unit = s.weightUnit || 'kg' }
     else {
       const ex = s.workout.exercises[this.exIdx]
@@ -44,8 +49,9 @@ export default {
   },
 
   onKey(k) {
-    if (k === 'C') { this.changed = true; this.buffer = ''; this.show = '0'; return }
+    if (k === 'C') { this.changed = true; this.buffer = ''; this.show = '—'; this.replaceOnDigit = false; return }
     if (k === 'ok') { this.commit(); return }
+    if (this.replaceOnDigit) { this.buffer = ''; this.replaceOnDigit = false }
     if (k === '.') {
       if (this.field !== 'w' || this.buffer.indexOf('.') >= 0) return
       if (!this.buffer) this.buffer = '0'
@@ -75,26 +81,27 @@ export default {
   onReady() { this.focusCrown() },
   onShow() { this.focusCrown() },
   focusCrown() { try { this.$element('keypad').requestFocus(true) } catch (e) {} },
-  onRotation(ev) {
-    if (!ev || ev.state === 3) return
-    const delta = Number(ev.delta) || (ev.direction === true ? 1 : ev.direction === false ? -1 : 0)
-    if (!delta) return
-    const step = this.field === 'w' ? storage.getSync({ key: 'weight_step' }) || 0.5 : 1
-    const value = Math.max(0, Math.min(99999, (parseFloat(this.show) || 0) + (delta > 0 ? step : -step)))
-    this.buffer = String(Math.round(value * 10) / 10)
-    this.show = this.buffer; this.changed = true
+  onRotation(ev) { const direction = rotationStep(ev); if (direction) this.adjustDraft(direction) },
+  adjustDraft(direction) {
+    this.buffer = valueStep(this.buffer, this.field, direction, storage.getSync({ key: 'weight_step' }))
+    this.show = this.buffer; this.changed = true; this.replaceOnDigit = false
   },
+  minus() { this.adjustDraft(-1) },
+  plus() { this.adjustDraft(1) },
+  useKeyboard() { this.inputMode = 'keypad' },
+  useQuick() { this.inputMode = 'quick' },
 
   commit() {
     if (!this.changed) { router.back(); return }
     const v = this.buffer === '' ? '' : String(parseFloat(this.buffer) || 0)
     // 编辑期间手机仍可能更新其他行，提交时只改最新会话里的目标字段。
     const s = loadState()
-    if (!s.active || s.sid !== this.state.sid) { router.back(); return }
+    if (!s.active || s.sid !== this.editSid) { router.back(); return }
     const ex = this.entryInstanceId ? s.workout.exercises.findIndex(e => e.entryInstanceId === this.entryInstanceId) : this.exIdx
     const set = this.setId ? s.workout.rows[ex]?.findIndex(r => r.setId === this.setId) : this.setIdx
-    if (!(ex >= 0) || !(set >= 0)) { router.back(); return }
-    const value = this.field === 'w' && this.state.weightUnit !== s.weightUnit && v !== '' ? Math.round(Number(v) * (this.state.weightUnit === 'lb' ? 0.45359237 : 1 / 0.45359237) * 1000) / 1000 : v
+    const row = s.workout.rows[ex] && s.workout.rows[ex][set]
+    if (!(ex >= 0) || !(set >= 0) || !row || row.done || s.pausedAt || s.restUntil) { this.notice = '目标已变化，未保存'; return }
+    const value = this.field === 'w' && this.editUnit !== (s.weightUnit || 'kg') && v !== '' ? Math.round(Number(v) * (this.editUnit === 'lb' ? 0.45359237 : 1 / 0.45359237) * 1000) / 1000 : v
     setRowValue(s, ex, set, this.field, value, true)
     router.back()
   },
@@ -103,10 +110,16 @@ export default {
 
 <template>
 <div class="page" id="keypad" touch-focusable="true" onrotation="onRotation">
+  <list class="editor-scroll"><list-item class="editor-content" type="editor">
   <text class="label">{{ label }} · {{ unit }}</text>
   <text class="show">{{ show }}</text>
 
-  <div class="grid">
+  <div class="quick" if="{{ inputMode === 'quick' }}">
+    <div class="step-row"><input class="step" type="button" value="−" onclick="minus" /><input class="step" type="button" value="+" onclick="plus" /></div>
+    <text class="step-hint">每次 {{ field === 'w' ? '按重量步长' : '1' }} · 仅保存后生效</text>
+    <input class="switch" type="button" value="数字键盘" onclick="useKeyboard" />
+  </div>
+  <div class="grid" if="{{ inputMode === 'keypad' }}">
     <input class="k" type="button" value="1" onclick="onKey1" />
     <input class="k" type="button" value="2" onclick="onKey2" />
     <input class="k" type="button" value="3" onclick="onKey3" />
@@ -121,10 +134,13 @@ export default {
     <input class="k c" type="button" value="C" onclick="onKeyC" />
   </div>
 
+  <input class="switch" type="button" if="{{ inputMode === 'keypad' }}" value="返回减加" onclick="useQuick" />
+  <text class="step-hint" if="{{ notice }}">{{ notice }}</text>
   <div class="actions">
     <input class="cancel" type="button" value="取消" onclick="onCancel" />
     <input class="ok" type="button" value="保存" onclick="onKeyOk" />
   </div>
+  </list-item></list>
 </div>
 </template>
 
@@ -149,4 +165,19 @@ export default {
   .ok { width: 184px; height: 44px; font-size: 18px; }
   .cancel { width: 88px; height: 44px; font-size: 17px; }
 }
+.quick { width: 350px; flex-direction: column; align-items: center; }
+.step-row { width: 350px; height: 82px; flex-direction: row; justify-content: space-between; }
+.step { width: 164px; height: 76px; font-size: 38px; border-radius: 20px; background-color: #242725; color: #F4F7F5; }
+.step-hint { width: 350px; height: 44px; font-size: 18px; text-align: center; color: #929297; lines: 2; }
+.switch { width: 350px; height: 44px; font-size: 18px; border-radius: 14px; background-color: #242725; color: #F4F7F5; }
+.show { font-size: 76px; height: 92px; line-height: 92px; }
+@media screen and (max-height: 420px) { .show { font-size: 72px; height: 88px; line-height: 88px; } .k { height: 44px; } }
+@media screen and (min-width: 450px) {
+  .quick, .step-row, .switch, .step-hint { width: 280px; }
+  .step { width: 132px; height: 52px; }
+  .step-row { height: 56px; }
+  .show { font-size: 52px; height: 66px; line-height: 66px; }
+}
+.editor-scroll { width: 100%; height: 100%; }
+.editor-content { width: 100%; flex-direction: column; align-items: center; padding-bottom: 16px; }
 </style>

@@ -1,3 +1,4 @@
+import { isOn } from './modules.js'
 // Automatic reviews on a phone that brings its own API key (Discord, 10-19).
 //
 // On a server the cadence tick runs them (api/coach/cadence.js). A phone in BYOK mode has no
@@ -19,11 +20,13 @@ const TICK_MS = 60000
 
 /** Whether this state could have a review due here at all, before anything is loaded. */
 export function mayBeDue(store) {
+  if (!isOn(store?.S, 'coach')) return false
   const cadence = store?.S?.coach?.cadence
   return store?.coachLocal?.mode === 'byok' && !!cadence && cadence !== 'off'
 }
 /** Whether the paired server could have run one this phone has not heard of. */
 export function mayHaveNews(store) {
+  if (!isOn(store?.S, 'coach')) return false
   const cadence = store?.S?.coach?.cadence
   // A paired phone without a key of its own uses its server's Coach (coachAvailable, lib/coach.js).
   return store?.coachLocal?.mode !== 'byok' && !!store?.config?.coach?.enabled && !!store?.user && !!cadence && cadence !== 'off'

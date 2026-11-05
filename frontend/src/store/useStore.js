@@ -1,3 +1,4 @@
+import { applyExerciseMerges } from '../lib/exercise-merge.js'
 import { ensureWatchIdentity } from '../lib/watch-identity.js'
 import { create } from 'zustand'
 import { api, setRemoteAuth } from '../lib/api.js'
@@ -588,6 +589,7 @@ export const useStore = create((set, get) => {
     // custom exercises marked as such (#378): one stored without the flag by an older plan import
     // goes out with it on the next push, without a stamp of its own (healCustomEx).
     S.customEx = healCustomEx(S.customEx)
+    applyExerciseMerges(S)
     registerCustom(S.customEx)
     registerExerciseAliases(S.exAliases)
     // A refused write used to take the change with it — Finish looked like it simply did
@@ -867,6 +869,7 @@ export const useStore = create((set, get) => {
     seenWid = readWid()
     handedOver = false
     meta.set(S, { base: readStoredSync(), owed: storedOwed() })
+    applyExerciseMerges(S)
     registerCustom(S.customEx)
     registerExerciseAliases(S.exAliases)
     set({ S })
@@ -913,6 +916,7 @@ export const useStore = create((set, get) => {
     if (sameCopy(merged, theirs)) {
       merged._ts = Math.max(Number(theirs._ts) || 0, Number(mine._ts) || 0)
       meta.set(merged, { base: readStoredSync(), owed: storedOwed() })
+      applyExerciseMerges(merged)
       registerCustom(merged.customEx)
       registerExerciseAliases(merged.exAliases)
       set({ S: merged })
@@ -1304,6 +1308,7 @@ export const useStore = create((set, get) => {
 
   const S0 = loadState()
   S0.customEx = healCustomEx(S0.customEx)
+  applyExerciseMerges(S0)
   registerCustom(S0.customEx)
   registerExerciseAliases(S0.exAliases)
   // Which photos and videos are still waiting for the server, known before the first sign-out

@@ -245,7 +245,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <p class="api-facts">
     <span>OpenAPI 3.1.0</span>
     <span>openGym v1.4.1</span>
-    <span>70 endpoints</span>
+    <span>71 endpoints</span>
     <span>AGPL-3.0-or-later</span>
   </p>
 
@@ -2119,7 +2119,13 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <div class="ep-body">
 <p>What the Coach screen polls. Also the only place a proposal past its 14-day expiry is retired. A phone that stays closed never polls, so nothing else would notice.</p>
     <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
-
+<p class="ep-h">Query parameters</p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">chatActionsVersion</span>
+    <span class="p-type">always 1</span>
+    <span class="p-desc">Negotiate chat proposals; older clients receive upgradeRequired with pending/job hidden.</span>
+  </div>
+</div>
 
     <p class="ep-h">Responses</p>
     <div class="ptab">
@@ -2409,6 +2415,16 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
 
 <p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
   <div class="prow">
+    <span class="p-name">chatActionsVersion</span>
+    <span class="p-type">always 1</span>
+    <span class="p-desc">Required for chat proposals.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">revision</span>
+    <span class="p-type">integer <span class="p-hint">(1&ndash;)</span></span>
+    <span class="p-desc">Required exact current revision for chat proposals.</span>
+  </div>
+  <div class="prow">
     <span class="p-name">proposalId<em class="p-req" title="required">required</em></span>
     <span class="p-type">string <span class="p-hint">(&le; 128 chars)</span></span>
     <span class="p-desc"></span>
@@ -2446,6 +2462,123 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   </div>
   <div class="prow rrow">
     <span class="r-code s4">409</span>
+    <span class="p-desc">The Coach will not take this job, and says which reason in <code>code</code>: - <code>busy</code> (409): a job for this profile is already running. - <code>shared</code> (409): instance mode, and the credential belongs to another profile. - <code>cap</code> (429): this profile's or the instance's daily limit is spent. - <code>consent</code> (403): no consent recorded for this profile. - <code>unprivileged</code> (503): the privilege drop cannot be performed, so no job runs. The message is the one to show; the raw provider detail never reaches the user.<span class="r-sig"><code>{&quot;error&quot;:&quot;the Coach is already thinking about your training&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">The Coach is not set up on this instance (switched off, or no provider connected). Every Coach route answers this rather than pretending, so an unconfigured instance renders exactly the app it was before the feature existed. <code>code</code> is <code>off</code>, the class a job refused at enqueue for the same reason carries; the app shows its own line for it.<span class="r-sig"><code>{&quot;error&quot;:&quot;the Coach is not set up on this instance&quot;}</code></span></span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-postCoachChat">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/coach/chat</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Discuss training or request a confirmable routine-template adjustment</span>
+  </summary>
+  <div class="ep-body">
+<p>Queues a chat job. Results arrive through status as a read-only answer/clarification (kind ask, source chat), or a review proposal (source chat, revision and routine scope). A proposal never edits an active workout or history. The client validates fresh status and explicitly confirms selected changes before applying them to routine templates. One pending slot is retained. Refinements must name the current proposal revision; an unsuccessful refinement leaves it intact. clientRequestId deduplicates identical requests for 24 hours within the retained 64-request ledger and runtime mode.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+<p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">chatActionsVersion<em class="p-req" title="required">required</em></span>
+    <span class="p-type">always 1</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">clientRequestId<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(&le; 128 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">text<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(&le; 4000 chars)</span></span>
+    <span class="p-desc">Trimmed and capped by the instance maxMessageLen setting.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">lang</span>
+    <span class="p-type">string</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">scope</span>
+    <span class="p-type">object</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">scope.kind<em class="p-req" title="required">required</em></span>
+    <span class="p-type">always &quot;routine&quot;</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">scope.routineId<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(&le; 128 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">proposalRef</span>
+    <span class="p-type">object</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">proposalRef.id<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">proposalRef.revision<em class="p-req" title="required">required</em></span>
+    <span class="p-type">integer <span class="p-hint">(1&ndash;)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">contextRef</span>
+    <span class="p-type">object</span>
+    <span class="p-desc">The exact selected debrief; never silently replaced by the latest.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">contextRef.kind<em class="p-req" title="required">required</em></span>
+    <span class="p-type">always &quot;debrief&quot;</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">contextRef.id<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">today</span>
+    <span class="p-type">object</span>
+    <span class="p-desc">Optional current-session context; not a write target.</span>
+  </div>
+</div>
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">202</span>
+    <span class="p-desc">Queued. The job runs in the background; its outcome arrives through <code>GET /api/coach/status</code>, which the client polls.<span class="r-sig">{ job: object }</span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc">invalid (empty text), invalid_request (missing/reused request id or invalid request).</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">403</span>
+    <span class="p-desc">The Coach will not take this job, and says which reason in <code>code</code>: - <code>busy</code> (409): a job for this profile is already running. - <code>shared</code> (409): instance mode, and the credential belongs to another profile. - <code>cap</code> (429): this profile's or the instance's daily limit is spent. - <code>consent</code> (403): no consent recorded for this profile. - <code>unprivileged</code> (503): the privilege drop cannot be performed, so no job runs. The message is the one to show; the raw provider detail never reaches the user.<span class="r-sig"><code>{&quot;error&quot;:&quot;the Coach is already thinking about your training&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">409</span>
+    <span class="p-desc">upgrade_required, busy, shared, pending_mismatch, scope_mismatch, or context_missing.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">429</span>
     <span class="p-desc">The Coach will not take this job, and says which reason in <code>code</code>: - <code>busy</code> (409): a job for this profile is already running. - <code>shared</code> (409): instance mode, and the credential belongs to another profile. - <code>cap</code> (429): this profile's or the instance's daily limit is spent. - <code>consent</code> (403): no consent recorded for this profile. - <code>unprivileged</code> (503): the privilege drop cannot be performed, so no job runs. The message is the one to show; the raw provider detail never reaches the user.<span class="r-sig"><code>{&quot;error&quot;:&quot;the Coach is already thinking about your training&quot;}</code></span></span>
   </div>
   <div class="prow rrow">
@@ -4667,6 +4800,21 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
 
 <div class="ptab">
   <div class="prow">
+    <span class="p-name">chatActionsVersion</span>
+    <span class="p-type">always 1</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">upgradeRequired</span>
+    <span class="p-type">boolean</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">code</span>
+    <span class="p-type">string</span>
+    <span class="p-desc">upgrade_required for a client unable to read the pending chat result.</span>
+  </div>
+  <div class="prow">
     <span class="p-name">debriefSelectionVersion</span>
     <span class="p-type">always 2</span>
     <span class="p-desc"></span>
@@ -4717,7 +4865,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
     <span class="ep-sum">The answer waiting for a decision, from whichever kind of job produced it.</span>
   </summary>
   <div class="ep-body">
-<p>It expires 14 days after it was made; the first status poll after that retires it. <code>changes</code> comes from a review, <code>bundle</code> from a plan, <code>score</code>/<code>highlights</code> from a debrief. One of the three, never more.</p>
+<p>It expires 14 days after it was made; the first status poll after that retires it. <code>changes</code> comes from a review, <code>bundle</code> from a plan, <code>score</code>/<code>highlights</code> from a debrief. Chat answers use kind ask; chat adjustments use kind review with source chat.</p>
 <div class="ptab">
   <div class="prow">
     <span class="p-name">id</span>
@@ -4725,8 +4873,53 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
     <span class="p-desc">The job's id.</span>
   </div>
   <div class="prow">
+    <span class="p-name">source</span>
+    <span class="p-type">&quot;chat&quot;</span>
+    <span class="p-desc">Present for chat-contract results.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">replyType</span>
+    <span class="p-type">&quot;answer&quot; | &quot;clarify&quot;</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">answer</span>
+    <span class="p-type">string <span class="p-hint">(&le; 6000 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">clarification</span>
+    <span class="p-type">string <span class="p-hint">(&le; 1200 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">revision</span>
+    <span class="p-type">integer <span class="p-hint">(1&ndash;)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">parentProposalId</span>
+    <span class="p-type">string</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">scope</span>
+    <span class="p-type">object</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">scope.kind</span>
+    <span class="p-type">always &quot;routine&quot;</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">scope.routineId</span>
+    <span class="p-type">string</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
     <span class="p-name">kind</span>
-    <span class="p-type">&quot;create&quot; | &quot;review&quot; | &quot;debrief&quot;</span>
+    <span class="p-type">&quot;create&quot; | &quot;review&quot; | &quot;debrief&quot; | &quot;ask&quot;</span>
     <span class="p-desc"></span>
   </div>
   <div class="prow">

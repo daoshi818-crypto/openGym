@@ -3,7 +3,7 @@ import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import CoachChat from './CoachChat.jsx'
-import { requestReview, askCoach } from '../lib/coach-api.js'
+import { requestReview, askCoach, chatCoach } from '../lib/coach-api.js'
 import { CONSENT_VERSION } from '../lib/coach.js'
 
 // When the server refuses a Coach request at enqueue it answers in English, with the refusal's
@@ -43,6 +43,7 @@ vi.mock('../lib/coach-api.js', () => ({
   refinePlan: vi.fn(() => Promise.resolve({})),
   requestReview: vi.fn(() => Promise.resolve({})),
   askCoach: vi.fn(() => Promise.resolve({})),
+  chatCoach: vi.fn(() => Promise.resolve({})),
   requestDebrief: vi.fn(() => Promise.resolve({})),
   requestPlan: vi.fn(() => Promise.resolve({})),
   cohortStats: vi.fn(() => Promise.resolve({ ok: false })),
@@ -99,21 +100,22 @@ describe('a typed message', () => {
   it('is a question for the Coach, answered in words, not a review of the whole plan', async () => {
     mount()
     await send('Quanto recupero tra le serie?')
-    expect(askCoach).toHaveBeenCalledWith('Quanto recupero tra le serie?')
+    expect(chatCoach).toHaveBeenCalledWith('Quanto recupero tra le serie?', {})
+    expect(askCoach).not.toHaveBeenCalled()
     expect(requestReview).not.toHaveBeenCalled()
   })
 })
 
 describe('a request the server refuses', () => {
   it('from the composer, toasts the app\'s line for its class, not the server\'s English', async () => {
-    vi.mocked(askCoach).mockRejectedValueOnce(refusal('the Coach is already thinking about your training', 'busy'))
+    vi.mocked(chatCoach).mockRejectedValueOnce(refusal('the Coach is already thinking about your training', 'busy'))
     mount()
     await send('x')
     expect(mocks.toast).toHaveBeenCalledWith('the app’s busy line')
   })
 
   it('whose class has no line of its own keeps the server\'s words', async () => {
-    vi.mocked(askCoach).mockRejectedValueOnce(refusal('this Coach account is shared; ask the owner', 'shared'))
+    vi.mocked(chatCoach).mockRejectedValueOnce(refusal('this Coach account is shared; ask the owner', 'shared'))
     mount()
     await send('x')
     expect(mocks.toast).toHaveBeenCalledWith('this Coach account is shared; ask the owner')
@@ -127,7 +129,7 @@ describe('a request the server refuses', () => {
   })
 
   it('with no class at all (a network failure) still shows what went wrong', async () => {
-    vi.mocked(askCoach).mockRejectedValueOnce(new Error('Network unreachable'))
+    vi.mocked(chatCoach).mockRejectedValueOnce(new Error('Network unreachable'))
     mount()
     await send('x')
     expect(mocks.toast).toHaveBeenCalledWith('Network unreachable')

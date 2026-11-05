@@ -3,6 +3,11 @@
 // (so the close journal and the event clock behave exactly as they do on the watch).
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
+import { rotationStep, valueStep } from '../../../watch-app/src/lib/value-step.js'
+import { captureRow, rowTarget, setDotWindow } from '../../../watch-app/src/lib/workout-interaction.js'
+
+// Real page imports, not stubs: keep VM tests in sync with the shipped page modules.
+export const watchInteractionDeps = { rotationStep, valueStep, captureRow, rowTarget, setDotWindow }
 
 export const watchSource = path => readFileSync(new URL('../../../watch-app/src/' + path, import.meta.url), 'utf8')
 export const stripImports = code => code

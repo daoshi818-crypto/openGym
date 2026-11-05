@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { applyEdit, applyRest, restOf, applyFocus } from '../../../watch-app/src/lib/protocol.js'
-import { loadWatchModule, watchPersistence } from './watch-test-harness.js'
+import { loadWatchModule, watchPersistence, watchInteractionDeps } from './watch-test-harness.js'
 import { effortScaleOf, effortValueOf, effortKindOf, stepEffortValue, effortMeaning, effortSummaryText, formatEffort } from '../../../watch-app/src/lib/effort-scale.js'
 
 const source = path => readFileSync(new URL('../../../watch-app/src/' + path, import.meta.url), 'utf8')
@@ -13,7 +13,7 @@ const imports = /^import[\s\S]*?from ['"][^'"]+['"]\r?$/gm
 
 function page(path, deps) {
   const script = source(path).match(/<script>([\s\S]*?)<\/script>/)[1]
-  const context = { console, WATCH_VERSION: 'test-watch', applyEdit, applyRest, restOf, applyFocus,
+  const context = { ...watchInteractionDeps, console, WATCH_VERSION: 'test-watch', applyEdit, applyRest, restOf, applyFocus,
     persistenceStatus: () => ({}), storageStatus: () => ({}), synchronizationStatus: () => ({}), storage: { getSync: () => null, set() {} },
     effortScaleOf, effortValueOf, effortKindOf, stepEffortValue, effortMeaning, effortSummaryText, formatEffort,
     replacePlan() {}, ...deps }
@@ -48,7 +48,8 @@ function setup({ scale = 'rpe', sets = 3 } = {}) {
   return { sessions, workout, sendEvent, state }
 }
 
-const complete = workout => { workout.state.restUntil = 0; workout.refresh(); workout.onCurrentSetAction(); vi.advanceTimersByTime(400) }
+// These scenarios use deliberate taps; the touch-lock suite covers trailing events.
+const complete = workout => { vi.advanceTimersByTime(1001); workout.state.restUntil = 0; workout.refresh(); vi.advanceTimersByTime(1001); workout.onCurrentSetAction(); vi.advanceTimersByTime(1001) }
 
 describe('per-set effort on the watch (RPE/RIR)', () => {
   it('offers current-set registration before completion without marking the set done', () => {

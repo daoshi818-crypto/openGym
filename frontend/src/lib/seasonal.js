@@ -1,3 +1,4 @@
+import { isOn } from './modules.js'
 // Seasonal themes (v1.4.3): a little decoration for a few weeks a year, Halloween first.
 //
 // This file is all the main bundle carries of them: the list, the date windows and the choice.
@@ -45,17 +46,20 @@ export function seasonChoice(S, id) {
 
 /** Whether the theme shows now: On always, Off never, Auto inside its window. */
 export function themeOn(S, id, now = new Date()) {
+  if (!isOn(S, 'seasonal')) return false
   const c = seasonChoice(S, id)
   return c === 'on' || (c === 'auto' && inSeason(id, now))
 }
 
 /** The theme showing now, or null. The first in the list wins if two ever overlap. */
 export function activeSeason(S, now = new Date()) {
+  if (!isOn(S, 'seasonal')) return null
   return THEMES.find(th => themeOn(S, th.id, now))?.id || null
 }
 
 /** The accent a showing theme puts on instead of the user's own, when its colours are chosen. */
 export function seasonAccent(S, now = new Date()) {
+  if (!isOn(S, 'seasonal')) return null
   const id = activeSeason(S, now)
   const th = id && byId(id)
   return th?.colors && S?.seasonal?.[id + 'Colors'] === true ? th.colors : null

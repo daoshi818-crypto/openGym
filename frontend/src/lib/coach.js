@@ -21,6 +21,7 @@ import { POLICIES } from './progression.js'
 import { t, tn, getLang, exerciseNameFor } from './i18n.js'
 import { hasCoachConsent } from '../../../api/coach/core/consent.js'
 import { fingerprint } from '../../../api/coach/core/debrief-selection.js'
+import { validateChat } from '../../../api/coach/core/chat.js'
 import { reviewScopeErrors } from '../../../api/coach/core/scope.js'
 import { scheduleHash } from '../../../api/coach/core/context.js'
 import { snapshotKey } from './sync-merge.js'
@@ -188,7 +189,7 @@ export function markStale(proposal, S) {
   const planMoved = !!proposal.planHash && proposal.planHash !== planHash(S)
   const changes = (proposal.changes || []).map(c => {
     const r = c.target?.routineId ? findRoutine(S, c.target.routineId) : null
-    let stale = contextStale || scopeStale
+    let stale = contextStale || scopeStale || (proposal.source === 'chat' && (planMoved || !proposal.expiresAt || proposal.expiresAt <= Date.now()))
     if (c.type !== 'add-routine' && c.type !== 'week' && !r) stale = true
     else if (c.target?.exId && !findEx(r, c.target.exId)) stale = true
     else if (c.type === 'week') {
@@ -201,7 +202,7 @@ export function markStale(proposal, S) {
       const cur = currentValue(S, c)
       // `before` is what the Coach saw. If the live plan disagrees, someone has already
       // changed it — applying would silently overwrite their edit with a stale premise.
-      if (cur !== undefined && c.before != null && cur !== c.before && cur !== null) stale = true
+      if (proposal.source === 'chat' ? (['repsMin', 'repsMax'].includes(c.type) ? cur || 0 : cur) !== c.before : cur !== undefined && c.before != null && cur !== c.before && cur !== null) stale = true
     }
     return { ...c, status: stale || c.status === 'stale' ? 'stale' : c.status || 'proposed' }
   })
@@ -617,10 +618,35 @@ function need(x) { if (!x) throw new Error('missing target'); return x }
  * this function already made, which is precisely the transaction we want — no half-applied
  * change-set, ever.
  */
-export function applyChangeSet(s, proposal, acceptedIds) {
+// A status proof is obtained immediately before the synchronous store transaction. It is not
+// authorization from the model: the provider never supplies runtime identity or pending state.
+const chatBinding = p => fingerprint({ id: p.id, revision: p.revision, kind: p.kind, source: p.source,
+  planHash: p.planHash, context: p.context, scope: p.scope, expiresAt: p.expiresAt,
+  executionModeFingerprint: p.executionModeFingerprint || null,
+  changes: (p.changes || []).map(({ id, type, target, before, after, why }) => ({ id, type, target, before, after, why })) })
+function assertChatApply(s, p, ids, authority) {
+  const fresh = authority?.pending
+  const invalid = () => { throw new Error(t('Your plan or Coach answers changed. Ask for a fresh proposal.')) }
+  if (!fresh || authority.job || authority.upgradeRequired || !authority.runtimeIdentity ||
+      authority.runtimeIdentity !== authority.currentRuntimeIdentity || p.runtimeIdentity !== authority.runtimeIdentity ||
+      fresh.runtimeIdentity !== authority.runtimeIdentity || chatBinding(p) !== chatBinding(fresh) ||
+      p.kind !== 'review' || !Number.isInteger(p.revision) || p.revision < 1 ||
+      !p.expiresAt || p.expiresAt <= Date.now() || !p.context || !p.planHash || p.planHash !== planHash(s) ||
+      p.context.unit !== (s.unit || 'kg') || p.context.profileRevision !== fingerprint(s.coach?.profile || null) ||
+      p.executionModeFingerprint && p.executionModeFingerprint !== authority.executionModeFingerprint) invalid()
+  if (!Array.isArray(ids) || !ids.length || new Set(ids).size !== ids.length || ids.some(id => !p.changes.some(c => c.id === id))) invalid()
+  if (p.changes.some(c => (['repsMin', 'repsMax'].includes(c.type) ? currentValue(s, c) || 0 : currentValue(s, c)) !== c.before)) invalid()
+  const checked = validateChat({ coach_contract: 1, chat_actions_contract: 1, replyType: 'proposal',
+    answer: p.answer || p.summary, summary: p.summary, targetRoutineId: p.scope?.routineId,
+    changes: p.changes.map(({ id, type, target, before, after, why }) => ({ id, type, target, before, after, why })), notes: p.notes || [] },
+    canonicalPlan(s), { scope: p.scope })
+  if (!checked.ok || checked.proposal?.replyType !== 'proposal' || checked.proposal.changes.length !== p.changes.length) invalid()
+}
+export function applyChangeSet(s, proposal, acceptedIds, authority) {
   validateProposal(proposal)
   const prior = decisionResult(s, proposal.id)
   if (prior) return { ...prior, alreadyApplied: true }
+  if (proposal.source === 'chat') assertChatApply(s, proposal, acceptedIds, authority)
   const marked = markStale(proposal, s)
   const accepted = new Set(acceptedIds || [])
   if (reviewScopeErrors(proposal.changes, proposal.scope || proposal.context?.scope).length) throw new Error(t('The proposal exceeds the selected routine. Ask again.'))
@@ -752,7 +778,7 @@ function rememberDecision(s, p, body, result) {
   const c = coachOf(s), now = Date.now()
   const requestId = uid()
   c.decisions = [...(c.decisions || []).filter(d => now - d.at < 21 * 864e5), { proposalId: p.id, requestId, at: now, result }].slice(-100)
-  c.outbox = [...(c.outbox || []).filter(d => d.proposalId !== p.id), { proposalId: p.id, requestId, ...(p.originIdentity ? { originIdentity: p.originIdentity } : {}), origin: p.origin || (String(p.id).startsWith('local-') ? 'local' : String(p.id).startsWith('demo-') ? 'demo' : 'server'), ...body }].slice(-100)
+  c.outbox = [...(c.outbox || []).filter(d => d.proposalId !== p.id), { proposalId: p.id, requestId, ...(p.source === 'chat' ? { revision: p.revision } : {}), ...(p.originIdentity ? { originIdentity: p.originIdentity } : {}), origin: p.origin || (String(p.id).startsWith('local-') ? 'local' : String(p.id).startsWith('demo-') ? 'demo' : 'server'), ...body }].slice(-100)
 }
 export function acknowledgeDecision(s, requestId) {
   if (s.coach) s.coach.outbox = (s.coach.outbox || []).filter(d => d.requestId !== requestId)

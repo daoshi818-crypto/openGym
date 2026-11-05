@@ -30,7 +30,7 @@ export function startCadence(deps) {
       try {
         const S = jobs.readState(user.id);
         const coach = S?.coach;
-        if (!hasCoachConsent(S)) continue;         // consent revoked ⇒ cadence stops
+        if (S?.modules?.coach === false || !hasCoachConsent(S)) continue;         // consent revoked ⇒ cadence stops
         // A job still running, or a proposal nobody has answered, is not a reason for another:
         // a second review would only replace the first unread. status() also retires an
         // expired proposal, which a phone that stays closed never polls for.

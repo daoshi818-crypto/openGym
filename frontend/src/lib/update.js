@@ -11,7 +11,7 @@
 import { MOBILE } from './mobile.js'
 import { APK_VARIANTS, APK_VARIANT } from './apk-variant.js'
 
-const REPO = 'daoshi818-crypto/openGym'   // [fork] 指向自己的 fork：Actions 会把官方更新 rebase 本地定制后自动构建签名，发布到这里
+const REPO = 'daoshi818-crypto/openGym'   // [fork] 固定已测试的 fork 提交构建签名；官方内容通过审阅后选择性适配。
 export const RELEASES_PAGE = `https://github.com/${REPO}/releases/latest`
 
 // The CDN keeps a domestic-accessible path; origin avoids stale branch-cache metadata after

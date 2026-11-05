@@ -125,4 +125,12 @@ export const ASK_SCHEMA = {
   required: ['coach_contract', 'answer']
 };
 
-export const SCHEMAS = { review: REVIEW_SCHEMA, create: CREATE_SCHEMA, refine: CREATE_SCHEMA, debrief: DEBRIEF_SCHEMA, debriefPlan: PLAN_DEBRIEF_SCHEMA, ask: ASK_SCHEMA };
+export const CHAT_SCHEMA = {
+  type: 'object', properties: {
+    coach_contract: { type: 'integer' }, chat_actions_contract: { type: 'integer' },
+    replyType: { type: 'string', enum: ['answer', 'clarify', 'proposal'] },
+    answer: STR, summary: STR, targetRoutineId: STR,
+    changes: { ...REVIEW_SCHEMA.properties.changes, maxItems: 10 }, notes: STRINGS, clarification: STR
+  }, required: ['coach_contract', 'chat_actions_contract', 'replyType', 'answer', 'changes']
+};
+export const SCHEMAS = { chat: CHAT_SCHEMA, review: REVIEW_SCHEMA, create: CREATE_SCHEMA, refine: CREATE_SCHEMA, debrief: DEBRIEF_SCHEMA, debriefPlan: PLAN_DEBRIEF_SCHEMA, ask: ASK_SCHEMA };

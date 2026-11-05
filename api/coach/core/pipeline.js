@@ -10,6 +10,7 @@
  * config it needs, and whatever the adapter's `invoke` wants passed through (`jobDir`, `env`,
  * a `fetch`), and gets back a plain object.
  */
+import { validateChat } from './chat.js';
 import { CONTRACT } from './payload.js';
 import { buildPrompt, buildPromptParts } from './prompt.js';
 import { SCHEMAS } from './schemas.js';
@@ -75,7 +76,9 @@ export async function attemptOnce({ adapter, cfg, kind, payload, model, timeoutM
   const answer = kind === 'create' && isChangeList(parsed.value)
     ? changesOntoPlan(payload.refine?.previous, parsed.value) || parsed.value
     : parsed.value;
-  const checked = kind === 'review'
+  const checked = kind === 'chat'
+    ? validateChat(parsed.value, payload.plan, { customIds, equipment, offered, lang: payload.meta?.lang, scope: payload.scope })
+    : kind === 'review'
     ? validateReview(parsed.value, payload.plan, { customIds, equipment, offered, lang: payload.meta?.lang, scope: payload.scope })
     : kind === 'debrief'
       ? validateDebrief(parsed.value, { scope: payload.debriefScope, sessions: payload.sessions })

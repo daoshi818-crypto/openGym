@@ -40,13 +40,13 @@ export default {
       const rows = s.workout.rows[i] || []
       return {
         name: ex.name,
-        idx: i,
+        idx: i, sid: s.sid, entryInstanceId: ex.entryInstanceId,
         // 官方 Overview 的右侧“已完成/总数”与当前动作高亮：只影响展示，不改完成语义。
         doneCount: rows.filter(r => r.done).length,
         totalCount: rows.length,
         current: i === s.exIdx,
         rows: rows.map((row, j) => ({
-          no: String(j + 1), txt: this.rowTxt(row, ex), done: row.done, exIdx: i, setIdx: j, setId: row.setId,
+          no: String(j + 1), txt: this.rowTxt(row, ex), done: row.done, sid: s.sid, entryInstanceId: ex.entryInstanceId, exIdx: i, setIdx: j, setId: row.setId,
         })),
       }
     })
@@ -128,27 +128,40 @@ export default {
     this.expanded = this.expanded === idx ? -1 : idx
   },
 
+  pickExercise(item) {
+    if (this.endOn || this.interactionBlocked() || this.navPending) return
+    const s = loadState()
+    if (!item || item.sid !== s.sid || !s.workout) { this.hint = '训练已变化'; return }
+    const ex = item.entryInstanceId ? s.workout.exercises.findIndex(e => e.entryInstanceId === item.entryInstanceId) : item.idx
+    if (!(ex >= 0) || !s.workout.exercises[ex]) { this.hint = '该动作已被删除'; return }
+    const rows = s.workout.rows[ex] || [], first = rows.findIndex(r => !r.done), set = first < 0 ? 0 : first
+    if (!rows[set]) { this.hint = '该动作已没有可选的组'; return }
+    this.pickRow({ sid: s.sid, entryInstanceId: item.entryInstanceId, exIdx: ex, setId: rows[set].setId, setIdx: set })
+  },
+
   // 一次有效轻触 = 一次导航：先同步运行态与持久化（网络与回执不参与），再返回训练页。
   pickRow(d) {
     if (this.endOn || this.interactionBlocked() || this.navPending) return
     const s = loadState()
     if (!s.active || !s.workout) { router.replace({ uri: '/Summary' }); return }
-    const ex = Number(d && d.exIdx)
+    if (!d || (d.sid && d.sid !== s.sid)) { this.hint = '训练已变化'; return }
+    const ex = d.entryInstanceId ? s.workout.exercises.findIndex(e => e.entryInstanceId === d.entryInstanceId) : Number(d.exIdx)
     if (!(ex >= 0 && ex < s.workout.exercises.length)) { this.hint = '该动作已被删除'; return }
     const rows = s.workout.rows[ex] || []
     if (!rows.length) { this.hint = '该动作已没有可选的组'; return }
     let set = Number(d.setIdx)
     if (d.setId) {
       const stable = rows.findIndex(r => r.setId === d.setId)
-      if (stable >= 0) set = stable
+      if (stable < 0) { this.hint = '该组已被删除'; return }
+      set = stable
     }
-    if (!(set >= 0 && set < rows.length)) set = Math.max(0, Math.min(Number(set) || 0, rows.length - 1))
+    if (!Number.isInteger(set) || !(set >= 0 && set < rows.length)) { this.hint = '该组已被删除'; return }
     this.hint = ''
     s.exIdx = ex
     s.setIdx = set
     s.focusAt = Date.now()
     save(s)
-    sendEvent({ t: 'focus', sid: s.sid, ex, set: set + 1, at: s.focusAt, source: 'watch' })
+    sendEvent({ t: 'focus', sid: s.sid, entryInstanceId: s.workout.exercises[ex].entryInstanceId, setId: rows[set].setId, ex, set: set + 1, at: s.focusAt, source: 'watch' })
     this.navPending = true
     this.focusPanel()
     router.back()
@@ -178,7 +191,11 @@ export default {
     this.hint = ''
     this.closeWorkout('abandoned')
   },
-  saveWorkout() { if (!this.interactionBlocked()) this.closeWorkout('saved') },
+  saveWorkout() {
+    if (this.interactionBlocked() || this.navPending) return
+    this.navPending = true
+    router.replace({ uri: '/Workout', params: { requestFinish: true } })
+  },
 
 }
 </script>
@@ -191,9 +208,10 @@ export default {
     <div class="body">
       <list class="scroll" id="exercises" touch-focusable="true" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
         <list-item class="exrow {{ item.current ? 'current' : '' }}" type="exercise" for="{{ item in list }}" tid="idx">
-          <div class="exhead" onclick="toggleEx(item.idx)">
-            <text class="exname {{ item.current ? 'current-name' : '' }}">{{ item.name }}</text>
+          <div class="exhead">
+            <text class="exname {{ item.current ? 'current-name' : '' }}" onclick="pickExercise(item)">{{ item.name }}</text>
             <text class="cnt {{ item.doneCount === item.totalCount && item.totalCount > 0 ? 'cnt-done' : '' }}">{{ item.doneCount }}/{{ item.totalCount }}</text>
+            <input class="expand-hit" type="button" value="{{ expanded === item.idx ? '⌃' : '⌄' }}" onclick="toggleEx(item.idx)" />
           </div>
           <div class="rows" if="{{ expanded === item.idx }}">
             <div class="rrow" for="{{ r in item.rows }}" onclick="pickRow(r)">
@@ -277,4 +295,6 @@ export default {
   .endbtn { width: 264px; height: 40px; margin-top: 8px; font-size: 17px; }
   .exit-row .endbtn { width: 126px; height: 40px; font-size: 15px; }
 }
+.expand-hit { width: 44px; height: 44px; font-size: 24px; color: #929297; background-color: #000000; }
+.exname { width: 240px; min-height: 44px; }
 </style>

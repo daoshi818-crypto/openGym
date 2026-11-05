@@ -313,3 +313,40 @@ describe('timeouts on the phone', () => {
     for (const p of ['anthropic', 'openai', 'gemini']) expect(timeoutFor(p)).toBe(TIMEOUT_MS)
   })
 })
+
+
+describe('chat actions on BYOK', () => {
+  const proposal = () => ({ coach_contract: 1, chat_actions_contract: 1, replyType: 'proposal', answer: 'Not applied', summary: 'User-directed change', targetRoutineId: 'r1', changes: [{ id: 'c', type: 'sets', target: { routineId: 'r1', exId: EX }, after: 4, why: 'Requested' }], notes: [], clarification: '' })
+  beforeEach(() => {
+    _resetCoachDevice(); local._resetLocal(); device.data = { mode: 'byok', provider: 'openai', model: 'gpt-t' }
+    wire.calls = []; wire.answer = chat(JSON.stringify(proposal())); secret.key = 'sk-test-1'
+  })
+  it('normalizes proposal as review and replays clientRequestId before cap or busy', async () => {
+    const S=state(), body={text:'Adjust this plan',clientRequestId:'req1'}
+    const first=await local.localChat(S,body);const duplicate=await local.localChat(S,body)
+    expect(duplicate.job.id).toBe(first.job.id)
+    let status=await settle();expect(status.pending.kind).toBe('review');expect(status.pending.source).toBe('chat');expect(status.pending.revision).toBe(1)
+    expect(S.routines[0].ex[0].sets).toBe(3);expect(status.chatActionsVersion).toBe(1)
+    await local.localChat(S,body);expect(wire.calls).toHaveLength(1);expect((await local.localStatus()).cap.used).toBe(1)
+    await expect(local.localChat(S,{...body,text:'different'})).rejects.toMatchObject({code:'invalid_request'})
+    const p=status.pending
+    wire.answer=chat(JSON.stringify({...proposal(),replyType:'answer',answer:'Explanation',changes:[]}))
+    await local.localChat(S,{text:'Why?',clientRequestId:'req2',proposalRef:{id:p.id,revision:1}});status=await settle()
+    expect(status.pending.kind).toBe('ask');expect(status.pending.changes).toBeUndefined();expect(status.pending.prev.id).toBe(p.id)
+    await local.localResolve({proposalId:status.pending.id,requestId:'read'});expect((await local.localStatus()).pending.id).toBe(p.id)
+    wire.answer=chat(JSON.stringify({...proposal(),changes:[{...proposal().changes[0],after:5}]}))
+    await local.localChat(S,{text:'Make it five',clientRequestId:'req3',proposalRef:{id:p.id,revision:1}});status=await settle()
+    expect(status.pending.revision).toBe(2);expect(status.pending.parentProposalId).toBe(p.id)
+    const p2=status.pending;wire.answer=chat('invalid')
+    await local.localChat(S,{text:'Revise again',clientRequestId:'req4',proposalRef:{id:p2.id,revision:2}});status=await settle()
+    expect(status.last.outcome).toBe('failed');expect(status.pending.id).toBe(p2.id)
+  })
+  it('rejects a late result when its referenced pending was dismissed during generation', async () => {
+    const S=state();await local.localChat(S,{text:'Adjust',clientRequestId:'a'});const p=(await settle()).pending
+    let release;wire.answer=()=>new Promise(r=>release=()=>r(chat(JSON.stringify(proposal()))))
+    await local.localChat(S,{text:'Refine',clientRequestId:'b',proposalRef:{id:p.id,revision:1}})
+    while(!release)await new Promise(r=>setTimeout(r,1))
+    await local.localResolve({proposalId:p.id,revision:1,requestId:'dismiss'});release()
+    const status=await settle();expect(status.pending).toBeNull();expect(status.last.errorClass).toBe('pending_mismatch')
+  })
+})

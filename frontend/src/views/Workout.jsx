@@ -1,3 +1,4 @@
+import { isOn } from '../lib/modules.js'
 import { Fragment, useEffect, useId, useRef, useState } from 'react'
 import SwipeCards from '../components/SwipeCards.jsx'
 import WatchWorkoutButton from '../components/WatchWorkoutButton.jsx'
@@ -357,7 +358,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
   // `i` for a set and `i:dN` for its N-th drop; a rest-pause burst keeps the set's weight, so it
   // is not in the sequence.
   const plateLoading = mode === 'reps' && !editing
-  const loadKind = plateLoading ? loadKindFor(S, cfg) : 'none'
+  const loadKind = plateLoading && isOn(S, 'plates') ? loadKindFor(S, cfg) : 'none'
   const base = baseWeightFor(S, entry.id)
   const loadSeq = loadKind === 'none' ? [] : (() => {
     const inv = inventoryFor(S)
@@ -417,7 +418,7 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
     sections: [
       { title: t('Today'), items: [
         onSwap && { icon: 'swap', label: t('Swap exercise'), onClick: onSwap, disabled: busy },
-        { icon: 'sunrise', label: t('Add warm-up set'), onClick: onAddWarmup },
+        isOn(S, 'plates') && { icon: 'sunrise', label: t('Add warm-up set'), onClick: onAddWarmup },
         { icon: 'note', label: entry.note ? t('Edit note') : t('Add note'), sub: entry.note || undefined, onClick: () => exerciseNoteSheet(entryIdx) },
         onNoProg && { icon: 'chartLineSlash', label: t('Don’t count for progression'), sub: t('This exercise, this session only'), on: entry.noProg === true, onClick: () => onNoProg(entry.noProg !== true) },
       ] },

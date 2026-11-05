@@ -2491,6 +2491,12 @@ paths:
         What the Coach screen polls. Also the only place a proposal past its 14-day
         expiry is retired. A phone that stays closed never polls, so nothing else
         would notice.
+      parameters:
+        - in: query
+          name: chatActionsVersion
+          required: false
+          schema: { type: integer, const: 1 }
+          description: Negotiate chat proposals; older clients receive upgradeRequired with pending/job hidden.
       responses:
         '200':
           description: This profile's Coach state.
@@ -2677,6 +2683,8 @@ paths:
               type: object
               required: [proposalId, requestId]
               properties:
+                chatActionsVersion: { type: integer, const: 1, description: Required for chat proposals. }
+                revision: { type: integer, minimum: 1, description: Required exact current revision for chat proposals. }
                 proposalId: { type: string, maxLength: 128 }
                 requestId: { type: string, maxLength: 128 }
                 accepted:
@@ -2698,6 +2706,70 @@ paths:
               schema: { $ref: '#/components/schemas/Ok' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/CoachRefused' }
+        '503': { $ref: '#/components/responses/CoachOff' }
+
+  /api/coach/chat:
+    post:
+      tags: [coach]
+      operationId: postCoachChat
+      summary: Discuss training or request a confirmable routine-template adjustment
+      description: |
+        Queues a chat job. Results arrive through status as a read-only answer/clarification
+        (kind ask, source chat), or a review proposal (source chat, revision and routine scope).
+        A proposal never edits an active workout or history. The client validates fresh status
+        and explicitly confirms selected changes before applying them to routine templates.
+        One pending slot is retained. Refinements must name the current proposal revision;
+        an unsuccessful refinement leaves it intact. clientRequestId deduplicates identical
+        requests for 24 hours within the retained 64-request ledger and runtime mode.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chatActionsVersion, clientRequestId, text]
+              properties:
+                chatActionsVersion: { type: integer, const: 1 }
+                clientRequestId: { type: string, minLength: 1, maxLength: 128 }
+                text:
+                  type: string
+                  minLength: 1
+                  maxLength: 4000
+                  description: Trimmed and capped by the instance maxMessageLen setting.
+                lang: { type: string }
+                scope:
+                  type: object
+                  required: [kind, routineId]
+                  properties:
+                    kind: { type: string, const: routine }
+                    routineId: { type: string, maxLength: 128 }
+                proposalRef:
+                  type: object
+                  additionalProperties: false
+                  required: [id, revision]
+                  properties:
+                    id: { type: string }
+                    revision: { type: integer, minimum: 1 }
+                contextRef:
+                  type: object
+                  additionalProperties: false
+                  required: [kind, id]
+                  properties:
+                    kind: { type: string, const: debrief }
+                    id: { type: string }
+                  description: The exact selected debrief; never silently replaced by the latest.
+                today:
+                  type: object
+                  description: Optional current-session context; not a write target.
+      responses:
+        '202': { $ref: '#/components/responses/CoachJobQueued' }
+        '400':
+          description: invalid (empty text), invalid_request (missing/reused request id or invalid request).
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/CoachRefused' }
+        '409':
+          description: upgrade_required, busy, shared, pending_mismatch, scope_mismatch, or context_missing.
+        '429': { $ref: '#/components/responses/CoachRefused' }
         '503': { $ref: '#/components/responses/CoachOff' }
 
   /api/coach/cohort:
@@ -3763,6 +3835,9 @@ components:
     CoachStatus:
       type: object
       properties:
+        chatActionsVersion: { type: integer, const: 1 }
+        upgradeRequired: { type: boolean }
+        code: { type: string, description: upgrade_required for a client unable to read the pending chat result. }
         debriefSelectionVersion: { type: integer, const: 2 }
         decisionVersion: { type: integer, const: 2 }
         scopeVersion: { type: integer, const: 2 }
@@ -3771,7 +3846,7 @@ components:
             - type: object
               properties:
                 id: { type: string }
-                kind: { type: string, enum: [create, review, debrief] }
+                kind: { type: string, enum: [create, review, debrief, ask, chat] }
                 state: { type: string, enum: [queued, running] }
                 startedAt: { type: integer, description: Epoch ms. }
             - type: 'null'
@@ -3794,7 +3869,7 @@ components:
               description: How the most recent job ended, so the chat can say so in the Coach's own voice.
               properties:
                 id: { type: string }
-                kind: { type: string, enum: [create, review, debrief] }
+                kind: { type: string, enum: [create, review, debrief, ask, chat] }
                 outcome: { type: string, enum: [ready, nochange, applied, dismissed, expired, failed] }
                 errorClass:
                   oneOf: [{ type: string }, { type: 'null' }]
@@ -3810,10 +3885,21 @@ components:
         The answer waiting for a decision, from whichever kind of job produced it. It
         expires 14 days after it was made; the first status poll after that retires it.
         `changes` comes from a review, `bundle` from a plan, `score`/`highlights` from a
-        debrief. One of the three, never more.
+        debrief. Chat answers use kind ask; chat adjustments use kind review with source chat.
       properties:
         id: { type: string, description: The job's id. }
-        kind: { type: string, enum: [create, review, debrief] }
+        source: { type: string, enum: [chat], description: Present for chat-contract results. }
+        replyType: { type: string, enum: [answer, clarify] }
+        answer: { type: string, maxLength: 6000 }
+        clarification: { type: string, maxLength: 1200 }
+        revision: { type: integer, minimum: 1 }
+        parentProposalId: { type: string }
+        scope:
+          type: object
+          properties:
+            kind: { type: string, const: routine }
+            routineId: { type: string }
+        kind: { type: string, enum: [create, review, debrief, ask] }
         createdAt: { type: integer, description: Epoch ms. }
         expiresAt: { type: integer, description: Epoch ms. }
         planHash: { type: string, description: The plan this was written against. A later edit makes it stale. }

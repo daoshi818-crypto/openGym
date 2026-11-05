@@ -1,3 +1,4 @@
+import { isOn } from './modules.js'
 // Pure helpers over the state object S (ported 1:1 from the vanilla app).
 import { syncSupersetMeta } from './superset-meta.js'
 import { todayISO, isoOf, weekKey, weekStartOf, fmtNum } from './format.js'
@@ -126,6 +127,7 @@ export const capEffort = (kind, v) => capEffortValue(kind, v)
 // when the profile has no answer of its own — an explicit 'none' has to win over it, or a
 // backup or another device that still carries the old flag would switch the column back on.
 export const effortOf = S => {
+  if (!isOn(S, 'effort')) return 'none'
   const e = S && S.effort
   return e === 'none' || EFFORT[e] ? e : (S && S.showRir ? 'rir' : 'none')
 }
@@ -531,6 +533,7 @@ export function nextTrainingDay(S, iso) {
  */
 export function buildSets(S, cfg, options = {}) {
   const rows = buildWorkSets(S, cfg, options)
+  if (!isOn(S, 'plates')) return rows
   const warm = Math.max(0, Math.min(MAX_PLANNED_WARMUPS, Math.round(cfg.warmupSets) || 0))
   if (!warm) return rows
   const mode = modeOf(cfg)

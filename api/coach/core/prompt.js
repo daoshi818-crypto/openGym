@@ -4,7 +4,7 @@
 import { PROMPTS } from './prompts.js';
 
 export const taskOf = (kind, payload) =>
-  kind === 'review' ? 'review' : kind === 'debrief' ? (payload?.debriefScope?.mode === 'plan' ? 'debriefPlan' : 'debrief') : kind === 'ask' ? 'ask' : payload && payload.refine ? 'refine' : 'create';
+  kind === 'chat' ? 'chat' : kind === 'review' ? 'review' : kind === 'debrief' ? (payload?.debriefScope?.mode === 'plan' ? 'debriefPlan' : 'debrief') : kind === 'ask' ? 'ask' : payload && payload.refine ? 'refine' : 'create';
 
 
 /**

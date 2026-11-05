@@ -3,7 +3,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 
 const target = process.argv[2] || process.env.WATCH_DEVICE_TYPE || 'watch-square'
-const build = path.resolve(__dirname, '../build', target)
+const build = process.env.BLUEOS_BUILD_ROOT ? path.resolve(process.env.BLUEOS_BUILD_ROOT, target) : path.resolve(__dirname, '../build', target)
 const read = name => JSON.parse(fs.readFileSync(path.join(build, name), 'utf8'))
 const manifest = read('manifest.json')
 assert.ok(manifest.deviceTypeList.includes(target), target + ' target is missing')
@@ -29,31 +29,35 @@ for (const page of Object.keys(manifest.router.pages)) {
     assert.ok(parseFloat(digits.height) >= parseFloat(digits.lineHeight), 'Native countdown clips its line box')
     assert.ok(parseFloat(styles['.rrow'].marginTop) >= 8, 'Native countdown needs separation from rest controls')
     assert.ok(styles['.completion-panel'], 'All-complete choice was not compiled')
-    const checkRest = sheet => {
+    const checkScrollableViews = sheet => {
       const px = (selector, field) => parseFloat(sheet[selector]?.[field] || 0)
-      const children = ['.rest-ex', '.rest', '.rrow', '.next', '.next-details', '.rest-panel .effort-row', '.skip']
-      const height = children.reduce((n, selector) => n + px(selector, 'height') + px(selector, 'marginTop') + px(selector, 'marginBottom'), 0)
-      assert.ok(height <= px('.rest-panel', 'height'), 'Rest children exceed panel height: ' + height)
-      const training = ['.ex', '.group', '.inputs', '.navrow', '.compact .effort-row']
-      const trainingHeight = training.reduce((n, selector) => n + px(selector, 'height') + px(selector, 'marginTop') + px(selector, 'marginBottom'), 0)
-      assert.ok(trainingHeight <= px('.compact', 'height'), 'Training children exceed panel height: ' + trainingHeight)
-      const picker = ['.effort-head', '.effort-target', '.effort-scale', '.effort-pick', '.effort-hint', '.effort-meaning', '.effort-ok', '.effort-clear']
-      const pickerHeight = picker.reduce((n, selector) => n + px(selector, 'height') + px(selector, 'marginTop') + px(selector, 'marginBottom'), 0)
-      assert.ok(pickerHeight <= 434, 'Effort picker clips the viewport: ' + pickerHeight)
-
-      assert.ok(px('.rest-ex', 'height') >= 2 * px('.rest-ex', 'lineHeight'), 'Rest exercise clips two lines')
-      assert.ok(px('.rest-ex', 'lineHeight') >= px('.rest-ex', 'fontSize') * 1.2, 'Rest exercise line-height is too tight')
-      assert.ok(px('.rest', 'lineHeight') >= px('.rest', 'fontSize') * 1.2, 'Countdown media line-height is too tight')
-      assert.ok(px('.rest', 'height') >= px('.rest', 'lineHeight'), 'Countdown media clips its line box')
-      const occupied = ['.topbar', '.metabar', '.rest-panel', '.primary-footer'].reduce((n, s) => n + px(s, 'height'), 0)
-      assert.ok(occupied + 6 <= px('.screen', 'height'), 'Rest page needs footer clearance')
+      const screenHeight = px('.screen', 'height')
+      for (const [viewport, panel] of [['.training-scroll', '.compact'], ['.rest-scroll', '.rest-panel']]) {
+        assert.ok(px(viewport, 'height') > 0, viewport + ' native list viewport missing')
+        assert.ok(px(viewport, 'height') + px(panel, 'paddingTop') <= px(panel, 'height'), viewport + ' exceeds its panel')
+        assert.ok(px('.topbar', 'height') + px(panel, 'height') + px('.primary-footer', 'height') <= screenHeight, panel + ' hides the footer')
+      }
+      assert.ok(px('.operation-scroll', 'height') + px('.topbar', 'height') <= screenHeight, 'Operation list exceeds screen')
+      assert.ok(px('.effort-scroll', 'height') + px('.effort-scroll', 'marginTop') <= 434, 'Effort list exceeds viewport')
+      // Content may be taller than these lists; do not reintroduce sum-of-children <=
+      // viewport assertions which would force shrinking the readable digits again.
+      assert.ok(px('.rest-ex', 'height') >= 2 * px('.rest-ex', 'lineHeight'), 'Rest title clips two lines')
+      assert.ok(px('.ex', 'height') >= 2 * px('.ex', 'lineHeight'), 'Action title clips two lines')
+      assert.ok(px('.rest', 'fontSize') >= 96, 'Countdown was squeezed instead of scrolled')
+      assert.ok(px('.rest', 'lineHeight') >= px('.rest', 'fontSize') * 1.2, 'Countdown line-height too tight')
+      assert.ok(px('.rest', 'height') >= px('.rest', 'lineHeight'), 'Countdown clips its line box')
+      assert.ok(px('.effort-value', 'fontSize') >= 80, 'Effort digits too small')
+      assert.ok(px('.elapsed-value', 'fontSize') >= 76, 'Elapsed digits too small')
+      assert.ok(px('.set-hit', 'width') >= 44 && px('.set-hit', 'height') >= 44, 'Set hit target too small')
+      assert.equal(sheet['.set-dots'].flexWrap, 'wrap', 'Set dots must wrap inside the round safe area')
+      assert.ok(px('.set-dots', 'height') >= 2 * px('.set-hit', 'height'), 'Wrapped set targets clip the second row')
+      assert.ok(px('.set-dots', 'width') <= px('.screen', 'width'), 'Set dots exceed safe area')
     }
-    checkRest(styles)
-    const roundMedia = styles['@MEDIA']?.find(item => item.condition === 'screen and (min-width: 450px)')
-    if (roundMedia) {
+    checkScrollableViews(styles)
+    for (const media of styles['@MEDIA'] || []) {
       const merged = { ...styles }
-      for (const [selector, rule] of Object.entries(roundMedia)) merged[selector] = { ...(styles[selector] || {}), ...rule }
-      checkRest(merged)
+      for (const [selector, rule] of Object.entries(media)) if (selector !== 'condition') merged[selector] = { ...(styles[selector] || {}), ...rule }
+      checkScrollableViews(merged)
     }
     if (target === 'watch-round') {
       const media = styles['@MEDIA']?.find(item => item.condition === 'screen and (min-width: 450px)')

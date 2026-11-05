@@ -118,7 +118,7 @@ export function healCustomEx(list) {
   return changed ? out : list
 }
 // Full searchable catalogue — customs first so your own exercises are easy to find.
-export const allExercises = st => [...(st.customEx || []), ...CATALOGUE]
+export const allExercises = st => [...(st.customEx || []), ...CATALOGUE].filter(e => !st.exMerged?.[e.id]?.into)
 
 function searchableText(value) {
   if (Array.isArray(value)) return value.map(searchableText).join(' ')

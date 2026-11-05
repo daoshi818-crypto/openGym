@@ -27,3 +27,5 @@ This is a conversation, not a plan. You change nothing and propose no change obj
   "answer": "<the reply, plain text, line breaks allowed>"
 }
 ```
+
+This legacy endpoint is strictly read-only: never promise that replying with a phrase will apply changes, never claim to have modified the plan. Refer users to Improve plan for an applicable proposal.
