@@ -71,16 +71,16 @@ jobs:
           tag_name: v${{ env.APP_VERSION }}
           name: openGym custom v${{ env.APP_VERSION }}
           body: |
-          手机：${{ env.APP_VERSION }}；手表：${{ env.WATCH_VERSION }}。
-          本版为官方 v1.4.4 的选择性合入（v1.4.3..v1.4.4，官方 peeled commit 5f5832db56080837b58342ff50f78631dcc63e07），逐条处置见 docs/dev/UPSTREAM_V1_4_4_INTEGRATION.zh-CN.md。
-          新增每组备注：组号菜单可写、训练页与历史显示、CSV 增加 set_note 列（可回导）、MCP get_workout 与 Coach 载荷一并携带；沿用本仓库 500 字上限。
-          新增本周剩余训练数：Home 连续卡下显示「本周还剩 X/Y」，轮换可在 设置 → 计划与日程 → 每周训练次数 设定目标。
-          新增每组对比上次：完成组标 ↑/=/↓（重量优先、次数其次、冲突时用估算 1RM；辅助器械反向；保持按秒、有氧按分钟），读屏文字同步，可在 设置 → 训练 关闭。
-          新增疑似笔误确认：手打勾且数值远超最好或远低于上次同组时先问一次，「我来改」保留未勾，「就按这样记录」照记；取消勾选、计时组自完成、手表打勾、辅助器械重量都不提问。
-          新增 28 条界面文案：简体/繁体为正式译文，俄/乌/波三语的复数形式已补齐，其余语言暂用英文占位。
-          范围：官方 iOS 内容全部未合入；Wear OS 仅保留专题文档，未新增手表工程；BlueOS 手表协议（DeviceRpc/outbox/eventId/业务 ACK/同步冲突）未改动，手表仍为 ${{ env.WATCH_VERSION }}。
-          验证：前端全量 474 文件 / 5814 测试通过；API 载荷 47 项通过；18 语言键一致（各 2449 键）；本地 vite 生产构建通过。Android/手表真机验收仍需按 docs/dev/UPSTREAM_V1_4_4_INTEGRATION.zh-CN.md 第 8 节执行。
-          手机 openGym.apk 沿用本仓库正式签名；vivo WATCH GT 安装 opengym-watch-${{ env.WATCH_VERSION }}.rpk，圆屏安装 opengym-watch-round-${{ env.WATCH_VERSION }}.rpk。
+            手机：${{ env.APP_VERSION }}；手表：${{ env.WATCH_VERSION }}。
+            本版为官方 v1.4.4 的选择性合入（v1.4.3..v1.4.4，官方 peeled commit 5f5832db56080837b58342ff50f78631dcc63e07），逐条处置见 docs/dev/UPSTREAM_V1_4_4_INTEGRATION.zh-CN.md。
+            新增每组备注：组号菜单可写、训练页与历史显示、CSV 增加 set_note 列（可回导）、MCP get_workout 与 Coach 载荷一并携带；沿用本仓库 500 字上限。
+            新增本周剩余训练数：Home 连续卡下显示「本周还剩 X/Y」，轮换可在 设置 → 计划与日程 → 每周训练次数 设定目标。
+            新增每组对比上次：完成组标 ↑/=/↓（重量优先、次数其次、冲突时用估算 1RM；辅助器械反向；保持按秒、有氧按分钟），读屏文字同步，可在 设置 → 训练 关闭。
+            新增疑似笔误确认：手打勾且数值远超最好或远低于上次同组时先问一次，「我来改」保留未勾，「就按这样记录」照记；取消勾选、计时组自完成、手表打勾、辅助器械重量都不提问。
+            新增 28 条界面文案：简体/繁体为正式译文，俄/乌/波三语的复数形式已补齐，其余语言暂用英文占位。
+            范围：官方 iOS 内容全部未合入；Wear OS 仅保留专题文档，未新增手表工程；BlueOS 手表协议（DeviceRpc/outbox/eventId/业务 ACK/同步冲突）未改动，手表仍为 ${{ env.WATCH_VERSION }}。
+            验证：前端全量 474 文件 / 5814 测试通过；API 载荷 47 项通过；18 语言键一致（各 2449 键）；本地 vite 生产构建通过。Android/手表真机验收仍需按 docs/dev/UPSTREAM_V1_4_4_INTEGRATION.zh-CN.md 第 8 节执行。
+            手机 openGym.apk 沿用本仓库正式签名；vivo WATCH GT 安装 opengym-watch-${{ env.WATCH_VERSION }}.rpk，圆屏安装 opengym-watch-round-${{ env.WATCH_VERSION }}.rpk。
           files: |
             openGym.apk
             openGym.apk.sha256
