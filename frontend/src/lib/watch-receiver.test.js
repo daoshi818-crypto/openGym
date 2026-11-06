@@ -23,9 +23,9 @@ function transport(connection, extra = {}) {
   loadWatchModule('event-id', ctx, ['allocateEventIdentity', 'rememberEventAt'])
   loadWatchModule('close-journal', ctx, ['pendingSummaries', 'pendingEntry', 'journalEntry', 'prepareClose', 'releaseCandidate', 'markPhase', 'markDelivered'])
   // rpc.js is loaded last so its own handlers win; it needs the session/dep surface above.
-  loadWatchModule('rpc', ctx, ['startServer', 'sendControl', 'sendEvent', 'pendingCount', 'persistenceStatus'])
-  const { startServer, sendControl, sendEvent, pendingCount, persistenceStatus } = ctx
-  return { startServer, sendControl, sendEvent, pendingCount, persistenceStatus, disk, sent: connection.sent }
+  loadWatchModule('rpc', ctx, ['startServer', 'sendControl', 'sendEvent', 'pendingCount', 'persistenceStatus', 'replayPendingEvents'])
+  const { startServer, sendControl, sendEvent, pendingCount, persistenceStatus, replayPendingEvents } = ctx
+  return { startServer, sendControl, sendEvent, pendingCount, persistenceStatus, replayPendingEvents, disk, sent: connection.sent }
 }
 function connection() {
   const sent = []
@@ -34,7 +34,7 @@ function connection() {
 }
 function page(path, deps) {
   const script = source(path).match(/<script>([\s\S]*?)<\/script>/)[1]
-  const context = { ...watchInteractionDeps, console, WATCH_VERSION: 'test-watch', applyEdit, applyRest, restOf, applyFocus, persistenceStatus: () => ({}), storageStatus: () => ({}), synchronizationStatus: () => ({}),
+  const context = { ...watchInteractionDeps, replayPendingEvents() {}, console, WATCH_VERSION: 'test-watch', applyEdit, applyRest, restOf, applyFocus, persistenceStatus: () => ({}), storageStatus: () => ({}), synchronizationStatus: () => ({}),
     effortScaleOf, effortValueOf, effortKindOf, stepEffortValue, effortMeaning, effortSummaryText, formatEffort,
     storage: { getSync: () => null, set() {} }, replacePlan() {}, ...deps }
   runInNewContext(script.replace(imports, '').replace('export default', 'this.page ='), context)
@@ -104,7 +104,12 @@ describe('watch completed sets and rest clock', () => {
     expect(workout.rowDone).toBe(false)
     expect(sendEvent.mock.calls.filter(([m]) => m.t === 'set')).toHaveLength(1)
     expect(sendEvent.mock.calls.filter(([m]) => m.t === 'unset')).toHaveLength(1)
-    expect(source('Workout/index.ux')).toContain('disabled="{{ paused }}"')
+    const beforePaused = sendEvent.mock.calls.length
+    workout.paused = true
+    workout.onCurrentSetAction()
+    expect(sendEvent.mock.calls).toHaveLength(beforePaused)
+    expect(workout.rowDone).toBe(false)
+    workout.paused = false
     vi.advanceTimersByTime(1001); workout.onCurrentSetAction()
     expect(workout.rowDone).toBe(true)
     expect(sendEvent.mock.calls.filter(([m]) => m.t === 'set')).toHaveLength(2)
@@ -516,12 +521,12 @@ describe('watch business message boundary', () => {
     const ux = source('ExerciseList/index.ux')
     expect(ux.match(/value="保存结束"/g)).toHaveLength(2)
     expect(ux.match(/value="放弃训练"/g)).toHaveLength(2)
-    expect(ux).toContain('value="返回动作"')
-    expect(ux).toContain('value="返回训练"')
+    expect(ux).toContain('onclick="backToExercises"><image class="back-icon" src="/common/icons/back.svg" /><text class="back-label">返回动作</text>')
+    expect(ux).toContain('onclick="onExit"><image class="back-icon" src="/common/icons/back.svg" /><text class="back-label">返回训练</text>')
     expect(ux).toContain('ontouchend="touchEnd"')
     expect(ux).toContain('<div class="page" id="page" touch-focusable="true"')
     expect(ux).toContain('<list class="scroll" id="exercises" touch-focusable="true" ontouchstart')
-    expect(ux).toContain("r.done ? '✓' : r.no")
+    expect(ux).toContain("r.done ? '完' : r.no")
     list.touchStart({ touches: [{ clientX: 80, clientY: 180 }] })
     list.touchMove({ touches: [{ clientX: 135, clientY: 182 }] })
     expect(list.endOn).toBe(true)
@@ -734,7 +739,7 @@ describe('watch business message boundary', () => {
   })
 
   it('opens on the first set and preserves the cursor across repeated plan deliveries', () => {
-    const sessions = session(), c = connection(), rpc = transport(c)
+    const sessions = session(), c = connection(), rpc = transport(c, sessions)
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
     const workout = training(sessions, rpc)
     workout.onInit()
@@ -778,7 +783,7 @@ describe('watch business message boundary', () => {
   })
 
   it('keeps a saved Keypad edit across a phone snapshot arriving before the page returns', () => {
-    const sessions = session(), c = connection(), rpc = transport(c)
+    const sessions = session(), c = connection(), rpc = transport(c, sessions)
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
     const workout = training(sessions, rpc)
     workout.onInit()
@@ -813,7 +818,7 @@ describe('watch business message boundary', () => {
   })
 
   it('converges to the phone set count when a refreshed plan precedes a repeated group change', () => {
-    const sessions = session(), c = connection(), rpc = transport(c)
+    const sessions = session(), c = connection(), rpc = transport(c, sessions)
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
     const workout = training(sessions, rpc)
     workout.onInit()
@@ -827,7 +832,7 @@ describe('watch business message boundary', () => {
   })
 
   it('applies phone completion once and advances the matching current set', () => {
-    const sessions = session(), c = connection(), rpc = transport(c)
+    const sessions = session(), c = connection(), rpc = transport(c, sessions)
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
     const workout = training(sessions, rpc)
     workout.onInit()

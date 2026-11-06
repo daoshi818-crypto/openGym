@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { watchSource, stripImports, watchInteractionDeps, watchPersistence, loadWatchModule } from './watch-test-harness.js'
 import * as effort from '../../../watch-app/src/lib/effort-scale.js'
@@ -35,7 +35,7 @@ describe('GT1 complete-screen rebuild contracts', () => {
   it('keeps completed-set guidance inline instead of pushing dots below the viewport', () => {
     const src = watchSource('Workout/index.ux')
     expect(src).not.toContain('class="undo-label"')
-    expect(src).toContain('已完成 · 点 ↶ 撤销')
+    expect(src).toContain('已完成 · 点撤销恢复')
     const h = (s, p='height') => cssSize('Workout',s,p)
     expect(h('topbar')+h('topbar','margin-top')+h('primary-footer')+h('primary-footer','margin-bottom')+
       ['ex','group','inputs','last-row','navrow'].reduce((n,s)=>n+h(s),0)+h('set-dots','min-height')).toBeLessThanOrEqual(450)
@@ -51,7 +51,7 @@ describe('GT1 complete-screen rebuild contracts', () => {
   it('reserves a whole two-line plan card above the recent-results footer', () => {
     const h = (s,p='height') => cssSize('Index',s,p)
     const fixed=h('topbar')+h('topbar','margin-top')+h('status')+h('hero')+h('links')+h('links','margin-bottom')+h('plans','margin-bottom')
-    const card=h('plan-name')+h('plan-preview')+16+h('plan','margin-bottom')
+    const card=h('plan-name')+h('plan-preview')+2*h('plan','padding')+h('plan','margin-bottom')
     expect(fixed+card).toBeLessThanOrEqual(450)
     expect(h('plan-name')).toBeGreaterThanOrEqual(48)
     expect(h('plan-preview')).toBeGreaterThanOrEqual(44)
@@ -92,6 +92,33 @@ describe('GT1 complete-screen rebuild contracts', () => {
     expect(src).not.toContain('{{ item.number }}')
     expect(src).toMatch(/class="set-dot [\s\S]*?<\/div>/)
     expect(src).toContain('onclick="openExercises">{{ exName }}')
+  })
+  it.each(['Index','Workout','Keypad','ExerciseList','Summary'])('%s keeps corner-adjacent controls inside conservative GT1 insets', name => {
+    const header = { Index: 'topbar', Workout: 'topbar', Keypad: 'label', ExerciseList: 'title', Summary: 'top' }[name]
+    expect(cssSize(name, header, 'margin-top')).toBeGreaterThanOrEqual(18)
+    expect(cssSize(name, header, 'width')).toBeLessThanOrEqual(314)
+  })
+  it('draws primary actions with bundled vectors instead of text or font glyphs', () => {
+    const home = watchSource('Index/index.ux'), workout = watchSource('Workout/index.ux')
+    expect(home).toContain('src="/common/icons/play.svg"')
+    expect(home).not.toMatch(/class="start-circle"[^>]*value=/)
+    expect(workout).toContain("paused ? '/common/icons/pause.svg' : rowDone ? '/common/icons/undo.svg' : '/common/icons/check.svg'")
+    expect(workout).toContain('src="/common/icons/back.svg"')
+    expect(workout).not.toMatch(/class="complete[^>]*value=/)
+    expect(watchSource('Summary/index.ux')).toContain('src="/common/icons/check.svg"')
+    for (const name of ['play','check','undo','pause','back','backspace']) {
+      const svg = watchSource('common/icons/' + name + '.svg')
+      expect(svg).toContain('viewBox="0 0 48 48"')
+      expect(svg).toMatch(/<(path|rect|polyline)\b/)
+      expect(svg).not.toMatch(/<(script|text|image|foreignObject)\b|href=|url\(/i)
+    }
+  })
+  it('does not depend on emoji or ambiguous icon glyphs anywhere in watch UI sources', () => {
+    const root = new URL('../../../watch-app/src/', import.meta.url)
+    const sources = readdirSync(root, { recursive: true }).filter(name => /\.(ux|js|json)$/.test(name))
+    for (const name of sources) {
+      expect(watchSource(name), name).not.toMatch(/[\p{Extended_Pictographic}\uFE0F✓▶♥↶]/u)
+    }
   })
   it('removes all frame transport/player entry points, not just hiding the button', () => {
     const removed = ['watch-app/src/lib/watch-media.js','watch-app/src/lib/media-client.js','watch-app/src/lib/media-format.js',

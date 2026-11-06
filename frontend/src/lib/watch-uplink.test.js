@@ -175,6 +175,7 @@ describe('watch → phone completed set (W06)', () => {
   })
 
   it('keeps an unconfirmed set in the outbox when only a later event is acknowledged', () => {
+    vi.useFakeTimers()
     const h = device(), S = phoneSession(), app = phone(S)
     startWatch(h, S)
     const before = h.sent.length
@@ -182,6 +183,7 @@ describe('watch → phone completed set (W06)', () => {
     const setMsg = h.sent[before]
     // A focus for the next set: an independent event with its own identity.
     h.rpc.sendEvent({ t: 'focus', sid: S.active.watchSid, ex: 1, set: 1, at: Date.now(), source: 'watch' })
+    vi.advanceTimersByTime(120) // paced uplink, not recursive SDK draining
     const focusMsg = h.sent.at(-1)
     expect(focusMsg.t).toBe('focus')
     expect(h.rpc.pendingCount()).toBe(2)

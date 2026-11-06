@@ -22,6 +22,8 @@ const PHONE_PACKAGE = 'ch.duartesantos.opengym'
 const PHONE_FINGERPRINT = '8bf64970048540fe913005d05becee1ecad819e7171518dabcd15817301a0149'
 const K_OUTBOX = 'rpc_outbox'
 const WRITE_TIMEOUT_MS = 5000
+const SEND_GAP_MS = 120
+const REPLAY_BATCH = 2
 const rpcState = () => runtime().rpc ||= { ...{"connect":null,"handlers":{},"connected":false,"outbox":[],"sending":false,"retryTimer":null,"lastEventAt":0,"initialized":false,"connectionGeneration":0,"sendingTimer":null,"writeBusy":false,"writeDirty":false,"persistFailed":false}, durable: new Set(), lifecycleQueue: null }
 
 
@@ -210,6 +212,40 @@ function probeConnection() {
   catch (error) { trace('ready_exception', {}, error); done(null) }
 }
 
+// One app-owned timer, never recursive draining from an SDK callback. The minimum gap
+// also applies to clicks/persistence callbacks that ask to flush during this window.
+function scheduleFlush(delay = SEND_GAP_MS) {
+  const r = rpcState(), at = Date.now() + Math.max(1, delay)
+  if (r.flushTimer != null && r.flushAt <= at) return
+  clearTimeout(r.flushTimer)
+  r.flushAt = at
+  r.flushTimer = setTimeout(() => { r.flushTimer = null; flush() }, Math.max(1, at - Date.now()))
+}
+
+// Keypad edits are already durable in session_state. Recover only edits not yet in the
+// outbox, two per UI turn. Re-read between batches so receipts/closed sessions win.
+export function replayPendingEvents() {
+  const r = rpcState()
+  initialize()
+  if (r.replaying) return
+  r.replaying = true
+  const step = () => {
+    r.replayTimer = null
+    try {
+      const queued = new Set(r.outbox.map(e => e.msg.eventId))
+      const missing = (loadState().pendingEdits || []).filter(e => e.committedRev == null && !queued.has(e.eventId))
+      for (const event of missing.slice(0, REPLAY_BATCH)) sendEvent(event)
+      if (missing.length > REPLAY_BATCH) r.replayTimer = setTimeout(step, SEND_GAP_MS)
+      else r.replaying = false
+    } catch (error) {
+      // Leave durable session edits intact and allow the next UI replay to retry.
+      r.replaying = false
+      trace('replay_failed', { reason: String(error?.message || error) })
+    }
+  }
+  step()
+}
+
 function flush() {
   initialize()
   const expired = runtime().expiredEvents || []
@@ -218,18 +254,20 @@ function flush() {
   if (rpcState().persistFailed && !rpcState().writeBusy) persist()
   if (!rpcState().connected) { probeConnection(); return }
   if (!rpcState().connected || !rpcState().connect || rpcState().sending) return
+  if (Date.now() < (rpcState().nextSendAt || 0)) { scheduleFlush(rpcState().nextSendAt - Date.now()); return }
   const eligible = e => rpcState().durable.has(e.msg.eventId) && (!e.sent || Date.now() >= (e.nextAttemptAt || (e.sentAt || 0) + 4000))
-  const next = rpcState().peerProtocol >= 3 ? (eligible(rpcState().outbox[0] || { msg: {} }) ? rpcState().outbox[0] : null) : rpcState().outbox.find(eligible)
+  const next = rpcState().peerProtocol >= 3 ? (eligible(rpcState().outbox[0] || { msg: {} }) ? rpcState().outbox[0] : null) : (rpcState().outbox.find(e => !e.sent && eligible(e)) || rpcState().outbox.find(eligible))
   if (!next) return
   const token = { generation: rpcState().connectionGeneration, eventId: next.msg.eventId }
   rpcState().sending = token
+  rpcState().nextSendAt = Date.now() + SEND_GAP_MS
   const release = () => { if (rpcState().sending !== token || token.generation !== rpcState().connectionGeneration) return false; clearTimeout(rpcState().sendingTimer); rpcState().sending = false; return true }
   trace('send_attempt', next.msg)
   rpcState().sendingTimer = setTimeout(() => { if (release()) { trace('send_timeout', next.msg); flush() } }, 6000)
   try {
     rpcState().connect.send({ data: next.msg,
-      success: () => { if (!release()) return; trace('send_success', next.msg); const item = rpcState().outbox.find(e => e.msg.eventId === token.eventId); if (item) { item.sent = true; item.sentAt = Date.now(); item.attempts = (item.attempts || 0) + 1; item.nextAttemptAt = Date.now() + Math.min(60000, 4000 * Math.pow(2, Math.min(4, item.attempts - 1))) + Math.floor(Math.random() * 1000) }; flush() },
-      fail: (error, code) => { if (!release()) return; trace('send_fail', next.msg, error, code); next.sent = true; next.nextAttemptAt = Date.now() + Math.min(60000, 2000 * Math.pow(2, Math.min(5, next.attempts || 0))); next.attempts = (next.attempts || 0) + 1; flush() }
+      success: () => { if (!release()) return; trace('send_success', next.msg); const item = rpcState().outbox.find(e => e.msg.eventId === token.eventId); if (item) { item.sent = true; item.sentAt = Date.now(); item.attempts = (item.attempts || 0) + 1; item.nextAttemptAt = Date.now() + Math.min(60000, 4000 * Math.pow(2, Math.min(4, item.attempts - 1))) + Math.floor(Math.random() * 1000) }; scheduleFlush() },
+      fail: (error, code) => { if (!release()) return; trace('send_fail', next.msg, error, code); next.sent = true; next.nextAttemptAt = Date.now() + Math.min(60000, 2000 * Math.pow(2, Math.min(5, next.attempts || 0))); next.attempts = (next.attempts || 0) + 1; scheduleFlush() }
     })
   } catch (error) { if (release()) trace('send_exception', next.msg, error) }
 }
@@ -355,6 +393,7 @@ export function startServer(h) {
     trace('connection_open')
     rpcState().connectionGeneration++; rpcState().sending = false; clearTimeout(rpcState().sendingTimer)
     initialize()
+    rpcState().nextSendAt = 0
     rpcState().outbox.forEach(e => { e.sent = false })
     persist()
     if (rpcState().handlers.onState) rpcState().handlers.onState(true)
@@ -557,6 +596,8 @@ export function startServer(h) {
 export function stopServer() {
   if (rpcState().retryTimer) clearInterval(rpcState().retryTimer)
   rpcState().retryTimer = null
+  clearTimeout(rpcState().flushTimer); rpcState().flushTimer = null
+  clearTimeout(rpcState().replayTimer); rpcState().replayTimer = null; rpcState().replaying = false
   try { if (rpcState().connect) rpcState().connect.close({ success() {}, fail() {} }) } catch (e) { /* 已关闭 */ }
   rpcState().connect = null
   rpcState().connected = false
@@ -567,6 +608,8 @@ export function stopServer() {
 export function sendEvent(obj) {
   if (!obj) return false
   initialize()
+  // A page replay must not re-clone/rewrite the full session or restart delivery.
+  if (obj.eventId && rpcState().outbox.some(e => e.msg.eventId === obj.eventId)) return true
   if (obj.at == null) obj.at = Date.now()
   if (!obj.eventId) {
     const identity = allocateEventIdentity(obj.sid)

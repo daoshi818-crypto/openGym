@@ -102,7 +102,7 @@ export default {
   <list class="scroll" id="summary" touch-focusable="true">
     <list-item class="row" type="block" for="{{ item in blocks }}" tid="key">
       <div class="saved" if="{{ item.kind === 'saved' }}">
-        <text class="check">✓</text>
+        <div class="check"><image class="saved-icon" src="/common/icons/check.svg" /></div>
         <text class="saved-text">训练已本地保存</text>
       </div>
       <text class="workoutname" if="{{ item.kind === 'name' }}">{{ item.label }}</text>
@@ -114,7 +114,7 @@ export default {
         </div>
       </div>
       <text class="sync" if="{{ item.kind === 'sync' }}">{{ syncLabel }}</text>
-      <input class="done" type="button" if="{{ item.kind === 'done' }}" value="完成" onclick="onBack" />
+      <div class="done" if="{{ item.kind === 'done' }}" onclick="onBack"><image class="back-icon" src="/common/icons/back.svg" /><text class="back-label">返回首页</text></div>
     </list-item>
   </list>
 </div>
@@ -124,12 +124,13 @@ export default {
 <style>
 /* V4 same single left-aligned scroll, top and bottom are not separate results. */
 .page { width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
-.top { width: 338px; height: 44px; margin-top: 8px; flex-direction: row; justify-content: flex-end; align-items: center; }
+.top { width: 314px; height: 44px; margin-top: 18px; flex-direction: row; justify-content: flex-end; align-items: center; }
 .clock { font-size: 26px; color: #FFFFFF; }
-.scroll { width: 338px; flex: 1; margin-bottom: 18px; }
+.scroll { width: 338px; flex: 1; margin-bottom: 24px; }
 .row { width: 338px; flex-direction: column; align-items: flex-start; }
 .saved { width: 338px; min-height: 44px; flex-direction: row; align-items: center; }
-.check { width: 29px; height: 29px; line-height: 29px; border-radius: 15px; background-color: #30D158; color: #000000; font-size: 22px; text-align: center; }
+.check { width: 29px; height: 29px; border-radius: 15px; background-color: #30D158; justify-content: center; align-items: center; }
+.saved-icon { width: 22px; height: 22px; }
 .saved-text { width: 297px; margin-left: 12px; font-size: 26px; color: #FFFFFF; lines: 2; }
 .workoutname { width: 338px; min-height: 32px; font-size: 24px; color: #929297; lines: 2; margin-top: 16px; margin-bottom: 21px; }
 .metric { width: 338px; flex-direction: column; align-items: flex-start; margin-bottom: 22px; }
@@ -139,7 +140,9 @@ export default {
 .hr-value { font-size: 34px; color: #FF453A; }
 .metric-unit { font-size: 29px; color: #FFFFFF; margin-left: 8px; }
 .sync { width: 338px; min-height: 44px; font-size: 18px; color: #929297; lines: 3; margin-bottom: 20px; }
-.done { width: 338px; height: 64px; border-radius: 32px; font-size: 23px; background-color: #0A3418; color: #30D158; margin-bottom: 18px; }
+.done { width: 338px; height: 64px; border-radius: 32px; background-color: #0A3418; margin-bottom: 18px; justify-content: center; align-items: center; }
+.back-icon { width: 26px; height: 26px; margin-right: 6px; }
+.back-label { font-size: 23px; color: #30D158; }
 @media screen and (min-width: 450px) {
  .top { width: 280px; margin-top: 58px; }
  .scroll { width: 280px; margin-bottom: 58px; }

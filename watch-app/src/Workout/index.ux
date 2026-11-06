@@ -15,7 +15,7 @@ import {
   formatEffort,
 } from '../lib/effort-scale.js'
 import { startSessionHr, stopSessionHr, tick, restOver } from '../lib/sensors.js'
-import { startServer, sendEvent, sendControl, pendingCount, isConnected, persistenceStatus, synchronizationStatus, transportDiagnostics } from '../lib/rpc.js'
+import { startServer, sendEvent, replayPendingEvents, sendControl, pendingCount, isConnected, persistenceStatus, synchronizationStatus, transportDiagnostics } from '../lib/rpc.js'
 import { storageStatus } from '../lib/persistence.js'
 import { applyEdit, applyFocus, applyRest, restOf } from '../lib/protocol.js'
 import { lastTimeView } from '../lib/watch-last-time.js'
@@ -37,7 +37,7 @@ export default {
     restExerciseName: '',
     nextLabel: '',
     nextDetails: '', nextTargetLabel: '', nextValuesLabel: '', effortNumber: '—',
-    hrLabel: '♥ --', weightUnit: 'kg',
+    hrLabel: '心率 --', weightUnit: 'kg',
     syncLabel: '',
     diagnosticOn: false, diagnosticPage: 0, diagnosticTitle: '', diagnosticText: '',
     isRest: false,
@@ -412,8 +412,9 @@ export default {
   clearFieldSelection() { this.selectedField = null; this.fieldTarget = null },
   flushPendingRowEdits() {
     // Reuse the original durable identities. RPC owns deduplication and ACK removal.
-    const edits = (this.state && this.state.pendingEdits || []).slice()
-    for (const edit of edits) this.emitEvent(edit)
+    replayPendingEvents()
+    const latest = loadState()
+    if (latest.sid === this.state.sid) this.state.pendingEdits = latest.pendingEdits || []
   },
   selectField(field) {
     if (this.interactionBlocked() || this.isRest || this.paused || this.closeMode || this.effortOn || this.lastOpen || this.finishOn) return
@@ -1011,7 +1012,7 @@ export default {
       })
     })
     this.volumeLabel = this.formatVolume(completedVolume)
-    this.restProgLabel = '✓ ' + doneSets + '/' + totalSets + ' 组'
+    this.restProgLabel = '完成 ' + doneSets + '/' + totalSets + ' 组'
     let completed = null
     s.workout.rows.forEach((rows, exIdx) => rows.forEach((r, setIdx) => {
       if (r.done && (!completed || r.at > completed.at)) completed = { exIdx, setIdx, at: r.at || 0 }
@@ -1162,7 +1163,7 @@ export default {
       : this.restTotalLabel
     const latest = loadState()
     if (latest.sid === s.sid) s.hr = latest.hr
-    this.hrLabel = s.hr?.last && Date.now() - (s.hr.sampleAt || 0) < 15000 && !s.pausedAt ? '♥ ' + s.hr.last : '♥ --'
+    this.hrLabel = s.hr?.last && Date.now() - (s.hr.sampleAt || 0) < 15000 && !s.pausedAt ? '心率 ' + s.hr.last : '心率 --'
     this.kcalLabel = String((s.baseCalories || 0) + calories(s, s.profile, Math.max(0, ((s.pausedAt || Date.now()) - (s.segmentStartedAt || s.startedAt) - (s.pausedMs || 0)) / 60000)))
     const n = pendingCount()
     const sync = synchronizationStatus()
@@ -1273,7 +1274,7 @@ export default {
     <div class="training-panel compact" if="{{ !isRest }}">
       <list class="training-scroll"><list-item type="current-group" class="training-content">
         <text class="ex" onclick="openExercises">{{ exName }} ›</text>
-        <text class="group {{ rowDone ? 'group-done' : '' }}">{{ groupLabel }}{{ rowDone ? ' · 已完成 · 点 ↶ 撤销' : ' · ' + finishName }}</text>
+        <text class="group {{ rowDone ? 'group-done' : '' }}">{{ groupLabel }}{{ rowDone ? ' · 已完成 · 点撤销恢复' : ' · ' + finishName }}</text>
         <div class="inputs">
           <div class="field weight-field {{ rowDone ? 'field-done' : selectedField === 'w' ? 'field-selected' : '' }}" onclick="editWeight">
             <text class="fval {{ weightNum.length > 7 ? 'extra-long-value' : weightNum.length > 4 ? 'long-value' : '' }}">{{ weightNum }}</text><text class="funit">{{ weightSuffix }}</text>
@@ -1286,7 +1287,7 @@ export default {
         <text class="input-notice" if="{{ inputNotice }}">{{ inputNotice }}</text>
         <div class="last-row" if="{{ lastOn }}" onclick="openLast"><text class="last-text">{{ lastLine }}</text></div><div class="last-space" if="{{ !lastOn }}"></div>
         <div class="navrow">
-          <input class="complete {{ rowDone || paused ? 'secondary' : '' }}" type="button" value="{{ paused ? 'Ⅱ' : rowDone ? '↶' : '✓' }}" disabled="{{ paused }}" onclick="onCurrentSetAction" />
+          <div class="complete {{ rowDone || paused ? 'secondary' : '' }}" onclick="onCurrentSetAction"><image class="complete-icon" src="{{ paused ? '/common/icons/pause.svg' : rowDone ? '/common/icons/undo.svg' : '/common/icons/check.svg' }}" /></div>
           <div class="effort-circle" if="{{ effortEntryOn }}" onclick="openEffort"><text class="effort-caption">{{ effortScaleLabel }}</text><text class="effort-entry-value">{{ effortNumber }}</text></div>
         </div>
         <div class="set-dots">
@@ -1317,7 +1318,7 @@ export default {
       <div class="mrow"><input class="m" type="button" value="上一组" onclick="onPrevSet" /><input class="m" type="button" value="下一组" onclick="onNextSet" /></div>
       <div class="mrow"><input class="m" type="button" value="加组" onclick="onMenuAddSet" /><input class="m" type="button" value="减组" onclick="onMenuRemoveSet" /></div>
       <div class="mrow"><input class="m" type="button" value="{{ pauseLabel }}" onclick="onPause" /><input class="m m-end" type="button" value="结束训练" onclick="openFinish" /></div>
-      <input class="return-button" type="button" value="返回当前组" onclick="showCurrent" />
+      <div class="return-button" onclick="showCurrent"><image class="back-icon" src="/common/icons/back.svg" /><text class="back-label">返回当前组</text></div>
     </list-item></list>
   </div>
   <div class="completion-panel" if="{{ closeMode === 'complete' && !effortOn }}">
@@ -1337,14 +1338,14 @@ export default {
     <input class="last-effort" type="button" if="{{ lastEffortOn }}" value="{{ lastEffortText + '  ›' }}" onclick="openLastEffort" /><text class="finish-back" onclick="closeFinish">继续训练</text>
   </div>
   <div class="effort-layer last-layer" if="{{ lastOpen && !closeMode && !finishOn }}">
-    <div class="last-head"><text class="last-back" onclick="closeLast">‹ 返回训练</text></div><text class="last-title">{{ lastTitle }}</text><text class="last-meta">{{ lastMeta }}</text>
+    <div class="last-head"><div class="last-back" onclick="closeLast"><image class="back-icon" src="/common/icons/back.svg" /><text class="back-label">返回训练</text></div></div><text class="last-title">{{ lastTitle }}</text><text class="last-meta">{{ lastMeta }}</text>
     <list class="last-list" id="history" touch-focusable="true"><list-item class="last-item" type="historyRow" for="{{ r in lastRows }}" tid="key"><text class="last-no">{{ r.no }}</text><text class="last-value">{{ r.label }}</text></list-item></list>
     <text class="last-hint">仅显示实际完成的工作组 · 不影响本次记录</text>
   </div>
   <div class="effort-layer diagnostic-layer" if="{{ diagnosticOn }}"><text class="effort-target">{{ diagnosticTitle }}</text><list class="diagnostic-scroll"><list-item type="diagnostic"><text class="diagnostic-text">{{ diagnosticText }}</text></list-item></list><div class="diagnostic-buttons"><input class="m" type="button" value="返回" onclick="closeDiagnostics" /><input class="m" type="button" value="下一页" onclick="nextDiagnostic" /></div></div>
   <div class="effort-layer" if="{{ effortOn && !diagnosticOn }}">
     <list class="effort-scroll"><list-item type="effort-content" class="scroll-content">
-      <div class="effort-head"><text class="effort-back" onclick="closeEffort">‹ 返回</text><text class="effort-timer">{{ effortRestLabel }}</text></div>
+      <div class="effort-head"><div class="effort-back" onclick="closeEffort"><image class="back-icon" src="/common/icons/back.svg" /><text class="back-label">返回</text></div><text class="effort-timer">{{ effortRestLabel }}</text></div>
       <text class="effort-target">{{ effortTargetLabel }}</text><text class="effort-scale">{{ effortScaleLabel }}</text>
       <div class="effort-pick"><input class="effort-arrow" type="button" value="−" onclick="effortMinus" /><text class="effort-value">{{ effortDraftLabel }}</text><input class="effort-arrow" type="button" value="+" onclick="effortPlus" /></div>
       <text class="effort-meaning" if="{{ effortDraft != null }}">{{ effortMeaning }}</text><text class="effort-meaning" if="{{ effortDraft == null }}">尚未登记</text><text class="effort-hint">{{ effortNotice || effortHint }}</text>
@@ -1360,15 +1361,15 @@ export default {
    One definition per selector; overflowing content scrolls, footer never shrinks the numbers. */
 .page { width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
 .screen { width: 100%; height: 100%; flex-direction: column; align-items: center; }
-.topbar { width: 338px; height: 44px; margin-top: 8px; flex-direction: row; align-items: center; justify-content: space-between; flex-shrink: 0; }
+.topbar { width: 314px; height: 44px; margin-top: 18px; flex-direction: row; align-items: center; justify-content: space-between; flex-shrink: 0; }
 .clock { width: 92px; font-size: 26px; color: #FFFFFF; text-align: right; lines: 1; }
-.heart { width: 230px; font-size: 18px; color: #FF453A; lines: 1; }
-.status { width: 238px; height: 44px; line-height: 44px; font-size: 16px; color: #FF9F0A; lines: 1; }
+.heart { width: 214px; font-size: 18px; color: #FF453A; lines: 1; }
+.status { width: 214px; height: 44px; line-height: 44px; font-size: 16px; color: #FF9F0A; lines: 1; }
 .training-panel { width: 338px; flex: 1; min-height: 0px; }
 .training-scroll { width: 338px; height: 100%; }
 .training-content { width: 338px; flex-direction: column; align-items: flex-start; }
-.ex { width: 338px; height: 56px; line-height: 28px; font-size: 27px; color: #FFFFFF; font-weight: bold; lines: 2; }
-.group { width: 338px; height: 22px; font-size: 18px; color: #929297; lines: 1; }
+.ex { width: 338px; height: 54px; line-height: 27px; font-size: 27px; color: #FFFFFF; font-weight: bold; lines: 2; }
+.group { width: 338px; height: 20px; font-size: 18px; color: #929297; lines: 1; }
 .group-done { color: #30D158; }
 .inputs { width: 338px; height: 76px; flex-direction: row; align-items: center; }
 .field { height: 76px; flex-direction: row; align-items: center; border-radius: 16px; background-color: #000000; }
@@ -1384,11 +1385,14 @@ export default {
 .funit { font-size: 18px; color: #929297; margin-left: 6px; }
 .times { width: 24px; font-size: 29px; color: #929297; text-align: center; }
 .input-notice { width: 338px; min-height: 32px; font-size: 17px; color: #FF9F0A; lines: 2; }
-.last-space { width: 338px; height: 44px; }
-.last-row { width: 338px; height: 44px; align-items: center; }
+.last-space { width: 338px; height: 32px; }
+.last-row { width: 338px; height: 32px; align-items: center; }
 .last-text { width: 338px; font-size: 18px; color: #929297; lines: 1; }
 .navrow { width: 338px; height: 94px; flex-direction: row; align-items: center; justify-content: center; }
-.complete { width: 94px; height: 94px; border-radius: 47px; font-size: 70px; color: #000000; background-color: #30D158; }
+.complete { width: 94px; height: 94px; border-radius: 47px; background-color: #30D158; justify-content: center; align-items: center; }
+.complete-icon { width: 48px; height: 48px; }
+.back-icon { width: 26px; height: 26px; margin-right: 6px; }
+.back-label { color: #30D158; font-size: 20px; }
 .secondary { background-color: #242725; color: #30D158; }
 .effort-circle { width: 108px; height: 80px; margin-left: 34px; border-radius: 24px; background-color: #1C1C1E; flex-direction: column; align-items: center; justify-content: center; }
 .effort-caption { font-size: 17px; color: #929297; }
@@ -1399,22 +1403,22 @@ export default {
 .set-current { width: 14px; height: 14px; border-radius: 7px; background-color: #000000; border: 2px solid #FFFFFF; }
 .set-done { background-color: #FFFFFF; }
 .segment { background-color: #000000; color: #929297; font-size: 26px; }
-.primary-footer { width: 338px; height: 44px; margin-bottom: 18px; flex-direction: row; align-items: center; justify-content: space-between; flex-shrink: 0; }
+.primary-footer { width: 314px; height: 44px; margin-bottom: 24px; flex-direction: row; align-items: center; justify-content: space-between; flex-shrink: 0; }
 .list-link { width: 170px; height: 44px; line-height: 44px; font-size: 20px; color: #30D158; }
 .end-link { width: 110px; height: 44px; line-height: 44px; font-size: 20px; color: #30D158; text-align: right; }
-.rest-panel { margin-bottom: 18px; }
+.rest-panel { margin-bottom: 24px; }
 .rest-scroll { width: 338px; height: 100%; }
 .scroll-content { width: 338px; flex-direction: column; align-items: center; }
 .rest-ex { width: 338px; height: 28px; line-height: 24px; font-size: 18px; color: #FF9F0A; lines: 1; }
 .rest { width: 338px; height: 126px; line-height: 126px; font-size: 104px; color: #FFFFFF; text-align: center; lines: 1; }
-.next { width: 338px; height: 48px; font-size: 18px; color: #929297; text-align: center; lines: 2; }
-.next-details { width: 338px; height: 48px; font-size: 36px; color: #FFFFFF; text-align: center; lines: 1; }
+.next { width: 338px; height: 44px; font-size: 18px; color: #929297; text-align: center; lines: 2; }
+.next-details { width: 338px; height: 44px; font-size: 36px; color: #FFFFFF; text-align: center; lines: 1; }
 .effort-row { width: 338px; height: 56px; border-radius: 18px; background-color: #1C1C1E; color: #FFFFFF; font-size: 19px; }
-.rrow { width: 338px; height: 56px; margin-top: 8px; flex-direction: row; justify-content: space-between; }
+.rrow { width: 338px; height: 56px; margin-top: 6px; flex-direction: row; justify-content: space-between; }
 .rbtn { width: 102px; height: 52px; border-radius: 26px; font-size: 20px; background-color: #242725; color: #FFFFFF; }
 .skip { width: 118px; height: 52px; border-radius: 26px; font-size: 20px; background-color: #0A3418; color: #30D158; }
 .rest-total { width: 338px; height: 28px; font-size: 16px; color: #929297; text-align: center; }
-.operation-scroll { width: 338px; flex: 1; margin-bottom: 18px; }
+.operation-scroll { width: 338px; flex: 1; margin-bottom: 24px; }
 .elapsed-label { height: 28px; font-size: 19px; color: #929297; }
 .elapsed-value { width: 338px; height: 104px; font-size: 84px; line-height: 104px; color: #FFFFFF; text-align: center; lines: 1; }
 .metrics { width: 338px; height: 52px; flex-direction: row; justify-content: space-between; align-items: center; }
@@ -1428,7 +1432,7 @@ export default {
 .mrow { width: 338px; height: 58px; flex-direction: row; justify-content: space-between; align-items: center; }
 .m { width: 164px; height: 52px; border-radius: 26px; background-color: #242725; font-size: 20px; color: #FFFFFF; }
 .m-end { background-color: #0A3418; color: #30D158; }
-.return-button { width: 338px; height: 48px; background-color: #000000; color: #30D158; font-size: 20px; }
+.return-button { width: 338px; height: 48px; background-color: #000000; color: #30D158; font-size: 20px;  align-items: center; justify-content: center; }
 .completion-panel { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; justify-content: center; }
 .completion-title { width: 338px; height: 52px; font-size: 30px; color: #FFFFFF; text-align: center; }
 .completion-progress { width: 338px; height: 44px; font-size: 21px; color: #929297; text-align: center; }
@@ -1450,18 +1454,18 @@ export default {
 .finish-count { width: 338px; height: 38px; font-size: 20px; color: #929297; text-align: center; }
 .last-effort { width: 338px; height: 52px; border-radius: 26px; background-color: #1C1C1E; color: #FFFFFF; font-size: 20px; }
 .finish-back { width: 338px; height: 48px; line-height: 48px; color: #30D158; text-align: center; font-size: 20px; }
-.last-head { width: 338px; height: 52px; margin-top: 8px; align-items: center; }
-.last-back { width: 338px; height: 44px; line-height: 44px; color: #30D158; font-size: 21px; }
+.last-head { width: 314px; height: 52px; margin-top: 18px; align-items: center; }
+.last-back { width: 314px; height: 44px; line-height: 44px; color: #30D158; font-size: 21px;  align-items: center; justify-content: center; }
 .last-title { width: 338px; min-height: 42px; font-size: 26px; color: #FFFFFF; lines: 2; }
 .last-meta { width: 338px; height: 32px; font-size: 19px; color: #929297; }
 .last-list { width: 338px; flex: 1; }
 .last-item { width: 338px; min-height: 56px; flex-direction: row; align-items: center; }
 .last-no { width: 80px; font-size: 20px; color: #929297; }
 .last-value { width: 258px; font-size: 23px; color: #FFFFFF; lines: 2; }
-.last-hint { width: 338px; height: 54px; font-size: 16px; color: #929297; lines: 2; }
+.last-hint { width: 314px; height: 54px; margin-bottom: 24px; font-size: 16px; color: #929297; lines: 2; }
 .effort-scroll { width: 338px; height: 100%; }
-.effort-head { width: 338px; height: 52px; margin-top: 8px; flex-direction: row; align-items: center; justify-content: space-between; }
-.effort-back { width: 126px; height: 44px; line-height: 44px; font-size: 21px; color: #30D158; }
+.effort-head { width: 314px; height: 52px; margin-top: 18px; flex-direction: row; align-items: center; justify-content: space-between; }
+.effort-back { width: 126px; height: 44px; line-height: 44px; font-size: 21px; color: #30D158;  align-items: center; justify-content: center; }
 .effort-timer { font-size: 17px; color: #FF9F0A; }
 .effort-target { width: 338px; min-height: 44px; font-size: 20px; color: #FFFFFF; lines: 2; }
 .effort-scale { width: 338px; height: 30px; font-size: 20px; color: #929297; text-align: center; }
@@ -1473,7 +1477,7 @@ export default {
 .effort-actions { width: 338px; height: 60px; flex-direction: row; justify-content: space-between; }
 .effort-cancel { width: 146px; height: 56px; border-radius: 28px; font-size: 22px; background-color: #242725; color: #FFFFFF; }
 .effort-ok { width: 182px; height: 56px; border-radius: 28px; font-size: 22px; background-color: #0A3418; color: #30D158; }
-.effort-clear { width: 338px; height: 44px; line-height: 44px; font-size: 18px; color: #FF9F0A; text-align: center; }
+.effort-clear { width: 314px; height: 44px; margin-bottom: 24px; line-height: 44px; font-size: 18px; color: #FF9F0A; text-align: center; }
 .diagnostic-layer { justify-content: center; }
 .diagnostic-scroll { width: 338px; height: 280px; }
 .diagnostic-text { width: 338px; font-size: 18px; color: #FFFFFF; }
@@ -1494,7 +1498,7 @@ export default {
   .effort-cancel { width: 126px; }
   .effort-ok { width: 144px; }
   .finish-name { width: 280px; }
-  .finish-title, .finish-count, .last-effort, .finish-back, .last-head, .last-title, .last-meta, .last-list, .last-hint, .last-item { width: 280px; }
+  .finish-title, .finish-count, .last-back, .last-effort, .finish-back, .last-head, .last-title, .last-meta, .last-list, .last-hint, .last-item { width: 280px; }
   .last-value { width: 200px; }
   .flag { width: 110px; height: 110px; border-radius: 55px; }
   .finish-name { height: 36px; }

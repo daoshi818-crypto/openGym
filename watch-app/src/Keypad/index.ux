@@ -125,7 +125,7 @@ export default {
     <div class="quick" if="{{ inputMode === 'quick' }}"><div class="step-row"><input class="step" type="button" value="−" onclick="minus" /><text class="show {{ show.length > 8 ? 'extra-long-value' : show.length > 5 ? 'long-value' : '' }}">{{ show }}</text><input class="step" type="button" value="+" onclick="plus" /></div><text class="step-hint">{{ unit }} · 每次 ±{{ stepLabel }}</text><input class="switch" type="button" value="键盘精确输入" onclick="useKeyboard" /></div>
     <text class="keyboard-value {{ show.length > 8 ? 'keyboard-long-value' : '' }}" if="{{ inputMode === 'keypad' }}">{{ show }} {{ unit }}</text>
     <div class="grid" if="{{ inputMode === 'keypad' }}">
-      <input class="k" type="button" value="1" onclick="onKey1" /><input class="k" type="button" value="2" onclick="onKey2" /><input class="k" type="button" value="3" onclick="onKey3" /><input class="k" type="button" value="4" onclick="onKey4" /><input class="k" type="button" value="5" onclick="onKey5" /><input class="k" type="button" value="6" onclick="onKey6" /><input class="k" type="button" value="7" onclick="onKey7" /><input class="k" type="button" value="8" onclick="onKey8" /><input class="k" type="button" value="9" onclick="onKey9" /><input class="k" type="button" value="{{ field === 'w' ? '.' : '⌫' }}" onclick="decimalOrClear" /><input class="k" type="button" value="0" onclick="onKey0" /><input class="k c" type="button" value="C" onclick="onKeyC" />
+      <input class="k" type="button" value="1" onclick="onKey1" /><input class="k" type="button" value="2" onclick="onKey2" /><input class="k" type="button" value="3" onclick="onKey3" /><input class="k" type="button" value="4" onclick="onKey4" /><input class="k" type="button" value="5" onclick="onKey5" /><input class="k" type="button" value="6" onclick="onKey6" /><input class="k" type="button" value="7" onclick="onKey7" /><input class="k" type="button" value="8" onclick="onKey8" /><input class="k" type="button" value="9" onclick="onKey9" /><div class="k key-symbol" onclick="decimalOrClear"><text class="decimal" if="{{ field === 'w' }}">.</text><image class="key-icon" if="{{ field !== 'w' }}" src="/common/icons/backspace.svg" /></div><input class="k" type="button" value="0" onclick="onKey0" /><input class="k c" type="button" value="清空" onclick="onKeyC" />
     </div>
     <input class="switch keyboard-switch" type="button" if="{{ inputMode === 'keypad' }}" value="返回减加" onclick="useQuick" /><text class="notice" if="{{ notice && inputMode !== 'keypad' }}">{{ notice }}</text>
     <div class="actions {{ inputMode === 'keypad' ? 'keyboard-actions' : '' }}"><input class="cancel {{ inputMode === 'keypad' ? 'keyboard-action' : '' }}" type="button" value="取消" onclick="onCancel" /><input class="ok {{ inputMode === 'keypad' ? 'keyboard-action' : '' }}" type="button" value="保存" onclick="onKeyOk" /></div>
@@ -138,7 +138,7 @@ export default {
 .page { width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
 .editor-scroll { width: 100%; height: 100%; }
 .editor-content { width: 100%; min-height: 450px; flex-direction: column; align-items: center; padding-bottom: 18px; }
-.label { width: 338px; height: 44px; margin-top: 8px; font-size: 19px; color: #929297; }
+.label { width: 314px; height: 44px; margin-top: 18px; font-size: 19px; color: #929297; }
 .edit-target { width: 338px; height: 56px; line-height: 28px; font-size: 27px; font-weight: bold; color: #FFFFFF; lines: 2; }
 .edit-group { width: 338px; height: 28px; font-size: 18px; color: #929297; }
 .quick { width: 338px; flex-direction: column; align-items: center; }
@@ -149,20 +149,23 @@ export default {
 .extra-long-value { font-size: 30px; }
 .step-hint { width: 338px; height: 36px; font-size: 20px; color: #929297; text-align: center; }
 .switch { width: 338px; height: 52px; border-radius: 24px; font-size: 20px; background-color: #161D18; color: #FFFFFF; }
-.actions { width: 338px; height: 64px; margin-top: 22px; flex-direction: row; justify-content: space-between; }
+.actions { width: 338px; height: 64px; margin-top: 14px; flex-direction: row; justify-content: space-between; }
 .cancel { width: 146px; height: 56px; border-radius: 28px; font-size: 22px; background-color: #242725; color: #FFFFFF; }
 .ok { width: 182px; height: 56px; border-radius: 28px; font-size: 22px; background-color: #0A3418; color: #30D158; }
-.keyboard-content { padding-bottom: 14px; }
-.keyboard-label { height: 28px; margin-top: 6px; font-size: 17px; lines: 1; }
+.keyboard-content { padding-bottom: 20px; }
+.keyboard-label { height: 24px; margin-top: 18px; font-size: 17px; lines: 1; }
 .keyboard-target { height: 48px; line-height: 24px; font-size: 24px; }
 .keyboard-value { width: 338px; height: 48px; font-size: 42px; color: #30D158; text-align: center; lines: 1; }
 .keyboard-long-value { font-size: 28px; }
 .keyboard-switch { height: 44px; font-size: 18px; }
-.keyboard-actions { height: 52px; margin-top: 6px; }
+.keyboard-actions { height: 50px; margin-top: 6px; }
 .keyboard-action { height: 48px; font-size: 21px; }
 .notice-label { color: #FF9F0A; }
 .grid { width: 338px; flex-direction: row; flex-wrap: wrap; justify-content: space-between; }
 .k { width: 108px; height: 44px; margin-bottom: 4px; font-size: 25px; border-radius: 20px; background-color: #1C1C1E; color: #FFFFFF; }
+.key-symbol { justify-content: center; align-items: center; }
+.key-icon { width: 30px; height: 30px; }
+.decimal { color: #FFFFFF; font-size: 25px; }
 .c { color: #FF453A; }
 .notice { width: 338px; min-height: 44px; color: #FF9F0A; font-size: 19px; lines: 2; }
 @media screen and (min-width: 450px) {

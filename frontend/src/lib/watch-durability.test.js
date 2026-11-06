@@ -26,6 +26,7 @@ function harness() {
 afterEach(() => vi.useRealTimers())
 
 it('does not send a new event when only an older outbox batch reached disk', () => {
+  vi.useFakeTimers()
   const h = harness(), rpc = h.transport()
   rpc.startServer({}); h.connection.onOpen(); h.commit(0)
   rpc.sendEvent({t:'set',sid:'s',ex:0,set:1,eventId:'a',at:1})
@@ -36,6 +37,7 @@ it('does not send a new event when only an older outbox batch reached disk', () 
   expect(h.sent.filter(x=>x.data.eventId==='b')).toHaveLength(0)
   expect(rpc.pendingCount()).toBe(2)
   for (let i=3;i<h.writes.length;i++) h.commit(i)
+  vi.advanceTimersByTime(120)
   expect(h.sent.some(x=>x.data.eventId==='b')).toBe(true)
 })
 
@@ -52,6 +54,7 @@ it('serializes session snapshots and retains the latest state while a write is d
 })
 
 it('shares one outbox across independent page bundles and sends only durable events', () => {
+  vi.useFakeTimers()
   const h = harness(), first = h.transport(), second = h.transport()
   first.startServer({onError:e=>h.failures.push(e)}); h.connection.onOpen()
   h.commit(0) // Persist empty outbox at connection setup, if any.
@@ -62,6 +65,7 @@ it('shares one outbox across independent page bundles and sends only durable eve
   // Skip the event_clock writes: explicit event IDs avoid those writes here.
   for(let i=1;i<h.writes.length;i++) h.commit(i)
   expect(first.pendingCount()).toBe(2); expect(second.pendingCount()).toBe(2)
+  vi.advanceTimersByTime(120)
   expect(h.sent.filter(x=>x.data.eventId).map(x=>x.data.eventId)).toEqual(['a','b'])
   h.connection.onMessage({t:'ack',eventId:'a'})
   expect(second.pendingCount()).toBe(1)

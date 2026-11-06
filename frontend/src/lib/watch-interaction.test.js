@@ -6,7 +6,7 @@ import { stripImports, watchSource } from './watch-test-harness.js'
 const makeState = (count = 4) => ({ active: true, sid: 's', exIdx: 0, setIdx: 0, weightUnit: 'kg', workout: {
   exercises: [{ entryInstanceId: 'e', name: 'Row' }], rows: [Array.from({ length: count }, (_, i) => ({ setId: 'r' + i, w: '', r: 8, done: false }))] } })
 function workout(s = makeState()) {
-  const ctx = { Date, rotationStep, valueStep, captureRow, rowTarget, setDotWindow,
+  const ctx = { Date, replayPendingEvents: vi.fn(), rotationStep, valueStep, captureRow, rowTarget, setDotWindow,
     storage: { getSync: () => 0.5 }, loadState: () => s, save: vi.fn(),
     persistenceStatus: () => ({ failed: false }), storageStatus: () => ({ failed: false }), pendingCount: () => 0,
     setRowValue: vi.fn((state, ex, set, field, value) => { state.workout.rows[ex][set][field] = value; state.pendingEdits = [{ eventId: 'original', t: 'weight' }] }),
@@ -16,6 +16,18 @@ function workout(s = makeState()) {
   return { page, ctx, s }
 }
 describe('watch stable targets and step rules', () => {
+  it('drawn completion target preserves complete, undo and paused no-op behavior', () => {
+    const { page } = workout()
+    page.onComplete = vi.fn(); page.onUndo = vi.fn()
+    page.onCurrentSetAction()
+    expect(page.onComplete).toHaveBeenCalledTimes(1)
+    page.rowDone = true; page.onCurrentSetAction()
+    expect(page.onUndo).toHaveBeenCalledTimes(1)
+    page.paused = true; page.onCurrentSetAction()
+    expect(page.onComplete).toHaveBeenCalledTimes(1)
+    expect(page.onUndo).toHaveBeenCalledTimes(1)
+  })
+
   it('rejects deleted stable IDs, stale sid and out of range legacy indexes', () => {
     const s = makeState(), target = captureRow(s)
     expect(rowTarget(s, target).setIdx).toBe(0)
@@ -52,6 +64,16 @@ describe('actual watch workout page wiring', () => {
     page.pickSetDot(page.setDots[1])
     expect(s.setIdx).toBe(6)
   })
+  it('hands 40 pending edits to the app-owned replay once, without per-event session reloads', () => {
+    const { page, ctx, s } = workout()
+    s.pendingEdits = Array.from({ length: 40 }, (_, i) => ({ eventId: 'queued-' + i }))
+    ctx.loadState = vi.fn(() => s)
+    page.flushPendingRowEdits()
+    expect(ctx.replayPendingEvents).toHaveBeenCalledOnce()
+    expect(ctx.loadState).toHaveBeenCalledOnce()
+    expect(page.emitEvent).not.toHaveBeenCalled()
+    expect(s.pendingEdits).toHaveLength(40)
+  })
   it('does not switch sets when no field is selected', () => {
     const { page } = workout(); page.stepSet = vi.fn(); page.onRotation({ delta: 1 })
     expect(page.stepSet).not.toHaveBeenCalled()
@@ -61,7 +83,8 @@ describe('actual watch workout page wiring', () => {
     page.editWeight(); expect(ctx.router.push).not.toHaveBeenCalled(); expect(page.selectedField).toBe('w')
     page.onRotation({ delta: 1 })
     expect(ctx.setRowValue).toHaveBeenCalledWith(page.state, 0, 0, 'w', '0.5', true)
-    expect(page.emitEvent).toHaveBeenCalledWith(expect.objectContaining({ eventId: 'original' }))
+    expect(ctx.replayPendingEvents).toHaveBeenCalledOnce()
+    expect(page.emitEvent).not.toHaveBeenCalled()
     page.editWeight(); expect(ctx.router.push).toHaveBeenCalledWith(expect.objectContaining({ uri: '/Keypad' }))
   })
   it('stops on stale units, deleted targets, completed rows and pause', () => {

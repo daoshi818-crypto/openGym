@@ -215,7 +215,7 @@ export default {
           </div>
           <div class="rows" if="{{ expanded === item.idx }}">
             <div class="rrow" for="{{ r in item.rows }}" onclick="pickRow(r)">
-              <text class="rno {{ r.done ? 'done-no' : '' }}">{{ r.done ? '✓' : r.no }}</text>
+              <text class="rno {{ r.done ? 'done-no' : '' }}">{{ r.done ? '完' : r.no }}</text>
               <text class="rtxt {{ r.done ? 'done' : '' }}">{{ r.txt }}</text>
               <text class="chev">›</text>
             </div>
@@ -227,7 +227,7 @@ export default {
     <div class="foot">
       <input class="endbtn save" type="button" value="保存结束" onclick="saveWorkout" />
       <div class="exit-row">
-        <input class="endbtn back" type="button" value="返回训练" onclick="onExit" />
+        <div class="endbtn back" onclick="onExit"><image class="back-icon" src="/common/icons/back.svg" /><text class="back-label">返回训练</text></div>
         <input class="endbtn abandon {{ abandonArmed ? 'armed' : '' }}" type="button" value="放弃训练" onclick="abandonWorkout" />
       </div>
     </div>
@@ -237,7 +237,7 @@ export default {
     <text class="hint">保存训练记录，或放弃本次训练</text>
     <input class="endbtn save" type="button" value="保存结束" onclick="saveWorkout" />
     <input class="endbtn abandon {{ abandonArmed ? 'armed' : '' }}" type="button" value="放弃训练" onclick="abandonWorkout" />
-    <input class="endbtn back" type="button" value="返回动作" onclick="backToExercises" />
+    <div class="endbtn back" onclick="backToExercises"><image class="back-icon" src="/common/icons/back.svg" /><text class="back-label">返回动作</text></div>
   </div>
 </div>
 </template>
@@ -247,8 +247,8 @@ export default {
 /* Wear OS: tap the exercise name to focus it; separate disclosure expands sets. */
 .page { width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
 .content { width: 100%; height: 100%; flex-direction: column; align-items: center; }
-.title { width: 338px; height: 44px; margin-top: 12px; font-size: 26px; font-weight: bold; color: #FFFFFF; lines: 1; }
-.hint-line { width: 338px; height: 44px; margin-top: 12px; font-size: 18px; color: #FF9F0A; lines: 2; }
+.title { width: 314px; height: 44px; margin-top: 18px; font-size: 26px; font-weight: bold; color: #FFFFFF; lines: 1; }
+.hint-line { width: 314px; height: 44px; margin-top: 18px; font-size: 18px; color: #FF9F0A; lines: 2; }
 .body { width: 358px; flex: 1; min-height: 0px; }
 .scroll { width: 358px; height: 100%; }
 .exrow { width: 358px; padding: 8px 12px; margin-bottom: 8px; border-radius: 22px; background-color: #1C1C1E; flex-direction: column; }
@@ -266,11 +266,11 @@ export default {
 .done { color: #929297; }
 .done-no { color: #30D158; }
 .chev { width: 26px; font-size: 24px; color: #929297; }
-.foot { width: 338px; height: 118px; margin-bottom: 18px; flex-direction: column; justify-content: space-between; }
-.endbtn { width: 338px; height: 52px; font-size: 21px; border-radius: 26px; background-color: #242725; color: #FFFFFF; }
+.foot { width: 314px; height: 118px; margin-bottom: 24px; flex-direction: column; justify-content: space-between; }
+.endbtn { width: 314px; height: 52px; font-size: 21px; border-radius: 26px; background-color: #242725; color: #FFFFFF; }
 .save { background-color: #0A3418; color: #30D158; }
-.exit-row { width: 338px; height: 52px; flex-direction: row; justify-content: space-between; }
-.exit-row .endbtn { width: 164px; }
+.exit-row { width: 314px; height: 52px; flex-direction: row; justify-content: space-between; }
+.exit-row .endbtn { width: 152px; }
 .abandon { color: #FF453A; }
 .armed { background-color: #FF453A; color: #000000; }
 .end-panel { width: 100%; height: 100%; flex-direction: column; align-items: center; justify-content: center; }
@@ -288,4 +288,7 @@ export default {
  .end-panel .title { margin-top: 0; }
 }
 
+.back { justify-content: center; align-items: center; }
+.back-icon { width: 26px; height: 26px; margin-right: 6px; }
+.back-label { font-size: 22px; color: #30D158; }
 </style>

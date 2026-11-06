@@ -30,7 +30,7 @@ const plan = { id: 'p1', sid: 'preview', name: '推部训练', workout: '推部�
 function page(name, env = environment()) {
   const ctx = { ...env.ctx, ...watchInteractionDeps, ...effort, ...summaryView, lastTimeView, WATCH_VERSION: 'preview',
     setInterval: () => 1, clearInterval() {}, setTimeout: () => 1, clearTimeout() {},
-    startServer() {}, sendEvent() {}, sendControl() {}, pendingCount: () => 0, isConnected: () => true,
+    startServer() {}, replayPendingEvents() {}, sendEvent() {}, sendControl() {}, pendingCount: () => 0, isConnected: () => true,
     persistenceStatus: () => ({}), synchronizationStatus: () => ({}), transportDiagnostics: () => ({events:[], pending:0}),
     startSessionHr() {}, stopSessionHr() {}, tick() {}, restOver() {}, brightness: { setKeepScreenOn() {} },
     router: {push() {}, replace() {}, back() {}} }
@@ -44,7 +44,7 @@ function workout(configure = () => {}) {
   s.workout.rows[0][0].done = true; s.workout.rows[0][0].at = Date.now() - 120000
   s.workout.rows[0][1].done = true; s.workout.rows[0][1].at = Date.now() - 110000
   configure(s); env.ctx.save(s)
-  const p = page('Workout', env); p.onInit({}); p.hrLabel = '♥ 118'; p.clockLabel = '9:23'
+  const p = page('Workout', env); p.onInit({}); p.hrLabel = '心率 118'; p.clockLabel = '9:23'
   return p
 }
 const scenes = []
@@ -89,19 +89,20 @@ p.targetName='这是一个用于验证两行显示的很长的训练动作名称
 env=environment();env.disk.set('plan_catalog',{plans:[{...plan,name:'这是一个用于验证两行训练计划名称显示的推部训练计划'}]});env.disk.set('summary_last',{savedAt:Date.now()});p=page('Index',env);p.onInit({});scene('32-home-long','Index',p,'首页 · 长计划名与最近结果')
 const runtime = `
 function val(exp,ctx){if(typeof exp!=='string')return exp;if(exp.startsWith('function'))return Function('return ('+exp+')')().call(ctx);return exp.split('.').reduce((a,k)=>a?.[k],ctx)}
-function render(n,ctx){if(n.repeat){let frag=document.createDocumentFragment();for(const item of val(n.repeat.$exp,ctx)||[]){let sub=Object.create(ctx);sub[n.repeat.value]=item;frag.append(render({...n,repeat:null},sub))}return frag}if(n.$shown&&!val(n.$shown,ctx))return document.createDocumentFragment();const el=document.createElement(n.type==='input'?'button':n.type==='text'?'native-text':'div');el.className=(n.$class?val(n.$class,ctx).flat(Infinity).filter(Boolean).join(' '):n.class||'');el.dataset.type=n.type;let a=n.attr||{};if(a.id)el.id=a.id;if(a.$disabled)el.disabled=!!val(a.$disabled,ctx);if(n.style)Object.assign(el.style,n.style);if(n.type==='text'||n.type==='input'){let text=a.$value?val(a.$value,ctx):a.value||'';let span=document.createElement('span');span.textContent=text??'';el.append(span)}for(let c of n.children||[])el.append(render(c,ctx));return el}
+function render(n,ctx){if(n.repeat){let frag=document.createDocumentFragment();for(const item of val(n.repeat.$exp,ctx)||[]){let sub=Object.create(ctx);sub[n.repeat.value]=item;frag.append(render({...n,repeat:null},sub))}return frag}if(n.$shown&&!val(n.$shown,ctx))return document.createDocumentFragment();const el=document.createElement(n.type==='input'?'button':n.type==='text'?'native-text':n.type==='image'?'img':'div');el.className=(n.$class?val(n.$class,ctx).flat(Infinity).filter(Boolean).join(' '):n.class||'');el.dataset.type=n.type;let a=n.attr||{};if(a.id)el.id=a.id;if(n.type==='image'){let src=a.$src?val(a.$src,ctx):a.src;el.src=ICONS[src]||src;el.alt=''}if(a.$disabled)el.disabled=!!val(a.$disabled,ctx);if(n.style)Object.assign(el.style,n.style);if(n.type==='text'||n.type==='input'){let text=a.$value?val(a.$value,ctx):a.value||'';let span=document.createElement('span');span.textContent=text??'';el.append(span)}for(let c of n.children||[])el.append(render(c,ctx));return el}
 document.querySelector('#viewport').append(render(SCENE.template,SCENE.state));
 for(let el of document.querySelectorAll('[data-type="text"]')){const lines=getComputedStyle(el).getPropertyValue('lines').trim();if(lines){el.firstChild.style.webkitLineClamp=lines}}
 if(SCENE.bottom)for(let el of document.querySelectorAll('[data-type="list"]'))el.scrollTop=el.scrollHeight;
 `
-const base=`html,body{margin:0;width:100%;height:100%;background:#000;font-family:'Segoe UI','Microsoft YaHei',sans-serif;color:#fff}*{box-sizing:border-box}#viewport{width:100vw;height:100vh;position:relative;overflow:hidden}div,button,native-text{display:flex;position:relative;flex-direction:row;flex-shrink:0;min-width:0}button{padding:0;border:0;align-items:center;justify-content:center;font:inherit;cursor:pointer}button:disabled{opacity:.4}native-text{align-items:center;overflow:hidden;white-space:normal}native-text>span{max-width:100%;display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden;line-height:inherit;flex:1}button>span{line-height:1.15}[data-type="list"]{display:block;overflow-y:auto;overflow-x:hidden;min-height:0;scrollbar-width:none}[data-type="list"]::-webkit-scrollbar{display:none}[data-type="list-item"]{flex-shrink:0}`
+const icons = Object.fromEntries(fs.readdirSync(path.join(root, 'src/common/icons')).filter(n => n.endsWith('.svg')).map(n => ['/common/icons/' + n, 'data:image/svg+xml;base64,' + fs.readFileSync(path.join(root, 'src/common/icons', n)).toString('base64')]))
+const base=`html,body{margin:0;width:100%;height:100%;background:#000;font-family:'Segoe UI','Microsoft YaHei',sans-serif;color:#fff}*{box-sizing:border-box}#viewport{width:100vw;height:100vh;position:relative;overflow:hidden;border-radius:80px}div,button,native-text{display:flex;position:relative;flex-direction:row;flex-shrink:0;min-width:0}button{padding:0;border:0;align-items:center;justify-content:center;font:inherit;cursor:pointer}button:disabled{opacity:.4}native-text{align-items:center;overflow:hidden;white-space:normal}native-text>span{max-width:100%;display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden;line-height:inherit;flex:1}button>span{line-height:1.15}[data-type="list"]{display:block;overflow-y:auto;overflow-x:hidden;min-height:0;scrollbar-width:none}[data-type="list"]::-webkit-scrollbar{display:none}[data-type="list-item"]{flex-shrink:0}`
 // Native-only `lines` is translated to CSS line clamp; remaining CSS is the shipped .ux stylesheet.
 for (const s of scenes) {
   const css=s.css.replace(/\blines:\s*(\d+);/g,'-webkit-line-clamp: $1;')
-  const html='<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>'+s.title+' · code preview NOT device</title><style>'+base+'\n'+css+'</style><body><div id="viewport"></div><script>const SCENE='+JSON.stringify(s).replaceAll('</','<\\/')+';'+runtime+'</script></body></html>'
+  const html='<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>'+s.title+' · code preview NOT device</title><style>'+base+'\n'+css+'</style><body><div id="viewport"></div><script>const ICONS='+JSON.stringify(icons)+';const SCENE='+JSON.stringify(s).replaceAll('</','<\\/')+';'+runtime+'</script></body></html>'
   fs.writeFileSync(path.join(out,s.id+'.html'),html)
 }
-fs.writeFileSync(path.join(out,'scenes.json'),JSON.stringify(scenes.map(({id,title,bottom})=>({id,title,bottom})),null,2))
+fs.writeFileSync(path.join(out,'scenes.json'),JSON.stringify(scenes.map(({id,name,title,bottom})=>({id,name,title,bottom})),null,2))
 const cards=scenes.map(s=>'<article><h2>'+s.title+'</h2><iframe src="'+s.id+'.html" width="390" height="450"></iframe><a href="'+s.id+'.html">390 × 450 单屏</a></article>').join('')
-fs.writeFileSync(path.join(out,'index.html'),'<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>GT1 390×450 实现审阅</title><style>body{background:#121417;color:#fff;font:16px Segoe UI,Microsoft YaHei,sans-serif;margin:36px}h1{color:#30d158}main{display:flex;flex-wrap:wrap;gap:28px}article{background:#202329;padding:18px;border-radius:24px}h2{font-size:18px}iframe{border:1px solid #41434a;border-radius:40px;background:#000}a{display:block;color:#30d158;margin-top:12px}</style><h1>GT1 · 390 × 450 重构实现</h1><p>从本轮原生编译模板和实际 .ux CSS 生成，页面数据由真实脚本生成。浏览器语义适配预览，非真机截图，不包含固件字体与原生渲染差异。</p><main>'+cards+'</main></html>')
+fs.writeFileSync(path.join(out,'index.html'),'<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>GT1 390×450 实现审阅</title><style>body{background:#121417;color:#fff;font:16px Segoe UI,Microsoft YaHei,sans-serif;margin:36px}h1{color:#30d158}main{display:flex;flex-wrap:wrap;gap:28px}article{background:#202329;padding:18px;border-radius:24px}h2{font-size:18px}iframe{border:1px solid #41434a;border-radius:80px;background:#000}a{display:block;color:#30d158;margin-top:12px}</style><h1>GT1 · 390 × 450 重构实现</h1><p>从本轮原生编译模板和实际 .ux CSS 生成，页面数据由真实脚本生成。浏览器语义适配预览，非真机截图，不包含固件字体与原生渲染差异。使用保守的80px圆角测试遮罩，不代表设备实测圆角。</p><main>'+cards+'</main></html>')
 console.log('Generated '+scenes.length+' code-derived scenes in '+out)

@@ -99,12 +99,11 @@ describe('real watch row edits with AI template isolation', () => {
       persistenceStatus: () => ({ failed: false }), pendingCount: () => 0 })
     runInNewContext(stripImports(watchSource('Workout/index.ux').match(/<script>([\s\S]*?)<\/script>/)[1]).replace('export default', 'globalThis.workoutPage ='), ctx)
     const page = { ...ctx.workoutPage, ...ctx.workoutPage.data, state: ctx.loadState(), refresh: vi.fn() }
-    loadWatchModule('rpc', ctx, ['sendEvent'])
-    ctx.sendEvent = vi.fn(ctx.sendEvent)
+    loadWatchModule('rpc', ctx, ['sendEvent', 'replayPendingEvents'])
     page.editWeight(); page.onRotation({ delta: 1 })
     const edit = ctx.loadState().pendingEdits[0]
     expect(edit.t).toBe('weight'); expect(edit.weight).toBe('40.5'); expect(edit.eventId).toBeTruthy()
-    expect(ctx.sendEvent.mock.calls[0][0]).toEqual(edit)
+    expect(ctx.runtime().rpc.outbox[0].msg).toEqual(edit)
     app.receive(edit); await app.receive.idle()
     expect(S.active.entries[0].sets[0].w).toBe(40.5)
     app.receive(edit); await app.receive.idle()

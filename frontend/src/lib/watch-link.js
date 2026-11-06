@@ -87,7 +87,13 @@ export function holdWatchOutbound() {
   }
 }
 export function setWatchCommitStatus(status) { commitStatus = status; for (const cb of commitListeners) { try { cb(status) } catch { /* isolated subscriber */ } } }
-let drainingInbox = false
+let drainingInbox = false, inboxDrainTimer = null
+const claimedInboxIds = new Set()
+function scheduleInboxDrain(delay = 100) {
+  if (inboxDrainTimer != null) return
+  inboxDrainTimer = setTimeout(() => { inboxDrainTimer = null; drainWatchInbox() }, delay)
+  inboxDrainTimer.unref?.()
+}
 export async function drainWatchInbox() {
   if (drainingInbox || !trainingStore) return
   drainingInbox = true
@@ -101,15 +107,25 @@ export async function drainWatchInbox() {
 }
 export async function completeWatchInbox(id) {
   const p = await watchPlugin()
-  if (p?.WatchRpc.completeInbox) await p.WatchRpc.completeInbox({ id })
-  // A bounded drain advances only as committed entries leave the native inbox.
-  Promise.resolve().then(drainWatchInbox)
+  try {
+    if (p?.WatchRpc.completeInbox) await p.WatchRpc.completeInbox({ id })
+  } catch (error) {
+    // Its decision is already durable. Permit replay rather than permanently
+    // suppressing an inbox entry that native storage could not delete.
+    claimedInboxIds.delete(id)
+    scheduleInboxDrain(1000)
+    throw error
+  }
+  claimedInboxIds.delete(id)
+  // Coalesce completions and yield to rendering; do not bridge the same 32 entries per ACK.
+  scheduleInboxDrain()
 }
 export function bindWatchLifecycle(cb, store = null) {
+  claimedInboxIds.clear()
   trainingStore = store
   onWatchLifecycle = cb
   Promise.resolve().then(drainWatchInbox)
-  return () => { if (onWatchLifecycle === cb) onWatchLifecycle = () => false }
+  return () => { if (onWatchLifecycle === cb) { onWatchLifecycle = () => false; trainingStore = null; claimedInboxIds.clear(); clearTimeout(inboxDrainTimer); inboxDrainTimer = null } }
 }
 export const pushEndedToWatch = msg => sendWatchEvent({ ...msg, t: 'ended' })
 export const sendToWatch = msg => sendWatchEvent(msg)
@@ -184,6 +200,7 @@ function onNativeWatchState(ev) {
 function onNativeWatchEvent(ev) {
   try {
     if (!ev) return
+    if (ev._inboxId && claimedInboxIds.has(ev._inboxId)) return
     for (const cb of receiptListeners) { try { cb(ev) } catch { /* Status subscribers must not interrupt delivery. */ } }
     if (ev.t === 'device') {
       device = { ...(device || {}), ...ev }
@@ -233,7 +250,7 @@ function onNativeWatchEvent(ev) {
       listenerError = 'watch lifecycle: ' + (e && e.message ? e.message : String(e))
       claimed = false
     }
-    if (claimed) return
+    if (claimed) { if (ev._inboxId) claimedInboxIds.add(ev._inboxId); return }
     // 手表刚打开：如果计划之前没送到，借这次握手立刻补推。
     if (ev.t === 'hello' && latestPlan) {
       pendingPlan = latestPlan

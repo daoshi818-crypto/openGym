@@ -27,9 +27,25 @@ for (const page of Object.keys(manifest.router.pages)) {
   }
   for (const selector of ['.screen','.content']) if (sheet[selector]) viewport(sheet[selector], page + selector)
   const tree = nodes(template)
+  for (const node of tree.filter(n => n.type === 'image')) {
+    const sources = node.attr?.src ? [node.attr.src] : [...(node.attr?.$src || '').matchAll(/['"](\/common\/icons\/[^'"]+\.svg)['"]/g)].map(m => m[1])
+    assert.ok(sources.length, page + ': image needs local vector source')
+    assert.ok(!node.events, page + ': click belongs to parent target, not unsupported image event')
+    for (const src of sources) {
+      assert.ok(src.startsWith('/common/icons/'), 'No remote media in watch UI')
+      const packed = path.join(build, src.slice(1))
+      assert.ok(fs.existsSync(packed), 'Vector missing from build: ' + src)
+      assert.equal(fs.readFileSync(packed, 'utf8'), fs.readFileSync(path.join(__dirname, '../src', src.slice(1)), 'utf8'), 'Vector changed in build: ' + src)
+    }
+  }
+
   assert.ok(tree.some(n => n.type === 'list'), page + ' must retain native scrolling')
   assert.ok(!JSON.stringify(template).match(/mediaOn|demoOn|openDemo|media-image/), 'Removed watch demo returned')
   assert.ok(sheet['@MEDIA']?.some(m => m.condition === 'screen and (min-width: 450px)'), page + ' round fallback missing')
+  assert.ok(!/[\p{Extended_Pictographic}\uFE0F✓▶♥↶]/u.test(JSON.stringify(template)), page + ' emoji/icon font dependency')
+  const headerSelector = { Index: '.topbar', Workout: '.topbar', Keypad: '.label', ExerciseList: '.title', Summary: '.top' }[page]
+  assert.ok(px(sheet,headerSelector,'marginTop')>=18, page + ' top corner inset')
+  assert.ok(px(sheet,headerSelector,'width')<=314, page + ' header corner width')
   if (page === 'Workout') {
     flexViewport(sheet, '.training-panel'); flexViewport(sheet, '.operation-scroll'); flexViewport(sheet, '.last-list')
     for (const selector of ['.training-scroll','.rest-scroll','.effort-scroll']) assert.equal(sheet[selector].height, '100%', selector + ' viewport')
@@ -47,6 +63,7 @@ for (const page of Object.keys(manifest.router.pages)) {
     assert.equal(sheet['.inputs'].flexDirection,'row', 'V4 horizontal prescription')
     assert.ok(px(sheet,'.weight-field','width')+px(sheet,'.times','width')+px(sheet,'.reps-field','width')<=338)
     assert.ok(px(sheet,'.fval','fontSize')>=60, 'Current numbers too small')
+    assert.ok(tree.some(n => n.type==='div' && n.events?.click==='onCurrentSetAction' && n.children?.some(c => c.type==='image' && c.attr?.$src?.includes('/common/icons/check.svg'))), 'Complete/undo/pause vector missing')
     assert.ok(px(sheet,'.complete','height')>=94 && px(sheet,'.complete','borderRadius')>=47, 'V4 round done button')
     assert.ok(px(sheet,'.set-hit','width')>=44 && px(sheet,'.set-hit','height')>=44, 'Dot touch target')
     assert.ok(px(sheet,'.set-dot','width')<=14 && px(sheet,'.set-current','width')<=18, 'Dots are not numeric chips')
@@ -65,6 +82,7 @@ for (const page of Object.keys(manifest.router.pages)) {
   } else if (page==='Index') {
     flexViewport(sheet,'.plans')
     assert.ok(px(sheet,'.start-circle','height')>=88)
+    assert.ok(tree.some(n => n.type==='div' && n.class==='start-circle' && n.events?.click==='onStart' && n.children?.some(c => c.type==='image' && c.attr?.src==='/common/icons/play.svg')), 'Start must retain drawn icon and original click target')
     const homeFixed = px(sheet,'.topbar','height')+px(sheet,'.topbar','marginTop')+px(sheet,'.status','height')+px(sheet,'.hero','height')+px(sheet,'.links','height')+px(sheet,'.links','marginBottom')+px(sheet,'.plans','marginBottom')
     const cardHeight=px(sheet,'.plan-name','height')+px(sheet,'.plan-preview','height')+px(sheet,'.plan','paddingTop')+px(sheet,'.plan','paddingBottom')
     assert.ok(homeFixed+Math.max(cardHeight,px(sheet,'.plan','minHeight'))+px(sheet,'.plan','marginBottom')<=450, 'Home must show a complete two-line plan card even with recent summary present')

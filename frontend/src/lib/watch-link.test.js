@@ -218,6 +218,41 @@ describe('watch connection state', () => {
     unbind()
   })
 
+  it('does not redispatch a 40-record backlog while its native inbox entries are still being committed', async () => {
+    const batch = Array.from({ length: 40 }, (_, i) => ({ t: 'set', sid: 's', eventId: 'A' + i, _inboxId: 'native:' + i }))
+    native.drainInbox.mockImplementation(async () => ({ events: batch.slice(0, 32), pending: batch.length }))
+    native.completeInbox.mockImplementation(async ({ id }) => { const i = batch.findIndex(e => e._inboxId === id); if (i >= 0) batch.splice(i, 1) })
+    const receive = vi.fn(() => true)
+    link.bindWatchLifecycle(receive, { getState: () => ({}) })
+    await link.connectWatch(); await link.drainWatchInbox()
+    expect(receive).toHaveBeenCalledTimes(32)
+    for (let i = 0; i < 32; i++) {
+      await link.completeWatchInbox('native:' + i)
+      await link.drainWatchInbox()
+    }
+    expect(receive).toHaveBeenCalledTimes(40)
+    expect(new Set(receive.mock.calls.map(([e]) => e.eventId)).size).toBe(40)
+  })
+
+  it('releases an inbox claim after native deletion fails and retries the durable entry', async () => {
+    vi.useFakeTimers()
+    const event = { t: 'set', sid: 's', eventId: 'A', _inboxId: 'native:A' }
+    native.drainInbox.mockResolvedValue({ events: [event], pending: 1 })
+    native.completeInbox.mockRejectedValueOnce(new Error('disk busy'))
+    const receive = vi.fn(() => true)
+    const unbind = link.bindWatchLifecycle(receive, { getState: () => ({}) })
+    await link.connectWatch(); await link.drainWatchInbox()
+    expect(receive).toHaveBeenCalledTimes(1)
+    await expect(link.completeWatchInbox('native:A')).rejects.toThrow('disk busy')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(receive).toHaveBeenCalledTimes(2)
+    native.drainInbox.mockResolvedValue({ events: [], pending: 0 })
+    await link.completeWatchInbox('native:A')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(receive).toHaveBeenCalledTimes(2)
+    unbind()
+  })
+
   it('blocks plan and state messages until a durable commit releases the barrier', async () => {
     native.sendEvent.mockResolvedValue({ ok: true })
     await link.connectWatch()

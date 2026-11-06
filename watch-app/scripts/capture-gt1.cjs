@@ -33,15 +33,43 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright')
         const card = firstPlan.getBoundingClientRect(), list = firstPlan.parentElement.getBoundingClientRect()
         clippedPlan = card.top < list.top - 1 || card.bottom > list.bottom + 1
       }
-      return { root: { width: root.width, height: root.height }, lists, outside, sideways, clippedNumbers, scrollRequired, clippedPlan }
+      // 80 design-pixel mask is deliberately conservative, not a measured GT1 radius.
+      // Measure visible text runs (not transparent layout boxes); obey ancestor/list clips.
+      const radius = 80
+      const inside = (x, y) => {
+        if (x < 0 || x > innerWidth || y < 0 || y > innerHeight) return false
+        const cx = Math.max(radius, Math.min(innerWidth-radius, x))
+        const cy = Math.max(radius, Math.min(innerHeight-radius, y))
+        return (x-cx)**2 + (y-cy)**2 <= (radius+0.5)**2
+      }
+      const corners = () => [...document.querySelectorAll('button>span,native-text>span')].flatMap(span => {
+        const range = document.createRange(); range.selectNodeContents(span)
+        return [...range.getClientRects()].flatMap(rect => {
+          let l=Math.max(0,rect.left), r=Math.min(innerWidth,rect.right), t=Math.max(0,rect.top), b=Math.min(innerHeight,rect.bottom)
+          for (let e=span; e && e.id!=='viewport'; e=e.parentElement) {
+            const css=getComputedStyle(e), box=e.getBoundingClientRect()
+            if (css.overflowX!=='visible') { l=Math.max(l,box.left); r=Math.min(r,box.right) }
+            if (css.overflowY!=='visible') { t=Math.max(t,box.top); b=Math.min(b,box.bottom) }
+          }
+          if (r<=l || b<=t || [[l,t],[r,t],[l,b],[r,b]].every(([x,y])=>inside(x,y))) return []
+          return [{ cls:span.parentElement.className, text:span.textContent, rect:{left:l,right:r,top:t,bottom:b} }]
+        })
+      })
+      const vectorImages = [...document.querySelectorAll('img')].map(e => ({ cls:e.className, loaded:e.complete && e.naturalWidth>0, width:e.getBoundingClientRect().width, height:e.getBoundingClientRect().height }))
+      const brokenVectors = vectorImages.filter(e => !e.loaded || e.width<=0 || e.height<=0)
+      const cornerClipped = corners()
+      for (const list of document.querySelectorAll('[data-type="list"]')) list.scrollTop=list.scrollHeight
+      const cornerClippedAtEnd = corners()
+      return { root: { width: root.width, height: root.height }, lists, vectorImages, brokenVectors, outside, sideways, clippedNumbers, scrollRequired, clippedPlan, cornerClipped, cornerClippedAtEnd }
+
     })
     assert.deepEqual(result.root, { width: 390, height: 450 }, scene.id + ' root viewport')
     report.push({ ...scene, ...result })
-    if (result.outside.length || result.sideways.length || result.clippedNumbers.length || result.scrollRequired.length || result.clippedPlan) console.error(scene.id, JSON.stringify(result))
+    if (result.brokenVectors.length || result.outside.length || result.sideways.length || result.clippedNumbers.length || result.scrollRequired.length || result.clippedPlan || result.cornerClipped.length || result.cornerClippedAtEnd.length) console.error(scene.id, JSON.stringify(result))
   }
-  fs.writeFileSync(path.join(dir, 'layout-report.json'), JSON.stringify({ errors, scenes: report }, null, 2))
+  fs.writeFileSync(path.join(dir, 'layout-report.json'), JSON.stringify({ previewOnly: true, conservativeCornerRadius: 80, errors, scenes: report }, null, 2))
   await browser.close()
   assert.deepEqual(errors, [], 'Browser rendering errors')
-  assert.deepEqual(report.filter(s => s.outside.length || s.sideways.length || s.clippedNumbers.length || s.scrollRequired.length || s.clippedPlan), [], 'Controls exceed viewport, numbers clip, single-screen forms scroll, or first plan is cut off')
+  assert.deepEqual(report.filter(s => s.brokenVectors.length || s.outside.length || s.sideways.length || s.clippedNumbers.length || s.scrollRequired.length || s.clippedPlan || s.cornerClipped.length || s.cornerClippedAtEnd.length), [], 'Controls exceed viewport/corner mask, numbers clip, single-screen forms scroll, or first plan is cut off')
   console.log('Captured ' + scenes.length + ' scenes; see layout-report.json for bounds checks')
 })().catch(e => { console.error(e); process.exitCode = 1 })
