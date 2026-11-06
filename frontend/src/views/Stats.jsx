@@ -2,7 +2,7 @@ import { isOn } from '../lib/modules.js'
 import { StrengthLevelsCard } from '../components/StrengthLevel.jsx'
 import WeeklyTargetsCard from '../components/WeeklyTargetsCard.jsx'
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
 import { EXIDX, matchExercise, betterWeight, isAssisted } from '../lib/exercises.js'
 import { lastBW, streakWeeks, setLabel, modeOf, effortOf, entriesForExercise, metricEntriesForExercise, metricModeForEntry, bestWeightForEntry, completedRepsOf, workoutDay, workoutAt, lifetimeVolume } from '../lib/history.js'
@@ -458,19 +458,36 @@ export function WeeklyPlanVolume({ S }) {
   </div>
 }
 
+const statsViewOf = search => {
+  const params = new URLSearchParams(search)
+  return params.get('view') === 'trends' || params.get('focus') === 'weekly-volume' ? 'trends' : 'calendar'
+}
+
 export default function Stats() {
   const nav = useNavigate()
   const S = useStore(s => s.S)
-  const [view, setView] = useState(() => /[?&]focus=weekly-volume\b/.test(window.location.hash || '') ? 'trends' : 'calendar')
+  const loc = useLocation()
+  const [view, setView] = useState(() => statsViewOf(loc.search))
+  // Keep the tab in the URL: returning from a detail screen must not reopen the calendar.
+  useEffect(() => { setView(statsViewOf(loc.search)) }, [loc.search])
+  const changeView = next => {
+    setView(next)
+    const params = new URLSearchParams(loc.search)
+    params.delete('focus')
+    if (next === 'trends') params.set('view', 'trends')
+    else params.delete('view')
+    const search = params.toString()
+    nav({ pathname: loc.pathname, search: search ? `?${search}` : '' }, { replace: true, state: loc.state })
+  }
   const [range, setRange] = useState(90)
   // Plan's "Weekly muscle volume" row lands here (/stats?focus=weekly-volume). The router is a
-  // HashRouter, so the query sits in the hash; the scroll waits a frame for the page's own
+  // HashRouter exposes the query as location.search; the scroll waits a frame for the page's own
   // scroll-to-top on navigation to have happened first.
   useEffect(() => {
-    if (!/[?&]focus=weekly-volume\b/.test(window.location.hash || '')) return
+    if (new URLSearchParams(loc.search).get('focus') !== 'weekly-volume' || view !== 'trends') return
     const frame = window.requestAnimationFrame(() => document.getElementById('weekly-volume')?.scrollIntoView?.({ block: 'start', behavior: 'smooth' }))
     return () => window.cancelAnimationFrame(frame)
-  }, [])
+  }, [loc.search, view])
   const [exId, setExId] = useState(null)
   const [exMetric, setExMetric] = useState('top')
   // What the Body weight view measures the lift by: 'e1rm' (default) or the heaviest set.
@@ -712,9 +729,7 @@ export default function Stats() {
     <div className="hdr"><SeasonDeco spot="stats-hdr" /><div><h1>{t('Stats')}</h1><div className="sub">{t('Progress & history')}</div></div>
       <button className="iconbtn" onClick={() => nav('/history')} aria-label={t('History')}><Icon name="history" /></button></div>
 
-    <WeeklyTargetsCard S={S} />
-    {isOn(S, 'strength') && <StrengthLevelsCard S={S} />}
-    <Segmented className="seg-range" value={view} onChange={setView}
+    <Segmented className="seg-range" value={view} onChange={changeView}
       options={[{ value: 'calendar', label: t('Training calendar') }, { value: 'trends', label: t('Trends') }]} />
 
     <div hidden={view !== 'calendar'} className="card">
@@ -750,7 +765,7 @@ export default function Stats() {
     {workouts.length > 0 && <div className="card row between" style={{ alignItems: 'center', gap: 12 }}>
       <div style={{ minWidth: 0 }}><h2 style={{ margin: 0 }}>{t('Structural balance')}</h2>
         <div className="muted small" style={{ marginTop: 4 }}>{t('See which lift is holding back the rest.')}</div></div>
-      <Button size="sm" variant="tinted" trailingIcon="chevronRight" style={{ flexShrink: 0 }} onClick={() => nav('/structural-balance')}>{t('Open')}</Button>
+      <Button size="sm" variant="tinted" trailingIcon="chevronRight" style={{ flexShrink: 0 }} onClick={() => nav('/structural-balance', { state: { fromStats: true } })}>{t('Open')}</Button>
     </div>}
     {isOn(S, 'body') && workouts.length > 0 && <div className="card row between" style={{ alignItems: 'center', gap: 12 }}>
       <div style={{ minWidth: 0 }}><h2 style={{ margin: 0 }}>{t('Progress photos')}</h2>

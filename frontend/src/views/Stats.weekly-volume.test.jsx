@@ -7,10 +7,12 @@ import Stats from './Stats.jsx'
 
 const NOW = new Date(2026, 8, 30, 12).getTime()
 const press = { id: 'press', n: 'Press', primaries: ['chest'], secondaries: ['triceps'], custom: true }
-const mocks = vi.hoisted(() => ({ S: null, bodyMaps: [] }))
+const mocks = vi.hoisted(() => ({ S: null, bodyMaps: [], nav: vi.fn() }))
 
 vi.mock('../store/useStore.js', () => ({ useStore: selector => selector({ S: mocks.S }) }))
-vi.mock('react-router-dom', () => ({ useNavigate: () => mocks.nav }))
+vi.mock('react-router-dom', () => ({
+  useLocation: () => ({ pathname: '/stats', search: (window.location.hash || '').split('?')[1] || '', state: null }),
+  useNavigate: () => mocks.nav }))
 vi.mock('../sheets.jsx', () => ({
   bwSheet: vi.fn(), goalSheet: vi.fn(), calendarSheet: vi.fn(), workoutDetailSheet: vi.fn(),
   exerciseHistorySheet: vi.fn(), WorkoutRow: () => React.createElement('div'), bwDeltaColor: () => '', weighInsSheet: vi.fn(),

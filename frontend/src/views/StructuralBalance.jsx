@@ -1,8 +1,8 @@
 import { useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
 import { exOr } from '../lib/exercises.js'
-import { t, exerciseNameFor, exerciseNameClass } from '../lib/i18n.js'
+import { t, getLang, exerciseNameFor, exerciseNameClass } from '../lib/i18n.js'
 import Icon from '../components/Icon.jsx'
 import { Button, Segmented } from '../components/ui.jsx'
 import { exercisePicker, bwSheet } from '../sheets.jsx'
@@ -19,10 +19,17 @@ const STATUS_COLOR = {
 
 // A role pointed at a custom exercise since deleted (on this device or another) still names
 // something rather than showing a blank line.
-const exerciseName = id => (id ? exerciseNameFor(exOr(id)) : null)
+// Chinese labels already identify the lift; omit redundant English suffixes here only.
+// exerciseNameFor still respects an explicitly enabled English-only preference.
+const exerciseName = id => (id ? exerciseNameFor(exOr(id), getLang().startsWith('zh') ? false : undefined) : null)
 
 export default function StructuralBalance() {
   const nav = useNavigate()
+  const loc = useLocation()
+  // A direct link has no Stats history entry; it still returns to the Trends section.
+  const backToStats = () => loc.state?.fromStats
+    ? nav(-1)
+    : nav('/stats?view=trends', { replace: true })
   const S = useStore(s => s.S)
   const update = useStore(s => s.update)
   // Own keys only: a synced or imported id such as "constructor" would otherwise find an
@@ -42,7 +49,7 @@ export default function StructuralBalance() {
   }
 
   return <>
-    <div className="hdr"><button className="iconbtn" onClick={() => nav('/stats')} aria-label={t('Stats')}><Icon name="chevronLeft" /></button>
+    <div className="hdr"><button className="iconbtn" onClick={backToStats} aria-label={t('Stats')}><Icon name="chevronLeft" /></button>
       <div style={{ flex: 1, marginInlineStart: 12 }}><h1>{t('Structural balance')}</h1>
         <div className="sub">{t('Compare your lifts against a published ratio table to find the weak link.')}</div></div></div>
 

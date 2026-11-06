@@ -8,7 +8,9 @@ import Stats from './Stats.jsx'
 
 const mocks = vi.hoisted(() => ({ charts: [], S: null }))
 vi.mock('../store/useStore.js', () => ({ useStore: selector => selector({ S: mocks.S }) }))
-vi.mock('react-router-dom', () => ({ useNavigate: () => () => {} }))
+vi.mock('react-router-dom', () => ({
+  useLocation: () => ({ pathname: '/stats', search: (window.location.hash || '').split('?')[1] || '', state: null }),
+  useNavigate: () => () => {} }))
 vi.mock('../sheets.jsx', () => ({
   bwSheet: () => {}, goalSheet: () => {}, calendarSheet: () => {}, workoutDetailSheet: () => {}, exerciseHistorySheet: () => {},
   WorkoutRow: () => null, bwDeltaColor: () => 'inherit',

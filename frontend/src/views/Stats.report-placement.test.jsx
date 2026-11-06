@@ -6,7 +6,9 @@ import Stats from './Stats.jsx'
 
 const mocks = vi.hoisted(() => ({ S: null, nav: vi.fn() }))
 vi.mock('../store/useStore.js', () => ({ useStore: selector => selector({ S: mocks.S }) }))
-vi.mock('react-router-dom', () => ({ useNavigate: () => mocks.nav }))
+vi.mock('react-router-dom', () => ({
+  useLocation: () => ({ pathname: '/stats', search: (window.location.hash || '').split('?')[1] || '', state: null }),
+  useNavigate: () => mocks.nav }))
 vi.mock('../sheets.jsx', () => ({
   bwSheet: vi.fn(), goalSheet: vi.fn(), calendarSheet: vi.fn(), dayOverrideSheet: vi.fn(),
   workoutDetailSheet: vi.fn(), exerciseHistorySheet: vi.fn(), weighInsSheet: vi.fn(),
@@ -49,6 +51,8 @@ describe('Stats report placement', () => {
     }]
     const original = structuredClone(mocks.S)
     act(() => root.render(<Stats />))
+    expect(host.querySelector('.hdr').nextElementSibling.classList.contains('seg')).toBe(true)
+    expect([...host.querySelectorAll('.card-head-title')].filter(el => el.textContent === 'Weekly sets per muscle')).toHaveLength(1)
     const reports = buttons('Performance report')
     expect(reports).toHaveLength(1)
     expect(buttons('Training calendar')[0].getAttribute('aria-pressed')).toBe('true')
@@ -59,6 +63,7 @@ describe('Stats report placement', () => {
     expect(buttons('Performance report')).toHaveLength(1)
     expect(isVisible(reports[0])).toBe(true)
     expect(isVisible(host.querySelector('[data-training-calendar]'))).toBe(false)
+    mocks.nav.mockClear()
     click(reports[0])
     expect(mocks.nav).toHaveBeenCalledExactlyOnceWith('/reports')
 

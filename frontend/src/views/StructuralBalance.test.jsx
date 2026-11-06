@@ -10,7 +10,9 @@ import { buildDemoState } from '../lib/demoSeed.js'
 import { TEMPLATE_LIST } from '../lib/structuralBalanceTemplates.js'
 
 const navSpy = vi.fn()
-vi.mock('react-router-dom', () => ({ useNavigate: () => navSpy }))
+vi.mock('react-router-dom', () => ({
+  useLocation: () => ({ pathname: '/stats', search: (window.location.hash || '').split('?')[1] || '', state: null }),
+  useNavigate: () => navSpy }))
 
 const clone = value => JSON.parse(JSON.stringify(value))
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -161,10 +163,10 @@ describe('StructuralBalance view', () => {
     expect(host.querySelector('[data-role-id="frontSquat"] [data-needs-anchor]')).toBe(null)   // not logged either
   })
 
-  it('the back chevron navigates to /stats', () => {
+  it('the back chevron defaults to Stats Trends', () => {
     const host = render()
     act(() => host.querySelector('.iconbtn').click())
-    expect(navSpy).toHaveBeenCalledWith('/stats')
+    expect(navSpy).toHaveBeenCalledWith('/stats?view=trends', { replace: true })
   })
 
   it('changing a role\'s exercise via the picker saves an override and marks it custom', () => {
@@ -207,7 +209,7 @@ describe('the way in from Stats', () => {
     expect(card.textContent).toContain('See which lift is holding back the rest.')
     const open = [...card.querySelectorAll('button')].find(b => b.textContent.includes('Open'))
     act(() => open.click())
-    expect(navSpy).toHaveBeenCalledWith('/structural-balance')
+    expect(navSpy).toHaveBeenCalledWith('/structural-balance', { state: { fromStats: true } })
   })
 
   it('is not offered before the first workout', () => {
