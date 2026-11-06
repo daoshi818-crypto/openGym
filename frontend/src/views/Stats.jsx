@@ -712,7 +712,6 @@ export default function Stats() {
     <div className="hdr"><SeasonDeco spot="stats-hdr" /><div><h1>{t('Stats')}</h1><div className="sub">{t('Progress & history')}</div></div>
       <button className="iconbtn" onClick={() => nav('/history')} aria-label={t('History')}><Icon name="history" /></button></div>
 
-    <div className="feature-presets"><Button onClick={() => nav('/reports')}>{t('Performance report')}</Button></div>
     <WeeklyTargetsCard S={S} />
     {isOn(S, 'strength') && <StrengthLevelsCard S={S} />}
     <Segmented className="seg-range" value={view} onChange={setView}
