@@ -24,15 +24,24 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright')
       }).map(el => ({ cls: el.className, text: el.textContent }))
       const sideways = [...document.querySelectorAll('[data-type="list"]')].filter(e => e.scrollWidth > e.clientWidth + 1).map(e => e.className)
       const clippedNumbers = [...document.querySelectorAll('.fval>span,.funit>span,.show>span,.rest>span')].filter(e => e.scrollWidth > e.clientWidth + 1).map(e => ({text:e.textContent,width:e.clientWidth,needed:e.scrollWidth}))
-      return { root: { width: root.width, height: root.height }, lists, outside, sideways, clippedNumbers }
+      // Being inside a scroll container must not exempt a single-screen form from checks.
+      const mustFit = ['03-current','16-editor','17-keyboard','20-done-row','28-paused'].includes(SCENE.id) || SCENE.name === 'Keypad'
+      const scrollRequired = mustFit ? lists.filter(e => e.scrollHeight > e.height + 1) : []
+      const firstPlan = document.querySelector('.plans .plan')
+      let clippedPlan = false
+      if (firstPlan) {
+        const card = firstPlan.getBoundingClientRect(), list = firstPlan.parentElement.getBoundingClientRect()
+        clippedPlan = card.top < list.top - 1 || card.bottom > list.bottom + 1
+      }
+      return { root: { width: root.width, height: root.height }, lists, outside, sideways, clippedNumbers, scrollRequired, clippedPlan }
     })
     assert.deepEqual(result.root, { width: 390, height: 450 }, scene.id + ' root viewport')
     report.push({ ...scene, ...result })
-    if (result.outside.length || result.sideways.length || result.clippedNumbers.length) console.error(scene.id, JSON.stringify(result))
+    if (result.outside.length || result.sideways.length || result.clippedNumbers.length || result.scrollRequired.length || result.clippedPlan) console.error(scene.id, JSON.stringify(result))
   }
   fs.writeFileSync(path.join(dir, 'layout-report.json'), JSON.stringify({ errors, scenes: report }, null, 2))
-  assert.deepEqual(errors, [], 'Browser rendering errors')
-  assert.deepEqual(report.filter(s => s.outside.length || s.sideways.length || s.clippedNumbers.length), [], 'Controls exceed viewport, lists overflow sideways, or numbers clip')
   await browser.close()
+  assert.deepEqual(errors, [], 'Browser rendering errors')
+  assert.deepEqual(report.filter(s => s.outside.length || s.sideways.length || s.clippedNumbers.length || s.scrollRequired.length || s.clippedPlan), [], 'Controls exceed viewport, numbers clip, single-screen forms scroll, or first plan is cut off')
   console.log('Captured ' + scenes.length + ' scenes; see layout-report.json for bounds checks')
 })().catch(e => { console.error(e); process.exitCode = 1 })

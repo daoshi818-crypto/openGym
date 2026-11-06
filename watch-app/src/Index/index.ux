@@ -132,25 +132,25 @@ export default {
 /* Full viewport; Apple-style routine hero, circular start, scrollable alternate plans. */
 .page { width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
 .content { width: 100%; height: 100%; flex-direction: column; align-items: center; }
-.topbar { width: 338px; height: 44px; margin-top: 8px; flex-direction: row; justify-content: space-between; align-items: center; }
+.topbar { width: 338px; height: 36px; margin-top: 8px; flex-direction: row; justify-content: space-between; align-items: center; }
 .brand { font-size: 23px; color: #FFFFFF; }
 .version { font-size: 16px; color: #929297; }
-.status { width: 338px; height: 32px; font-size: 17px; color: #FF9F0A; lines: 1; }
-.hero { width: 338px; height: 228px; flex-direction: column; align-items: center; }
-.card-name { width: 338px; height: 56px; line-height: 28px; font-size: 27px; font-weight: bold; color: #FFFFFF; text-align: center; lines: 2; }
-.card-meta { width: 338px; height: 26px; font-size: 18px; color: #929297; text-align: center; lines: 1; }
-.start-circle { width: 104px; height: 104px; border-radius: 52px; font-size: 56px; background-color: #30D158; color: #000000; }
-.start-label { width: 338px; height: 42px; line-height: 42px; font-size: 24px; font-weight: bold; color: #30D158; text-align: center; }
-.plans { width: 358px; flex: 1; margin-bottom: 18px; }
-.plan { width: 358px; min-height: 74px; padding: 10px 14px; margin-bottom: 8px; border-radius: 22px; background-color: #1C1C1E; flex-direction: column; }
+.status { width: 338px; height: 26px; font-size: 17px; color: #FF9F0A; lines: 1; }
+.hero { width: 338px; height: 194px; flex-direction: column; align-items: center; }
+.card-name { width: 338px; height: 48px; line-height: 24px; font-size: 24px; font-weight: bold; color: #FFFFFF; text-align: center; lines: 2; }
+.card-meta { width: 338px; height: 22px; font-size: 17px; color: #929297; text-align: center; lines: 1; }
+.start-circle { width: 88px; height: 88px; border-radius: 44px; font-size: 48px; background-color: #30D158; color: #000000; }
+.start-label { width: 338px; height: 36px; line-height: 36px; font-size: 22px; font-weight: bold; color: #30D158; text-align: center; }
+.plans { width: 358px; flex: 1; min-height: 0px; margin-bottom: 8px; }
+.plan { width: 358px; min-height: 108px; padding: 8px 14px; margin-bottom: 8px; border-radius: 22px; background-color: #1C1C1E; flex-direction: column; }
 .selected { background-color: #242725; }
-.plan-name { width: 330px; min-height: 28px; font-size: 23px; color: #FFFFFF; lines: 2; }
-.plan-preview { width: 330px; min-height: 24px; font-size: 17px; color: #929297; lines: 2; }
+.plan-name { width: 330px; height: 48px; line-height: 24px; font-size: 22px; color: #FFFFFF; lines: 2; }
+.plan-preview { width: 330px; height: 44px; line-height: 22px; font-size: 17px; color: #929297; lines: 2; }
 .empty-state { width: 338px; flex: 1; flex-direction: column; justify-content: center; align-items: center; }
 .empty-icon { width: 100px; height: 94px; font-size: 80px; color: #30D158; text-align: center; }
 .empty-title { width: 338px; height: 48px; font-size: 27px; color: #FFFFFF; text-align: center; }
 .empty { width: 310px; min-height: 72px; font-size: 22px; color: #929297; text-align: center; lines: 3; }
-.links { width: 338px; height: 44px; margin-bottom: 18px; justify-content: center; }
+.links { width: 338px; height: 44px; margin-bottom: 12px; justify-content: center; }
 .link { width: 338px; height: 44px; background-color: #000000; color: #30D158; font-size: 19px; }
 .overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; justify-content: center; }
 .overlay-title { width: 338px; height: 60px; font-size: 27px; color: #FFFFFF; text-align: center; lines: 2; }

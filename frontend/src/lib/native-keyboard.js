@@ -86,6 +86,10 @@ export function revealAboveKeyboard(el, win = typeof window !== 'undefined' ? wi
     scroller = scroller.parentElement
   }
   const page = !scroller || scroller === doc.body || scroller === doc.documentElement
+  // Coach already bounds its composer above the keyboard. Its footer has no
+  // scrollable ancestor: falling back to the document would lift the whole chat
+  // again, undoing that layout (especially during the IME animation).
+  if (page && el.closest?.('.chat .composer')) return 0
   const r = el.getBoundingClientRect()
   let bottom = visibleBottom(win) - MARGIN
   let top = MARGIN

@@ -2,10 +2,56 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { validateChat, bindChatRequest, assertChatBase, chatPending } from '../coach/core/chat.js';
 import { EXERCISES } from '../coach/core/library-data.js';
+import { runPipeline } from '../coach/core/pipeline.js';
 const exId = EXERCISES[0].id;
 const plan = { routines: [{ id: 'back', name: 'Back', ex: [{ id: exId, mode: 'reps', sets: 4, reps: 10, repsMin: 8, repsMax: 12 }] }] };
 const proposal = () => ({ coach_contract: 1, chat_actions_contract: 1, replyType: 'proposal', answer: 'Not applied yet', summary: 'Adjust sets', targetRoutineId: 'back', changes: [{ id: 'a', type: 'sets', target: { routineId: 'back', exId }, before: 1234, after: 3, why: 'Requested by user' }], notes: [], clarification: '' });
 const options = { customIds: [exId] };
+test('chat accepts unambiguous scalar encodings without weakening integer bounds', () => {
+  for (const after of ['3', ' 3 ', { sets: 3 }, { sets: '3' }]) {
+    const p = proposal(); p.changes[0].after = after;
+    const before = structuredClone(p);
+    const result = validateChat(p, plan, options);
+    assert.equal(result.ok, true, JSON.stringify(after));
+    assert.equal(result.proposal.changes[0].after, 3);
+    assert.deepEqual(p, before, 'provider output must not be mutated');
+  }
+  for (const after of [true, null, [], [3], '', '3 sets', '三组', '3.5', '1e1', '0x3', { sets: 3, reps: 12 }, { value: 3 }, { sets: { sets: 3 } }, 0, 11, 3.5, '11']) {
+    const p = proposal(); p.changes[0].after = after;
+    assert.equal(validateChat(p, plan, options).ok, false, JSON.stringify(after));
+  }
+});
+test('chat normalizes bounds before subset comparisons and keeps mode and range checks', () => {
+  const p = proposal();
+  p.changes = ['repsMin', 'repsMax'].map((type, i) => ({ type, target: { routineId: 'back', exId }, after: i ? '10' : '9', why: 'Requested' }));
+  const result = validateChat(p, plan, options);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.proposal.changes.map(c => c.after), [9, 10]);
+  p.changes[0].after = { repsMin: '13' };
+  assert.equal(validateChat(p, plan, options).ok, false);
+  const timed = structuredClone(plan); timed.routines[0].ex[0].mode = 'time';
+  for (const after of ['120', { sec: '120' }]) {
+    const edit = proposal(); edit.changes[0] = { ...edit.changes[0], type: 'sec', after };
+    assert.equal(validateChat(edit, timed, options).proposal.changes[0].after, 120);
+    assert.equal(validateChat(edit, plan, options).ok, false);
+  }
+});
+test('genuinely invalid sets still require the existing repair round and may never be clamped', async () => {
+  for (const repaired of [3, 11]) {
+    let calls = 0;
+    const result = await runPipeline({ kind: 'chat', cfg: {}, payload: { plan }, adapter: {
+      spawns: false, invoke: async args => {
+        const p = proposal(); p.changes[0].after = calls++ ? repaired : 11;
+        if (calls === 2) assert.ok(args.prompt.includes('whole number of sets (1-10)'));
+        return { code: 0, text: JSON.stringify(p) };
+      }
+    } });
+    assert.equal(calls, 2);
+    assert.equal(result.ok, repaired === 3);
+    if (result.ok) assert.equal(result.result.changes[0].after, 3);
+    else assert.equal(result.errorClass, 'unusable');
+  }
+});
 test('chat corrects before, assigns unique change IDs and keeps ask separate', () => {
   const r = validateChat(proposal(), plan, options); assert.equal(r.ok, true); assert.equal(r.proposal.changes[0].before, 4);
   assert.equal(r.proposal.changes[0].id, 'chat-c1');

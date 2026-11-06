@@ -118,21 +118,23 @@ export default {
 
 <template>
 <div class="page" id="keypad" touch-focusable="true" onrotation="onRotation">
-  <list class="editor-scroll"><list-item class="editor-content" type="editor">
-    <text class="label">编辑{{ label }} · {{ unit }}</text><text class="edit-target">{{ targetName }}</text><text class="edit-group">第 {{ setIdx + 1 }} 组</text>
+  <list class="editor-scroll"><list-item class="editor-content {{ inputMode === 'keypad' ? 'keyboard-content' : '' }}" type="editor">
+    <text class="label" if="{{ inputMode !== 'keypad' }}">编辑{{ label }} · {{ unit }}</text>
+    <text class="label keyboard-label {{ notice ? 'notice-label' : '' }}" if="{{ inputMode === 'keypad' }}">{{ notice || ('编辑' + label + ' · ' + unit + ' · 第 ' + (setIdx + 1) + ' 组') }}</text>
+    <text class="edit-target {{ inputMode === 'keypad' ? 'keyboard-target' : '' }}">{{ targetName }}</text><text class="edit-group" if="{{ inputMode !== 'keypad' }}">第 {{ setIdx + 1 }} 组</text>
     <div class="quick" if="{{ inputMode === 'quick' }}"><div class="step-row"><input class="step" type="button" value="−" onclick="minus" /><text class="show {{ show.length > 8 ? 'extra-long-value' : show.length > 5 ? 'long-value' : '' }}">{{ show }}</text><input class="step" type="button" value="+" onclick="plus" /></div><text class="step-hint">{{ unit }} · 每次 ±{{ stepLabel }}</text><input class="switch" type="button" value="键盘精确输入" onclick="useKeyboard" /></div>
-    <text class="keyboard-value" if="{{ inputMode === 'keypad' }}">{{ show }} {{ unit }}</text>
+    <text class="keyboard-value {{ show.length > 8 ? 'keyboard-long-value' : '' }}" if="{{ inputMode === 'keypad' }}">{{ show }} {{ unit }}</text>
     <div class="grid" if="{{ inputMode === 'keypad' }}">
       <input class="k" type="button" value="1" onclick="onKey1" /><input class="k" type="button" value="2" onclick="onKey2" /><input class="k" type="button" value="3" onclick="onKey3" /><input class="k" type="button" value="4" onclick="onKey4" /><input class="k" type="button" value="5" onclick="onKey5" /><input class="k" type="button" value="6" onclick="onKey6" /><input class="k" type="button" value="7" onclick="onKey7" /><input class="k" type="button" value="8" onclick="onKey8" /><input class="k" type="button" value="9" onclick="onKey9" /><input class="k" type="button" value="{{ field === 'w' ? '.' : '⌫' }}" onclick="decimalOrClear" /><input class="k" type="button" value="0" onclick="onKey0" /><input class="k c" type="button" value="C" onclick="onKeyC" />
     </div>
-    <input class="switch" type="button" if="{{ inputMode === 'keypad' }}" value="返回减加" onclick="useQuick" /><text class="notice" if="{{ notice }}">{{ notice }}</text>
-    <div class="actions"><input class="cancel" type="button" value="取消" onclick="onCancel" /><input class="ok" type="button" value="保存" onclick="onKeyOk" /></div>
+    <input class="switch keyboard-switch" type="button" if="{{ inputMode === 'keypad' }}" value="返回减加" onclick="useQuick" /><text class="notice" if="{{ notice && inputMode !== 'keypad' }}">{{ notice }}</text>
+    <div class="actions {{ inputMode === 'keypad' ? 'keyboard-actions' : '' }}"><input class="cancel {{ inputMode === 'keypad' ? 'keyboard-action' : '' }}" type="button" value="取消" onclick="onCancel" /><input class="ok {{ inputMode === 'keypad' ? 'keyboard-action' : '' }}" type="button" value="保存" onclick="onKeyOk" /></div>
   </list-item></list>
 </div>
 </template>
 
 <style>
-/* Explicit-save drafts; crown and touch share step logic. Long keypad form scrolls. */
+/* Explicit-save drafts. GT1 keypad fits all controls in 450px; round safety retains scrolling. */
 .page { width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
 .editor-scroll { width: 100%; height: 100%; }
 .editor-content { width: 100%; min-height: 450px; flex-direction: column; align-items: center; padding-bottom: 18px; }
@@ -150,9 +152,17 @@ export default {
 .actions { width: 338px; height: 64px; margin-top: 22px; flex-direction: row; justify-content: space-between; }
 .cancel { width: 146px; height: 56px; border-radius: 28px; font-size: 22px; background-color: #242725; color: #FFFFFF; }
 .ok { width: 182px; height: 56px; border-radius: 28px; font-size: 22px; background-color: #0A3418; color: #30D158; }
-.keyboard-value { width: 338px; height: 66px; font-size: 48px; color: #30D158; text-align: center; lines: 1; }
+.keyboard-content { padding-bottom: 14px; }
+.keyboard-label { height: 28px; margin-top: 6px; font-size: 17px; lines: 1; }
+.keyboard-target { height: 48px; line-height: 24px; font-size: 24px; }
+.keyboard-value { width: 338px; height: 48px; font-size: 42px; color: #30D158; text-align: center; lines: 1; }
+.keyboard-long-value { font-size: 28px; }
+.keyboard-switch { height: 44px; font-size: 18px; }
+.keyboard-actions { height: 52px; margin-top: 6px; }
+.keyboard-action { height: 48px; font-size: 21px; }
+.notice-label { color: #FF9F0A; }
 .grid { width: 338px; flex-direction: row; flex-wrap: wrap; justify-content: space-between; }
-.k { width: 108px; height: 52px; margin-bottom: 6px; font-size: 28px; border-radius: 22px; background-color: #1C1C1E; color: #FFFFFF; }
+.k { width: 108px; height: 44px; margin-bottom: 4px; font-size: 25px; border-radius: 20px; background-color: #1C1C1E; color: #FFFFFF; }
 .c { color: #FF453A; }
 .notice { width: 338px; min-height: 44px; color: #FF9F0A; font-size: 19px; lines: 2; }
 @media screen and (min-width: 450px) {

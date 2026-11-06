@@ -5,6 +5,8 @@
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { parseHTML } from 'linkedom'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import CoachChat from './CoachChat.jsx'
 import { CONSENT_VERSION } from '../lib/coach.js'
@@ -92,6 +94,24 @@ afterEach(async () => {
 })
 
 describe('the Coach thread while the keyboard is up', () => {
+  it('keeps the safe-area origin stable when entering the flex column', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/coach.css'), 'utf8')
+    expect(css).toMatch(/\.chat\{display:flow-root;/)
+    expect(css).toMatch(/\.chat\.kb \.chat-hdr\{position:relative;flex:none\}/)
+  })
+  it('handles adjustResize when innerHeight and visualViewport both shrink', async () => {
+    await mount()
+    window.innerHeight = 600
+    keyboard(0, { visualHeight: 600 })
+    await flush()
+    const el = container.querySelector('.chat')
+    expect(el.classList.contains('kb')).toBe(true)
+    expect(el.style.getPropertyValue('--chat-h')).toBe('600px')
+    window.innerHeight = 900
+    keyboard(0)
+    await flush()
+    expect(el.classList.contains('kb')).toBe(false)
+  })
   it('gives the thread one known height and lifts the composer out of the keyboard’s way', async () => {
     await mount()
     const el = container.querySelector('.chat')
@@ -116,6 +136,23 @@ describe('the Coach thread while the keyboard is up', () => {
     await flush()
     expect(el.classList.contains('kb')).toBe(true)
     expect(el.style.getPropertyValue('--chat-h')).toBe('500px')
+  })
+
+  it('resets the layout baseline on rotation, then handles a resized keyboard', async () => {
+    await mount()
+    window.innerWidth = (window.innerWidth || 0) + 300
+    window.innerHeight = 500
+    keyboard(0, { visualHeight: 500 })
+    await flush()
+    const el = container.querySelector('.chat')
+    expect(el.classList.contains('kb')).toBe(false)
+    window.innerHeight = 320
+    keyboard(0, { visualHeight: 320 })
+    await flush()
+    expect(el.style.getPropertyValue('--chat-h')).toBe('320px')
+    window.innerHeight = 900
+    keyboard(0)
+    await flush()
   })
 
   it('follows new messages inside the thread, and leaves a reader in history where they were', async () => {
@@ -154,8 +191,8 @@ describe('the Coach thread while the keyboard is up', () => {
     expect(el.classList.contains('kb')).toBe(false)
     expect(document.body.classList.contains('chat-kb')).toBe(false)
     expect(scrollY).toBe(0)
-    // Only the one-off pin when entering the mode; the page is never scrolled while in it.
-    expect(dom.scrollTo.mock.calls.length - scrolled).toBe(20)   // the one-off pin, once per entry
+    // Pin once on entry; restore the conversation on exit. No scrolling during IME updates.
+    expect(dom.scrollTo.mock.calls.length - scrolled).toBe(40)
   })
 
   it('keeps the draft and the same composer across a keyboard cycle', async () => {

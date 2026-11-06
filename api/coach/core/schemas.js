@@ -130,7 +130,13 @@ export const CHAT_SCHEMA = {
     coach_contract: { type: 'integer' }, chat_actions_contract: { type: 'integer' },
     replyType: { type: 'string', enum: ['answer', 'clarify', 'proposal'] },
     answer: STR, summary: STR, targetRoutineId: STR,
-    changes: { ...REVIEW_SCHEMA.properties.changes, maxItems: 10 }, notes: STRINGS, clarification: STR
+    changes: { type: 'array', maxItems: 10, items: {
+      type: 'object', properties: {
+        id: STR, type: { type: 'string', enum: ['sets', 'reps', 'repsMin', 'repsMax', 'sec'] },
+        target: { type: 'object', properties: { routineId: STR, exId: STR }, required: ['routineId', 'exId'] },
+        before: { type: 'integer' }, after: { type: 'integer', minimum: 1, maximum: 3600 }, why: STR
+      }, required: ['type', 'target', 'after', 'why']
+    } }, notes: STRINGS, clarification: STR
   }, required: ['coach_contract', 'chat_actions_contract', 'replyType', 'answer', 'changes']
 };
 export const SCHEMAS = { chat: CHAT_SCHEMA, review: REVIEW_SCHEMA, create: CREATE_SCHEMA, refine: CREATE_SCHEMA, debrief: DEBRIEF_SCHEMA, debriefPlan: PLAN_DEBRIEF_SCHEMA, ask: ASK_SCHEMA };

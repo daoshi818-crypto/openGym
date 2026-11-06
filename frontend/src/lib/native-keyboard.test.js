@@ -5,7 +5,7 @@
 // (Android QA, v1.3.9). MainActivity passes the covered height as --native-kb; these check the page
 // side: the sheets lift by it, the focused field is scrolled above it, and with no variable (older
 // Android, iOS, a browser) nothing changes.
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { nativeKeyboardHeight, visibleBottom, revealAboveKeyboard, startNativeKeyboard, NATIVE_KEYBOARD_EVENT, visibleBox, viewportBox, boxBelow } from './native-keyboard.js'
 import { sheetKeyboardInsets } from './use-sheet-keyboard.js'
@@ -64,6 +64,18 @@ describe('the keyboard height the app passes', () => {
 })
 
 describe('keeping the focused field above the keyboard', () => {
+  it('does not lift the document to reveal an already bounded Coach composer', () => {
+    const chat = document.createElement('div')
+    chat.className = 'chat kb'
+    chat.innerHTML = '<div class="composer"><textarea></textarea></div>'
+    document.body.appendChild(chat)
+    const input = chat.querySelector('textarea')
+    input.getBoundingClientRect = () => rect(700, 44)
+    setKeyboard(336)
+    window.scrollTo = vi.fn()
+    expect(revealAboveKeyboard(input)).toBe(0)
+    expect(window.scrollTo).not.toHaveBeenCalled()
+  })
   function sheetWithField(fieldTop, sheetTop = 300, sheetHeight = 615) {
     const sheet = document.createElement('div')
     sheet.className = 'sheet'

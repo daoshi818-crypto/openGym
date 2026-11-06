@@ -1273,7 +1273,7 @@ export default {
     <div class="training-panel compact" if="{{ !isRest }}">
       <list class="training-scroll"><list-item type="current-group" class="training-content">
         <text class="ex" onclick="openExercises">{{ exName }} ›</text>
-        <text class="group {{ rowDone ? 'group-done' : '' }}">{{ groupLabel }}{{ rowDone ? ' · 已完成' : ' · ' + finishName }}</text>
+        <text class="group {{ rowDone ? 'group-done' : '' }}">{{ groupLabel }}{{ rowDone ? ' · 已完成 · 点 ↶ 撤销' : ' · ' + finishName }}</text>
         <div class="inputs">
           <div class="field weight-field {{ rowDone ? 'field-done' : selectedField === 'w' ? 'field-selected' : '' }}" onclick="editWeight">
             <text class="fval {{ weightNum.length > 7 ? 'extra-long-value' : weightNum.length > 4 ? 'long-value' : '' }}">{{ weightNum }}</text><text class="funit">{{ weightSuffix }}</text>
@@ -1289,7 +1289,6 @@ export default {
           <input class="complete {{ rowDone || paused ? 'secondary' : '' }}" type="button" value="{{ paused ? 'Ⅱ' : rowDone ? '↶' : '✓' }}" disabled="{{ paused }}" onclick="onCurrentSetAction" />
           <div class="effort-circle" if="{{ effortEntryOn }}" onclick="openEffort"><text class="effort-caption">{{ effortScaleLabel }}</text><text class="effort-entry-value">{{ effortNumber }}</text></div>
         </div>
-        <text class="undo-label" if="{{ rowDone }}">点击 ↶ 撤销完成</text>
         <div class="set-dots">
           <input class="set-hit segment" if="{{ dotSegmented }}" type="button" value="‹" disabled="{{ !dotHasPrev }}" onclick="prevDotSegment" />
           <div class="set-hit" for="{{ item in setDots }}" onclick="pickSetDot(item)"><div class="set-dot {{ item.current ? 'set-current' : item.done ? 'set-done' : '' }}"></div></div>
@@ -1394,7 +1393,6 @@ export default {
 .effort-circle { width: 108px; height: 80px; margin-left: 34px; border-radius: 24px; background-color: #1C1C1E; flex-direction: column; align-items: center; justify-content: center; }
 .effort-caption { font-size: 17px; color: #929297; }
 .effort-entry-value { font-size: 28px; color: #FFFFFF; }
-.undo-label { width: 338px; height: 28px; font-size: 17px; color: #929297; text-align: center; }
 .set-dots { width: 338px; min-height: 44px; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: center; }
 .set-hit { width: 44px; height: 44px; align-items: center; justify-content: center; }
 .set-dot { width: 10px; height: 10px; border-radius: 5px; background-color: #333638; }

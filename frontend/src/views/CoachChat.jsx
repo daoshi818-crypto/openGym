@@ -121,16 +121,28 @@ export default function CoachChat() {
   // height — header, scroller, composer — and the page itself never moves.
   const [chatBox, setChatBox] = useState(null)   // { height } while the keyboard is up
   const boxHeight = useRef(0)
+  const exitScroll = useRef(null)
   useEffect(() => {
     if (typeof window === 'undefined') return
     let frame = 0
+    let fullHeight = window.innerHeight || 0
+    let fullWidth = window.innerWidth || 0
     const measure = () => {
       frame = 0
       const el = chatRef.current
       const view = viewportBox(window)
       const inner = window.innerHeight || 0
-      const covered = inner > 0 && view.bottom < inner - 1
-      if (!el || !covered) { boxHeight.current = 0; setChatBox(null); return }
+      // adjustResize can shrink BOTH viewports: comparing them to each other misses
+      // the keyboard entirely. Keep the unoccluded layout height too. A width change
+      // is orientation/window resizing, not a keyboard opening.
+      const width = window.innerWidth || 0
+      if (Math.abs(width - fullWidth) > 1) { fullWidth = width; fullHeight = inner }
+      fullHeight = Math.max(fullHeight, inner)
+      const covered = inner > 0 && (view.bottom < inner - 1 || fullHeight - inner > 120)
+      if (!el || !covered) {
+        if (boxHeight.current) exitScroll.current = msgsRef.current?.scrollTop || 0
+        boxHeight.current = 0; setChatBox(null); return
+      }
       // `top` is only meaningful while the page is not scrolled; entering this mode pins it,
       // so measure the page offset of the thread rather than its offset inside a scrolled page.
       const pageTop = (el.getBoundingClientRect().top || 0) + (window.scrollY || 0)
@@ -185,15 +197,25 @@ export default function CoachChat() {
   // The keyboard opening makes the thread the scroller: land on the same place it was showing
   // (the end, unless the reader had gone up), without touching the page.
   useEffect(() => {
-    if (!chatBox) return
     const el = msgsRef.current
+    if (!chatBox) {
+      if (exitScroll.current != null && el) {
+        if (stick.current) followMsgs()
+        else window.scrollTo?.(0, el.getBoundingClientRect().top + (window.scrollY || 0) + exitScroll.current)
+        exitScroll.current = null
+      }
+      return
+    }
     if (el && stick.current) el.scrollTop = el.scrollHeight
-  }, [!!chatBox])
+  }, [chatBox?.height])
   // Reading history on the whole-page scroll (no keyboard): note where the reader left the
   // thread, so a reply that lands while they are above the end does not yank them down.
   useEffect(() => {
     if (typeof window === 'undefined') return
-    const onScroll = () => { stick.current = atBottom() }
+    // Switching from document flow to the bounded thread can clamp document
+    // scrollY to zero before effects run. That is not the reader leaving the end.
+    // Ignore document scrolls as soon as measurement enters keyboard mode.
+    const onScroll = () => { if (!boxHeight.current) stick.current = atBottom() }
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
   }, [!!chatBox])

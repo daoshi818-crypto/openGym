@@ -1,4 +1,9 @@
-# GT1 390×450 UI 重构与验收（手机 1.6.11 / 手表 0.6.17）
+# GT1 390×450 UI 重构与验收（手机 1.6.12 / 手表 0.6.18）
+
+## 0.6.18 一屏适配补充
+- 已完成组的撤销提示并入组状态行，不添加独立提示高度，标准当前/已完成组均不需滚动。
+- 精确键盘单独使用紧凑间距、顶部合并字段/单位/组号；全部按键、返回减加、取消/保存同屏。按键至少 44px；长动作名支持两行；失效提示替换顶部行，不挤走底部按钮。
+- 首页启动圆按钮改为 88px，减少顶部留白；有最近结果入口时仍预留完整两行计划名称+两行动作摘要的卡片空间。仅多计划列表需要滚动。
 
 ## 本轮范围
 - 完整重写 `Index`、`Workout`、`ExerciseList`、`Keypad`、`Summary` 的模板与样式，清除旧固定高度外壳、旧紧凑样式叠加和动作演示。
@@ -35,7 +40,7 @@
 1. `watch-app/scripts/build-release.ps1`：厂商编译器构建方屏/圆屏，校验 VRU、签名条目、版本、目标设备、SHA256。
 2. `watch-app/scripts/verify-layout.cjs`：检查编译后模板/CSS 的全屏根、原生滚动、450px 高度预算、圆点/完成按钮触控尺寸及导航合同。
 3. `watch-app/scripts/preview-gt1.mjs <目录>`：从编译模板和实际 UX 样式生成预览，数据通过真实脚本与会话模型生成。
-4. `watch-app/scripts/capture-gt1.cjs <目录>`：以 390×450 浏览器语义适配捕获 29 场景，检查根尺寸、固定操作边界、横向溢出与主要数字裁切。设 `PLAYWRIGHT_MODULE` 可指定 Playwright 安装位置。
+4. `watch-app/scripts/capture-gt1.cjs <目录>`：以 390×450 浏览器语义适配捕获 32 场景，检查根尺寸、固定操作边界、横向溢出与主要数字裁切，并拒绝标准当前/已完成组及编辑/键盘页需要滚动、第一张计划卡片截断。设 `PLAYWRIGHT_MODULE` 可指定 Playwright 安装位置。
 5. frontend watch 回归与完整 Vitest、mobile 启动测试、手机 production bundle/Capacitor 同步、Android Java 编译；GitHub 门禁通过后再发布 APK、双 RPK 及校验文件，最后更新 update.json。
 
 ## 必须保留的真机验收边界

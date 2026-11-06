@@ -27,6 +27,35 @@ function training(scale) {
 }
 
 describe('GT1 complete-screen rebuild contracts', () => {
+  function cssSize(page, selector, field) {
+    const css = watchSource(page + '/index.ux').match(/<style>([\s\S]*?)<\/style>/)[1]
+    const rule = css.match(new RegExp('\\.' + selector + '\\s*\\{([^}]+)\\}'))?.[1] || ''
+    return Number(rule.match(new RegExp('(?:^|[;\\s])' + field + ':\\s*([\\d.]+)px'))?.[1] || 0)
+  }
+  it('keeps completed-set guidance inline instead of pushing dots below the viewport', () => {
+    const src = watchSource('Workout/index.ux')
+    expect(src).not.toContain('class="undo-label"')
+    expect(src).toContain('已完成 · 点 ↶ 撤销')
+    const h = (s, p='height') => cssSize('Workout',s,p)
+    expect(h('topbar')+h('topbar','margin-top')+h('primary-footer')+h('primary-footer','margin-bottom')+
+      ['ex','group','inputs','last-row','navrow'].reduce((n,s)=>n+h(s),0)+h('set-dots','min-height')).toBeLessThanOrEqual(450)
+  })
+  it('fits the entire precise keyboard and keeps every key at least 44px', () => {
+    const h = (s,p='height') => cssSize('Keypad',s,p)
+    expect(h('keyboard-label','margin-top')+h('keyboard-label')+h('keyboard-target')+h('keyboard-value')+
+      4*(h('k')+h('k','margin-bottom'))+h('keyboard-switch')+h('keyboard-actions')+
+      h('keyboard-actions','margin-top')+h('keyboard-content','padding-bottom')).toBeLessThanOrEqual(450)
+    for (const s of ['k','keyboard-action','keyboard-switch']) expect(h(s)).toBeGreaterThanOrEqual(44)
+    expect(watchSource('Keypad/index.ux')).toContain('notice ||')
+  })
+  it('reserves a whole two-line plan card above the recent-results footer', () => {
+    const h = (s,p='height') => cssSize('Index',s,p)
+    const fixed=h('topbar')+h('topbar','margin-top')+h('status')+h('hero')+h('links')+h('links','margin-bottom')+h('plans','margin-bottom')
+    const card=h('plan-name')+h('plan-preview')+16+h('plan','margin-bottom')
+    expect(fixed+card).toBeLessThanOrEqual(450)
+    expect(h('plan-name')).toBeGreaterThanOrEqual(48)
+    expect(h('plan-preview')).toBeGreaterThanOrEqual(44)
+  })
   it.each(['Index','Workout','Keypad','ExerciseList','Summary'])('%s has a full viewport, not the former fixed safe-area shell', name => {
     const src = watchSource(name + '/index.ux'), css = src.match(/<style>([\s\S]*?)<\/style>/)[1]
     const root = css.match(/\.page\s*\{([^}]+)\}/)[1]

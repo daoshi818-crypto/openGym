@@ -75,7 +75,10 @@
 .ob-hint{text-align:center;font-size:13px;color:var(--label-3);margin-top:8px}
 
 /* ---------- chat ---------- */
-.chat{padding-bottom:40px}
+/* Keep the header's negative safe-area margin inside this formatting context.
+   Otherwise entering flex mode changes the chat origin by the safe-area height,
+   after JS measured it, pushing the composer below the keyboard. */
+.chat{display:flow-root;padding-bottom:40px}
 .chat-hdr{
   display:flex;align-items:center;gap:10px;
   /* Pinned like a messenger's title bar: it eats the app shell's top padding so the blur
@@ -200,10 +203,12 @@
 body.chat-kb #app,
 :root[data-native-kb] body.chat-kb #app,
 :root[data-native-kb] body.chat-kb.resting #app{padding-bottom:0}
+body.chat-kb{overflow-y:hidden;overscroll-behavior-y:none}
 .chat.kb{
   display:flex;flex-direction:column;overflow:hidden;
   height:var(--chat-h,100dvh);padding-bottom:0
 }
+.chat.kb .chat-hdr{position:relative;flex:none}
 .chat.kb .msgs{
   flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;
   -webkit-overflow-scrolling:touch;padding-bottom:4px

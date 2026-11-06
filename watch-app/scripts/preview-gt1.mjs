@@ -71,7 +71,7 @@ p=workout(s=>s.workout.rows.forEach(rows=>rows.forEach(r=>{r.done=true;r.at=Date
 p=workout();p.pageIndex=1;scene('13-operations','Workout',p,'训练操作');scene('14-operations-bottom','Workout',p,'训练操作 · 底部',true)
 env=environment();env.ctx.startSession(clone(plan));p=page('ExerciseList',env);p.onInit();p.expanded=0;scene('15-exercises','ExerciseList',p,'点击动作名切换')
 p=page('Keypad',env);p.onInit({exIdx:0,setIdx:0,field:'w'});scene('16-editor','Keypad',p,'重量编辑 · 表冠')
-p.useKeyboard();scene('17-keyboard','Keypad',p,'精确键盘 · 底部',true)
+p.useKeyboard();scene('17-keyboard','Keypad',p,'精确键盘 · 完整一屏')
 env.disk.set('summary_last',{sid:'preview',workout:'推部训练',minutes:64,sets:Array.from({length:13},()=>({done:true})),volume:5230,weightUnit:'kg',avgHr:118,maxHr:142,calories:382})
 p=page('Summary',env);p.onInit();p.clockLabel='9:23';scene('18-summary','Summary',p,'总结 · 上半屏');scene('19-summary-bottom','Summary',p,'总结 · 下半屏',true)
 scene('20-done-row','Workout',workout(s=>{s.setIdx=1}),'已完成组 · 撤销')
@@ -84,6 +84,9 @@ env=environment();env.ctx.startSession(clone(plan));p=page('Index',env);p.onInit
 p=page('Index',env);p.onInit({conflict:JSON.stringify({...plan,sid:'phone-session'})});scene('27-conflict','Index',p,'手机训练冲突确认')
 scene('28-paused','Workout',workout(s=>{s.pausedAt=Date.now()}),'暂停 · 禁止误完成')
 env=environment();env.ctx.startSession(clone(plan));p=page('ExerciseList',env);p.onInit();p.endOn=true;scene('29-exercise-end','ExerciseList',p,'动作列表 · 结束操作')
+env=environment();env.ctx.startSession(clone(plan));p=page('Keypad',env);p.onInit({exIdx:0,setIdx:0,field:'r',inputMode:'keypad'});scene('30-keyboard-reps','Keypad',p,'次数键盘 · 完整一屏')
+p.targetName='这是一个用于验证两行显示的很长的训练动作名称';p.notice='目标已变化，未保存';scene('31-keyboard-notice','Keypad',p,'键盘 · 长动作名与过期提示')
+env=environment();env.disk.set('plan_catalog',{plans:[{...plan,name:'这是一个用于验证两行训练计划名称显示的推部训练计划'}]});env.disk.set('summary_last',{savedAt:Date.now()});p=page('Index',env);p.onInit({});scene('32-home-long','Index',p,'首页 · 长计划名与最近结果')
 const runtime = `
 function val(exp,ctx){if(typeof exp!=='string')return exp;if(exp.startsWith('function'))return Function('return ('+exp+')')().call(ctx);return exp.split('.').reduce((a,k)=>a?.[k],ctx)}
 function render(n,ctx){if(n.repeat){let frag=document.createDocumentFragment();for(const item of val(n.repeat.$exp,ctx)||[]){let sub=Object.create(ctx);sub[n.repeat.value]=item;frag.append(render({...n,repeat:null},sub))}return frag}if(n.$shown&&!val(n.$shown,ctx))return document.createDocumentFragment();const el=document.createElement(n.type==='input'?'button':n.type==='text'?'native-text':'div');el.className=(n.$class?val(n.$class,ctx).flat(Infinity).filter(Boolean).join(' '):n.class||'');el.dataset.type=n.type;let a=n.attr||{};if(a.id)el.id=a.id;if(a.$disabled)el.disabled=!!val(a.$disabled,ctx);if(n.style)Object.assign(el.style,n.style);if(n.type==='text'||n.type==='input'){let text=a.$value?val(a.$value,ctx):a.value||'';let span=document.createElement('span');span.textContent=text??'';el.append(span)}for(let c of n.children||[])el.append(render(c,ctx));return el}

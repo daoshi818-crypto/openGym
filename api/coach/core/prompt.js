@@ -26,7 +26,8 @@ export function buildPromptParts(kind, payload, repair) {
   const naming = `## Exercise names
 
 The payload's \`library\` entries contain \`n\` (the canonical English catalogue name) and \`displayName\` (the name for the language in \`meta.lang\`). For every exercise mentioned in a human-readable field, use the exact \`displayName\` belonging to its id. Never translate an exercise name yourself, never use \`n\` when \`displayName\` is present, and never output an English exercise name in a Chinese response. The id remains the only value used in plan changes.`;
-  const system = PROMPTS.common + '\n\n---\n\n' + naming + '\n\n---\n\n' + rules;
+  const chatScalars = task === 'chat' ? '\n\nFor each supported scalar edit, before and after are bare JSON integers: {"type":"sets","target":{"routineId":"actual-id","exId":"actual-ex-id"},"after":3,"why":"User requested three sets"}. Never use "3", "三组", {"sets":3}, or a relative delta as after. For a request such as “练背除了第一个动作以外，其他改为三组”, identify the actual back routine (ask if ambiguous), preserve its first exercise in plan order, and propose sets=3 only for its remaining exercises that differ. Preserve all other fields and routines. These examples are output-format rules, not instructions to change the current user’s plan.' : '';
+  const system = PROMPTS.common + '\n\n---\n\n' + naming + '\n\n---\n\n' + rules + chatScalars;
   // Compact JSON, not pretty-printed: the indentation was ~30% of the payload's tokens and
   // a model reads either just as well.
   let user = '## Payload\n\n```json\n' + JSON.stringify(payload) + '\n```\n';

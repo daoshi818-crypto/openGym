@@ -38,6 +38,7 @@ for (const page of Object.keys(manifest.router.pages)) {
     const footer=px(sheet,'.primary-footer','height')+px(sheet,'.primary-footer','marginBottom')
     const current=['.ex','.group','.inputs','.last-row','.navrow'].reduce((n,s)=>n+px(sheet,s,'height'),0)+px(sheet,'.set-dots','minHeight')
     assert.ok(header+current+footer<=450, 'Standard current set must show all dots and footer at 390x450')
+    assert.ok(!tree.some(n=>n.class==='undo-label'), 'Completed-set hint must not add a scrolling row')
     const rest=['.rest-ex','.rest','.next','.next-details','.effort-row','.rrow'].reduce((n,s)=>n+px(sheet,s,'height'),0)+px(sheet,'.rrow','marginTop')
     assert.ok(header+rest+px(sheet,'.rest-panel','marginBottom')<=450, 'Rest controls must fit without scrolling in standard state')
     assert.ok(px(sheet,'.rest','fontSize')>=100 && px(sheet,'.rest','height')>=px(sheet,'.rest','lineHeight'), 'Do not shrink or clip countdown')
@@ -63,14 +64,18 @@ for (const page of Object.keys(manifest.router.pages)) {
     assert.ok(tree.some(n=>n.events?.$click?.includes('pickExercise(this.item')), 'Tap action name handler missing')
   } else if (page==='Index') {
     flexViewport(sheet,'.plans')
-    assert.ok(px(sheet,'.start-circle','height')>=100)
+    assert.ok(px(sheet,'.start-circle','height')>=88)
     const homeFixed = px(sheet,'.topbar','height')+px(sheet,'.topbar','marginTop')+px(sheet,'.status','height')+px(sheet,'.hero','height')+px(sheet,'.links','height')+px(sheet,'.links','marginBottom')+px(sheet,'.plans','marginBottom')
-    assert.ok(homeFixed+44<=450, 'Home plan list must retain a visible touch/scroll region with recent summary present')
+    const cardHeight=px(sheet,'.plan-name','height')+px(sheet,'.plan-preview','height')+px(sheet,'.plan','paddingTop')+px(sheet,'.plan','paddingBottom')
+    assert.ok(homeFixed+Math.max(cardHeight,px(sheet,'.plan','minHeight'))+px(sheet,'.plan','marginBottom')<=450, 'Home must show a complete two-line plan card even with recent summary present')
   } else if (page==='Keypad') {
     assert.equal(sheet['.editor-scroll'].height,'100%')
     assert.ok(px(sheet,'.step','width')>=44 && px(sheet,'.step','height')>=44)
     assert.ok(2*px(sheet,'.step','width')+px(sheet,'.show','width')<=px(sheet,'.step-row','width'))
     assert.ok(px(sheet,'.show','fontSize')>=76)
+    const keyboard=px(sheet,'.keyboard-label','marginTop')+px(sheet,'.keyboard-label','height')+px(sheet,'.keyboard-target','height')+px(sheet,'.keyboard-value','height')+4*(px(sheet,'.k','height')+px(sheet,'.k','marginBottom'))+px(sheet,'.keyboard-switch','height')+px(sheet,'.keyboard-actions','height')+px(sheet,'.keyboard-actions','marginTop')+px(sheet,'.keyboard-content','paddingBottom')
+    assert.ok(keyboard<=450, 'GT1 keyboard must fit without scrolling, including Save/Cancel')
+    assert.ok(px(sheet,'.k','height')>=44 && px(sheet,'.keyboard-action','height')>=44 && px(sheet,'.keyboard-switch','height')>=44, 'Compact keyboard keeps touch targets')
     assert.ok(tree.some(n=>n.events?.click==='onKeyOk'), 'Explicit Save missing')
   } else if (page==='Summary') {
     flexViewport(sheet,'.scroll')

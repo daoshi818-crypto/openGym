@@ -7,6 +7,13 @@ export const CHAT_TYPES = ['sets', 'reps', 'repsMin', 'repsMax', 'sec'];
 const fail = message => ({ ok: false, errors: [message] });
 const error = code => Object.assign(new Error(code), { code });
 const only = (obj, keys) => obj && typeof obj === 'object' && !Array.isArray(obj) && Object.keys(obj).every(k => keys.includes(k));
+// Chat has scalar edits only. Some non-strict providers use "3" or {sets:3}
+// despite the decoding schema. Accept only those lossless encodings, never parseInt,
+// booleans, human prose, deltas, nested objects or objects with extra edit fields.
+function scalarAfter(type, value) {
+  if (only(value, [type]) && Object.hasOwn(value, type)) value = value[type];
+  return typeof value === 'string' && /^\d+$/.test(value.trim()) ? Number(value.trim()) : value;
+}
 export function validateChat(data, plan, ctx = {}) {
   if (!only(data, ['coach_contract', 'chat_actions_contract', 'replyType', 'answer', 'summary', 'targetRoutineId', 'changes', 'notes', 'clarification']) || data.coach_contract !== 1 || data.chat_actions_contract !== 1) return fail('invalid chat contract or unknown fields');
   if (!['answer', 'clarify', 'proposal'].includes(data.replyType) || typeof data.answer !== 'string' || !data.answer.trim() || data.answer.length > 6000 || !Array.isArray(data.changes)) return fail('replyType, answer and changes are required');
@@ -21,6 +28,7 @@ export function validateChat(data, plan, ctx = {}) {
   const routine = plan?.routines?.find(r => r.id === data.targetRoutineId);
   if (!routine || ctx.scope && ctx.scope.routineId !== routine.id) return fail('proposal exceeds selected routine');
   const fields = new Set(), ids = new Set();
+  const changes = [];
   for (const c of data.changes) {
     if (!only(c, ['id', 'type', 'target', 'before', 'after', 'why']) || !CHAT_TYPES.includes(c.type) || !only(c.target, ['routineId', 'exId']) || c.target.routineId !== routine.id) return fail('unsupported change or target');
     const key = [c.target.routineId, c.target.exId, c.type].join('|');
@@ -29,19 +37,20 @@ export function validateChat(data, plan, ctx = {}) {
     const ex = routine.ex?.find(e => e.id === c.target.exId);
     if (!ex || routine.ex.filter(e => e.id === c.target.exId).length !== 1) return fail('missing or ambiguous exercise identity');
     if ((c.type === 'sec' && ex.mode !== 'time') || (['reps', 'repsMin', 'repsMax'].includes(c.type) && ex.mode !== 'reps')) return fail('change is incompatible with exercise mode');
+    changes.push({ ...c, after: scalarAfter(c.type, c.after) });
   }
   // Every checkbox subset must be safe. Restrict independent bounds instead of inventing an
   // atomic group that the existing review UI cannot represent. Never validate only the full set.
   for (const ex of routine.ex || []) {
-    const changes = data.changes.filter(c => c.target.exId === ex.id);
-    const mins = [ex.repsMin || null, ...changes.filter(c => c.type === 'repsMin').map(c => c.after)].filter(v => v != null);
-    const maxs = [ex.repsMax || null, ...changes.filter(c => c.type === 'repsMax').map(c => c.after)].filter(v => v != null);
+    const edits = changes.filter(c => c.target.exId === ex.id);
+    const mins = [ex.repsMin || null, ...edits.filter(c => c.type === 'repsMin').map(c => c.after)].filter(v => v != null);
+    const maxs = [ex.repsMax || null, ...edits.filter(c => c.type === 'repsMax').map(c => c.after)].filter(v => v != null);
     if (mins.some(lo => maxs.some(hi => lo > hi))) return fail('a selected subset would invert the rep range');
   }
   // Canonical plan uses zero for an unset range. The legacy validator treats non-null
   // bounds as real bounds, so pass null only for its range checks, preserving canonical before.
   const reviewPlan = { ...plan, routines: plan.routines.map(r => ({ ...r, ex: (r.ex || []).map(e => ({ ...e, repsMin: e.repsMin || null, repsMax: e.repsMax || null })) })) };
-  const checked = validateReview({ summary: data.summary, changes: data.changes, notes: data.notes || [] }, reviewPlan, { ...ctx, scope: { kind: 'routine', routineId: routine.id } });
+  const checked = validateReview({ summary: data.summary, changes, notes: data.notes || [] }, reviewPlan, { ...ctx, scope: { kind: 'routine', routineId: routine.id } });
   if (!checked.ok) return checked;
   if (checked.nochange || !checked.proposal?.changes?.length) return { ok: true, proposal: { replyType: 'answer', answer: data.answer } };
   return { ok: true, proposal: { ...checked.proposal, replyType: 'proposal', answer: data.answer, targetRoutineId: routine.id,
