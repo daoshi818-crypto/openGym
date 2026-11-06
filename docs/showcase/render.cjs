@@ -1,4 +1,4 @@
-/* Export seven independent 3:4 cards. Never export a combined long screenshot.
+/* Export nine independent 3:4 cards. Never export a combined long screenshot.
  * Run from the repository root with a static server; see README.zh-CN.md.
  * Resolve Playwright externally; no application dependency changes are needed.
  */
@@ -42,8 +42,8 @@ const pngSize = file => {
       };
     });
     report.layout = layout;
-    assert.equal(layout.panels.length, 7, 'Exactly seven independent short cards');
-    assert.equal(new Set(layout.panels.map(p => p.filename)).size, 7);
+    assert.equal(layout.panels.length, 9, 'Exactly nine independent short cards');
+    assert.equal(new Set(layout.panels.map(p => p.filename)).size, 9);
     assert.ok(layout.images.every(el => el.loaded), 'All source images must load');
     assert.ok(layout.images.every(el => el.aspectError < 0.005), 'Screenshot aspect ratios must not be distorted');
     for (const panel of layout.panels) {
@@ -62,9 +62,9 @@ const pngSize = file => {
       assert.ok(size.cards.every(card => Math.abs(card.width - width) <= 1 && Math.abs(card.height / card.width - 4 / 3) < 0.005), `Cards do not fit ${width}px`);
       mobile.push({ width, ...size });
     }
-    report.checks = { sevenShortCards: true, allImagesLoaded: true, noPanelOverflow: true, footerClear: true, mobile };
+    report.checks = { nineShortCards: true, allImagesLoaded: true, noPanelOverflow: true, footerClear: true, mobile };
     assert.deepEqual(report.errors, []);
-    console.log('Seven short-card exports and layout checks passed', JSON.stringify(report.sizes));
+    console.log('Nine short-card exports and layout checks passed', JSON.stringify(report.sizes));
   } finally {
     fs.writeFileSync(process.env.SHOWCASE_REPORT || path.join(os.tmpdir(), 'opengym-showcase-report.json'), JSON.stringify(report, null, 2));
     await browser.close();

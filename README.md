@@ -13,7 +13,7 @@
 [![构建](https://img.shields.io/github/actions/workflow/status/daoshi818-crypto/openGym/build.yml?branch=main&style=flat-square&label=手机构建)](https://github.com/daoshi818-crypto/openGym/actions/workflows/build.yml)
 [![许可证](https://img.shields.io/badge/license-AGPL--3.0-a3e635?style=flat-square)](LICENSE)
 
-[下载安装](https://github.com/daoshi818-crypto/openGym/releases/latest) · [七张功能短图](docs/showcase/README.zh-CN.md) · [官方原项目](https://github.com/DuarteSantos8/openGym) · [自托管文档](docs/SELF_HOSTING.md)
+[下载安装](https://github.com/daoshi818-crypto/openGym/releases/latest) · [九张功能短图](docs/showcase/README.zh-CN.md) · [官方原项目](https://github.com/DuarteSantos8/openGym) · [自托管文档](docs/SELF_HOSTING.md)
 
 <img src="assets/showcase/opengym-cover.png" width="540" alt="openGym 中文定制版：官方核心功能与我们的定制拓展，手机应用中文演示截图">
 
@@ -30,7 +30,7 @@
 | 训练计划 | 按周或轮换安排训练，自定义动作、组数、次数、休息时间，使用入门模板。 |
 | 逐组记录 | 记录重量、次数、训练时长和可选 RPE / RIR；休息倒计时、上次表现、个人纪录辅助训练。 |
 | 动作库与手机动作示范 | 按肌群、器械搜索动作，在手机端查看示范和训练要领；支持自定义动作。 |
-| 进步统计与报告 | 训练日历、趋势、容量、体重和肌群统计；查看阶段报告，使用系统打印保存 PDF。 |
+| 进步统计与报告 | 趋势、容量、体重和肌群统计；查看阶段报告，使用系统打印保存 PDF。 |
 | AI 教练 | 训练问答、复盘、计划生成与调整建议；需要配置兼容的 AI 服务或自己的密钥。 |
 | 数据自主 | 本地优先、离线记录、备份导入导出，可选自托管与多端同步。AI 和在线同步仍需对应服务。 |
 
@@ -41,7 +41,7 @@
 </tr>
 </table>
 
-## 二、我们的拓展：中文体验与 vivo 手表
+## 二、我们的拓展：中文体验与 vivo / iQOO 手表
 
 ### 1. AI 普通聊天，也能走到「确认改计划」
 
@@ -85,6 +85,12 @@
 - 手机 APK、方屏/圆屏手表包与 SHA-256 校验文件统一发布；构建与测试通过后才更新 `update.json`。
 - 持续修复输入法避让、训练同步与页面布局等体验问题；统计页仅保留趋势内原有报告入口，移除外层重复按钮。
 
+### 训练日历、丢弃与接续
+
+- **主题训练日历**：按月查看训练日期和主题，点日期查看当天训练，再进入动作与逐组记录；不是把完整动作清单塞进每个日历格。
+- **丢弃训练**：保留并完善官方已有退出能力，确认后丢弃当前未保存内容；丢弃接续不会删除原已保存历史。
+- **接续已完成训练**：从历史或完成总结继续原场训练，保留动作、组记录与此前用时，保存时更新原记录，不重复新增场次。与另开一场的“今天再练一次”不同；已有正在进行的训练需先结束。
+
 详细归属与限制：[功能对照基线](docs/dev/FORK_VS_OFFICIAL_1_6_9.zh-CN.md) · [GT1 交互和实机验收](docs/dev/WATCH_GT1_UI_REBUILD.zh-CN.md) · [1.6.14 发布说明](docs/dev/RELEASE_1_6_14.zh-CN.md)
 
 ## 下载与安装
@@ -100,7 +106,7 @@
 
 当前文档快照：手机 **1.6.14 / code 60**，手表 **0.6.18 / code 33**。以后续 Release 为准。建议先导出手机数据、确认手表待上传记录已同步，再按兼容的签名和版本覆盖升级；不建议为更新随意卸载或清除数据。
 
-手机内使用「设置 → 检查更新」。手表安装与配对请参阅 [watch-app/README.md](watch-app/README.md)，真机兼容性以设备安装结果为准。
+手机内使用「设置 → 检查更新」。手表端需通过 **orbibitv** 安装，**未上架官方手表应用商店**。适配目标为 **vivo / iQOO WATCH GT1 / GT2 及 vivo WATCH 3–6 系列**（发布方适配范围，未逐台真机验收；不代表每一型号均已验证）。手表安装与配对请参阅 [watch-app/README.md](watch-app/README.md)，真机兼容性以设备安装结果为准。
 
 ## 自托管与源码开发
 
@@ -115,23 +121,29 @@ docker compose up -d --build
 
 访问 `http://localhost:8080`。跨设备使用 Passkey 需要合适的 HTTPS / 域名配置。此处使用 `--build` 构建本分支源码；直接拉取上游预构建镜像不会自动带上本分支修改。Android APK 的发布也不等于你的 API 服务器已经部署更新。
 
-开发与完整配置参考：[原英文说明](README.en.md) · [贡献指南](CONTRIBUTING.md) · [安全说明](SECURITY.md) · [上游变更记录](CHANGELOG.md) · [本分支发布记录](docs/dev/RELEASE_1_6_13.zh-CN.md)
+开发与完整配置参考：[原英文说明](README.en.md) · [贡献指南](CONTRIBUTING.md) · [安全说明](SECURITY.md) · [上游变更记录](CHANGELOG.md) · [本分支发布记录](docs/dev/RELEASE_1_6_14.zh-CN.md)
 
 ## 手机阅读与社交分享图片
 
-采用 **7 张独立短图，全部为 1080×1440（3:4）**，一张一个主题，不再使用拼接长图。按下列顺序发布即可：
+采用 **9 张独立短图，全部为 1080×1440（3:4）**，一张一个主题，不做拼接长图。手表适配放在第 2 张醒目展示，另增训练日历与丢弃/接续专题。
 
 | 顺序 | 图片 | 归属 |
 | --- | --- | --- |
-| 01 | [封面：认真练，也认真记录](assets/showcase/opengym-cover.png) | 总览 |
-| 02 | [计划与逐组记录](assets/showcase/opengym-02-official-training.png) | 官方核心功能 |
-| 03 | [统计与复盘](assets/showcase/opengym-03-official-progress.png) | 官方核心功能 |
-| 04 | [动作库、AI 与数据自主](assets/showcase/opengym-04-official-tools.png) | 官方核心功能 |
-| 05 | [AI 对话到确认改计划](assets/showcase/opengym-05-custom-coach.png) | 我们的定制拓展 |
-| 06 | [vivo / BlueOS 手表训练](assets/showcase/opengym-06-custom-watch.png) | 我们的定制拓展 |
-| 07 | [中文资料与发布更新](assets/showcase/opengym-07-custom-ecosystem.png) | 我们的定制拓展 |
+| 01 | [封面：认真练，也认真记录](assets/showcase/opengym-cover.png) | 总览与适配机型 |
+| 02 | [vivo / iQOO 手表适配与安装](assets/showcase/opengym-02-custom-watch.png) | 我们的定制拓展 |
+| 03 | [计划与逐组记录](assets/showcase/opengym-03-official-training.png) | 官方核心功能 |
+| 04 | [统计与复盘](assets/showcase/opengym-04-official-progress.png) | 官方核心功能 |
+| 05 | [动作库、AI 与数据自主](assets/showcase/opengym-05-official-tools.png) | 官方核心功能 |
+| 06 | [按日期回看训练、动作与组](assets/showcase/opengym-06-custom-calendar.png) | 我们的定制日历 |
+| 07 | [AI 对话到确认改计划](assets/showcase/opengym-07-custom-coach.png) | 我们的定制拓展 |
+| 08 | [丢弃与接续已完成训练](assets/showcase/opengym-08-custom-lifecycle.png) | 保留基础能力，拓展接续闭环 |
+| 09 | [中文资料与发布更新](assets/showcase/opengym-09-custom-ecosystem.png) | 我们的定制拓展 |
 
 [可编辑 HTML、制作说明与重导出脚本](docs/showcase/README.zh-CN.md)。手机图为应用演示数据截图；手表图为代码生成预览，非真机截图。流程图仅解释操作，不伪装成模型回复。发布时请保留功能归属和预览标记。
+
+## 向官方贡献
+
+建议先建立官方仓库的正式 fork，再从上游 main 拆分单功能 PR，不要把本分支发行定制整体合并回去。操作、测试边界和 CLA 需本人确认的事项见 [向上游贡献指南](docs/dev/UPSTREAM_CONTRIBUTION.zh-CN.md)。本次未替你创建上游 PR，也未代签 CLA。
 
 ## 致谢与许可证
 
