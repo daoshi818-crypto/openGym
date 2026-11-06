@@ -17,7 +17,11 @@ function scalarAfter(type, value) {
 export function validateChat(data, plan, ctx = {}) {
   if (!only(data, ['coach_contract', 'chat_actions_contract', 'replyType', 'answer', 'summary', 'targetRoutineId', 'changes', 'notes', 'clarification']) || data.coach_contract !== 1 || data.chat_actions_contract !== 1) return fail('invalid chat contract or unknown fields');
   if (!['answer', 'clarify', 'proposal'].includes(data.replyType) || typeof data.answer !== 'string' || !data.answer.trim() || data.answer.length > 6000 || !Array.isArray(data.changes)) return fail('replyType, answer and changes are required');
-  if (data.notes != null && (!Array.isArray(data.notes) || data.notes.length > 10 || data.notes.some(n => typeof n !== 'string' || n.length > 1200))) return fail('invalid notes');
+  // JSON-only providers may ignore the decoding schema and return one plain-text note.
+  // Wrapping that string is lossless and cannot authorize any edit. Do not coerce objects,
+  // parse JSON inside notes, drop invalid entries or truncate an over-limit response.
+  const notes = typeof data.notes === 'string' ? (data.notes.trim() ? [data.notes] : []) : data.notes ?? [];
+  if (!Array.isArray(notes) || notes.length > 10 || notes.some(n => typeof n !== 'string' || n.length > 1200)) return fail('invalid notes: use [] or an array of at most 10 strings, each at most 1200 characters');
   if (data.summary != null && (typeof data.summary !== 'string' || data.summary.length > 2000)) return fail('invalid summary');
   if (data.clarification != null && (typeof data.clarification !== 'string' || data.clarification.length > 1200)) return fail('invalid clarification');
   if (data.replyType !== 'proposal') {
@@ -50,7 +54,7 @@ export function validateChat(data, plan, ctx = {}) {
   // Canonical plan uses zero for an unset range. The legacy validator treats non-null
   // bounds as real bounds, so pass null only for its range checks, preserving canonical before.
   const reviewPlan = { ...plan, routines: plan.routines.map(r => ({ ...r, ex: (r.ex || []).map(e => ({ ...e, repsMin: e.repsMin || null, repsMax: e.repsMax || null })) })) };
-  const checked = validateReview({ summary: data.summary, changes, notes: data.notes || [] }, reviewPlan, { ...ctx, scope: { kind: 'routine', routineId: routine.id } });
+  const checked = validateReview({ summary: data.summary, changes, notes }, reviewPlan, { ...ctx, scope: { kind: 'routine', routineId: routine.id } });
   if (!checked.ok) return checked;
   if (checked.nochange || !checked.proposal?.changes?.length) return { ok: true, proposal: { replyType: 'answer', answer: data.answer } };
   return { ok: true, proposal: { ...checked.proposal, replyType: 'proposal', answer: data.answer, targetRoutineId: routine.id,

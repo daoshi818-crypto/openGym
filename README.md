@@ -85,7 +85,7 @@
 - 手机 APK、方屏/圆屏手表包与 SHA-256 校验文件统一发布；构建与测试通过后才更新 `update.json`。
 - 持续修复输入法避让、训练同步与页面布局等体验问题；统计页仅保留趋势内原有报告入口，移除外层重复按钮。
 
-详细归属与限制：[功能对照基线](docs/dev/FORK_VS_OFFICIAL_1_6_9.zh-CN.md) · [GT1 交互和实机验收](docs/dev/WATCH_GT1_UI_REBUILD.zh-CN.md) · [1.6.13 发布说明](docs/dev/RELEASE_1_6_13.zh-CN.md)
+详细归属与限制：[功能对照基线](docs/dev/FORK_VS_OFFICIAL_1_6_9.zh-CN.md) · [GT1 交互和实机验收](docs/dev/WATCH_GT1_UI_REBUILD.zh-CN.md) · [1.6.14 发布说明](docs/dev/RELEASE_1_6_14.zh-CN.md)
 
 ## 下载与安装
 
@@ -98,7 +98,7 @@
 | `opengym-watch-round-<版本>.rpk` | 支持的 BlueOS 圆屏设备，不是 Wear OS / Apple Watch 安装包。 |
 | `*.sha256` | 对应安装包的 SHA-256 校验值。 |
 
-当前文档快照：手机 **1.6.13 / code 59**，手表 **0.6.18 / code 33**。以后续 Release 为准。建议先导出手机数据、确认手表待上传记录已同步，再按兼容的签名和版本覆盖升级；不建议为更新随意卸载或清除数据。
+当前文档快照：手机 **1.6.14 / code 60**，手表 **0.6.18 / code 33**。以后续 Release 为准。建议先导出手机数据、确认手表待上传记录已同步，再按兼容的签名和版本覆盖升级；不建议为更新随意卸载或清除数据。
 
 手机内使用「设置 → 检查更新」。手表安装与配对请参阅 [watch-app/README.md](watch-app/README.md)，真机兼容性以设备安装结果为准。
 

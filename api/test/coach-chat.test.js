@@ -90,7 +90,34 @@ test('request references are resolved from trusted pending, not supplied content
 });
 test('chat fails closed on non-string summary and malformed notes instead of throwing', () => {
   for (const summary of [12, {}, [], null]) assert.equal(validateChat({ ...proposal(), summary }, plan, options).ok, false);
-  for (const notes of [{}, 'text', [4], Array(11).fill('x')]) assert.equal(validateChat({ ...proposal(), notes }, plan, options).ok, false);
+  for (const notes of [{}, 4, true, [4], [['text']], Array(11).fill('x'), 'x'.repeat(1201), ['x'.repeat(1201)]]) assert.equal(validateChat({ ...proposal(), notes }, plan, options).ok, false);
+});
+test('chat accepts a single plain-text note from JSON-mode providers without mutating output', () => {
+  for (const notes of ['Only changes the template.', '   ', '', null, undefined, ['Keep first exercise unchanged.']]) {
+    const data = { ...proposal(), notes }, before = structuredClone(data);
+    const result = validateChat(data, plan, options);
+    assert.equal(result.ok, true, JSON.stringify(notes));
+    assert.deepEqual(result.proposal.notes, typeof notes === 'string' && notes.trim() ? [notes] : Array.isArray(notes) ? notes : []);
+    assert.deepEqual(data, before);
+  }
+});
+test('read-only answers and clarifications accept the same plain-text notes as proposals', () => {
+  for (const replyType of ['answer', 'clarify']) {
+    const data = { ...proposal(), replyType, changes: [], notes: 'No changes have been applied.', clarification: replyType === 'clarify' ? 'Which routine?' : '' };
+    assert.equal(validateChat(data, plan, options).ok, true);
+    assert.equal(validateChat({ ...data, changes: proposal().changes }, plan, options).ok, false, 'notes compatibility must not hide mutation in a read-only reply');
+  }
+});
+test('plain-text notes no longer spend the only repair round, while unsafe edits still fail closed', async () => {
+  for (const after of [3, 11]) {
+    let calls = 0;
+    const result = await runPipeline({ kind: 'chat', cfg: {}, payload: { plan }, adapter: {
+      spawns: false, invoke: async () => { calls++; const p = { ...proposal(), notes: 'Wait for explicit confirmation.' }; p.changes[0].after = after; return { code: 0, text: JSON.stringify(p) }; }
+    } });
+    assert.equal(result.ok, after === 3);
+    assert.equal(calls, after === 3 ? 1 : 2);
+    if (after === 11) assert.ok(result.errors.some(e => e.includes('whole number of sets (1-10)')));
+  }
 });
 test('debrief references preserve selected evidence without confusing debrief scope with template scope', () => {
   const debrief = { id: 'd1', kind: 'debrief', summary: 'Selected old debrief', scope: { mode: 'plan', planId: 'historic', actual: 2 }, nextTime: ['Reduce fatigue'], evidenceSnapshot: { unit: 'kg', totals: { sessions: 2 }, sessions: [{ ref: 'chosen', d: '2026-09-01', sets: 8, lifts: [{ id: exId, sets: 4 }] }] } };

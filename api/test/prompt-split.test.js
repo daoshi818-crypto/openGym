@@ -16,6 +16,15 @@ const workout = (d, done = true) => ({
   entries: [{ id: '0001', target: { sets: 3, reps: 8, weight: 60 }, sets: [{ done, w: 60, r: 8, rir: 2 }] }]
 });
 
+test('chat states the notes array shape explicitly for JSON-only endpoints', () => {
+  const p = buildPromptParts('chat', { meta: { lang: 'zh' }, plan: { routines: [] } });
+  assert.ok(p.system.includes('notes is always an array of strings'));
+  assert.ok(p.system.includes('"notes":[]'));
+  assert.equal(SCHEMAS.chat.properties.notes.type, 'array');
+  assert.equal(SCHEMAS.chat.properties.notes.maxItems, 10);
+  assert.equal(SCHEMAS.chat.properties.notes.items.maxLength, 1200);
+});
+
 test('the rules half of the prompt is byte-identical across jobs of the same task', () => {
   const a = buildPromptParts('review', build(S([workout('2026-08-01')]), { handle: 'h1', kind: 'review' }));
   const b = buildPromptParts('review', build(S([workout('2026-08-20')]), { handle: 'h2', kind: 'review' }));

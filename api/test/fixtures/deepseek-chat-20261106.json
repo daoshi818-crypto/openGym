@@ -1,0 +1,385 @@
+[
+  {
+    "model": "deepseek-flash",
+    "phase": "baseline",
+    "scenario": "exact-request",
+    "attempt": 1,
+    "response": {
+      "coach_contract": 1,
+      "chat_actions_contract": 1,
+      "replyType": "proposal",
+      "answer": "可以，我按你说的做了一版调整方案：练背日里保留第一个动作杠铃俯身划船 4 组不变，把后面的绳索全幅度高位下拉、绳索坐姿划船、哑铃俯身划船都从 4 组降到 3 组。这只是提案，**尚未应用**，需要你明确确认后才会写入模板。",
+      "summary": "练背：保留杠铃俯身划船 4 组，其余三个动作各改为 3 组",
+      "targetRoutineId": "back",
+      "changes": [
+        {
+          "id": "2330",
+          "type": "sets",
+          "target": {
+            "routineId": "back",
+            "exId": "2330"
+          },
+          "before": 4,
+          "after": 3,
+          "why": "用户要求练背除第一个动作外其余改为三组；该动作在练背计划中排第二，现为 4 组"
+        },
+        {
+          "id": "0861",
+          "type": "sets",
+          "target": {
+            "routineId": "back",
+            "exId": "0861"
+          },
+          "before": 4,
+          "after": 3,
+          "why": "用户要求练背除第一个动作外其余改为三组；该动作在练背计划中排第三，现为 4 组"
+        },
+        {
+          "id": "0293",
+          "type": "sets",
+          "target": {
+            "routineId": "back",
+            "exId": "0293"
+          },
+          "before": 4,
+          "after": 3,
+          "why": "用户要求练背除第一个动作外其余改为三组；该动作在练背计划中排第四，现为 4 组"
+        }
+      ],
+      "notes": [
+        "第一个动作杠铃俯身划船保持 4 组不变，符合你说的“除了第一个动作以外”。",
+        "本次只动组数，动作、顺序、重量与进阶设置都不变；具体重量仍由应用的进阶引擎按历史记录决定。",
+        "该改动只影响练背模板，之后新增的训练日才会按 3 组执行；已记录的历史不会改写。"
+      ],
+      "clarification": ""
+    }
+  },
+  {
+    "model": "deepseek-flash",
+    "phase": "baseline",
+    "scenario": "why-after-two-errors",
+    "attempt": 1,
+    "response": {
+      "coach_contract": 1,
+      "chat_actions_contract": 1,
+      "replyType": "clarify",
+      "answer": "我无法确定“这个”指哪条提示：当前对话里没有你上一条消息，也没有待确认的调整（pendingProposal 为空），训练记录窗口为空，脚手架也没有附带任何提示原文。因此，我不能凭猜测解释某个提示的来源。只凭现在计划里的内容，我能看到的只有练背（杠铃俯身划船、绳索全幅度高位下拉、绳索坐姿划船、哑铃俯身划船）和练胸（杠铃卧推）两个模板，没有任何触发提示的记录。",
+      "summary": "",
+      "targetRoutineId": null,
+      "changes": [],
+      "notes": "我不做任何修改，也还没有应用过任何改动；如果你要调整模板，需要你明确确认后走提案确认流程。",
+      "clarification": "你说的“这个提示”具体是哪一条？请把提示原文（或它出现在哪个动作、哪个页面旁边）发给我，比如是练背模板里某个动作旁的提示，还是练胸的杠铃卧推附近的提示？"
+    }
+  },
+  {
+    "model": "deepseek-flash",
+    "phase": "baseline",
+    "scenario": "debrief-context-request",
+    "attempt": 1,
+    "response": {
+      "coach_contract": 1,
+      "chat_actions_contract": 1,
+      "replyType": "proposal",
+      "answer": "已按你的要求整理出一个草案：练背日保留第一个动作杠铃俯身划船 4 组不变，其余三个动作各改为 3 组。这是模板层面的修改，目前还没有应用，需要你明确确认后才会写入。",
+      "summary": "练背：保留首个动作 4 组，其余 3 个动作改为 3 组（尚未应用）",
+      "targetRoutineId": "back",
+      "changes": [
+        {
+          "id": "2330",
+          "type": "sets",
+          "target": {
+            "routineId": "back",
+            "exId": "2330"
+          },
+          "before": 4,
+          "after": 3,
+          "why": "用户要求练背除第一个动作外其余改为三组"
+        },
+        {
+          "id": "0861",
+          "type": "sets",
+          "target": {
+            "routineId": "back",
+            "exId": "0861"
+          },
+          "before": 4,
+          "after": 3,
+          "why": "用户要求练背除第一个动作外其余改为三组"
+        },
+        {
+          "id": "0293",
+          "type": "sets",
+          "target": {
+            "routineId": "back",
+            "exId": "0293"
+          },
+          "before": 4,
+          "after": 3,
+          "why": "用户要求练背除第一个动作外其余改为三组"
+        }
+      ],
+      "notes": [
+        "此次只改动组数，动作、次数目标、顺序与训练日安排均保持不变。",
+        "杠铃俯身划船作为练背的第一个动作，按你的要求维持 4 组。",
+        "改动仅作用于模板，不会改动历史记录；确认后才会生效。"
+      ],
+      "clarification": ""
+    }
+  },
+  {
+    "model": "deepseek-flash",
+    "phase": "fixed-deepseek-flash",
+    "scenario": "exact-request",
+    "attempt": 1,
+    "response": {
+      "coach_contract": 1,
+      "chat_actions_contract": 1,
+      "replyType": "proposal",
+      "answer": "明白，你要把「练背」里除第一个动作（杠铃俯身划船）以外的其余三个动作都改成 3 组。我按这个要求拟了一份改动：绳索全幅度高位下拉、绳索坐姿划船、哑铃俯身划船各从 4 组降为 3 组，杠铃俯身划船保持 4 组不动。这只是草案，还没有应用到你的计划里——需要你在界面上确认后才会写入模板。",
+      "summary": "将「练背」中除第一个动作（杠铃俯身划船）外的三个动作各从 4 组调整为 3 组。",
+      "targetRoutineId": "back",
+      "changes": [
+        {
+          "id": "2330",
+          "type": "sets",
+          "target": {
+            "routineId": "back",
+            "exId": "2330"
+          },
+          "before": 4,
+          "after": 3,
+          "why": "你要求「练背」除第一个动作以外的动作都改为三组；该动作在计划顺序中排第二，当前为 4 组。"
+        },
+        {
+          "id": "0861",
+          "type": "sets",
+          "target": {
+            "routineId": "back",
+            "exId": "0861"
+          },
+          "before": 4,
+          "after": 3,
+          "why": "你要求「练背」除第一个动作以外的动作都改为三组；该动作排第三，当前为 4 组。"
+        },
+        {
+          "id": "0293",
+          "type": "sets",
+          "target": {
+            "routineId": "back",
+            "exId": "0293"
+          },
+          "before": 4,
+          "after": 3,
+          "why": "你要求「练背」除第一个动作以外的动作都改为三组；该动作排第四，当前为 4 组。"
+        }
+      ],
+      "notes": [
+        "第一个动作杠铃俯身划船保持 4 组不变，符合你「除了第一个动作以外」的限定。",
+        "这次只改组数，次数目标和杠铃俯身划船的内容都不动；后续重量仍由应用的进阶引擎按历史记录计算。"
+      ],
+      "clarification": ""
+    }
+  },
+  {
+    "model": "deepseek-flash",
+    "phase": "fixed-deepseek-flash",
+    "scenario": "debrief-context-request",
+    "attempt": 1,
+    "response": {
+      "coach_contract": 1,
+      "chat_actions_contract": 1,
+      "replyType": "proposal",
+      "answer": "按你的要求，我准备把「练背」里除第一个动作（杠铃俯身划船，保持4组）以外的三个动作都改成3组：绳索全幅度高位下拉、绳索坐姿划船、哑铃俯身划船，都从4组降到3组。这只是一个待确认的修改方案，还没有写入你的计划；你确认之后才会生效，而且只改模板，不影响已经记录的训练。",
+      "summary": "练背：保留杠铃俯身划船的4组，其余三个动作改为3组",
+      "targetRoutineId": "back",
+      "changes": [
+        {
+          "id": "2330",
+          "type": "sets",
+          "target": {
+            "routineId": "back",
+            "exId": "2330"
+          },
+          "before": 4,
+          "after": 3,
+          "why": "你要求练背除第一个动作外都改为3组；该动作在计划顺序中排第二，当前为4组"
+        },
+        {
+          "id": "0861",
+          "type": "sets",
+          "target": {
+            "routineId": "back",
+            "exId": "0861"
+          },
+          "before": 4,
+          "after": 3,
+          "why": "你要求练背除第一个动作外都改为3组；该动作在计划顺序中排第三，当前为4组"
+        },
+        {
+          "id": "0293",
+          "type": "sets",
+          "target": {
+            "routineId": "back",
+            "exId": "0293"
+          },
+          "before": 4,
+          "after": 3,
+          "why": "你要求练背除第一个动作外都改为3组；该动作在计划顺序中排第四，当前为4组"
+        }
+      ],
+      "notes": [
+        "这样练背的总组数会从16组降到13组，单次训练时间会缩短一些；如果之后觉得背部刺激不够，可以再把其中一个动作补回4组。"
+      ],
+      "clarification": ""
+    }
+  },
+  {
+    "model": "deepseek-v4-pro",
+    "phase": "fixed-deepseek-v4-pro",
+    "scenario": "exact-request",
+    "attempt": 1,
+    "response": {
+      "coach_contract": 1,
+      "chat_actions_contract": 1,
+      "replyType": "proposal",
+      "answer": "已为你准备更改方案，尚未应用，需要你确认后才会写入计划：练背第一个动作杠铃俯身划船保持4组，后面三个动作改为3组。",
+      "summary": "将练背中杠铃俯身划船保持4组，其余绳索全幅度高位下拉、绳索坐姿划船、哑铃俯身划船改为3组。",
+      "targetRoutineId": "back",
+      "changes": [
+        {
+          "type": "sets",
+          "target": {
+            "routineId": "back",
+            "exId": "2330"
+          },
+          "before": 4,
+          "after": 3,
+          "why": "用户要求练背除第一个动作外其他改为三组"
+        },
+        {
+          "type": "sets",
+          "target": {
+            "routineId": "back",
+            "exId": "0861"
+          },
+          "before": 4,
+          "after": 3,
+          "why": "用户要求练背除第一个动作外其他改为三组"
+        },
+        {
+          "type": "sets",
+          "target": {
+            "routineId": "back",
+            "exId": "0293"
+          },
+          "before": 4,
+          "after": 3,
+          "why": "用户要求练背除第一个动作外其他改为三组"
+        }
+      ],
+      "notes": [],
+      "clarification": ""
+    }
+  },
+  {
+    "model": "deepseek-v4-pro",
+    "phase": "fixed-deepseek-v4-pro",
+    "scenario": "why-after-two-errors",
+    "attempt": 1,
+    "response": {
+      "coach_contract": 1,
+      "chat_actions_contract": 1,
+      "replyType": "proposal",
+      "answer": "系统提示需要确认，是因为计划改动只作用于模板，必须由你确认后才会写入，不会因为这条回复就自动应用。下面是按你的要求整理的改动，供你确认。",
+      "summary": "练背：保留第一个动作 4 组，其余三个动作改为 3 组。",
+      "targetRoutineId": "back",
+      "changes": [
+        {
+          "id": "c1",
+          "type": "sets",
+          "target": {
+            "routineId": "back",
+            "exId": "2330"
+          },
+          "before": 4,
+          "after": 3,
+          "why": "你要求除第一个动作外其他改为三组"
+        },
+        {
+          "id": "c2",
+          "type": "sets",
+          "target": {
+            "routineId": "back",
+            "exId": "0861"
+          },
+          "before": 4,
+          "after": 3,
+          "why": "你要求除第一个动作外其他改为三组"
+        },
+        {
+          "id": "c3",
+          "type": "sets",
+          "target": {
+            "routineId": "back",
+            "exId": "0293"
+          },
+          "before": 4,
+          "after": 3,
+          "why": "你要求除第一个动作外其他改为三组"
+        }
+      ],
+      "notes": [],
+      "clarification": ""
+    }
+  },
+  {
+    "model": "deepseek-v4-pro",
+    "phase": "fixed-deepseek-v4-pro",
+    "scenario": "debrief-context-request",
+    "attempt": 1,
+    "response": {
+      "coach_contract": 1,
+      "chat_actions_contract": 1,
+      "replyType": "proposal",
+      "answer": "好的，我会保留练背的第一个动作“杠铃俯身划船”为4组，把其余三个动作改为3组。下面是具体修改方案，请确认。",
+      "summary": "练背除第一个动作外，其余动作均由4组改为3组。",
+      "targetRoutineId": "back",
+      "changes": [
+        {
+          "type": "sets",
+          "target": {
+            "routineId": "back",
+            "exId": "2330"
+          },
+          "before": 4,
+          "after": 3,
+          "why": "用户要求练背除第一个动作外改为三组。"
+        },
+        {
+          "type": "sets",
+          "target": {
+            "routineId": "back",
+            "exId": "0861"
+          },
+          "before": 4,
+          "after": 3,
+          "why": "用户要求练背除第一个动作外改为三组。"
+        },
+        {
+          "type": "sets",
+          "target": {
+            "routineId": "back",
+            "exId": "0293"
+          },
+          "before": 4,
+          "after": 3,
+          "why": "用户要求练背除第一个动作外改为三组。"
+        }
+      ],
+      "notes": [
+        "该提案尚未应用，需要你明确确认后才会写入计划。"
+      ],
+      "clarification": ""
+    }
+  }
+]

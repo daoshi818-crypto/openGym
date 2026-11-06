@@ -136,7 +136,7 @@ export const CHAT_SCHEMA = {
         target: { type: 'object', properties: { routineId: STR, exId: STR }, required: ['routineId', 'exId'] },
         before: { type: 'integer' }, after: { type: 'integer', minimum: 1, maximum: 3600 }, why: STR
       }, required: ['type', 'target', 'after', 'why']
-    } }, notes: STRINGS, clarification: STR
+    } }, notes: { type: 'array', maxItems: 10, items: { type: 'string', maxLength: 1200 } }, clarification: STR
   }, required: ['coach_contract', 'chat_actions_contract', 'replyType', 'answer', 'changes']
 };
 export const SCHEMAS = { chat: CHAT_SCHEMA, review: REVIEW_SCHEMA, create: CREATE_SCHEMA, refine: CREATE_SCHEMA, debrief: DEBRIEF_SCHEMA, debriefPlan: PLAN_DEBRIEF_SCHEMA, ask: ASK_SCHEMA };

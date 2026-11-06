@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { applyChangeSet, canonicalPlan, planHash, markStale } from './coach.js'
+import recordedResponses from '../../../api/test/fixtures/deepseek-chat-20261106.json'
+import { chatPending } from '../../../api/coach/core/chat.js'
 import { validateChat } from '../../../api/coach/core/chat.js'
 import { coachContext } from '../../../api/coach/core/context.js'
 import { chatCommand } from './coach-chat-command.js'
@@ -13,7 +15,7 @@ function pending(s, change = {}) {
 }
 const proof = p => ({ pending: structuredClone(p), job: null, runtimeIdentity: p.runtimeIdentity, currentRuntimeIdentity: p.runtimeIdentity })
 describe('chat application authority and isolation', () => {
-  it.each([3, '3', { sets: 3 }])('regresses “我想把练背除了第一个动作以外 其他改为三组” with after=%j', async after => {
+  it.each([[3, []], ['3', []], [{ sets: 3 }, []], [3, '第一个动作保持四组；尚未应用，请确认。']])('regresses “我想把练背除了第一个动作以外 其他改为三组” with after=%j, notes=%j', async (after, notes) => {
     const s = state()
     s.routines[0].name = '练背'
     s.routines[0].ex = ['0001', '0002', '0003', '0004'].map(id => ({ id, mode: 'reps', sets: 4, reps: 8 }))
@@ -23,13 +25,39 @@ describe('chat application authority and isolation', () => {
       expect(args.prompt).toContain('我想把练背除了第一个动作以外 其他改为三组')
       expect(args.schema).toBe(SCHEMAS.chat)
       expect(args.schema.properties.changes.items.properties.after.type).toBe('integer')
-      return { code: 0, text: JSON.stringify({ coach_contract: 1, chat_actions_contract: 1, replyType: 'proposal', answer: '尚未应用，请确认', summary: '保留首个动作，其余改三组', targetRoutineId: 'back', notes: [], changes: s.routines[0].ex.slice(1).map(e => ({ type: 'sets', target: { routineId: 'back', exId: e.id }, after, why: '用户要求' })) }) }
+      return { code: 0, text: JSON.stringify({ coach_contract: 1, chat_actions_contract: 1, replyType: 'proposal', answer: '尚未应用，请确认', summary: '保留首个动作，其余改三组', targetRoutineId: 'back', notes, changes: s.routines[0].ex.slice(1).map(e => ({ type: 'sets', target: { routineId: 'back', exId: e.id }, after, why: '用户要求' })) }) }
     } }
     const result = await runPipeline({ adapter, cfg: {}, kind: 'chat', payload: { meta: { lang: 'zh' }, userNote: '我想把练背除了第一个动作以外 其他改为三组', plan: canonicalPlan(s), library: [] } })
     expect(result.ok).toBe(true)
     expect(s).toEqual(original) // receiving an answer is never an authorization to write
     const p = { ...result.result, kind: 'review', source: 'chat', id: 'back-three', revision: 1, runtimeIdentity: 'server|test', scope: { kind: 'routine', routineId: 'back' }, expiresAt: Date.now() + 60000, planHash: planHash(s), context: coachContext(s, planHash(s)) }
     expect(p.changes.map(c => c.after)).toEqual([3, 3, 3])
+    expect(applyChangeSet(s, p, p.changes.map(c => c.id), proof(p)).applied).toBe(3)
+    expect(s.routines[0].ex.map(e => e.sets)).toEqual([4, 3, 3, 3])
+    expect(s.routines[1]).toEqual(original.routines[1])
+    expect({ active: s.active, workouts: s.workouts, week: s.week, dayPlan: s.dayPlan }).toEqual({ active: original.active, workouts: original.workouts, week: original.week, dayPlan: original.dayPlan })
+  })
+  it.each(recordedResponses.map((record, i) => [i, record]))('replays real DeepSeek response %s through validation, pending and explicit application', async (_i, record) => {
+    const s = state()
+    s.routines = [{ id: 'back', name: '练背', ex: ['0027', '2330', '0861', '0293'].map(id => ({ id, mode: 'reps', sets: 4, reps: 10 })) },
+      { id: 'chest', name: '练胸', ex: [{ id: '0025', mode: 'reps', sets: 4, reps: 10 }] }]
+    const original = structuredClone(s)
+    let calls = 0
+    const adapter = { spawns: false, invoke: async () => { calls++; return { code: 0, text: JSON.stringify(record.response) } } }
+    const result = await runPipeline({ adapter, cfg: {}, kind: 'chat', payload: { meta: { lang: 'zh' }, userNote: '我想把练背除了第一个动作以外 其他改为三组', plan: canonicalPlan(s), library: [] } })
+    expect(result.ok).toBe(true)
+    expect(calls).toBe(1) // even the captured string-notes failure no longer needs model repair
+    expect(s).toEqual(original)
+    if (result.result.replyType !== 'proposal') {
+      expect(['answer', 'clarify']).toContain(result.result.replyType)
+      const readOnly = chatPending(result.result, { id: 'read-only-response' }, {})
+      expect(readOnly.kind).toBe('ask')
+      expect(readOnly.changes).toBeUndefined()
+      expect(s).toEqual(original)
+      return // a readable answer or question never authorizes an edit
+    }
+    const p = chatPending(result.result, { id: 'live-response', runtimeIdentity: 'byok|recorded', planHash: planHash(s), context: coachContext(s, planHash(s)), expiresAt: Date.now() + 60000 }, {})
+    expect(p.scope).toEqual({ kind: 'routine', routineId: 'back' })
     expect(applyChangeSet(s, p, p.changes.map(c => c.id), proof(p)).applied).toBe(3)
     expect(s.routines[0].ex.map(e => e.sets)).toEqual([4, 3, 3, 3])
     expect(s.routines[1]).toEqual(original.routines[1])

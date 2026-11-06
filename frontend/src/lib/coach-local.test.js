@@ -321,6 +321,26 @@ describe('chat actions on BYOK', () => {
     _resetCoachDevice(); local._resetLocal(); device.data = { mode: 'byok', provider: 'openai', model: 'gpt-t' }
     wire.calls = []; wire.answer = chat(JSON.stringify(proposal())); secret.key = 'sk-test-1'
   })
+  it('DeepSeek-style JSON-only fallback plus plain-text notes reaches confirmation without writing the plan', async () => {
+    device.data = { mode: 'byok', provider: 'compatible', model: 'deepseek-flash', baseUrl: 'https://api.deepseek.com' }
+    wire.answer = (_n, _url, init) => JSON.parse(init.body).response_format?.type === 'json_schema'
+      ? { status: 400, body: { error: { message: 'response_format type json_schema is not supported' } } }
+      : chat(JSON.stringify({ ...proposal(), notes: '尚未应用，等待确认。' }))
+    const S = state(), before = structuredClone(S)
+    await local.localChat(S, { text: '改组数', clientRequestId: 'deepseek-json-only' })
+    const status = await settle()
+    expect(status.last.outcome).not.toBe('failed')
+    expect(status.pending.kind).toBe('review'); expect(status.pending.source).toBe('chat')
+    expect(status.pending.notes).toEqual(['尚未应用，等待确认。'])
+    expect(wire.calls).toHaveLength(2) // schema rejection + JSON mode; no model repair request
+    expect(wire.calls[1].body.response_format.type).toBe('json_object')
+    expect(S).toEqual(before)
+    // coachStatus() adds the trusted runtime identity before the UI applies a local proposal.
+    const p = { ...status.pending, runtimeIdentity: 'byok|compatible|https://api.deepseek.com|deepseek-flash' }
+    expect(applyChangeSet(S, p, p.changes.map(c => c.id), { pending: p, job: null, runtimeIdentity: p.runtimeIdentity, currentRuntimeIdentity: p.runtimeIdentity, executionModeFingerprint: status.executionModeFingerprint }).applied).toBe(1)
+    expect(S.routines[0].ex[0].sets).toBe(4)
+    expect(S.workouts).toEqual(before.workouts)
+  })
   it('normalizes proposal as review and replays clientRequestId before cap or busy', async () => {
     const S=state(), body={text:'Adjust this plan',clientRequestId:'req1'}
     const first=await local.localChat(S,body);const duplicate=await local.localChat(S,body)
