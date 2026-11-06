@@ -79,6 +79,17 @@ for (const page of Object.keys(manifest.router.pages)) {
     assert.ok(px(sheet,'.title','height')+px(sheet,'.title','marginTop')+px(sheet,'.foot','height')+px(sheet,'.foot','marginBottom')<450)
     assert.ok(px(sheet,'.exname','width')+px(sheet,'.cnt','width')+px(sheet,'.expand-hit','width')<=px(sheet,'.exhead','width'))
     assert.ok(tree.some(n=>n.events?.$click?.includes('pickExercise(this.item')), 'Tap action name handler missing')
+    assert.equal(sheet['.back'].flexDirection, 'row', 'Return icon and label must share a row')
+    const round = sheet['@MEDIA'].find(m => m.condition === 'screen and (min-width: 450px)')
+    const roundSheet = { ...sheet }
+    for (const [selector, style] of Object.entries(round)) if (selector.startsWith('.')) roundSheet[selector] = { ...sheet[selector], ...style }
+    for (const [name, styles] of [['GT1', sheet], ['round', roundSheet]]) {
+      assert.ok(2 * px(styles,'.compact-action','width') <= px(styles,'.exit-row','width'), name + ': footer buttons overlap')
+      assert.ok(px(styles,'.back-icon','width') + px(styles,'.back-icon','marginRight') + 4 * px(styles,'.back-label','fontSize') <= px(styles,'.compact-action','width'), name + ': return label clips')
+      assert.ok(2 * px(styles,'.endbtn','height') <= px(styles,'.foot','height'), name + ': footer rows overlap')
+    }
+    for (const handler of ['onExit', 'abandonWorkout']) assert.ok(tree.some(n => n.events?.click === handler && (n.class || n.$class || '').includes('compact-action')), handler + ': compact footer class missing')
+
   } else if (page==='Index') {
     flexViewport(sheet,'.plans')
     assert.ok(px(sheet,'.start-circle','height')>=88)

@@ -1,9 +1,11 @@
+// @vitest-environment happy-dom
 import { afterEach, describe, it, expect, vi } from 'vitest'
 import { createDurableWatchLifecycle } from './watch-commit.js'
 import { ensureWatchIdentity } from './watch-identity.js'
 import { stampWatchRevision, watchConflict } from './watch-revision.js'
 import { watchSnapshotOf } from './watch-workout.js'
-import { watchPersistence, loadWatchModule } from './watch-test-harness.js'
+import { useUI } from '../store/useUI.js'
+import { watchPersistence, loadWatchModule, startWatchApp, watchTimerOwner } from './watch-test-harness.js'
 import { applyEdit, applyRest, restOf } from '../../../watch-app/src/lib/protocol.js'
 import { wireHash, diffWire, splitWire } from '../../../watch-app/src/lib/sync-wire.js'
 
@@ -16,8 +18,10 @@ function phone() {
     send: vi.fn(), sendAck: vi.fn(), sendEnded: vi.fn(), sendSync: vi.fn(), finish: vi.fn() }
   return { S, deps, receive: createDurableWatchLifecycle(deps) }
 }
-function watch(S) {
+function watch(S, options = {}) {
   const { disk, shared, ctx } = watchPersistence()
+  const pageTimers = watchTimerOwner()
+  if (options.appLifetime) { startWatchApp(shared); Object.assign(ctx, pageTimers) }
   Object.assign(ctx, { applyEdit, applyRest, console, setInterval: () => 1, clearInterval() {}, WATCH_VERSION: 'test' })
   loadWatchModule('event-id', ctx, ['allocateEventIdentity', 'rememberEventAt'])
   loadWatchModule('close-journal', ctx, ['prepareClose', 'releaseCandidate', 'pendingSummaries', 'pendingEntry', 'journalEntry', 'markPhase', 'markDelivered'])
@@ -25,19 +29,66 @@ function watch(S) {
   const sent = [], connection = { send: ({ data, success }) => { sent.push(data); success?.() }, getReadyState: ({ success }) => success({ status: 1 }) }
   ctx.interconnect = { instance: () => connection }
   loadWatchModule('rpc', ctx, ['startServer', 'sendEvent', 'pendingCount', 'synchronizationStatus'])
-  const initial = watchSnapshotOf(S, null), value = { ...initial, t: 'sync', protocolVersion: 3 }
+  const initial = watchSnapshotOf(S, options.timer || null), value = { ...initial, t: 'sync', protocolVersion: 3 }
   const snap = { ...value, wireHash: wireHash(value) }
   ctx.startSession({ ...initial, name: initial.workout, rows: initial.rows, exercises: initial.exercises })
   const viewState = ctx.loadState() // pages keep their own object while RPC writes the shared cache
   ctx.startServer({ onSync: msg => { ctx.applySync(viewState, msg); return { status: 'applied' } } })
   connection.onMessage(snap)
-  return { disk, shared, ctx, sent, connection, snap }
+  return { disk, shared, ctx, sent, connection, snap, pageTimers }
 }
 const event = a => ({ t: 'weight', sid: 's', eventId: 'v3:A', protocolVersion: 3, installationId: 'watch-A', deviceSeq: 1,
   baseCommitRev: a.S.active.syncRev, entryInstanceId: a.S.active.entries[0].entryInstanceId, setId: a.S.active.entries[0].sets[0].setId,
   ex: 0, set: 1, weight: '65', at: 1, seq: 1 })
-afterEach(() => vi.useRealTimers())
+afterEach(() => { useUI.getState().stopRest(); vi.useRealTimers() })
 describe('negotiated durable protocol', () => {
+  it('commits 40 queued edits and a rest skip after the originating page is destroyed', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-06T09:00:00Z'))
+    const a = phone()
+    useUI.getState().startRest(90)
+    a.deps.getTimer = () => useUI.getState().timer
+    a.deps.rest = vi.fn(ev => useUI.getState().followWatchRest(ev))
+    const w = watch(a.S, { appLifetime: true, timer: a.deps.getTimer() })
+    const oldSnapshot = structuredClone(w.snap)
+    for (let i = 0; i < 40; i++) {
+      w.ctx.sendEvent({ ...event(a), eventId: undefined, deviceSeq: undefined, weight: String(50 + i), at: Date.now() + i })
+    }
+    const local = w.ctx.loadState()
+    const skipEvent = { t: 'rest', sid: 's', ...restOf(local),
+      seq: Date.now() + 41, leftSec: 0, totalSec: 0, endsAt: 0, at: Date.now() + 41 }
+    applyRest(local, skipEvent)
+    w.ctx.save(local)
+    w.ctx.sendEvent(skipEvent)
+    expect(w.ctx.pendingCount()).toBe(41)
+    expect(w.ctx.loadState().restUntil).toBe(0)
+    w.pageTimers.destroy()
+    let sentIndex = 0, replyIndex = 0, skip
+    for (let i = 0; i < 100 && w.ctx.pendingCount(); i++) {
+      for (const msg of w.sent.slice(sentIndex)) {
+        if (!['weight', 'rest'].includes(msg.t)) continue
+        if (msg.t === 'rest') skip = msg
+        a.receive(msg)
+      }
+      sentIndex = w.sent.length
+      await a.receive.idle()
+      for (const [msg] of a.deps.send.mock.calls.slice(replyIndex)) w.connection.onMessage(msg)
+      replyIndex = a.deps.send.mock.calls.length
+      await vi.advanceTimersByTimeAsync(150)
+    }
+    expect(w.ctx.pendingCount()).toBe(0)
+    expect(a.S.active.entries[0].sets[0].w).toBe(89)
+    expect(a.S.active.entries[0].sets).toHaveLength(2)
+    expect(a.deps.getTimer()).toBeNull()
+    expect(a.S.watchRest).toBeNull()
+    expect(a.deps.rest).toHaveBeenCalledOnce()
+    expect(w.ctx.loadState().restUntil).toBe(0)
+    w.connection.onMessage(oldSnapshot)
+    expect(w.ctx.loadState().restUntil).toBe(0)
+    a.receive(skip); await a.receive.idle()
+    expect(a.deps.rest).toHaveBeenCalledOnce()
+    a.receive.dispose()
+  })
+
   it('keeps completion rest and next-set focus while older snapshots arrive, then preserves a local skip', () => {
     vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-27T09:00:00Z'))
     const a = phone(), w = watch(a.S), local = w.ctx.loadState()

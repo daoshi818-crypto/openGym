@@ -17,7 +17,9 @@ export const stripImports = code => code
   .replace(/^export function /gm, 'function ')
 
 export function loadWatchModule(name, ctx, names) {
+  if (['rpc', 'persistence'].includes(name) && !ctx.appTimeout) loadWatchModule('app-timers', ctx, ['appTimeout', 'cancelAppTimeout', 'appInterval', 'cancelAppInterval'])
   if (name === 'rpc' && !ctx.acceptWireChunk) loadWatchModule('sync-wire', ctx, ['wireHash', 'wireBytes', 'acceptWireChunk', 'expandWireDelta'])
+  if (name === 'session' && !names.includes('readSessionHr')) names = [...names, 'readSessionHr']
   const body = stripImports(watchSource('lib/' + name + '.js'))
   // Each module gets its own function scope, like a real ES module: the flattened global
   // would otherwise let one module's top-level `save`/`loadState` overwrite another's.
@@ -33,7 +35,29 @@ export function watchPersistence(disk = new Map(), shared = {}) {
     getSync: ({ key }) => disk.has(key) ? JSON.parse(JSON.stringify(disk.get(key))) : null,
     set: ({ key, value, success }) => { disk.set(key, JSON.parse(JSON.stringify(value))); if (success) success() },
   }
-  const ctx = { storage, runtime: () => shared, Date, setTimeout, clearTimeout }
+  const ctx = { storage, runtime: () => shared, Date, setTimeout, clearTimeout, setInterval, clearInterval }
   loadWatchModule('persistence', ctx, ['readStored', 'writeStored', 'writeStoredConfirmed', 'retryStorage', 'storageStatus'])
   return { disk, shared, storage, ctx }
+}
+
+// Model the SDK's per-instance timers: callbacks from a destroyed Page are discarded.
+// The App remains alive. This is a lifecycle simulation, not a device crash test.
+export function watchTimerOwner() {
+  let alive = true
+  return {
+    setTimeout: (fn, ms) => setTimeout(() => { if (alive) fn() }, ms),
+    clearTimeout: id => clearTimeout(id),
+    setInterval: (fn, ms) => setInterval(() => { if (alive) fn() }, ms),
+    clearInterval: id => clearInterval(id),
+    destroy: () => { alive = false },
+  }
+}
+export function startWatchApp(shared) {
+  const timers = watchTimerOwner(), definition = { openGymRuntime: shared }
+  const ctx = { ...timers, console: { log() {} }, runtime: () => shared,
+    bindRuntime: owner => { if (owner !== definition) throw new Error('wrong runtime owner') } }
+  const source = watchSource('app.ux').match(/<script>([\s\S]*?)<\/script>/)[1]
+  runInNewContext(stripImports(source).replace('export default', 'this.app ='), ctx)
+  ctx.app.onCreate.call({ $def: definition })
+  return timers
 }

@@ -1,10 +1,17 @@
 <script>
-// Pages bind shared transport/storage/sensor owners to this application definition.
+import { bindRuntime, runtime } from './lib/runtime.js'
 export default {
   onCreate() {
+    bindRuntime(this.$def || this)
+    runtime().timers = {
+      setTimeout: (fn, ms) => setTimeout(fn, ms),
+      clearTimeout: id => clearTimeout(id),
+      setInterval: (fn, ms) => setInterval(fn, ms),
+      clearInterval: id => clearInterval(id),
+    }
     console.log('opengym 启动')
   },
-  onDestroy() { this.openGymRuntime?.hrCapture?.stop() },
+  onDestroy() { (this.$def || this).openGymRuntime?.hrCapture?.stop() },
 }
 </script>
 

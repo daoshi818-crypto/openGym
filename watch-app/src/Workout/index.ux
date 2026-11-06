@@ -1,5 +1,5 @@
 <script>
-import { bindRuntime } from '../lib/runtime.js'
+import { bindRuntime, runtime } from '../lib/runtime.js'
 // 主训练页（单屏 + 手势）：重量/次数保持可见，休息态只保留必要操作。
 import router from '@blueos.app.appmanager.router'
 import storage from '@blueos.storage.storage'
@@ -7,7 +7,7 @@ import { rotationStep, valueStep } from '../lib/value-step.js'
 import { captureRow, rowTarget, setDotWindow } from '../lib/workout-interaction.js'
 import brightness from '@blueos.hardware.display.brightness'
 import {
-  loadState, save, replacePlan, applySync, toggleSet, nextUndone, nextUndoneFrom,
+  loadState, readSessionHr, save, replacePlan, applySync, toggleSet, nextUndone, nextUndoneFrom,
   endSession, closeSession, addSet, removeSet, addRestTime, setRowValue, setEffort, calories,
 } from '../lib/session.js'
 import {
@@ -99,7 +99,7 @@ export default {
     this.hrDirty = false
     this.hrActive = false
     this.clockPeriod = 0
-    this.touch = null
+    this.resetInteraction()
     this.restCrownTimer = null
     this.restCrownDirty = false
     this.visible = true
@@ -126,6 +126,7 @@ export default {
   },
 
   onShow() {
+    this.resetInteraction()
     this.visible = true
     // Keypad/动作列表独立读取并保存会话，返回训练页时重新读取，确保重量立即回显。
     const latest = loadState()
@@ -143,6 +144,11 @@ export default {
     this.startHrCapture()
     this.refresh()
     this.focusCrown()
+    const finish = runtime().finishRequest
+    if (finish) {
+      delete runtime().finishRequest
+      if (finish.sid === this.state.sid) this.openFinish()
+    }
   },
 
   onReady() {
@@ -181,9 +187,17 @@ export default {
   showCurrent() { this.pageIndex = 0; this.focusCrown() },
   openMenu() { this.menuOn = true; this.leaveChoice = false },
   openActions() { if (!this.isRest) this.pageIndex = 1; this.menuOn = false },
+  resetInteraction() {
+    this.touchCancel()
+    this.trailingTapBlockedUntil = 0
+    this.autoFocusIgnoreUntil = 0
+    this.navPending = false
+  },
   interactionBlocked() { return !!this.touchAxis || Date.now() < (this.trailingTapBlockedUntil || 0) || Date.now() < (this.autoFocusIgnoreUntil || 0) },
   openExercises(fromGesture) {
+    if (this.navPending) return
     if (fromGesture !== true && this.interactionBlocked()) return
+    this.navPending = true
     this.clearFieldSelection(); router.push({ uri: '/ExerciseList' })
   },
 
@@ -233,6 +247,8 @@ export default {
   },
 
   onHide() {
+    this.touchCancel()
+    this.trailingTapBlockedUntil = 0
     this.visible = false
     this.flushRestNudge()
     this.setRestScreenLock(false)
@@ -241,6 +257,8 @@ export default {
   },
 
   onDestroy() {
+    this.visible = false
+    this.touchCancel()
     if (this.timer) clearInterval(this.timer)
     this.flushRestNudge()
     this.setRestScreenLock(false)
@@ -1161,8 +1179,8 @@ export default {
     this.restPctLabel = totalSec > 0
       ? '剩余 ' + Math.max(0, Math.min(100, Math.round(left / totalSec * 100))) + '% · ' + this.restTotalLabel
       : this.restTotalLabel
-    const latest = loadState()
-    if (latest.sid === s.sid) s.hr = latest.hr
+    const hr = readSessionHr(s.sid)
+    if (hr) s.hr = hr
     this.hrLabel = s.hr?.last && Date.now() - (s.hr.sampleAt || 0) < 15000 && !s.pausedAt ? '心率 ' + s.hr.last : '心率 --'
     this.kcalLabel = String((s.baseCalories || 0) + calories(s, s.profile, Math.max(0, ((s.pausedAt || Date.now()) - (s.segmentStartedAt || s.startedAt) - (s.pausedMs || 0)) / 60000)))
     const n = pendingCount()

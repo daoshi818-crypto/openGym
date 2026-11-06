@@ -1,9 +1,11 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { loadWatchModule, watchPersistence } from './watch-test-harness.js'
+import { loadWatchModule, watchPersistence, watchTimerOwner, startWatchApp } from './watch-test-harness.js'
 
-function device(count = 40, disk = new Map()) {
+function device(count = 40, disk = new Map(), lifecycle = false) {
   const { shared, storage, ctx } = watchPersistence(disk)
+  const pageTimers = watchTimerOwner()
+  if (lifecycle) { startWatchApp(shared); Object.assign(ctx, pageTimers) }
   const writes = [], sent = []
   const put = storage.set
   storage.set = item => { writes.push(item.key); put(item) }
@@ -20,13 +22,33 @@ function device(count = 40, disk = new Map()) {
     interconnect: { instance: () => connection }, WATCH_VERSION: 'test',
     setInterval, clearInterval, pendingSummaries: () => [], pendingEntry: () => null,
     journalEntry: () => null, rememberEventAt() {}, allocateEventIdentity: () => ({ eventId: 'new' }) })
+  if (lifecycle) Object.assign(ctx, pageTimers)
   loadWatchModule('rpc', ctx, ['startServer', 'stopServer', 'sendEvent', 'pendingCount', 'transportDiagnostics', 'replayPendingEvents'])
   ctx.startServer({})
-  return { ctx, disk, shared, connection, sent, writes, save, loadState, edits }
+  return { pageTimers, ctx, disk, shared, connection, sent, writes, save, loadState, edits }
 }
 const events = h => h.sent.filter(e => e.eventId)
 afterEach(() => vi.useRealTimers())
 describe('watch backlog fairness and durable replay', () => {
+  it('reads only heart rate on clock ticks without traversing the workout or backlog', () => {
+    const h = watchPersistence()
+    loadWatchModule('session', h.ctx, ['readSessionHr'])
+    const hr = { last: 120, sampleAt: Date.now() }
+    h.ctx.writeStored('session_state', { sid: 's', hr })
+    const cached = h.shared.persistence.values.session_state
+    Object.defineProperty(cached, 'workout', { enumerable: true, get() { throw new Error('full workout traversal') } })
+    Object.defineProperty(cached, 'pendingEdits', { enumerable: true, get() { throw new Error('backlog traversal') } })
+    expect(h.ctx.readSessionHr('s')).toEqual(hr)
+    h.ctx.readSessionHr('s').last = 1
+    expect(h.ctx.readSessionHr('s').last).toBe(120)
+    expect(h.ctx.readSessionHr('other')).toBeNull()
+  })
+  it('hydrates a cold cache before projecting fields and retains normal full reads', () => {
+    const h = watchPersistence(new Map([['session_state', { sid: 's', hr: { last: 90 }, workout: { rows: [1] } }]]))
+    expect(h.ctx.readStored('session_state', ['sid', 'hr'])).toEqual({ sid: 's', hr: { last: 90 } })
+    expect(h.ctx.readStored('session_state').workout.rows).toEqual([1])
+    expect(h.ctx.readStored('missing', ['sid'])).toBeNull()
+  })
   it('does not read/rewrite the entire session when 40 already queued edits are replayed', () => {
     vi.useFakeTimers()
     const h = device()
@@ -118,5 +140,54 @@ describe('watch backlog fairness and durable replay', () => {
     for (const row of [...restored.disk.get('rpc_outbox')]) restored.connection.onMessage({ t: 'ack', eventId: row.msg.eventId })
     expect(restored.ctx.pendingCount()).toBe(0)
     expect(restored.disk.get('rpc_outbox')).toEqual([])
+  })
+})
+
+describe('application lifetime transport', () => {
+  it('continues draining and replaying after the initiating page is destroyed', () => {
+    vi.useFakeTimers()
+    const h = device(40, new Map([['rpc_outbox', []]]), true)
+    h.connection.onOpen()
+    h.ctx.replayPendingEvents()
+    h.pageTimers.destroy()
+    vi.advanceTimersByTime(3000)
+    expect(h.ctx.pendingCount()).toBe(40)
+    expect(events(h).length).toBeGreaterThan(2)
+    expect(h.shared.rpc.replaying).toBe(false)
+  })
+  it('releases a lost send callback and retries after page destruction', () => {
+    vi.useFakeTimers()
+    const h = device(1, new Map(), true)
+    h.connection.send = ({ data }) => { h.sent.push(data) }
+    h.connection.onOpen()
+    h.pageTimers.destroy()
+    vi.advanceTimersByTime(6500)
+    expect(events(h).length).toBeGreaterThan(1)
+    expect(h.ctx.pendingCount()).toBe(1)
+  })
+  it('does not send a new hello or rebind native callbacks just for a page change', () => {
+    vi.useFakeTimers()
+    const h = device(0)
+    h.connection.onOpen()
+    const callback = h.connection.onMessage
+    const hellos = h.sent.filter(e => e.t === 'hello').length
+    for (let i = 0; i < 20; i++) h.ctx.startServer({})
+    expect(h.sent.filter(e => e.t === 'hello')).toHaveLength(hellos)
+    expect(h.connection.onMessage).toBe(callback)
+  })
+  it('storage watchdog survives page destruction and leaves failed writes retryable', async () => {
+    vi.useFakeTimers()
+    const h = watchPersistence(), page = watchTimerOwner()
+    startWatchApp(h.shared)
+    Object.assign(h.ctx, page)
+    h.storage.set = () => {} // dropped native callback
+    const result = h.ctx.writeStoredConfirmed('session_state', { sid: 's' })
+    page.destroy()
+    vi.advanceTimersByTime(5001)
+    expect(h.ctx.storageStatus().failed).toBe(true)
+    expect(await result).toBe(false)
+    h.storage.set = ({ success }) => success()
+    h.ctx.retryStorage()
+    expect(h.ctx.storageStatus()).toEqual({ failed: false, pending: false })
   })
 })

@@ -93,15 +93,15 @@ describe('ExerciseList 动作总览（官方 OverviewScreen 映射）', () => {
   })
 
   const listPage = () => {
-    const state = sessionState()
+    const state = sessionState(), shared = {}
     const sendEvent = vi.fn()
     const router = { back: vi.fn(), replace: vi.fn(), push: vi.fn() }
     const p = page('ExerciseList/index.ux', {
       loadState: () => state, save: vi.fn(), endSession: vi.fn(), closeSession: vi.fn(), sendEvent,
-      router,
+      router, runtime: () => shared,
     })
     p.onInit()
-    return { p, sendEvent, state, router }
+    return { p, sendEvent, state, router, shared }
   }
 
   it('每个动作显示已完成/总数，并高亮当前动作', () => {
@@ -125,10 +125,12 @@ describe('ExerciseList 动作总览（官方 OverviewScreen 映射）', () => {
   })
 
   it('保存入口回到统一结束确认，不在列表直接关闭会话', () => {
-    const { p, sendEvent, router } = listPage()
+    const { p, sendEvent, router, shared, state } = listPage()
     p.saveWorkout()
     expect(sendEvent).not.toHaveBeenCalled()
-    expect(router.replace).toHaveBeenCalledWith({ uri: '/Workout', params: { requestFinish: true } })
+    expect(router.back).toHaveBeenCalledOnce()
+    expect(shared.finishRequest).toEqual({ sid: state.sid })
+    expect(router.replace).not.toHaveBeenCalled()
   })
 
   it('从结束区返回会清掉二次确认状态', () => {

@@ -1,5 +1,5 @@
 <script>
-import { bindRuntime } from '../lib/runtime.js'
+import { bindRuntime, runtime } from '../lib/runtime.js'
 // 动作列表页：查看动作和组，点组返回训练页并切换游标。
 import router from '@blueos.app.appmanager.router'
 import { loadState, save, endSession, closeSession } from '../lib/session.js'
@@ -109,9 +109,9 @@ export default {
     this.endOn = false; this.abandonArmed = false; this.hint = ''; this.focusPanel()
   },
   onBackPress() {
-    if (this.interactionBlocked()) return true
+    if (this.interactionBlocked() || this.navPending) return true
     if (this.endOn) this.backToExercises()
-    else router.back()
+    else this.onExit()
     return true
   },
 
@@ -167,7 +167,11 @@ export default {
     router.back()
   },
 
-  onExit() { if (!this.interactionBlocked()) router.back() },
+  onExit() {
+    if (this.interactionBlocked() || this.navPending) return
+    this.navPending = true
+    router.back()
+  },
 
   closeWorkout(disposition) {
     const s = loadState()
@@ -194,7 +198,8 @@ export default {
   saveWorkout() {
     if (this.interactionBlocked() || this.navPending) return
     this.navPending = true
-    router.replace({ uri: '/Workout', params: { requestFinish: true } })
+    runtime().finishRequest = { sid: this.state.sid }
+    router.back()
   },
 
 }
@@ -227,8 +232,8 @@ export default {
     <div class="foot">
       <input class="endbtn save" type="button" value="保存结束" onclick="saveWorkout" />
       <div class="exit-row">
-        <div class="endbtn back" onclick="onExit"><image class="back-icon" src="/common/icons/back.svg" /><text class="back-label">返回训练</text></div>
-        <input class="endbtn abandon {{ abandonArmed ? 'armed' : '' }}" type="button" value="放弃训练" onclick="abandonWorkout" />
+        <div class="endbtn back compact-action" onclick="onExit"><image class="back-icon" src="/common/icons/back.svg" /><text class="back-label">返回训练</text></div>
+        <input class="endbtn abandon compact-action {{ abandonArmed ? 'armed' : '' }}" type="button" value="放弃训练" onclick="abandonWorkout" />
       </div>
     </div>
   </div>
@@ -270,7 +275,7 @@ export default {
 .endbtn { width: 314px; height: 52px; font-size: 21px; border-radius: 26px; background-color: #242725; color: #FFFFFF; }
 .save { background-color: #0A3418; color: #30D158; }
 .exit-row { width: 314px; height: 52px; flex-direction: row; justify-content: space-between; }
-.exit-row .endbtn { width: 152px; }
+.compact-action { width: 152px; }
 .abandon { color: #FF453A; }
 .armed { background-color: #FF453A; color: #000000; }
 .end-panel { width: 100%; height: 100%; flex-direction: column; align-items: center; justify-content: center; }
@@ -284,11 +289,12 @@ export default {
  .cnt { width: 48px; font-size: 16px; }
  .rtxt { width: 192px; font-size: 19px; }
  .foot { margin-bottom: 58px; }
- .exit-row .endbtn { width: 134px; font-size: 18px; }
+ .compact-action { width: 134px; font-size: 18px; }
+ .back-label { font-size: 18px; }
  .end-panel .title { margin-top: 0; }
 }
 
-.back { justify-content: center; align-items: center; }
+.back { flex-direction: row; justify-content: center; align-items: center; }
 .back-icon { width: 26px; height: 26px; margin-right: 6px; }
-.back-label { font-size: 22px; color: #30D158; }
+.back-label { font-size: 20px; color: #30D158; }
 </style>

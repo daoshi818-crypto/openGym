@@ -1,3 +1,4 @@
+import { appTimeout, cancelAppTimeout, appInterval, cancelAppInterval } from './app-timers.js'
 import { runtime } from './runtime.js'
 import { readStored, writeStored, writeStoredConfirmed, retryStorage } from './persistence.js'
 import { wireHash, wireBytes, acceptWireChunk, expandWireDelta } from './sync-wire.js'
@@ -96,7 +97,7 @@ function persist() {
   const done = ok => {
     if (settled) return
     settled = true
-    try { if (timer != null) clearTimeout(timer) } catch { /* 无定时器 */ }
+    try { if (timer != null) cancelAppTimeout(timer) } catch { /* 无定时器 */ }
     r.writeBusy = false
     if (ok) {
       r.persistFailed = false
@@ -110,7 +111,7 @@ function persist() {
   }
   try {
     // 回调丢失不能把写链永久卡死：超时按失败处理，flush() 的定时器会重试。
-    timer = setTimeout(() => done(false), WRITE_TIMEOUT_MS)
+    timer = appTimeout(() => done(false), WRITE_TIMEOUT_MS)
     storage.set({ key: K_OUTBOX, value,
       success: () => done(true),
       fail: () => done(false),
@@ -183,7 +184,7 @@ function resumeConnection() {
   if (r.connected || !r.connect) return
   r.connected = true
   r.nextProbeAt = 0; r.probeAttempts = 0
-  r.connectionGeneration++; r.sending = false; clearTimeout(r.sendingTimer)
+  r.connectionGeneration++; r.sending = false; cancelAppTimeout(r.sendingTimer)
   r.outbox.forEach(e => { e.sent = false })
   trace('connection_resumed')
   r.handlers.onState?.(true)
@@ -217,9 +218,9 @@ function probeConnection() {
 function scheduleFlush(delay = SEND_GAP_MS) {
   const r = rpcState(), at = Date.now() + Math.max(1, delay)
   if (r.flushTimer != null && r.flushAt <= at) return
-  clearTimeout(r.flushTimer)
+  cancelAppTimeout(r.flushTimer)
   r.flushAt = at
-  r.flushTimer = setTimeout(() => { r.flushTimer = null; flush() }, Math.max(1, at - Date.now()))
+  r.flushTimer = appTimeout(() => { r.flushTimer = null; flush() }, Math.max(1, at - Date.now()))
 }
 
 // Keypad edits are already durable in session_state. Recover only edits not yet in the
@@ -235,7 +236,7 @@ export function replayPendingEvents() {
       const queued = new Set(r.outbox.map(e => e.msg.eventId))
       const missing = (loadState().pendingEdits || []).filter(e => e.committedRev == null && !queued.has(e.eventId))
       for (const event of missing.slice(0, REPLAY_BATCH)) sendEvent(event)
-      if (missing.length > REPLAY_BATCH) r.replayTimer = setTimeout(step, SEND_GAP_MS)
+      if (missing.length > REPLAY_BATCH) r.replayTimer = appTimeout(step, SEND_GAP_MS)
       else r.replaying = false
     } catch (error) {
       // Leave durable session edits intact and allow the next UI replay to retry.
@@ -261,9 +262,9 @@ function flush() {
   const token = { generation: rpcState().connectionGeneration, eventId: next.msg.eventId }
   rpcState().sending = token
   rpcState().nextSendAt = Date.now() + SEND_GAP_MS
-  const release = () => { if (rpcState().sending !== token || token.generation !== rpcState().connectionGeneration) return false; clearTimeout(rpcState().sendingTimer); rpcState().sending = false; return true }
+  const release = () => { if (rpcState().sending !== token || token.generation !== rpcState().connectionGeneration) return false; cancelAppTimeout(rpcState().sendingTimer); rpcState().sending = false; return true }
   trace('send_attempt', next.msg)
-  rpcState().sendingTimer = setTimeout(() => { if (release()) { trace('send_timeout', next.msg); flush() } }, 6000)
+  rpcState().sendingTimer = appTimeout(() => { if (release()) { trace('send_timeout', next.msg); flush() } }, 6000)
   try {
     rpcState().connect.send({ data: next.msg,
       success: () => { if (!release()) return; trace('send_success', next.msg); const item = rpcState().outbox.find(e => e.msg.eventId === token.eventId); if (item) { item.sent = true; item.sentAt = Date.now(); item.attempts = (item.attempts || 0) + 1; item.nextAttemptAt = Date.now() + Math.min(60000, 4000 * Math.pow(2, Math.min(4, item.attempts - 1))) + Math.floor(Math.random() * 1000) }; scheduleFlush() },
@@ -374,7 +375,7 @@ async function handleEnded(msg) {
 
 export function startServer(h) {
   if (h) rpcState().handlers = h
-  if (!rpcState().retryTimer) rpcState().retryTimer = setInterval(flush, 4000)
+  if (!rpcState().retryTimer) rpcState().retryTimer = appInterval(flush, 4000)
   if (!rpcState().connect) {
     initialize()
     try {
@@ -387,11 +388,15 @@ export function startServer(h) {
     }
   }
 
+  // Page changes only replace subscribers. Rebinding/hello here restarted full sync
+  // on every onShow even when the connection was already active.
+  if (rpcState().boundConnection === rpcState().connect) return
+  rpcState().boundConnection = rpcState().connect
   // 页面模块共享 application runtime；当前页面只接管 UI 回调。
   rpcState().connect.onOpen = () => {
     rpcState().connected = true
     trace('connection_open')
-    rpcState().connectionGeneration++; rpcState().sending = false; clearTimeout(rpcState().sendingTimer)
+    rpcState().connectionGeneration++; rpcState().sending = false; cancelAppTimeout(rpcState().sendingTimer)
     initialize()
     rpcState().nextSendAt = 0
     rpcState().outbox.forEach(e => { e.sent = false })
@@ -403,13 +408,13 @@ export function startServer(h) {
   rpcState().connect.onClose = () => {
     trace('connection_close')
     rpcState().connected = false
-    rpcState().connectionGeneration++; rpcState().sending = false; clearTimeout(rpcState().sendingTimer)
+    rpcState().connectionGeneration++; rpcState().sending = false; cancelAppTimeout(rpcState().sendingTimer)
     if (rpcState().handlers.onState) rpcState().handlers.onState(false)
   }
   rpcState().connect.onError = (err) => {
     trace('connection_error', {}, err)
     rpcState().connected = false
-    rpcState().connectionGeneration++; rpcState().sending = false; clearTimeout(rpcState().sendingTimer)
+    rpcState().connectionGeneration++; rpcState().sending = false; cancelAppTimeout(rpcState().sendingTimer)
     if (rpcState().handlers.onState) rpcState().handlers.onState(false)
     if (rpcState().handlers.onError) rpcState().handlers.onError(err || {})
   }
@@ -594,14 +599,15 @@ export function startServer(h) {
 }
 
 export function stopServer() {
-  if (rpcState().retryTimer) clearInterval(rpcState().retryTimer)
+  if (rpcState().retryTimer) cancelAppInterval(rpcState().retryTimer)
   rpcState().retryTimer = null
-  clearTimeout(rpcState().flushTimer); rpcState().flushTimer = null
-  clearTimeout(rpcState().replayTimer); rpcState().replayTimer = null; rpcState().replaying = false
+  cancelAppTimeout(rpcState().flushTimer); rpcState().flushTimer = null
+  cancelAppTimeout(rpcState().replayTimer); rpcState().replayTimer = null; rpcState().replaying = false
   try { if (rpcState().connect) rpcState().connect.close({ success() {}, fail() {} }) } catch (e) { /* 已关闭 */ }
   rpcState().connect = null
+  rpcState().boundConnection = null
   rpcState().connected = false
-  rpcState().connectionGeneration++; rpcState().sending = false; clearTimeout(rpcState().sendingTimer)
+  rpcState().connectionGeneration++; rpcState().sending = false; cancelAppTimeout(rpcState().sendingTimer)
 }
 
 /** 事件类：进 outbox，保证闪退/断线不丢。返回是否已在队列里（不代表手机已保存）。 */

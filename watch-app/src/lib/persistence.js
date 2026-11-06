@@ -1,4 +1,5 @@
 import storage from '@blueos.storage.storage'
+import { appTimeout, cancelAppTimeout } from './app-timers.js'
 import { runtime } from './runtime.js'
 // 存储封装：内存缓存 + 按 key 串行写。
 //
@@ -14,15 +15,25 @@ import { runtime } from './runtime.js'
 const clone = v => JSON.parse(JSON.stringify(v))
 const data = () => runtime().persistence ||= { values: {}, queues: {}, errors: {}, revisions: {} }
 const WRITE_TIMEOUT_MS = 5000
-const later = (fn, ms) => { try { return setTimeout(fn, ms) } catch { return null } }
-const cancel = t => { try { if (t != null) clearTimeout(t) } catch { /* 无定时器 */ } }
+const later = (fn, ms) => { try { return appTimeout(fn, ms) } catch { return null } }
+const cancel = t => { try { if (t != null) cancelAppTimeout(t) } catch { /* 无定时器 */ } }
 
-export function readStored(key) {
+// Project before cloning: clock ticks must not copy rows, snapshots and pending events.
+// Both full reads and projections remain detached from the mutable shared cache.
+export function readStored(key, fields) {
   const state = data()
-  if (Object.prototype.hasOwnProperty.call(state.values, key)) return clone(state.values[key])
-  const value = storage.getSync({ key })
-  if (value != null) state.values[key] = clone(value)
-  return value
+  if (!Object.prototype.hasOwnProperty.call(state.values, key)) {
+    const value = storage.getSync({ key })
+    if (value == null) return value
+    state.values[key] = clone(value)
+  }
+  const value = state.values[key]
+  if (!fields || value == null) return clone(value)
+  const selected = {}
+  for (const field of fields) {
+    if (Object.prototype.hasOwnProperty.call(value, field)) selected[field] = value[field]
+  }
+  return clone(selected)
 }
 
 export function writeStored(key, value) {

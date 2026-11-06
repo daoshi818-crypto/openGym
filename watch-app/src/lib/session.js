@@ -47,6 +47,11 @@ export function blankState() {
 // 注意：这里不是纯读。超过 6 小时的活动会话会被放弃，但放弃之前必须先把已记录的数据
 // 冻成可恢复候选写进关闭日志（独立 key），再清空 session_state；否则重启/重开手表时
 // 唯一一份热量就没了。原始状态在日志确认之前不做删除。
+export function readSessionHr(sid) {
+  const current = readStored(K_STATE, ['sid', 'hr'])
+  return current?.sid === sid ? (current.hr || null) : null
+}
+
 export function loadState() {
   try {
     const s = readStored(K_STATE)

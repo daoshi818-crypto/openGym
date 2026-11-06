@@ -9,8 +9,8 @@ import { effortScaleOf, effortValueOf, effortKindOf, stepEffortValue, effortMean
 // Execute the shipped watch JS and page scripts with only the device APIs replaced.
 const source = path => readFileSync(new URL('../../../watch-app/src/' + path, import.meta.url), 'utf8')
 const imports = /^import[\s\S]*?from ['"][^'"]+['"]\r?$/gm
-function transport(connection, extra = {}) {
-  const { disk, ctx } = watchPersistence()
+function transport(connection, extra = {}, shared = {}) {
+  const { disk, ctx } = watchPersistence(new Map(), shared)
   Object.assign(ctx, {
     interconnect: { instance: () => connection },
     loadState: extra.loadState || (() => ({})), save: extra.save || (() => {}),
@@ -504,9 +504,9 @@ describe('watch business message boundary', () => {
     expect(back).toHaveBeenCalledOnce()
   })
   it('opens the action-list end panel with the second right swipe and exposes explicit end actions', () => {
-    const sessions = session(), sendEvent = vi.fn(), replace = vi.fn()
+    const sessions = session(), sendEvent = vi.fn(), replace = vi.fn(), back = vi.fn()
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
-    const list = page('ExerciseList/index.ux', { ...sessions, sendEvent, router: { back: vi.fn(), replace } })
+    const list = page('ExerciseList/index.ux', { ...sessions, sendEvent, router: { back, replace } })
     list.onInit()
     list.touchStart({ touches: [{ clientX: 80, clientY: 180 }] })
     list.touchEnd({ changedTouches: [{ clientX: 170, clientY: 182 }] })
@@ -542,7 +542,9 @@ describe('watch business message boundary', () => {
     list.trailingTapBlockedUntil = 0   // a fresh gesture clears the trailing protection
     list.saveWorkout()
     expect(sendEvent).not.toHaveBeenCalled()
-    expect(replace).toHaveBeenCalledWith({ uri: '/Workout', params: { requestFinish: true } })
+    expect(back).toHaveBeenCalledOnce()
+    expect(sessions.runtime().finishRequest).toEqual({ sid: plan.sid })
+    expect(replace).not.toHaveBeenCalled()
   })
 
   it('keeps the end panel through a long swipe and accepts a later deliberate return', () => {
@@ -936,9 +938,9 @@ describe('watch business message boundary', () => {
     expect(c.sent.find(m => m.t === 'plan_ack')).toMatchObject({ status: 'no_handler' })
   })
 
-  it('reattaches callbacks when returning to a page whose module shares the SDK instance', () => {
-    const c = connection()
-    const indexRpc = transport(c), workoutRpc = transport(c)
+  it('updates subscribers across page modules sharing the App runtime and SDK instance', () => {
+    const c = connection(), shared = {}
+    const indexRpc = transport(c, {}, shared), workoutRpc = transport(c, {}, shared)
     const home = vi.fn(() => ({ status: 'applied' }))
     const workout = vi.fn(() => ({ status: 'applied' }))
     indexRpc.startServer({ onPlan: home })
