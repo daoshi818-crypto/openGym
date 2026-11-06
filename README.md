@@ -13,7 +13,7 @@
 [![构建](https://img.shields.io/github/actions/workflow/status/daoshi818-crypto/openGym/build.yml?branch=main&style=flat-square&label=手机构建)](https://github.com/daoshi818-crypto/openGym/actions/workflows/build.yml)
 [![许可证](https://img.shields.io/badge/license-AGPL--3.0-a3e635?style=flat-square)](LICENSE)
 
-[下载安装](https://github.com/daoshi818-crypto/openGym/releases/latest) · [功能展示长图](assets/showcase/opengym-features-long.png) · [官方原项目](https://github.com/DuarteSantos8/openGym) · [自托管文档](docs/SELF_HOSTING.md)
+[下载安装](https://github.com/daoshi818-crypto/openGym/releases/latest) · [七张功能短图](docs/showcase/README.zh-CN.md) · [官方原项目](https://github.com/DuarteSantos8/openGym) · [自托管文档](docs/SELF_HOSTING.md)
 
 <img src="assets/showcase/opengym-cover.png" width="540" alt="openGym 中文定制版：官方核心功能与我们的定制拓展，手机应用中文演示截图">
 
@@ -119,13 +119,19 @@ docker compose up -d --build
 
 ## 手机阅读与社交分享图片
 
-- [完整功能长图（1080px 宽）](assets/showcase/opengym-features-long.png)
-- [分图 01：官方核心功能](assets/showcase/opengym-official-features.png)
-- [分图 02：我们的定制拓展](assets/showcase/opengym-custom-features.png)
-- [封面图](assets/showcase/opengym-cover.png)
-- [可编辑 HTML 与图片制作说明](docs/showcase/README.zh-CN.md)
+采用 **7 张独立短图，全部为 1080×1440（3:4）**，一张一个主题，不再使用拼接长图。按下列顺序发布即可：
 
-手机图为应用演示数据截图；手表图为代码生成预览。文字流程图只解释操作，不伪装成实际模型回复。发布图文时建议保留功能归属和预览标记。
+| 顺序 | 图片 | 归属 |
+| --- | --- | --- |
+| 01 | [封面：认真练，也认真记录](assets/showcase/opengym-cover.png) | 总览 |
+| 02 | [计划与逐组记录](assets/showcase/opengym-02-official-training.png) | 官方核心功能 |
+| 03 | [统计与复盘](assets/showcase/opengym-03-official-progress.png) | 官方核心功能 |
+| 04 | [动作库、AI 与数据自主](assets/showcase/opengym-04-official-tools.png) | 官方核心功能 |
+| 05 | [AI 对话到确认改计划](assets/showcase/opengym-05-custom-coach.png) | 我们的定制拓展 |
+| 06 | [vivo / BlueOS 手表训练](assets/showcase/opengym-06-custom-watch.png) | 我们的定制拓展 |
+| 07 | [中文资料与发布更新](assets/showcase/opengym-07-custom-ecosystem.png) | 我们的定制拓展 |
+
+[可编辑 HTML、制作说明与重导出脚本](docs/showcase/README.zh-CN.md)。手机图为应用演示数据截图；手表图为代码生成预览，非真机截图。流程图仅解释操作，不伪装成模型回复。发布时请保留功能归属和预览标记。
 
 ## 致谢与许可证
 

@@ -1,85 +1,118 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>openGym · 官方核心功能与我们的定制拓展</title>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>openGym · 七张手机阅读短图</title>
 <style>
-*{box-sizing:border-box} :root{color-scheme:dark;--lime:#c1f55c;--ink:#f3f5f0;--muted:#b1b8ab;--line:#32382b;--base:#11150e}
-html,body{margin:0;background:#080b07;color:var(--ink);font-family:"Microsoft YaHei","PingFang SC","Noto Sans CJK SC",sans-serif}body{overflow-x:hidden}button,a{-webkit-tap-highlight-color:transparent}
-.canvas{width:1080px;margin:auto;background:var(--base)}.panel{height:2640px;padding:64px;position:relative;overflow:hidden;background:radial-gradient(ellipse at 105% 0%,#28391a 0,transparent 38%),var(--base)}.panel.custom{background:radial-gradient(ellipse at 0 35%,#23341b 0,transparent 40%),#11150e;border-top:2px solid #4a5938}
-.topline{display:flex;align-items:center;justify-content:space-between;font-size:28px;color:var(--muted);letter-spacing:1px}.brand{font-size:44px;font-weight:800;color:var(--ink);letter-spacing:-2px}.brand b{color:var(--lime)}.tag{border:1px solid #52633d;border-radius:40px;padding:12px 22px;font-size:25px;color:var(--lime)}
-.eyebrow{display:flex;align-items:center;gap:16px;margin-top:54px;color:var(--lime);font-size:30px;font-weight:700}.num{display:inline-grid;place-items:center;background:var(--lime);color:#18230d;font-size:28px;width:52px;height:42px;border-radius:10px}
-h1,h2,h3,p{margin:0}h1,h2{font-size:84px;line-height:1.2;letter-spacing:-3px;margin:28px 0 24px;font-weight:800}h1 em,h2 em{font-style:normal;color:var(--lime)}.intro{font-size:34px;line-height:1.65;color:#c7cdbc}.screens{display:flex;gap:40px;margin:42px 0 32px;justify-content:center}.shot{margin:0;width:424px;flex:none}.phone{padding:10px;background:#333b2b;border-radius:39px;box-shadow:0 22px 64px #0005}.phone img{width:100%;height:auto;display:block;border-radius:29px}.shot figcaption{text-align:center;font-size:29px;line-height:1.6;margin-top:19px;font-weight:600}.shot figcaption span{font-size:24px;color:var(--muted);font-weight:400}.feature-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 36px;margin-top:38px}.feature{padding:24px 0;border-top:1px solid #3a4430}.feature h3{font-size:35px;line-height:1.4;margin-bottom:10px;font-weight:700}.feature h3:before{content:"";display:inline-block;width:10px;height:10px;background:var(--lime);border-radius:50%;margin-right:14px;vertical-align:middle}.feature p{font-size:29px;line-height:1.7;color:var(--muted)}
-.bottom{position:absolute;bottom:52px;left:64px;right:64px;border-top:1px solid #3a4430;padding-top:25px;display:flex;justify-content:space-between;gap:32px;align-items:end;color:var(--muted);font-size:23px;line-height:1.65}.bottom .page{font-size:26px;color:var(--lime);white-space:nowrap;letter-spacing:2px}.bottom strong{font-weight:600;color:#d9dfd1}
-.custom .eyebrow{margin-top:45px}.custom h2{font-size:78px;margin:25px 0 21px}.custom .intro{font-size:32px}.card{background:#1e2618;border:1px solid #3c4c2c;border-radius:30px;padding:32px;margin-top:32px}.card-title{font-size:38px;line-height:1.4;font-weight:700}.card-title .label{font-size:24px;display:inline-block;color:var(--lime);background:#303e22;border-radius:9px;padding:5px 12px;margin-right:14px;vertical-align:4px}.example{margin-top:23px;border-left:4px solid var(--lime);padding:9px 0 9px 22px;font-size:34px;line-height:1.65;color:#f1f4eb}.flow{display:flex;align-items:center;justify-content:space-between;margin:27px 0 20px;font-size:29px;color:var(--lime);font-weight:700}.flow span{padding:12px 22px;border-radius:13px;background:#303e22}.flow i{font-style:normal;color:#9cac85;font-size:28px}.safe{font-size:27px;color:#c3ccb8;line-height:1.65}.safe b{color:var(--ink)}
-.watch-title{display:flex;align-items:center;justify-content:space-between;gap:15px}.smalltag{font-size:23px;color:#bbc9a6;border:1px solid #556447;border-radius:20px;padding:7px 15px;white-space:nowrap}.watch-intro{font-size:29px;line-height:1.7;color:var(--muted);margin-top:12px}.watches{display:flex;gap:36px;justify-content:center;margin:23px 0 20px}.watch{margin:0;width:354px}.watch-frame{background:#030403;border:9px solid #4a5044;border-radius:44px;padding:5px;position:relative}.watch-frame:after{content:"";position:absolute;right:-17px;top:104px;width:9px;height:42px;border-radius:0 5px 5px 0;background:#78816d}.watch img{width:100%;display:block;border-radius:30px}.watch figcaption{text-align:center;font-size:25px;color:#c5ceba;margin-top:14px;line-height:1.5}.watch-bits{display:grid;grid-template-columns:1fr 1fr;gap:14px 30px;font-size:28px;line-height:1.5;color:#dce4d2}.watch-bits span:before{content:"+";color:var(--lime);font-size:31px;margin-right:13px}.preview-note{font-size:23px;color:#aebba0;margin-top:21px;line-height:1.6}
-.extras{display:grid;grid-template-columns:1fr 1fr;gap:28px;margin-top:30px}.extra{border-top:2px solid #647b44;padding-top:20px}.extra h3{font-size:34px;margin-bottom:11px}.extra p{font-size:28px;line-height:1.7;color:var(--muted)}.repo{margin-top:33px;background:var(--lime);border-radius:20px;padding:21px 27px;color:#1c2b0c;display:flex;align-items:center;justify-content:space-between}.repo strong{font-size:32px;display:block}.repo span{font-size:24px;display:block;margin-top:7px}.repo .arrow{font-size:46px;line-height:1;margin:0 0 0 20px}
-.cover{width:1080px;height:1440px;padding:66px;background:radial-gradient(ellipse at top right,#344c20 0,transparent 60%),#11150e;overflow:hidden;position:relative}.cover .eyebrow{margin-top:43px}.cover h2{font-size:89px;margin:28px 0 22px}.cover .intro{font-size:34px}.cover-shots{position:absolute;top:510px;left:66px;right:66px;display:flex;align-items:start;gap:38px}.cover-shot{width:420px;border-radius:37px;background:#3d4931;padding:10px;box-shadow:0 20px 55px #0005}.cover-shot img{width:100%;border-radius:27px;display:block}.cover-shot:nth-child(2){margin-top:85px}.cover-bottom{position:absolute;bottom:0;left:0;right:0;background:linear-gradient(transparent,#10150df2 45%);padding:110px 66px 48px;display:flex;justify-content:space-between;align-items:end}.cover-bottom p{font-size:26px;line-height:1.7;color:#c8d2bc}.cover-bottom strong{font-size:36px;color:var(--lime)}
-.official .feature p{font-size:32px}.extra p{font-size:30px}.watch img,.cover-shot img{height:auto}.cover-shots{top:610px}
-.toolbar{max-width:1080px;margin:0 auto;padding:22px;font-size:17px;line-height:1.8;color:#becab0}.toolbar a{color:#c1f55c;text-underline-offset:4px}.toolbar a:focus-visible{outline:2px solid var(--lime);outline-offset:4px}
-@media(max-width:1079px){.canvas,.cover{zoom:calc(100vw / 1080px)}}
-@media print{.toolbar{display:none}.panel{break-after:page}.canvas,.cover{zoom:1}}
+*{box-sizing:border-box} :root{color-scheme:dark;--lime:#c1f55c;--ink:#f3f5f0;--muted:#bac4af;--base:#11150e}
+html,body{margin:0;background:#080b07;color:var(--ink);font-family:"Microsoft YaHei","PingFang SC","Noto Sans CJK SC",sans-serif}body{overflow-x:hidden}h1,h2,h3,p,figure{margin:0}a{color:var(--lime)}
+.toolbar{padding:22px;text-align:center;font-size:16px;line-height:1.8}.toolbar a{margin:0 8px}.canvas{width:1080px;margin:auto}.panel{width:1080px;height:1440px;padding:60px;position:relative;overflow:hidden;background:radial-gradient(ellipse at 105% 0,#28391a 0,transparent 43%),var(--base);margin-bottom:32px}.panel.custom{background:radial-gradient(ellipse at 0 35%,#23341b 0,transparent 48%),var(--base)}
+.topline{display:flex;align-items:center;justify-content:space-between;gap:20px}.brand{font-size:44px;font-weight:800;letter-spacing:-2px}.brand b,em{color:var(--lime);font-style:normal}.tag{font-size:28px;color:var(--lime);border:1px solid #52633d;border-radius:40px;padding:10px 22px}.eyebrow{color:var(--lime);font-size:30px;font-weight:700;margin-top:32px;letter-spacing:2px}h1,h2{font-size:72px;line-height:1.2;letter-spacing:-2px;margin:16px 0 18px}h3{font-size:42px;line-height:1.4}.intro{font-size:38px;line-height:1.65;color:#cbd4bf}.body{margin-top:34px}.bottom{position:absolute;left:60px;right:60px;bottom:44px;display:flex;justify-content:space-between;gap:16px;align-items:end;border-top:1px solid #3a4430;padding-top:21px;font-size:27px;line-height:1.6;color:#b7c2ab}.bottom strong{font-weight:600;color:#dbe3d2}.page{font-size:29px;color:var(--lime);white-space:nowrap;letter-spacing:1px}.content{position:relative}
+.phone{padding:9px;border-radius:35px;background:#38432e;box-shadow:0 18px 40px #0004}.phone img{display:block;width:100%;height:auto;border-radius:26px}.device-label{font-size:28px;color:var(--muted);text-align:center;margin-top:14px;line-height:1.5}.two-col{display:grid;grid-template-columns:1fr 340px;gap:42px;align-items:center}.bullet{margin-bottom:38px}.bullet h3{margin-bottom:12px}.bullet h3:before{content:"";display:inline-block;width:10px;height:10px;background:var(--lime);border-radius:50%;margin-right:14px;vertical-align:middle}.bullet p{font-size:36px;line-height:1.7;color:var(--muted)}
+.screens{display:flex;justify-content:center;gap:36px;margin-top:32px}.shot{width:346px}.pill-row{display:flex;gap:18px;margin-top:30px}.pill{font-size:29px;color:var(--lime);padding:12px 20px;background:#2c3920;border-radius:12px}.cards{display:grid;gap:24px;margin-top:32px}.card{border:1px solid #415333;border-radius:26px;padding:24px 30px;background:#1c2517}.card h3{color:var(--ink);margin-bottom:12px}.card p{font-size:36px;line-height:1.55;color:var(--muted)}.card .label{font-size:27px;color:var(--lime);margin-bottom:12px;letter-spacing:1px}.note{font-size:29px;line-height:1.65;color:#b7c4a8;margin-top:23px}
+.cover h1{font-size:94px;margin-top:28px}.cover .eyebrow{margin-top:38px}.cover .intro{font-size:38px}.cover-shots{display:flex;gap:36px;justify-content:center;margin-top:32px}.cover-shots .phone{width:292px}.cover-shots img{height:auto}.cover .body{margin-top:0}.cover .bottom{background:var(--base)}
+.quote{border-left:5px solid var(--lime);padding:16px 28px;background:#1d2816;border-radius:0 22px 22px 0;font-size:43px;line-height:1.65}.steps{display:grid;gap:18px;margin-top:27px}.step{display:flex;gap:24px;align-items:center;background:#1d2816;border:1px solid #405331;border-radius:22px;padding:18px 28px}.step-num{display:grid;place-items:center;border-radius:50%;background:var(--lime);color:#18230d;font-size:33px;width:58px;height:58px;flex:none;font-weight:800}.step h3{font-size:38px;margin-bottom:6px}.step p{font-size:32px;line-height:1.5;color:var(--muted)}
+.watches{display:flex;gap:40px;justify-content:center;margin:24px 0 24px}.watch{width:330px}.watch-frame{background:#030403;border:9px solid #4a5044;border-radius:43px;padding:5px;position:relative}.watch-frame:after{content:"";position:absolute;right:-17px;top:104px;width:9px;height:42px;border-radius:0 5px 5px 0;background:#78816d}.watch img{width:100%;height:auto;display:block;border-radius:28px}.watch figcaption{font-size:29px;text-align:center;color:var(--muted);margin-top:14px}.watch-bits{display:grid;grid-template-columns:1fr 1fr;gap:20px 24px;font-size:35px;line-height:1.6}.watch-bits span:before{content:"+";color:var(--lime);font-size:38px;margin-right:12px}.repo{margin-top:34px;border-top:1px solid #405331;padding-top:24px}.repo strong{display:block;font-size:37px;margin-bottom:12px}.repo span{font-size:29px;color:var(--lime)}
+@media(max-width:1080px){.canvas{width:100%}.panel{zoom:calc(100vw / 1080px)}.toolbar{font-size:14px;padding:15px}}
 </style>
 </head>
 <body>
-<nav class="toolbar" aria-label="分享图片下载">查看：<a href="../../assets/showcase/opengym-features-long.png">完整长图</a> · <a href="../../assets/showcase/opengym-official-features.png">图 01</a> · <a href="../../assets/showcase/opengym-custom-features.png">图 02</a> · <a href="../../assets/showcase/opengym-cover.png">封面</a> · <a href="../../README.md">项目说明</a></nav>
-<main class="canvas" id="long-poster">
-<section class="panel official" id="official" aria-label="官方核心功能展示">
-  <div class="topline"><div class="brand">open<b>Gym</b></div><span class="tag">开源健身记录 · 简体中文定制版</span></div>
-  <div class="eyebrow"><span class="num">01</span> 官方核心功能 · 定制版保留</div>
-  <h1>一套应用，<br>记录你的<em>训练全程。</em></h1>
-  <p class="intro">计划、逐组记录、动作库与进步统计，<br>从开练到复盘，让每一次努力有迹可循。</p>
-  <div class="screens">
-    <figure class="shot"><div class="phone"><img src="../../assets/showcase/app-home.png" width="780" height="1688" alt="应用中文演示截图：今日训练安排和体重趋势"></div><figcaption>今天练什么，一眼看清<br><span>今日计划 / 训练日程 / 体重趋势</span></figcaption></figure>
-    <figure class="shot"><div class="phone"><img src="../../assets/showcase/app-workout.png" width="780" height="1688" alt="应用中文演示截图：每一组的重量、次数和努力程度"></div><figcaption>每一组，都认真记录<br><span>重量次数 / 上次表现 / RPE · RIR</span></figcaption></figure>
-  </div>
-  <div class="feature-grid">
-    <article class="feature"><h3>灵活安排训练</h3><p>按周或轮换编排计划，<br>组数、次数与休息可调。</p></article>
-    <article class="feature"><h3>跟进每一组</h3><p>逐组记录、休息倒计时，<br>对照上次表现继续进步。</p></article>
-    <article class="feature"><h3>动作库与手机示范</h3><p>按肌群、器械查找动作，<br>查看动作示范与要领。</p></article>
-    <article class="feature"><h3>看见长期变化</h3><p>日历、趋势与阶段报告，<br>回顾训练量和个人纪录。</p></article>
-    <article class="feature"><h3>AI 教练辅助</h3><p>训练问答、复盘与计划建议，<br>按需配置自己的 AI 服务。</p></article>
-    <article class="feature"><h3>数据由自己掌握</h3><p>本地优先、备份与导出，<br>可选自托管和多端同步。</p></article>
-  </div>
-  <footer class="bottom"><div><strong>源于 DuarteSantos8/openGym 的开源基础</strong><br>手机为中文演示数据截图；AI、在线同步需相应配置。</div><div class="page">01 / 02</div></footer>
+<nav class="toolbar" aria-label="七张短图导航">七张独立短图 · 每张 1080×1440 · 不导出拼接长图<br><a href="#cover">01 封面</a><a href="#official-training">02 训练</a><a href="#official-progress">03 复盘</a><a href="#official-tools">04 工具</a><a href="#custom-coach">05 AI 拓展</a><a href="#custom-watch">06 手表拓展</a><a href="#custom-ecosystem">07 中文与更新</a></nav>
+<main class="canvas">
+<section class="panel cover" id="cover" data-file="opengym-cover.png" aria-label="01 封面">
+<div class="content">
+<header class="topline"><div class="brand">open<b>Gym</b></div><span class="tag">简体中文定制版</span></header>
+<div class="eyebrow">开源健身记录 / 手机 + vivo 手表</div>
+<h1>认真练，<br>也<em>认真记录。</em></h1>
+<p class="intro">官方核心功能 × 我们的定制拓展<br>从训练计划，到每一组，再到复盘。</p>
+<div class="cover-shots"><div class="phone"><img src="../../assets/showcase/app-home.png" alt="手机首页中文演示数据截图"></div><div class="phone"><img src="../../assets/showcase/app-workout.png" alt="手机逐组训练中文演示数据截图"></div></div>
+</div>
+<footer class="bottom"><div><strong>基于 DuarteSantos8/openGym · 非官方分支</strong><br>手机演示数据截图 · AGPL-3.0</div><span class="page">01 / 07</span></footer>
 </section>
-<section class="panel custom" id="custom" aria-label="我们的定制拓展展示">
-  <div class="topline"><div class="brand">open<b>Gym</b></div><span class="tag">在开源基础上，继续打磨</span></div>
-  <div class="eyebrow"><span class="num">02</span> 我们基于官方做的定制拓展</div>
-  <h2>不止能记录，<br>还要<em>更顺手。</em></h2>
-  <p class="intro">重点完善 AI 对话改计划、vivo 手表训练，<br>以及中文动作资料和更新体验。</p>
-  <article class="card">
-    <h3 class="card-title"><span class="label">AI 对话拓展</span>一句话，走到可确认的调整</h3>
-    <p class="example">“我想把练背除了第一个动作以外，<br>其他改为三组。”</p>
-    <div class="flow"><span>说出需求</span><i>→</i><span>查看变更</span><i>→</i><span>明确确认</span></div>
-    <p class="safe">不必只从复盘入口改计划。<b>确认后改后续模板，</b><br>不回写本场和历史；范围不明确时先澄清。</p>
-  </article>
-  <article class="card">
-    <div class="watch-title"><h3 class="card-title"><span class="label">BlueOS 拓展</span>把训练带到 vivo 手表</h3><span class="smalltag">GT1 · 390×450</span></div>
-    <p class="watch-intro">参考 Apple Watch 的选组与字段编辑，<br>结合 Wear OS「点击动作名切换」的入口逻辑。</p>
-    <div class="watches">
-      <figure class="watch"><div class="watch-frame"><img src="../../assets/showcase/watch-current-preview.png" width="390" height="450" alt="GT1 当前组代码生成预览，非真机截图"></div><figcaption>圆点选组 / 查看上次表现</figcaption></figure>
-      <figure class="watch"><div class="watch-frame"><img src="../../assets/showcase/watch-keyboard-preview.png" width="390" height="450" alt="GT1 精确键盘代码生成预览，非真机截图"></div><figcaption>表冠调值 / 精确数字录入</figcaption></figure>
-    </div>
-    <div class="watch-bits"><span>点击动作名切换</span><span>选字段后表冠调值</span><span>休息与 RPE / RIR</span><span>结束确认与总结</span></div>
-    <p class="preview-note">手表为代码生成预览，非真机；固件交互仍需实机验收。<br>当前不含手表动作演示，不承诺强制唤起后台手机。</p>
-  </article>
-  <div class="extras">
-    <article class="extra"><h3>中文动作资料完善</h3><p>在官方中文基础上，<br>补充、校正名称与要领。</p></article>
-    <article class="extra"><h3>更新与发布闭环</h3><p>本仓库独立更新源，<br>手机、手表包与校验同发。</p></article>
-  </div>
-  <div class="repo"><div><strong>开源可查 · 下载与源码</strong><span>github.com/daoshi818-crypto/openGym</span></div><span class="arrow">↗</span></div>
-  <footer class="bottom"><div><strong>非官方定制分支 · AGPL-3.0 · 保留上游致谢</strong><br>功能对照基线：官方 v1.4.4；定制快照：手机 1.6.13 / 手表 0.6.18。</div><div class="page">02 / 02</div></footer>
+<section class="panel" id="official-training" data-file="opengym-02-official-training.png" aria-label="02 官方计划与记录">
+<div class="content">
+<header class="topline"><div class="brand">open<b>Gym</b></div><span class="tag">官方核心功能</span></header>
+<div class="eyebrow">01 / 计划与记录</div>
+<h2>今天练什么，<br><em>每一组都清楚。</em></h2>
+<p class="intro">先安排，再开练；把过程留下来。</p>
+<div class="body two-col"><div>
+<article class="bullet"><h3>训练计划</h3><p>安排训练日和动作，<br>设定组数、次数与休息。</p></article>
+<article class="bullet"><h3>逐组记录</h3><p>记录重量、次数，<br>按自己的节奏完成训练。</p></article>
+<article class="bullet"><h3>回看历史</h3><p>对照过去的训练记录，<br>为下一次调整提供参考。</p></article>
+</div><figure><div class="phone"><img src="../../assets/showcase/app-workout.png" alt="逐组训练中文演示数据截图"></div><figcaption class="device-label">逐组训练 · 演示数据</figcaption></figure></div>
+</div>
+<footer class="bottom"><div><strong>能力源于官方项目，本分支保留或适配。</strong><br>手机为浏览器演示截图，非真机拍摄。</div><span class="page">02 / 07</span></footer>
+</section>
+<section class="panel" id="official-progress" data-file="opengym-03-official-progress.png" aria-label="03 官方统计与复盘">
+<div class="content">
+<header class="topline"><div class="brand">open<b>Gym</b></div><span class="tag">官方核心功能</span></header>
+<div class="eyebrow">02 / 统计与复盘</div>
+<h2>不只记录今天，<br><em>也看见长期变化。</em></h2>
+<p class="intro">训练日历看坚持，趋势与报告做复盘。</p>
+<div class="body two-col"><div>
+<article class="bullet"><h3>训练日历</h3><p>看训练安排与频率，<br>回顾自己的坚持。</p></article>
+<article class="bullet"><h3>趋势统计</h3><p>对比一段时间的数据，<br>观察训练变化。</p></article>
+<article class="bullet"><h3>训练报告</h3><p>从趋势页进入报告，<br>进一步复盘与导出。</p></article>
+</div><figure><div class="phone"><img src="../../assets/showcase/app-trends.png" alt="趋势统计中文演示数据截图"></div><figcaption class="device-label">趋势统计 · 演示数据</figcaption></figure></div>
+</div>
+<footer class="bottom"><div><strong>统计、报告均为官方已有能力。</strong><br>截图使用演示数据，不代表实际训练效果。</div><span class="page">03 / 07</span></footer>
+</section>
+<section class="panel" id="official-tools" data-file="opengym-04-official-tools.png" aria-label="04 官方辅助工具">
+<div class="content">
+<header class="topline"><div class="brand">open<b>Gym</b></div><span class="tag">官方核心功能</span></header>
+<div class="eyebrow">03 / 辅助工具与数据自主</div>
+<h2>训练之外，<br><em>也有趁手的工具。</em></h2>
+<p class="intro">不是只有一张训练记录表。</p>
+<div class="cards">
+<article class="card"><h3>动作库与手机端示范</h3><p>查看动作资料与示范内容，<br>为训练安排提供参考。</p></article>
+<article class="card"><h3>AI 辅助提问与复盘</h3><p>官方已有 AI 教练；<br>使用范围取决于配置与部署。</p></article>
+<article class="card"><h3>开源、导出、可自托管</h3><p>源码可查，按需管理数据，<br>选择适合自己的使用方式。</p></article>
+</div>
+</div>
+<footer class="bottom"><div><strong>以上为官方能力，不宣传成定制原创。</strong><br>手机动作示范 ≠ 手表动作演示。</div><span class="page">04 / 07</span></footer>
+</section>
+<section class="panel custom" id="custom-coach" data-file="opengym-05-custom-coach.png" aria-label="05 定制AI对话改计划">
+<div class="content">
+<header class="topline"><div class="brand">open<b>Gym</b></div><span class="tag">我们的定制拓展</span></header>
+<div class="eyebrow">01 / AI 对话 → 计划修改</div>
+<h2>不只聊建议，<br><em>还能确认改计划。</em></h2>
+<p class="intro">把日常提问，接到可确认的修改流程。</p>
+<div class="body quote">“我想把练背除了第一个动作以外，<br>其他改为三组。”</div>
+<div class="steps">
+<article class="step"><span class="step-num">1</span><div><h3>用自然语言提出需求</h3><p>说明训练日、动作范围和调整目标。</p></div></article>
+<article class="step"><span class="step-num">2</span><div><h3>核对结构化修改方案</h3><p>检查动作匹配、修改前后值与合法性。</p></div></article>
+<article class="step"><span class="step-num">3</span><div><h3>明确确认，再应用计划</h3><p>不是只给一段文字，也不静默修改。</p></div></article>
+</div>
+<p class="note">拓展普通聊天到确认应用；AI 教练为官方已有能力。</p>
+</div>
+<footer class="bottom"><div><strong>此处是操作流程示意，不是模型回复截图。</strong><br>实际方案须通过校验；AI 需对应配置与服务。</div><span class="page">05 / 07</span></footer>
+</section>
+<section class="panel custom" id="custom-watch" data-file="opengym-06-custom-watch.png" aria-label="06 定制vivo手表训练">
+<div class="content">
+<header class="topline"><div class="brand">open<b>Gym</b></div><span class="tag">我们的定制拓展</span></header>
+<div class="eyebrow">02 / vivo · BlueOS</div>
+<h2>训练记录，<br><em>延伸到手腕上。</em></h2>
+<p class="intro">面向 GT1 方屏 390×450，<br>重整训练页面与输入交互。</p>
+<div class="watches"><figure class="watch"><div class="watch-frame"><img src="../../assets/showcase/watch-current-preview.png" alt="当前组代码生成浏览器预览，非真机"></div><figcaption>当前组 · 代码预览</figcaption></figure><figure class="watch"><div class="watch-frame"><img src="../../assets/showcase/watch-keyboard-preview.png" alt="数字录入代码生成浏览器预览，非真机"></div><figcaption>数字录入 · 代码预览</figcaption></figure></div>
+<div class="watch-bits"><span>点动作名切换动作</span><span>圆点选择不同组</span><span>选字段后表冠调节</span><span>数字键盘精确录入</span></div>
+<p class="note">官方已有 Apple Watch / Wear OS；<br>本分支重点拓展 vivo / BlueOS 训练端。</p>
+</div>
+<footer class="bottom"><div><strong>手表为代码生成预览，非 GT1 真机截图。</strong><br>当前无动作演示，不承诺强制唤起后台手机。</div><span class="page">06 / 07</span></footer>
+</section>
+<section class="panel custom" id="custom-ecosystem" data-file="opengym-07-custom-ecosystem.png" aria-label="07 定制中文资料与发布更新">
+<div class="content">
+<header class="topline"><div class="brand">open<b>Gym</b></div><span class="tag">我们的定制拓展</span></header>
+<div class="eyebrow">03 / 中文体验与持续更新</div>
+<h2>不止改界面，<br><em>也把细节补齐。</em></h2>
+<p class="intro">让已有能力更贴近日常使用。</p>
+<div class="cards">
+<article class="card"><h3>补充与校正动作资料</h3><p>在官方已有中文支持之上，<br>完善动作名称、描述和训练要领。<br>不是把中文支持当作本分支首创。</p></article>
+<article class="card"><h3>手机、手表包与更新入口</h3><p>GitHub 构建与发布、应用更新 JSON，<br>手机和手表安装包、校验文件同发。<br>下载有出处，版本可核对。</p></article>
+</div>
+<div class="repo"><strong>源码与下载 · 非官方定制分支</strong><span>github.com/daoshi818-crypto/openGym</span></div>
+</div>
+<footer class="bottom"><div><strong>感谢上游 openGym · 源码 AGPL-3.0</strong><br>对照：官方 v1.4.4；快照：手机 1.6.13 / 手表 0.6.18。</div><span class="page">07 / 07</span></footer>
 </section>
 </main>
-<section class="cover" id="cover" aria-label="社交媒体封面">
-  <div class="topline"><div class="brand">open<b>Gym</b></div><span class="tag">简体中文定制版</span></div>
-  <div class="eyebrow">开源健身记录 / 手机 + vivo 手表</div>
-  <h2>认真练，<br>也<em>认真记录。</em></h2>
-  <p class="intro">官方核心功能 × 我们的定制拓展<br>训练计划 · 逐组记录 · AI · BlueOS</p>
-  <div class="cover-shots"><div class="cover-shot"><img src="../../assets/showcase/app-home.png" width="780" height="1688" alt="手机首页中文演示截图"></div><div class="cover-shot"><img src="../../assets/showcase/app-workout.png" width="780" height="1688" alt="手机逐组训练中文演示截图"></div></div>
-  <div class="cover-bottom"><div><strong>从计划到复盘，形成自己的训练闭环。</strong><p>基于 DuarteSantos8/openGym · 非官方定制分支<br>手机演示数据截图 · AGPL-3.0</p></div></div>
-</section>
 </body>
 </html>

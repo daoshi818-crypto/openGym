@@ -1,15 +1,20 @@
 # openGym 手机阅读与社交展示素材
 
-## 导出图片
+## 导出图片：七张独立短图
 
-| 图片 | 尺寸 | 用途 |
+**全部 1080×1440（3:4），不做拼接长图。** 推荐按 01→07 顺序发布；02–04 是官方主要功能，05–07 是我们的定制拓展。每张只围绕一个主题，正文使用大字号，适合手机左右翻图阅读。
+
+| 顺序 | 图片 | 主题 |
 | --- | --- | --- |
-| [完整功能长图](../../assets/showcase/opengym-features-long.png) | 1080×5280 | 两部分连贯阅读，支持长图的平台 |
-| [01 官方核心功能](../../assets/showcase/opengym-official-features.png) | 1080×2640 | 分图第一张 |
-| [02 我们的定制拓展](../../assets/showcase/opengym-custom-features.png) | 1080×2640 | 分图第二张 |
-| [封面](../../assets/showcase/opengym-cover.png) | 1080×1440 | 3:4 社交媒体封面 |
+| 01 | [封面](../../assets/showcase/opengym-cover.png) | 认真练，也认真记录 |
+| 02 | [官方：计划与记录](../../assets/showcase/opengym-02-official-training.png) | 训练计划、逐组记录、历史 |
+| 03 | [官方：统计与复盘](../../assets/showcase/opengym-03-official-progress.png) | 日历、趋势、报告 |
+| 04 | [官方：辅助工具](../../assets/showcase/opengym-04-official-tools.png) | 动作库、AI、数据自主 |
+| 05 | [定制：AI 对话改计划](../../assets/showcase/opengym-05-custom-coach.png) | 自然语言需求、校验、确认应用 |
+| 06 | [定制：vivo 手表训练](../../assets/showcase/opengym-06-custom-watch.png) | BlueOS / GT1、切动作、选组、录入 |
+| 07 | [定制：中文与更新](../../assets/showcase/opengym-07-custom-ecosystem.png) | 中文内容增补、独立发布更新 |
 
-推荐发布顺序：封面 → 官方核心功能 → 定制拓展。两张功能分图是长图的两个完整部分，没有另加功能。正文大字号、单向竖读，无需横向拖动查看表格。
+此前的 5280px 长图和两张 2640px 分图已从当前展示中移除，避免误用旧排版。可以直接保存上述 PNG 使用，无须再截图 HTML 页面。
 
 附加原始素材：[训练日历](../../assets/showcase/app-calendar.png)、[趋势统计](../../assets/showcase/app-trends.png)、[训练报告](../../assets/showcase/app-report.png)、[手表总结代码预览](../../assets/showcase/watch-summary-preview.png)。这些也分别属于浏览器演示截图或代码预览，不是真机截图。
 
@@ -30,8 +35,8 @@
 源稿是 [index.html](index.html)，只用本地图片、系统字体和 CSS，无外部字体、CDN脚本或生成式图片依赖。
 
 1. 从仓库根目录启动本地静态服务器，例如 `python -m http.server 8768 --bind 127.0.0.1`。
-2. 打开 `http://127.0.0.1:8768/docs/showcase/index.html`。手机宽度按1080px画布等比显示。
-3. 按 [render.cjs](render.cjs) 的说明配置 Playwright，然后运行导出；导出脚本同时检查字体、图片、内容边界与产物尺寸。
+2. 打开 `http://127.0.0.1:8768/docs/showcase/index.html`。手机宽度按1080px画布等比显示；各张保留独立的3:4比例。
+3. 按 [render.cjs](render.cjs) 的说明配置 Playwright，然后运行导出；导出脚本仅逐张截图，不截整页；同时检查字体、图片比例、正文与页脚边界、文字溢出、七张产物尺寸，以及360/390/430/768px宽度适配。
 
 ```bash
 # 标准 Node 环境，先在仓库外部的工具目录安装 playwright，并安装对应浏览器。
