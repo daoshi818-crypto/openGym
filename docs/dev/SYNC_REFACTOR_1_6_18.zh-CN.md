@@ -43,28 +43,39 @@ TX保留相同序列化内容、transferId和ACK bitmap；RX逐块及元数据�
 - android-build-32.log：compileDebugJavaWithJavac、testDebugUnitTest（含6个新门禁故障/公平测试）、assembleRelease通过（434任务）。本地unsigned release不是生产签名交付。
 - mobile-build-31.log：mobile Vite、6554静态+6554动画资源、cap sync android、bundle检查通过。未同步iOS。
 - watch-build-35.log：最终方/圆编译与五页布局契约、manifest/VRU/CERT验证；正式包在watch-app/releases。
-- API本地669项，663通过、6个POSIX权限语义用例在Windows失败；保留测试，正式Linux CI必须全通过。此前错误工作目录和缺TZ导致的fixture失败已定位，未弱化断言。
+- API本地669项，663通过、6个POSIX权限语义用例在Windows失败；保留测试，正式Linux CI现已669/669通过。此前错误工作目录和缺TZ导致的fixture失败已定位，未弱化断言。
 - 故障覆盖：本地失败/断连/立即重启、关闭分步故障、精确ACK丢失、父失败及独立推进、20+块指定丢失/乱序/重复/双方重启、损坏/旧基准/取消回退、大快照不阻塞业务、SDK迟回调及门禁公平/容量。
 
 ## 7. 主机模拟性能（不是真机）
-可重放：frontend/scripts/watch-sync-probe.mjs；performance-simulation.json。Windows单进程真实业务模块+mock存储/SDK，performance.now单调时钟；注入存储1ms/RPC2ms，Windows实际timer约15ms。30个操作/30快照，每次固定丢第6块、两端重启、虚拟65s重连间隔（不是墙钟65s）。
+可重放：frontend/scripts/watch-sync-probe.mjs；最终实现提交dba46d035复跑performance-final.json（此前performance-simulation.json为较早一轮）。Windows单进程真实业务模块+mock存储/SDK，performance.now单调时钟；注入存储1ms/RPC2ms，Windows实际timer约15ms。30个操作/30快照，每次固定丢第6块、两端重启、虚拟65s重连间隔（不是墙钟65s）。
 
 |指标|样本|p50 ms|p95 ms|
 |---|---:|---:|---:|
-|点击→存储回调成功|30|15.599|16.376|
-|点击→UI回调（非呈现帧）|30|16.109|17.238|
-|RPC callback|32|15.676|16.387|
-|队列等待|30|46.964|63.067|
-|入队→committed|30|77.801|94.068|
-|快照总耗时|30|1511.166|1532.225|
-|重启恢复主机耗时（不含虚拟65s）|30|1030.698|1048.831|
+|点击→存储回调成功|30|15.454|16.554|
+|点击→UI回调（非呈现帧）|30|16.370|17.671|
+|RPC callback|32|15.228|16.080|
+|队列等待|30|47.388|73.542|
+|入队→committed|30|78.245|104.074|
+|快照总耗时|30|1493.284|1528.113|
+|重启恢复主机耗时（不含虚拟65s）|30|1013.655|1041.029|
 
-每快照TX写50次/RX块+元数据23次（p50/p95相同）；watch Outbox61/session120/decisions30次。660次块发送，30次重复，按attempt计重传4.545%。宿主进程maxRSS90964KiB，最终RSS93143040bytes。以上是模拟边界和调度路径成本，不代表watch flash、BLE速率或设备RAM。最终验收另记录运行日志。
+每快照TX写50次/RX块+元数据23次（p50/p95相同）；watch Outbox61/session120/decisions30次。660次块发送，30次重复，按attempt计重传4.545%。宿主进程maxRSS80944KiB，最终RSS82882560bytes。以上是模拟边界和调度路径成本，不代表watch flash、BLE速率或设备RAM。最终验收原始数据与运行日志均在诊断目录。
 
 ## 8. 剩余风险与未测项
-无真实BlueOS/手机连接：未测固件断电durability、flash耗时、BLE丢包与后台存活、真实UI帧和设备内存。JS/SDK watchdog为逻辑取消，不能阻止固件已发起的物理写/发送迟到；仍需真机断电、息屏、杀进程验收。依赖父裁决被有界保留淘汰时保守拒绝，不推测成功；冲突/容量满需要用户核对，绝不清数据解堵。持续sid错误的快照可保持退避直到新有效源，不宣称无限故障下必收敛。Hash不是认证。生产签名APK、GitHub Linux结果、release和实际客户端CDN metadata均须另行实下载核验，不能以本地构建冒充发布完成。
+无真实BlueOS/手机连接：未测固件断电durability、flash耗时、BLE丢包与后台存活、真实UI帧和设备内存。JS/SDK watchdog为逻辑取消，不能阻止固件已发起的物理写/发送迟到；仍需真机断电、息屏、杀进程验收。依赖父裁决被有界保留淘汰时保守拒绝，不推测成功；冲突/容量满需要用户核对，绝不清数据解堵。持续sid错误的快照可保持退避直到新有效源，不宣称无限故障下必收敛。Hash不是认证。生产签名APK、GitHub Linux结果、release和实际客户端CDN metadata已按下一节实下载核验；这些验证仍不等于真实设备通信验收。
 
-## 9. 实际改造/交付文件
+## 9. 正式发布及实下载验证
+- 实现提交 dba46d03531a7f9f27d2e7e574cb98c4fb831f43，GitHub Actions 42404774355 verify/build全部success（5m46s/3m51s）。Linux前端506文件6175通过、移动启动2通过、API669通过/0失败；Native单测及release组装/签名、RPK校验成功。
+- 正式release v1.6.18，非draft/非prerelease，同一release六个安装包/校验附件。链接：https://github.com/daoshi818-crypto/openGym/releases/tag/v1.6.18
+- update.json由既有流程提交12800c404，main已快进同步。APK64/1.6.18，v1/v2/v3签名验证通过，证书SHA256与上一版一致：8bf64970048540fe913005d05becee1ecad819e7171518dabcd15817301a0149。
+- 下载到D:/gym/deliverables/openGym-v1.6.18；三包均与release附带sha256一致，RPK同时与仓库构建产物一致、检查manifest/code36/对应屏型及VRU/CERT。
+- `openGym.apk`：222677393bytes，SHA256 `18633c38ce9c5291a48ec9728e7e2831d82e855f2a2d43a9a54afd125508978e`。
+- `opengym-watch-0.6.21.rpk`：236134bytes，SHA256 `76fe6645bee202188e9b762d972df148bfd8dbda556422c1b22f7e8515bfa9a5`。
+- `opengym-watch-round-0.6.21.rpk`：236121bytes，SHA256 `93f3f2ffe3be74bf025268f5ff6792520a7b1c4a632f8ff777cab190a69c0115`。
+- 实际客户端源站与CDN小时query均返回v1.6.18；精确apk_url/hash_url可访问，hash内容与实下载APK一致，下载响应大小222677393bytes。完整证据release-verification.json与github-all.log。CDN检查使用运行时实际小时参数，不伪造缓存命中。
+- 未为本次授权安装任何设备应用，不清应用数据；仍需双端真机验收。依赖action有Node20/setup-java v4弃用警告，未阻止本次构建，未为压警告扩展本次改造。
+
+## 10. 实际改造/交付文件
 完整范围（不含两处无关修改；生成的本地构建中间产物未提交）：
 - `.github/scripts/ci-build.sh`
 - `.github/workflows/build.yml`
@@ -122,3 +133,5 @@ TX保留相同序列化内容、transferId和ACK bitmap；RX逐块及元数据�
 - `watch-app/src/lib/sync-wire.js`
 - `watch-app/src/lib/version.js`
 - `watch-app/src/manifest.json`
+
+- `update.json`（发布工作流自动提交，非初始56文件实现提交的一部分）
