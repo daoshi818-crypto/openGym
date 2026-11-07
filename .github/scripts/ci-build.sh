@@ -11,13 +11,13 @@ cd frontend
 npm ci
 VITE_MOBILE=1 npx vite build
 node ../scripts/catalogue/stage-media.mjs dist
-npx cap sync
+npx cap sync android
 node scripts/check-mobile-bundle.mjs
 cd ..
 
 echo "== 2/3 release APK =="
 cd frontend/android
-./gradlew assembleRelease --console=plain
+./gradlew testDebugUnitTest assembleRelease --console=plain
 cd ../..
 
 echo "== 3/3 zipalign + sign (v1+v2+v3) =="

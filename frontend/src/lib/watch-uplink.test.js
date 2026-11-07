@@ -74,7 +74,7 @@ function completeCurrent(h) {
 
 describe('watch → phone completed set (W06)', () => {
   afterEach(() => vi.useRealTimers())
-  it('recovers uplink on a valid downlink after an SDK error without another onOpen', () => {
+  it('recovers uplink on a valid downlink after an SDK error without another onOpen', async () => {
     vi.useFakeTimers()
     const h = device(), S = phoneSession(), app = phone(S)
     startWatch(h, S)
@@ -89,6 +89,7 @@ describe('watch → phone completed set (W06)', () => {
     app.receive(event)
     expect(S.active.entries[0].sets[0].done).toBe(true)
     h.connection.onMessage({ t: 'ack', eventId: event.eventId })
+    await vi.advanceTimersByTimeAsync(0) // exact ACK updates durable decision + session first
     expect(h.rpc.pendingCount()).toBe(0)
   })
 
@@ -139,7 +140,8 @@ describe('watch → phone completed set (W06)', () => {
     expect(h.sent.slice(before).some(e => e.t === 'set')).toBe(true)
     expect(h.rpc.pendingCount()).toBe(1)
   })
-  it('updates the phone row, acknowledges that exact event and clears the watch outbox', () => {
+  it('updates the phone row, acknowledges that exact event and clears the watch outbox', async () => {
+    vi.useFakeTimers()
     const h = device(), S = phoneSession(), app = phone(S)
     startWatch(h, S)
 
@@ -158,6 +160,7 @@ describe('watch → phone completed set (W06)', () => {
     expect(app.rejected).toHaveLength(0)
 
     h.connection.onMessage({ t: 'ack', upto: ev.at, eventId: uplink[0].eventId })
+    await vi.advanceTimersByTimeAsync(0) // exact ACK updates durable decision + session first
     expect(h.rpc.pendingCount()).toBe(0)
   })
 
@@ -174,7 +177,7 @@ describe('watch → phone completed set (W06)', () => {
     expect(app.acks.filter(a => a.eventId === msg.eventId)).toHaveLength(10)
   })
 
-  it('keeps an unconfirmed set in the outbox when only a later event is acknowledged', () => {
+  it('keeps an unconfirmed set in the outbox when only a later event is acknowledged', async () => {
     vi.useFakeTimers()
     const h = device(), S = phoneSession(), app = phone(S)
     startWatch(h, S)
@@ -190,6 +193,7 @@ describe('watch → phone completed set (W06)', () => {
     // The phone applies the focus only; the set stays unconfirmed until its own ack.
     app.receive(focusMsg)
     h.connection.onMessage({ t: 'ack', upto: focusMsg.at, eventId: focusMsg.eventId })
+    await vi.advanceTimersByTimeAsync(0)
     expect(h.rpc.pendingCount()).toBe(1)
     app.receive(setMsg)
     expect(S.active.entries[0].sets[0].done).toBe(true)
@@ -208,5 +212,94 @@ describe('watch → phone completed set (W06)', () => {
     expect(S.active.watchSid).toBe('case-up-1')
     expect(snapshot.rows[1][0].done).toBe(true)
     expect(applyFocus(s, { sid: 'case-up-1', ex: 1, set: 1, at: Date.now(), source: 'phone' })).toBe(true)
+  })
+})
+
+
+describe('frozen extension intention with a legacy phone', () => {
+  afterEach(() => vi.useRealTimers())
+  it('preserves identity and FIFO through v2 exact acknowledgements on the real phone lifecycle', async () => {
+    vi.useFakeTimers()
+    const h=device(), S=phoneSession(), app=phone(S)
+    startWatch(h,S)
+    h.connection.onMessage({t:'hello_ack',protocolVersion:2,capabilities:{}})
+    h.connection.onClose()
+    h.connection.getReadyState=({success})=>success({status:0})
+    const frozen=[]
+    for(const weight of ['61','62']) {
+      const result=await h.ctx.commitSessionAction(S.active.watchSid, draft => {
+        draft.workout.rows[0][0].w=weight
+        h.ctx.stageSessionEvent(draft,{t:'weight',sid:draft.sid,ex:0,set:1,weight,at:Date.now()})
+      })
+      expect(result.ok).toBe(true)
+      frozen.push(structuredClone(h.ctx.loadState().pendingEdits.at(-1)))
+      h.rpc.sendEvent(frozen.at(-1))
+    }
+    expect(frozen.every(e=>e.protocolVersion===3 && e.dependencyEvents)).toBe(true)
+    expect(frozen[1].dependsOn).toContain(frozen[0].eventId)
+    const before=h.sent.length
+    h.connection.onOpen()
+    await vi.advanceTimersByTimeAsync(500) // No second event before the exact legacy head ACK.
+    const first=h.sent.slice(before).filter(m=>m.t==='weight')
+    expect(first).toEqual([frozen[0]])
+    app.receive(first[0])
+    expect(S.active.entries[0].sets[0].w).toBe(61)
+    h.connection.onMessage({t:'ack',...app.acks.at(-1)})
+    await vi.advanceTimersByTimeAsync(200)
+    const sent=h.sent.slice(before).filter(m=>m.t==='weight')
+    expect(sent).toEqual(frozen)
+    app.receive(sent[1])
+    h.connection.onMessage({t:'ack',...app.acks.at(-1)})
+    await vi.advanceTimersByTimeAsync(0)
+    expect(S.active.entries[0].sets[0].w).toBe(62)
+    expect(h.rpc.pendingCount()).toBe(0)
+    expect(h.ctx.loadState().pendingEdits).toHaveLength(0)
+    expect(app.rejected).toHaveLength(0)
+  })
+})
+
+
+describe('connection negotiation and conflict review durability', () => {
+  afterEach(() => vi.useRealTimers())
+  it('renegotiates dependencies on reconnect instead of reusing old peer capabilities', async () => {
+    vi.useFakeTimers()
+    const h = device(), S = phoneSession()
+    startWatch(h, S)
+    h.connection.onMessage({ t: 'hello_ack', protocolVersion: 3, capabilities: { dependencyEvents: true } })
+    expect(h.rpc.runtime().rpc.peerCapabilities.dependencyEvents).toBe(true)
+    h.connection.onClose()
+    h.connection.onOpen()
+    expect(h.rpc.runtime().rpc.peerCapabilities).toEqual({})
+  })
+
+  it('serializes durable conflict review with a new archived conflict without losing either', async () => {
+    vi.useFakeTimers()
+    const h = device(), S = phoneSession()
+    startWatch(h, S)
+    h.connection.onMessage({ t: 'hello_ack', protocolVersion: 3, capabilities: { dependencyEvents: true } })
+    h.ctx.writeStored('sync_conflicts', [{ event: { eventId: 'old' }, reviewed: false }])
+    const realSet = h.storage.set
+    let held
+    h.storage.set = options => {
+      if (options.key === 'sync_conflicts' && !held) { held = options; return }
+      realSet(options)
+    }
+    h.connection.onMessage({ t: 'conflict_reviewed', eventId: 'old' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(held).toBeTruthy()
+    expect(h.ctx.readStored('sync_conflicts')[0].reviewed).toBe(false)
+    const result = await h.ctx.commitSessionAction(S.active.watchSid, draft => {
+      h.ctx.stageSessionEvent(draft, { t: 'weight', sid: draft.sid, ex: 0, set: 1, weight: '63', at: Date.now() })
+    })
+    expect(result.ok).toBe(true)
+    const event = h.ctx.loadState().pendingEdits.at(-1)
+    h.rpc.sendEvent(event)
+    h.connection.onMessage({ t: 'committed', sid: event.sid, eventId: event.eventId, status: 'conflict', commitRev: 2 })
+    realSet(held)
+    await vi.advanceTimersByTimeAsync(0)
+    const archive = h.ctx.readStored('sync_conflicts')
+    expect(archive.find(c => c.event.eventId === 'old').reviewed).toBe(true)
+    expect(archive.find(c => c.event.eventId === event.eventId).event).toEqual(event)
+    expect(h.rpc.pendingCount()).toBe(0)
   })
 })

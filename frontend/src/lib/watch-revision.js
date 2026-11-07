@@ -1,6 +1,6 @@
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
 export const watchFieldKey = (entry, row, field) => [entry?.entryInstanceId || '', row?.setId || '', field].join(':')
-export function stampWatchRevision(prev, next, actor = 'phone') {
+export function stampWatchRevision(prev, next, actor = 'phone', eventId = null) {
   const a = next.active, old = prev.active
   if (!a) return
   const changes = []
@@ -20,7 +20,7 @@ export function stampWatchRevision(prev, next, actor = 'phone') {
   if (!changes.length) return
   a.syncRev = Math.max(a.syncRev || 0, old?.syncRev || 0) + 1
   a.syncFields = { ...a.syncFields }
-  for (const key of changes) a.syncFields[key] = { rev: a.syncRev, actor }
+  for (const key of changes) a.syncFields[key] = { rev: a.syncRev, actor, ...(eventId ? { eventId } : {}) }
 }
 
 export function watchConflict(S, ev) {
@@ -31,10 +31,15 @@ export function watchConflict(S, ev) {
   const row = entry?.sets?.find(r => r.setId === ev.setId)
   const fields = ev.t === 'set' ? ['done', ...(ev.weight != null ? ['weight'] : []), ...(ev.reps != null ? ['reps'] : [])]
     : ev.t === 'unset' ? ['done'] : ['weight', 'reps', 'effort'].includes(ev.t) ? [ev.t] : ['add_set', 'remove_set'].includes(ev.t) ? ['structure'] : []
+  const globals = ['set','unset'].includes(ev.t) ? ['restVersion','watchFocus'] : ev.t === 'rest' ? ['restVersion'] : ev.t === 'focus' ? ['watchFocus'] : ev.t === 'pause' ? ['pauseVersion','restVersion'] : []
   const actor = ev.installationId || 'watch'
+  for (const field of globals) {
+    const version = a.syncFields?.[field]
+    if (version && version.rev > ev.baseCommitRev && (version.actor !== actor || (ev.dependencyEvents === true && (!version.eventId || !ev.dependsOn?.includes(version.eventId))))) return { field, version, watch: ev }
+  }
   for (const field of fields) {
     const version = a.syncFields?.[watchFieldKey(entry, field === 'structure' ? null : row, field)]
-    if (version && version.rev > ev.baseCommitRev && version.actor !== actor) return { field, version, phone: row ? JSON.parse(JSON.stringify(row)) : null, watch: ev }
+    if (version && version.rev > ev.baseCommitRev && (version.actor !== actor || (ev.dependencyEvents === true && (!version.eventId || !ev.dependsOn?.includes(version.eventId))))) return { field, version, phone: row ? JSON.parse(JSON.stringify(row)) : null, watch: ev }
   }
   return null
 }

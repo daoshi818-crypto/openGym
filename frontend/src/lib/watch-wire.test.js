@@ -21,7 +21,7 @@ describe('bounded snapshot and revision wire format', () => {
     expect(() => acceptWireChunk(pending, { ...pieces.at(-1), data: pieces.at(-1).data + 'x' }, 4)).toThrow('snapshot_checksum')
     expect(() => splitWire({ padding: '中'.repeat(50000) }, 'x')).toThrow('snapshot_too_large')
     acceptWireChunk(pending, pieces[0], 5)
-    acceptWireChunk(pending, { ...pieces[1], transferId: 'new' }, 31006)
+    acceptWireChunk(pending, { ...pieces[1], transferId: 'new' }, 181006)
     expect(pending.a).toBeUndefined()
   })
   it('patches only changed cells, detects gaps and rejects a changed target', () => {

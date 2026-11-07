@@ -10,19 +10,19 @@ import { rotationStep, valueStep } from '../../../watch-app/src/lib/value-step.j
 import { captureRow, rowTarget, setDotWindow } from '../../../watch-app/src/lib/workout-interaction.js'
 import { createDurableWatchLifecycle } from './watch-commit.js'
 import { applyEdit, applyRest } from '../../../watch-app/src/lib/protocol.js'
-import { loadWatchModule, stripImports, watchPersistence, watchSource } from './watch-test-harness.js'
-function watchStart() {
+import { loadWatchModule, stripImports, watchPersistence, watchSource, watchInteractionDeps } from './watch-test-harness.js'
+async function watchStart() {
   const S = { workouts: [], unit: 'kg', routines: [{ id: 'back', name: 'Back', prog: 'off', ex: [{ id: '0025', sets: 4, reps: 8, weight: 40 }] }], watchPlanIds: ['back'] }
   const plan = watchCatalogOf(S).plans[0], { ctx } = watchPersistence()
-  Object.assign(ctx, { applyEdit, applyRest, console, WATCH_VERSION: 'test', router: { replace: vi.fn() } })
+  Object.assign(ctx, { ...watchInteractionDeps, applyEdit, applyRest, console, WATCH_VERSION: 'test', router: { replace: vi.fn() } })
   loadWatchModule('event-id', ctx, ['allocateEventIdentity', 'rememberEventAt'])
   loadWatchModule('close-journal', ctx, ['prepareClose', 'releaseCandidate', 'pendingSummaries', 'pendingEntry', 'journalEntry', 'markPhase', 'markDelivered'])
   loadWatchModule('session', ctx, ['startSession', 'loadState', 'save', 'setRowValue', 'toggleSet', 'eventIdentity'])
   const events = []
-  ctx.sendEvent = ev => { events.push({ ...ev, eventId: 'start-1', protocolVersion: 3 }); return true }
+  ctx.sendEvent = ev => { events.push({ ...ev }); return true }
   const body = stripImports(watchSource('Index/index.ux').match(/<script>([\s\S]*?)<\/script>/)[1]).replace('export default', 'globalThis.page =')
   runInNewContext(body, ctx)
-  ctx.page.selected = plan; ctx.page.onStart()
+  ctx.page.selected = plan; await ctx.page.onStart()
   return { S, event: events[0], watch: ctx.loadState(), ctx }
 }
 function phone(S, extra = {}) {
@@ -33,7 +33,7 @@ function phone(S, extra = {}) {
 }
 describe('watch cached plan → durable phone start → workout UI', () => {
   it('opens after the real Index start has been checkpointed, never on duplicate', async () => {
-    const { S, event, watch } = watchStart(); let release
+    const { S, event, watch } = await watchStart(); let release
     const app = phone(S, { checkpoint: vi.fn(() => new Promise(resolve => { release = resolve })) })
     expect(event.plan.entries[0].sets).toHaveLength(4)
     expect(event.sid).toBe(watch.sid)
@@ -48,7 +48,7 @@ describe('watch cached plan → durable phone start → workout UI', () => {
     expect(app.deps.onStarted).toHaveBeenCalledTimes(1); app.receive.dispose()
   })
   it('opens after a failed checkpoint retries, without another session', async () => {
-    const { S, event } = watchStart()
+    const { S, event } = await watchStart()
     const app = phone(S, { checkpoint: vi.fn().mockRejectedValueOnce(new Error('disk full')).mockResolvedValue(undefined) })
     app.receive(event); await app.receive.idle(); const active = S.active
     expect(app.deps.onStarted).not.toHaveBeenCalled()
@@ -57,7 +57,7 @@ describe('watch cached plan → durable phone start → workout UI', () => {
     expect(app.deps.onStarted).toHaveBeenCalledExactlyOnceWith(event.sid); app.receive.dispose()
   })
   it.each(['conflict', 'closed', 'invalid_plan'])('does not replace/open a %s session', async status => {
-    const { S, event } = watchStart()
+    const { S, event } = await watchStart()
     if (status === 'conflict') S.active = { start: 123, entries: [] }
     if (status === 'closed') S.watchClosed = { [event.sid]: { disposition: 'abandoned' } }
     if (status === 'invalid_plan') event.plan.entries = []
@@ -66,25 +66,25 @@ describe('watch cached plan → durable phone start → workout UI', () => {
     expect(app.deps.onStarted).not.toHaveBeenCalled(); expect(S.active).toEqual(before); app.receive.dispose()
   })
   it.each([2, 3])('does not replay navigation after coordinator reconstruction (v%s)', async version => {
-    const { S, event } = watchStart(); event.protocolVersion = version
+    const { S, event } = await watchStart(); event.protocolVersion = version
     const app = phone(S); app.receive(event); await app.receive.idle(); app.receive.dispose()
     const restarted = phone(S); restarted.receive(event); await restarted.receive.idle()
     expect(restarted.deps.onStarted).not.toHaveBeenCalled(); restarted.receive.dispose()
   })
   it('does not let a router exception prevent a durable ACK', async () => {
-    const { S, event } = watchStart()
+    const { S, event } = await watchStart()
     const app = phone(S, { onStarted: vi.fn(() => { throw new Error('router unavailable') }) })
     app.receive(event); await app.receive.idle()
     expect(app.deps.send).toHaveBeenCalledWith(expect.objectContaining({ t: 'watch_start_ack', status: 'started' }))
     expect(S.active.watchSid).toBe(event.sid); app.receive.dispose()
   })
   it('does not navigate a session replaced while the checkpoint was pending', async () => {
-    const { S, event } = watchStart(); let release
+    const { S, event } = await watchStart(); let release
     const app = phone(S, { checkpoint: () => new Promise(resolve => { release = resolve }) })
     app.receive(event); S.active = { watchSid: 'newer', entries: [] }; release(); await app.receive.idle()
     expect(app.deps.onStarted).not.toHaveBeenCalled(); app.receive.dispose()
   })
-  it('wires the committed-start callback into the actual phone router', () => {
+  it('wires the committed-start callback into the actual phone router', async () => {
     expect(readFileSync(new URL('../App.jsx', import.meta.url), 'utf8')).toMatch(/onStarted:\s*\(\)\s*=>\s*navToWorkout\(\)/)
   })
 })
@@ -93,17 +93,17 @@ describe('watch cached plan → durable phone start → workout UI', () => {
 // enclosing UI finish callback are simulated; the completed-workout shape is production code.
 describe('real watch row edits with AI template isolation', () => {
   it('crown → durable pending edit → phone keeps the original event identity', async () => {
-    const { S, event, ctx } = watchStart(), app = phone(S)
+    const { S, event, ctx } = await watchStart(), app = phone(S)
     app.receive(event); await app.receive.idle()
     Object.assign(ctx, { rotationStep, valueStep, captureRow, rowTarget, setDotWindow,
       persistenceStatus: () => ({ failed: false }), pendingCount: () => 0 })
     runInNewContext(stripImports(watchSource('Workout/index.ux').match(/<script>([\s\S]*?)<\/script>/)[1]).replace('export default', 'globalThis.workoutPage ='), ctx)
     const page = { ...ctx.workoutPage, ...ctx.workoutPage.data, state: ctx.loadState(), refresh: vi.fn() }
     loadWatchModule('rpc', ctx, ['sendEvent', 'replayPendingEvents'])
-    page.editWeight(); page.onRotation({ delta: 1 })
-    const edit = ctx.loadState().pendingEdits[0]
+    page.editWeight(); await page.onRotation({ delta: 1 })
+    const edit = ctx.loadState().pendingEdits.find(e => e.t === 'weight')
     expect(edit.t).toBe('weight'); expect(edit.weight).toBe('40.5'); expect(edit.eventId).toBeTruthy()
-    expect(ctx.runtime().rpc.outbox[0].msg).toEqual(edit)
+    expect(ctx.runtime().rpc.outbox.find(e => e.msg.eventId === edit.eventId).msg).toEqual(edit)
     app.receive(edit); await app.receive.idle()
     expect(S.active.entries[0].sets[0].w).toBe(40.5)
     app.receive(edit); await app.receive.idle()
@@ -111,7 +111,7 @@ describe('real watch row edits with AI template isolation', () => {
     expect(S.routines[0].ex[0].sets).toBe(4); app.receive.dispose()
   })
   it('AI changes template 4→3; offline fourth watch row still commits and saves; next start has 3', async () => {
-    const { S, event, ctx } = watchStart()
+    const { S, event, ctx } = await watchStart()
     const app = phone(S, { finish: end => { S.workouts.push(buildCompletedWorkout(S.active, { end })); S.active = null } })
     app.receive(event); await app.receive.idle()
     const validated = validateChat({ coach_contract: 1, chat_actions_contract: 1, replyType: 'proposal', answer: 'Confirm first', summary: 'Reduce sets', targetRoutineId: 'back',
@@ -125,7 +125,7 @@ describe('real watch row edits with AI template isolation', () => {
     watch.setIdx = 3; ctx.setRowValue(watch, 0, 3, 'w', '42', true)
     loadWatchModule('rpc', ctx, ['sendEvent'])
     ctx.sendEvent(watch.pendingEdits[0])
-    const edit = ctx.loadState().pendingEdits[0], row = ctx.toggleSet(watch, true)
+    const edit = ctx.loadState().pendingEdits.find(e => e.t === 'weight'), row = ctx.toggleSet(watch, true)
     const done = { ...ctx.eventIdentity(watch, 0, 3), ...ctx.allocateEventIdentity(watch.sid), t: 'set', sid: watch.sid,
       ex: 0, set: 4, weight: String(row.w), reps: String(row.r) }
     // Delivery resumes only after the template was already changed.

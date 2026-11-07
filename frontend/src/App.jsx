@@ -93,7 +93,7 @@ function Shell() {
     if (!MOBILE || !ready || !watchOn) return
     const receive = createDurableWatchLifecycle({
       getState: () => useStore.getState().S,
-      update: (fn, ev) => useStore.getState().update(fn, true, { watchActor: ev?.installationId || 'watch' }), getTimer: () => useUI.getState().timer,
+      update: (fn, ev) => useStore.getState().update(fn, true, { watchActor: ev?.installationId || 'watch', watchEventId: ev?.eventId }), getTimer: () => useUI.getState().timer,
       sendEnded: pushEndedToWatch, sendSync: pushSyncToWatch, sendAck: pushAckToWatch,
       finish: finishWorkoutFromWatch,
       onStarted: () => navToWorkout(),

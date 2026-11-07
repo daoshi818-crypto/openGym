@@ -57,11 +57,13 @@ describe('watch RPC transport diagnostics without delivery changes', () => {
     expect(d.ctx.pendingCount()).toBe(1)
     expect(d.ctx.transportDiagnostics().events).toContainEqual(expect.objectContaining({ stage: 'send_exception', detail: 'SDK threw' }))
   })
-  it('records callback timeouts and preserves the existing six-second retry', () => {
+  it('records callback timeouts and applies bounded retry backoff', () => {
     vi.useFakeTimers()
     const d = device('timeout'); d.emit()
     vi.advanceTimersByTime(6000)
     expect(d.ctx.pendingCount()).toBe(1)
+    expect(d.controls).toHaveLength(1)
+    vi.advanceTimersByTime(2500)
     expect(d.controls).toHaveLength(2)
     expect(d.ctx.transportDiagnostics().events).toContainEqual(expect.objectContaining({ stage: 'send_timeout', type: 'rest' }))
   })

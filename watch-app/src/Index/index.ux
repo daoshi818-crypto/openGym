@@ -2,7 +2,7 @@
 import { bindRuntime } from '../lib/runtime.js'
 import router from '@blueos.app.appmanager.router'
 import storage from '@blueos.storage.storage'
-import { loadState, startSession, applySync, replacePlan, closeSession, save } from '../lib/session.js'
+import { commitLocalClose, commitSessionStart, loadState, startSession, applySync, replacePlan, closeSession, save } from '../lib/session.js'
 import { startServer, sendEvent, pendingCount, isConnected } from '../lib/rpc.js'
 import { WATCH_VERSION } from '../lib/version.js'
 
@@ -86,23 +86,29 @@ export default {
     return { status: 'applied', page: 'Index' }
   },
   choose(p) { this.selected = p; this.workoutName = p.name; this.exerciseCount = p.exercises.length },
-  onStart() {
+  async onStart() {
+    if (this.startSaving) return
     if (loadState().active) { this.onResume(); return }
     const p = this.selected
     if (!p || !p.exercises.length) return
-    const s = startSession({ ...p, name: p.name, exercises: p.exercises, rows: p.rows }, p.profile)
-    s.pendingStart = true; s.planId = p.id; save(s)
-    sendEvent({ t: 'watch_start', sid: s.sid, startedAt: s.startedAt, planId: p.id, plan: p })
-    this.onResume()
+    this.startSaving = true
+    try {
+      const result = await commitSessionStart(p, p.profile)
+      if (!result.ok) { this.startLabel = '存储失败，请重试'; return }
+      for (const event of result.value.pendingEdits || []) sendEvent(event)
+      this.onResume()
+    } catch (_) { this.startLabel = '存储失败，请重试' }
+    finally { this.startSaving = false }
   },
   onResume() {
     this.enterWorkout()
   },
-  acceptConflict() {
+  async acceptConflict() {
     const s = loadState()
     if (s.active) {
-      sendEvent({ t: 'session_close', sid: s.sid, disposition: 'abandoned', closedAt: Date.now() })
-      closeSession(s.sid)
+      const result = await commitLocalClose(s.sid, 'abandoned')
+      if (!result.ok) { this.status = '存储失败，未结束，请重试'; return }
+      for (const event of [...(result.entry.pendingEvents || []), result.entry.closeEvent]) sendEvent(event)
     }
     const msg = this.conflict
     this.conflict = null

@@ -206,7 +206,7 @@ describe('negotiated durable protocol', () => {
     expect(w.ctx.pendingCount()).toBe(1)
     expect(w.ctx.synchronizationStatus().phonePending).toBe(1)
     w.connection.onMessage({ t: 'committed', eventId: ev.eventId, sid: ev.sid, status: 'applied', commitRev: 2 })
-    await Promise.resolve(); await Promise.resolve(); await Promise.resolve()
+    for (let i = 0; i < 20; i++) await Promise.resolve()
     expect(w.ctx.pendingCount()).toBe(0)
     expect(w.ctx.loadState().pendingEdits).toHaveLength(1)
     w.ctx.applySync(w.ctx.loadState(), { ...w.snap, commitRev: 2, ackedEvents: [] })
@@ -246,4 +246,47 @@ describe('negotiated durable protocol', () => {
     expect(w.disk.get('sync_conflicts')[0].event.eventId).toBe(ev.eventId)
     a.receive.dispose()
   })
+  it('rejects unknown/cyclic/evicted dependencies without blocking an unrelated event', async () => {
+    const a=phone(), base={...event(a),dependencyEvents:true}
+    a.receive({...base,eventId:'cycle-a',dependsOn:['cycle-b']}); await a.receive.idle()
+    a.receive({...base,eventId:'cycle-b',dependsOn:['cycle-a']}); await a.receive.idle()
+    a.receive({...base,eventId:'independent',dependsOn:[]}); await a.receive.idle()
+    const commits=a.deps.send.mock.calls.map(([m])=>m).filter(m=>m.t==='committed')
+    expect(commits.map(m=>m.status)).toEqual(['rejected','rejected','applied'])
+    const independent=Object.values(a.S.watchCommits).find(x=>x.decision?.eventId==='independent')
+    a.S.watchCommits=Object.fromEntries(Array.from({length:4000},(_,i)=>['old'+i,{...independent,decision:{eventId:'retained'+i,sid:'s',status:'applied'}}]))
+    a.receive({...base,eventId:'boundary',dependsOn:[]}); await a.receive.idle()
+    expect(Object.keys(a.S.watchCommits)).toHaveLength(4000)
+    a.receive({...base,eventId:'too-old',dependsOn:['retained0']}); await a.receive.idle()
+    expect(a.deps.send.mock.calls.at(-1)[0]).toMatchObject({t:'committed',status:'rejected',detail:{reason:'dependency_missing'}})
+    a.receive.dispose()
+  })
+  it('does not remove v3 intentions for legacy start/effort/rejection messages or received', async () => {
+    const a=phone(), w=watch(a.S)
+    w.ctx.sendEvent({...event(a),eventId:undefined})
+    const ev=w.sent.find(m=>m.t==='weight')
+    for(const msg of [{t:'ack'}, {t:'watch_start_ack',status:'started'}, {t:'event_rejected'}, {t:'effort_ack'}, {t:'received'}]) w.connection.onMessage({...msg,sid:'s',eventId:ev.eventId})
+    for(let i=0;i<30;i++) await Promise.resolve()
+    expect(w.ctx.pendingCount()).toBe(1); expect(w.ctx.loadState().pendingEdits[0].eventId).toBe(ev.eventId)
+    a.receive.dispose()
+  })
+  it('accepts a legacy exact decision as a dependency after v2-to-v3 migration, without fabricating a wire commit', async () => {
+    const a=phone(), parent={...event(a),protocolVersion:2,eventId:'legacy-parent'}
+    a.receive(parent); await a.receive.idle(); expect(a.deps.sendAck).toHaveBeenCalled()
+    expect(a.deps.send.mock.calls.some(([m])=>m.t==='committed')).toBe(false)
+    a.receive({...event(a),eventId:'new-child',baseCommitRev:a.S.active.syncRev,dependencyEvents:true,dependsOn:['legacy-parent']}); await a.receive.idle()
+    expect(a.deps.send.mock.calls.at(-1)[0]).toMatchObject({t:'committed',status:'applied',eventId:'new-child'})
+    a.receive.dispose()
+  })
+
+  it('reads pre-upgrade legacy ACK-only records as exact applied parents', async () => {
+    const a=phone(), parent={...event(a),protocolVersion:2,eventId:'old-legacy-parent'}
+    a.receive(parent); await a.receive.idle()
+    const record=Object.values(a.S.watchCommits).at(-1)
+    delete record.decision
+    a.receive({...event(a),eventId:'migrated-child',baseCommitRev:a.S.active.syncRev,dependencyEvents:true,dependsOn:[parent.eventId]}); await a.receive.idle()
+    expect(a.deps.send.mock.calls.at(-1)[0]).toMatchObject({t:'committed',eventId:'migrated-child',status:'applied'})
+    a.receive.dispose()
+  })
+
 })

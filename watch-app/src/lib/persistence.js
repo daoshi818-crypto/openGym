@@ -38,7 +38,9 @@ export function readStored(key, fields) {
 
 export function writeStored(key, value) {
   const state = data()
+  const before = state.queues[key]?.atomic ? readStored(key) : null
   state.values[key] = clone(value)
+  if (state.queues[key]?.atomic) state.queues[key].atomic.overlays.push({ before, value: clone(value) })
   state.revisions[key] = (state.revisions[key] || 0) + 1
   const q = state.queues[key] ||= { busy: false, dirty: false, confirmed: 0, waiters: [] }
   q.dirty = true
@@ -70,8 +72,69 @@ function settle(q, ok) {
   q.waiters = keep
 }
 
+// Transactions share the existing per-key SDK chain. Their candidate is NEVER a read cache.
+// Ordinary concurrent writes are rebased as changes, rather than rolling the cache backward.
+export function writeStoredAtomic(key, transform) {
+  const state = data()
+  const q = state.queues[key] ||= { busy: false, dirty: false, confirmed: 0, waiters: [] }
+  return new Promise(resolve => {
+    ;(q.transactions ||= []).push({ transform, resolve })
+    drain(key, state, q)
+  })
+}
+function rebase(before, after, onto) {
+  if (JSON.stringify(before) === JSON.stringify(after)) return onto
+  if (before && after && onto && typeof before === 'object' && typeof after === 'object' && typeof onto === 'object') {
+    if (Array.isArray(after)) {
+      if (!Array.isArray(before) || !Array.isArray(onto)) return clone(after)
+      const key = ['eventId', 'setId', 'entryInstanceId'].find(k => [...before, ...after, ...onto].length && [...before, ...after, ...onto].every(v => v && typeof v[k] === 'string'))
+      if (key) {
+        const removed = new Set(before.filter(v => !after.some(a => a[key] === v[key])).map(v => v[key]))
+        const out = onto.filter(v => !removed.has(v[key])).map(v => clone(v))
+        for (const value of after) {
+          const prior = before.find(v => v[key] === value[key]), index = out.findIndex(v => v[key] === value[key])
+          if (index < 0) out.push(clone(value))
+          else out[index] = rebase(prior, value, out[index])
+        }
+        return out
+      }
+      if (before.length !== after.length || onto.length !== before.length) return clone(after)
+      return after.map((v, i) => rebase(before[i], v, onto[i]))
+    }
+    const out = { ...onto }
+    for (const k of Object.keys(before)) if (!(k in after)) delete out[k]
+    for (const k of Object.keys(after)) out[k] = rebase(before[k], after[k], onto[k])
+    return out
+  }
+  return after == null ? after : clone(after)
+}
+function atomicDrain(key, state, q) {
+  const job = q.transactions.shift(), overlays = []
+  let value
+  try { value = clone(job.transform(readStored(key))) }
+  catch (error) { job.resolve({ ok: false, error: String(error?.message || error) }); drain(key, state, q); return }
+  q.busy = true; q.atomic = { overlays }
+  let finished = false, timer = null
+  const done = ok => {
+    if (finished) return
+    finished = true; cancel(timer); q.busy = false; q.atomic = null
+    if (ok) {
+      let published = value
+      for (const overlay of overlays) published = rebase(overlay.before, overlay.value, published)
+      state.values[key] = published
+      delete state.errors[key]
+    } else state.errors[key] = 'write_failed'
+    job.resolve({ ok, value: ok ? clone(value) : null })
+    drain(key, state, q)
+  }
+  try {
+    timer = later(() => done(false), WRITE_TIMEOUT_MS)
+    storage.set({ key, value, success: () => done(true), fail: () => done(false) })
+  } catch { done(false) }
+}
 function drain(key, state, q) {
-  if (q.busy || !q.dirty) return
+  if (q.busy) return
+  if (!q.dirty) { if (q.transactions?.length) atomicDrain(key, state, q); return }
   q.busy = true; q.dirty = false
   const revision = state.revisions[key] || 0
   const value = clone(state.values[key])
@@ -105,5 +168,5 @@ export function retryStorage() {
 
 export function storageStatus() {
   const state = data()
-  return { failed: Object.keys(state.errors).length > 0, pending: Object.values(state.queues).some(q => q.busy || q.dirty) }
+  return { failed: Object.keys(state.errors).length > 0, pending: Object.values(state.queues).some(q => q.busy || q.dirty || q.transactions?.length) }
 }

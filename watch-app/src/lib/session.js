@@ -1,5 +1,7 @@
+import { wireHash, expandWireDelta } from './sync-wire.js'
+import { dependenciesFor } from './event-dependencies.js'
 import { runtime } from './runtime.js'
-import { readStored, writeStored } from './persistence.js'
+import { readStored, writeStored, writeStoredAtomic } from './persistence.js'
 // 会话状态机 + 持久化。防闪退的关键：每一个动作（完成一组、休息开始、心率累计）
 // 都立刻写入本地存储；应用启动时读回状态继续，而不是从头开始。
 //
@@ -53,6 +55,7 @@ export function readSessionHr(sid) {
 }
 
 export function loadState() {
+  if (runtime().sessionDraft) return runtime().sessionDraft
   try {
     const s = readStored(K_STATE)
     if (s?.expiredClose) queueExpired(s.expiredClose)
@@ -123,11 +126,45 @@ function persist(state) {
 }
 
 export function save(state) {
+  if (runtime().sessionDraft === state) { state.rev = (state.rev || 0) + 1; return }
   const latest = readStored(K_STATE)
   if (latest?.sid === state.sid && latest.segmentStartedAt === state.segmentStartedAt && (latest.hr?.sampleAt || 0) > (state.hr?.sampleAt || 0)) state.hr = latest.hr
   if (state.pausedAt || !state.active) runtime().hrCapture?.stop()
   state.rev = (state.rev || 0) + 1
   persist(state)
+}
+
+// The operation and stable pending intentions enter the SAME candidate document.
+// No candidate is published, sent, or rolled back over a newer value before storage confirms it.
+export async function commitSessionAction(sid, action) {
+  let output
+  const result = await writeStoredAtomic(K_STATE, latest => {
+    if (runtime().closingSid === sid || latest?.closeIntent || !latest?.active || latest.sid !== sid) throw new Error('session_changed')
+    const candidate = JSON.parse(JSON.stringify(latest))
+    runtime().sessionDraft = candidate
+    try { output = action(candidate) }
+    finally { runtime().sessionDraft = null }
+    candidate.rev = (candidate.rev || 0) + 1
+    return candidate
+  })
+  return { ...result, output }
+}
+
+export function stageSessionEvent(state, event) {
+  const existing = state.pendingEdits?.find(e => e.eventId && e.eventId === event.eventId)
+  if (existing) return existing
+  const pending = state.pendingEdits ||= []
+  if (pending.length >= 256) throw new Error('pending_edits_full')
+  const identity = event.eventId ? {} : allocateEventIdentity(event.sid)
+  const ex = state.workout?.exercises?.[event.ex], row = state.workout?.rows?.[event.ex]?.[event.set - 1]
+  const msg = { ...identity, ...eventIdentity(state, event.ex, event.set - 1), ...event,
+    installationId: event.installationId || identity.installationId || runtime().eventClock?.installationId,
+    source: 'watch', protocolVersion: 3, dependencyEvents: true }
+  msg.entryInstanceId ||= ex?.entryInstanceId; msg.setId ||= row?.setId
+  if (msg.t === 'add_set') msg.newSetIds = (state.workout.rows[msg.ex] || []).map(r => r.setId)
+  msg.dependsOn = dependenciesFor(msg, pending)
+  pending.push(JSON.parse(JSON.stringify(msg)))
+  return pending[pending.length - 1]
 }
 
 export function startSession(workout, profile) {
@@ -142,8 +179,56 @@ export function startSession(workout, profile) {
   s.effortScale = workout.effortScale === 'rpe' || workout.effortScale === 'rir' ? workout.effortScale : 'none'
   s.workout = { name: workout.name, exercises: JSON.parse(JSON.stringify(workout.exercises || [])), rows: JSON.parse(JSON.stringify(workout.rows || [])) }
   ensureRows(s)
-  save(s)
+  if (!runtime().buildingSession) save(s)
   return s
+}
+
+// New watch-start follows the same one-document commit boundary as row actions.
+export async function commitSessionStart(workout, profile) {
+  return writeStoredAtomic(K_STATE, latest => {
+    if (latest?.active) throw new Error('session_active')
+    const candidate = blankState()
+    runtime().sessionDraft = candidate
+    try {
+      // Build with existing business initializer without publishing its save.
+      runtime().buildingSession = true
+      const started = startSession(workout, profile)
+      Object.assign(candidate, started, { pendingStart: true, planId: workout.id })
+      stageSessionEvent(candidate, { t: 'watch_start', sid: candidate.sid, startedAt: candidate.startedAt, planId: workout.id, plan: workout })
+      return candidate
+    } finally { runtime().buildingSession = false; runtime().sessionDraft = null }
+  })
+}
+
+// Persistent transport applies independently of the visible Page. The marker shares
+// the training document, so state-success / transfer-index-failure is recoverable.
+export async function commitWireSnapshot(message, meta) {
+  let status = 'applied'
+  const result = await writeStoredAtomic(K_STATE, current => {
+    let latest = current || blankState()
+    const prior = (latest.appliedTransfers || []).find(m => m.id === meta.transferId)
+    if (prior) { if (prior.hash !== meta.hash) throw new Error('transfer_mismatch'); status = prior.status; return latest }
+    let snapshot = message.t === 'sync_delta' ? expandWireDelta(latest.syncBase, message) : message
+    const { wireHash: hash, ...value } = snapshot
+    if (!hash || wireHash(value) !== hash) throw new Error('snapshot_checksum')
+    if (snapshot.sid !== meta.sid || snapshot.commitRev !== meta.revision) throw new Error('snapshot_version')
+    if ((readStored('closed_sessions') || []).includes(snapshot.sid)) throw new Error('session_closed')
+    if (latest.active && latest.sid !== snapshot.sid) throw new Error('session_conflict')
+    if (latest.closeIntent || runtime().closingSid === snapshot.sid) throw new Error('session_closing')
+    if (latest.sid === snapshot.sid && snapshot.commitRev < (latest.commitRev || 0)) status = 'retained'
+    else {
+      const candidate = JSON.parse(JSON.stringify(latest))
+      runtime().sessionDraft = candidate
+      try {
+        if (!candidate.active) Object.assign(candidate, { active: true, sid: snapshot.sid, startedAt: snapshot.startedAt, workout: { exercises: [], rows: [] } })
+        applySync(candidate, snapshot)
+        latest = candidate
+      } finally { runtime().sessionDraft = null }
+    }
+    latest.appliedTransfers = [...(latest.appliedTransfers || []), { id: meta.transferId, hash: meta.hash, status }].slice(-8)
+    return latest
+  })
+  return { ...result, status }
 }
 
 // 训练中途手机重推计划：替换动作清单，rows 对齐补齐（同名的动作保留已录数据）
@@ -307,9 +392,9 @@ export function setRowValue(state, exIdx, setIdx, field, value, notifyPhone = fa
   else if (field === 'r') row.r = value === '' || value == null ? '' : value
   if (notifyPhone) {
     // 输入页没有训练页的 RPC 实例。先与行数据一起落盘，返回后交给训练页的 outbox。
-    const edits = state.pendingEdits || []
+    const edits = state.pendingEdits ||= []
     const at = Math.max(now(), edits.length ? edits[edits.length - 1].at + 1 : 0)
-    edits.push({ ...eventIdentity(state, exIdx, setIdx), t: field === 'w' ? 'weight' : 'reps', sid: state.sid, ex: exIdx, set: setIdx + 1,
+    stageSessionEvent(state, { ...eventIdentity(state, exIdx, setIdx), t: field === 'w' ? 'weight' : 'reps', sid: state.sid, ex: exIdx, set: setIdx + 1,
       [field === 'w' ? 'weight' : 'reps']: row[field], at })
     state.pendingEdits = edits
   }
@@ -455,4 +540,48 @@ export function eventIdentity(s, ex, set) {
   return { protocolVersion: s.protocolVersion || 1, baseCommitRev: s.commitRev || 0, sessionEpoch: s.sid,
     entryInstanceId: s.workout?.exercises?.[ex]?.entryInstanceId,
     setId: s.workout?.rows?.[ex]?.[set]?.setId, structureRevision: s.structureRevision, weightUnit: s.weightUnit || 'kg' }
+}
+
+// Freeze both close payload and prerequisites BEFORE clearing the active session.
+// The journal is the recovery source even when the process exits before Outbox save.
+export async function commitLocalClose(sid, disposition, closedAt = now()) {
+  if (runtime().closingSid) return { ok: false, error: 'close_busy' }
+  runtime().closingSid = sid
+  try {
+    const frozen = await writeStoredAtomic(K_STATE, latest => {
+      if (!latest?.active || latest.sid !== sid) throw new Error('session_changed')
+      if (latest.closeIntent) return latest
+      const session = buildSessionSummary(latest, latest.profile, closedAt)
+      const closeEvent = stageSessionEvent(latest, { t: 'session_close', sid, disposition, closedAt, at: closedAt,
+        ...(disposition === 'saved' ? { workout: latest.workout, startedAt: latest.startedAt, weightUnit: latest.weightUnit || 'kg',
+          summary: { minutes: session.minutes, avgHr: session.avgHr, maxHr: session.maxHr, calories: session.calories, volume: session.volume }, completedSets: session.sets } : {}) })
+      const summaryEvent = summaryEventOf(session, allocateEventIdentity(sid), latest, true)
+      summaryEvent.protocolVersion = 3; summaryEvent.dependencyEvents = true; summaryEvent.dependsOn = [closeEvent.eventId]
+      latest.pendingEdits = latest.pendingEdits.filter(e => e.eventId !== closeEvent.eventId)
+      latest.closeIntent = { close: { sid, disposition, closedAt, eventId: closeEvent.eventId, closeEvent,
+        pendingEvents: (latest.pendingEdits || []).filter(e => e.eventId !== closeEvent.eventId && e.committedRev == null) }, summaryEvent, session, summaryLast: { ...session, totalMinutes: Math.max(0, ((latest.pausedAt || session.endedAt) - latest.startedAt - (latest.pausedMs || 0)) / 60000), totalCalories: (latest.baseCalories || 0) + session.calories, sets: session.sets.length } }
+      return latest
+    })
+    if (!frozen.ok) return frozen
+    return finishLocalClose(frozen.value.closeIntent)
+  } finally { runtime().closingSid = null }
+}
+
+async function finishLocalClose(intent) {
+  const { close, summaryEvent, session } = intent
+  const entry = await prepareClose(close, summaryEvent, close.disposition === 'saved' ? 'pending' : 'candidate')
+  if (!entry?.closeEvent) return { ok: false, error: 'close_journal_storage' }
+  // Once the journal is durable the UI may leave. A failed clear is recovered on boot.
+  // Keep closeIntent until ALL recovery data is durable. Clearing first creates a
+  // crash window with neither tombstone/summary_last nor a recoverable intention.
+  const closed = await writeStoredAtomic('closed_sessions', value => [...(value || []).filter(id => id !== close.sid), close.sid].slice(-500))
+  const summary = close.disposition !== 'saved' || (await writeStoredAtomic('summary_last', () => intent.summaryLast || ({ ...session, totalMinutes: session.minutes, totalCalories: session.calories, sets: session.sets.length }))).ok
+  if (!closed.ok || !summary) return { ok: true, entry, session, pendingRecovery: true }
+  const cleared = await writeStoredAtomic(K_STATE, latest => latest?.sid === close.sid ? blankState() : latest)
+  if (cleared.ok) runtime().hrCapture?.stop()
+  return { ok: true, entry, session, pendingRecovery: !cleared.ok }
+}
+export async function recoverLocalClose() {
+  const intent = loadState().closeIntent
+  return intent ? finishLocalClose(intent) : { ok: true }
 }

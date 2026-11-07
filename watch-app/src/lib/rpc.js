@@ -1,6 +1,8 @@
+import { persistentReceiver } from './persistent-transfer.js'
+import { selectReadyEvent } from './event-dependencies.js'
 import { appTimeout, cancelAppTimeout, appInterval, cancelAppInterval } from './app-timers.js'
 import { runtime } from './runtime.js'
-import { readStored, writeStored, writeStoredConfirmed, retryStorage } from './persistence.js'
+import { readStored, writeStored, writeStoredConfirmed, writeStoredAtomic, retryStorage } from './persistence.js'
 import { wireHash, wireBytes, acceptWireChunk, expandWireDelta } from './sync-wire.js'
 // 手表侧传输层：vivo 智能终端 SDK（穿戴业务 Kit）。
 //
@@ -14,9 +16,9 @@ import { wireHash, wireBytes, acceptWireChunk, expandWireDelta } from './sync-wi
 //    日志重建 outbox，而不是依赖打烊前是否调用过 sendEvent。
 import interconnect from '@blueos.bluexlink.connectionManager'
 import storage from '@blueos.storage.storage'
-import { loadState, buildSessionSummary, summaryEventOf, closeSession, save } from './session.js'
+import { loadState, buildSessionSummary, summaryEventOf, closeSession, save, stageSessionEvent, recoverLocalClose, commitWireSnapshot } from './session.js'
 import { allocateEventIdentity, rememberEventAt } from './event-id.js'
-import { pendingSummaries, pendingEntry, journalEntry, prepareClose, releaseCandidate, markPhase, markEntry, markDelivered } from './close-journal.js'
+import { pendingSummaries, pendingCloseEvents, pendingEntry, journalEntry, prepareClose, releaseCandidate, markPhase, markEntry, markDelivered } from './close-journal.js'
 import { WATCH_VERSION } from './version.js'
 
 const PHONE_PACKAGE = 'ch.duartesantos.opengym'
@@ -65,14 +67,18 @@ function initialize() {
   if (rpcState().initialized) return
   rpcState().outbox = loadOutbox()
   // 已冻结的最终汇总可能只存在日志里（关闭时 outbox 还没写成功）：先并进来。
+  const decisions = readStored('event_decisions') || {}
+  for (const event of pendingCloseEvents()) if (!decisions[event.eventId]) enqueue(event, { persistOutbox: false })
   for (const entry of pendingSummaries()) enqueue(entry.summaryEvent, { persistOutbox: false })
   markDurable()
   rpcState().initialized = true
+  if (typeof recoverLocalClose === 'function') serial(async () => { await recoverLocalClose(); replayPendingEvents(); flush() })
 }
 
 // 日志里的汇总也已经是可靠数据：把它连同 outbox 现有内容一起视为可发送。
 function markDurable(batch = rpcState().outbox) {
   const ids = new Set(batch.map(e => e.msg.eventId))
+  for (const event of pendingCloseEvents()) ids.add(event.eventId)
   for (const entry of pendingSummaries()) if (entry.summaryEvent?.eventId) ids.add(entry.summaryEvent.eventId)
   rpcState().durable = ids
 }
@@ -80,8 +86,11 @@ function markDurable(batch = rpcState().outbox) {
 function enqueue(msg, { persistOutbox = true } = {}) {
   if (!msg || !msg.eventId) return false
   if (rpcState().outbox.some(e => e.msg.eventId === msg.eventId)) return true
-  if (rpcState().outbox.some(e => e.msg.sid === msg.sid && e.msg.t === msg.t && e.msg.set === msg.set && e.at === msg.at)) return true
-  rpcState().outbox.push({ at: msg.at || Date.now(), msg, sent: false })
+  const entry = { at: msg.at || Date.now(), msg, sent: false }
+  if (rpcState().outbox.length >= 4096 || wireBytes(JSON.stringify([...rpcState().outbox, entry])) > 2 * 1024 * 1024) {
+    rpcState().handlers.onError?.({ code: 'outbox_capacity' }); return false
+  }
+  rpcState().outbox.push(entry)
   trace('enqueue', msg)
   if (persistOutbox) persist()
   return true
@@ -168,7 +177,7 @@ function sendHello() {
   sendControl({
     t: 'hello',
     watchVersion: WATCH_VERSION, protocolVersion: 3, stableIds: true,
-    capabilities: { durableCommit: true, snapshotChunks: true, deltas: true },
+    capabilities: { durableCommit: true, snapshotChunks: true, deltas: true, dependencyEvents: true, selectiveChunkAck: true, persistentTransfers: true },
     receipts: true,
     sid: s.sid || '',
     rev: s.rev || 0,
@@ -183,9 +192,10 @@ function resumeConnection() {
   const r = rpcState()
   if (r.connected || !r.connect) return
   r.connected = true
+  r.peerCapabilities = {} // Every connection must negotiate extension features again.
   r.nextProbeAt = 0; r.probeAttempts = 0
   r.connectionGeneration++; r.sending = false; cancelAppTimeout(r.sendingTimer)
-  r.outbox.forEach(e => { e.sent = false })
+  r.outbox.forEach(e => { e.sent = false; if (!e.lastSendFailed) e.nextAttemptAt = 0 })
   trace('connection_resumed')
   r.handlers.onState?.(true)
   sendHello()
@@ -227,6 +237,7 @@ function scheduleFlush(delay = SEND_GAP_MS) {
 // outbox, two per UI turn. Re-read between batches so receipts/closed sessions win.
 export function replayPendingEvents() {
   const r = rpcState()
+  if (runtime().sessionDraft) return
   initialize()
   if (r.replaying) return
   r.replaying = true
@@ -249,34 +260,54 @@ export function replayPendingEvents() {
 
 function flush() {
   initialize()
+  const decisions = readStored('event_decisions') || {}
+  for (const event of pendingCloseEvents()) if (!decisions[event.eventId] && !rpcState().outbox.some(e => e.msg.eventId === event.eventId)) enqueue(event)
   const expired = runtime().expiredEvents || []
   if (expired.length) { runtime().expiredEvents = []; for (const event of expired) sendEvent(event) }
   retryStorage()
   if (rpcState().persistFailed && !rpcState().writeBusy) persist()
   if (!rpcState().connected) { probeConnection(); return }
   if (!rpcState().connected || !rpcState().connect || rpcState().sending) return
-  if (Date.now() < (rpcState().nextSendAt || 0)) { scheduleFlush(rpcState().nextSendAt - Date.now()); return }
-  const eligible = e => rpcState().durable.has(e.msg.eventId) && (!e.sent || Date.now() >= (e.nextAttemptAt || (e.sentAt || 0) + 4000))
-  const next = rpcState().peerProtocol >= 3 ? (eligible(rpcState().outbox[0] || { msg: {} }) ? rpcState().outbox[0] : null) : (rpcState().outbox.find(e => !e.sent && eligible(e)) || rpcState().outbox.find(eligible))
-  if (!next) return
+  if (!(rpcState().controls || []).some(e => Date.now() >= (e.nextAttemptAt || 0)) && Date.now() < (rpcState().nextSendAt || 0)) { scheduleFlush(rpcState().nextSendAt - Date.now()); return }
+  const r = rpcState()
+  let control = (r.controls ||= []).find(e => Date.now() >= (e.nextAttemptAt || 0))
+  const eligible = e => r.durable.has(e.msg.eventId) && Date.now() >= (e.nextAttemptAt || 0) && (!e.sent || Date.now() >= (e.nextAttemptAt || (e.sentAt || 0) + 4000))
+  // Frozen extension intentions require head confirmation on old peers. Original v2
+  // payloads retain their established FIFO send-order pipeline and exact ACK semantics.
+  const business = r.peerProtocol >= 3 || r.outbox[0]?.msg.dependencyEvents
+    ? selectReadyEvent(r.outbox, r.durable, decisions, Date.now(), r.peerProtocol >= 3 && !!r.peerCapabilities?.dependencyEvents)
+    : (r.outbox.find(e => !e.sent && eligible(e)) || r.outbox.find(eligible))
+  if ((r.controlBurst || 0) >= 8 && business) control = null
+  const next = control || business
+  if (!next) {
+    const waiting = [...r.controls, ...r.outbox.filter(e => r.durable.has(e.msg.eventId))]
+    if (waiting.length) scheduleFlush(Math.max(SEND_GAP_MS, Math.min(4000, ...waiting.map(e => Math.max(1000, (e.nextAttemptAt || 0) - Date.now())))))
+    return
+  }
+  r.controlBurst = control ? (r.controlBurst || 0) + 1 : 0
   const token = { generation: rpcState().connectionGeneration, eventId: next.msg.eventId }
   rpcState().sending = token
-  rpcState().nextSendAt = Date.now() + SEND_GAP_MS
+  if (!control) rpcState().nextSendAt = Date.now() + SEND_GAP_MS
   const release = () => { if (rpcState().sending !== token || token.generation !== rpcState().connectionGeneration) return false; cancelAppTimeout(rpcState().sendingTimer); rpcState().sending = false; return true }
   trace('send_attempt', next.msg)
-  rpcState().sendingTimer = appTimeout(() => { if (release()) { trace('send_timeout', next.msg); flush() } }, 6000)
+  const backoff = () => {
+    next.sent = true; next.lastSendFailed = true; next.attempts = (next.attempts || 0) + 1
+    next.nextAttemptAt = Date.now() + Math.min(60000, 2000 * Math.pow(2, Math.min(5, next.attempts - 1)))
+    if (!control) persist()
+  }
+  rpcState().sendingTimer = appTimeout(() => { if (release()) { trace('send_timeout', next.msg); backoff(); scheduleFlush() } }, 6000)
   try {
     rpcState().connect.send({ data: next.msg,
-      success: () => { if (!release()) return; trace('send_success', next.msg); const item = rpcState().outbox.find(e => e.msg.eventId === token.eventId); if (item) { item.sent = true; item.sentAt = Date.now(); item.attempts = (item.attempts || 0) + 1; item.nextAttemptAt = Date.now() + Math.min(60000, 4000 * Math.pow(2, Math.min(4, item.attempts - 1))) + Math.floor(Math.random() * 1000) }; scheduleFlush() },
-      fail: (error, code) => { if (!release()) return; trace('send_fail', next.msg, error, code); next.sent = true; next.nextAttemptAt = Date.now() + Math.min(60000, 2000 * Math.pow(2, Math.min(5, next.attempts || 0))); next.attempts = (next.attempts || 0) + 1; scheduleFlush() }
+      success: () => { if (!release()) return; trace('send_success', next.msg); if (control) { r.controls = r.controls.filter(e => e !== control); scheduleFlush(); return }; const item = rpcState().outbox.find(e => e.msg.eventId === token.eventId); if (item) { item.lastSendFailed = false; item.sent = true; item.sentAt = Date.now(); item.attempts = (item.attempts || 0) + 1; item.nextAttemptAt = Date.now() + Math.min(60000, 4000 * Math.pow(2, Math.min(4, item.attempts - 1))) + Math.floor(Math.random() * 1000) }; scheduleFlush() },
+      fail: (error, code) => { if (!release()) return; trace('send_fail', next.msg, error, code); backoff(); scheduleFlush() }
     })
-  } catch (error) { if (release()) trace('send_exception', next.msg, error) }
+  } catch (error) { if (release()) { trace('send_exception', next.msg, error); backoff(); scheduleFlush() } }
 }
 
 // 精确回执：eventId 匹配时只删那一条。日志里的最终汇总要先持久化 delivered，
 // 再清 outbox；顺序反了，重启会从日志重建一条已确认的消息。
 function ackEvent(upto, eventId) {
-  if (upto == null && !eventId) return
+  if (!eventId) return // No cumulative timestamp/sequence acknowledgement, including legacy peers.
   initialize()
   const before = rpcState().outbox.length
   if (eventId) {
@@ -292,12 +323,39 @@ function ackEvent(upto, eventId) {
       return
     }
     rpcState().outbox = rpcState().outbox.filter(e => e.msg.eventId !== eventId)
-  } else {
-    // 旧式时间戳回执：只清理普通事件；最终汇总必须精确确认，否则“较晚的 focus 时间戳”
-    // 会把还没保存成功的汇总一起删掉。
-    rpcState().outbox = rpcState().outbox.filter(e => e.at > upto || e.msg.t === 'summary')
   }
   if (rpcState().outbox.length !== before) persist()
+}
+
+function decisionPins() {
+  return new Set([...rpcState().outbox.map(e => e.msg), ...(loadState().pendingEdits || []), ...pendingCloseEvents(), ...pendingSummaries().map(e => e.summaryEvent)].flatMap(e => e?.dependsOn || []))
+}
+
+async function acceptLegacyAck(eventId) {
+  const event = rpcState().outbox.find(e => e.msg.eventId === eventId)?.msg
+  if (!event) return
+  const decision = await writeStoredAtomic('event_decisions', value => {
+    const decisions = value || {}
+    decisions[eventId] = { sid: event.sid, status: 'applied', legacy: true }
+    const pins = decisionPins()
+    let size = Object.keys(decisions).length
+    for (const id of Object.keys(decisions)) { if (size <= 4096) break; if (!pins.has(id)) { delete decisions[id]; size-- } }
+    if (size > 4096) throw new Error('event_decisions_full')
+    return decisions
+  })
+  if (!decision.ok) return
+  const saved = await writeStoredAtomic('session_state', state => {
+    if (state) {
+      state.pendingEdits = (state.pendingEdits || []).filter(e => e.eventId !== eventId)
+      if (event.t === 'watch_start' && state.sid === event.sid) state.pendingStart = false
+    }
+    return state || {}
+  })
+  if (!saved.ok) return
+  const journal = journalEntry(event.sid)
+  if (journal?.localClose && event.t === 'session_close' && !(await markEntry(event.sid, { closeCommitted: true }))) return
+  ackEvent(null, eventId)
+  flush()
 }
 
 function summaryForEvent(eventId) {
@@ -395,15 +453,16 @@ export function startServer(h) {
   // 页面模块共享 application runtime；当前页面只接管 UI 回调。
   rpcState().connect.onOpen = () => {
     rpcState().connected = true
+    rpcState().peerCapabilities = {}
     trace('connection_open')
     rpcState().connectionGeneration++; rpcState().sending = false; cancelAppTimeout(rpcState().sendingTimer)
     initialize()
     rpcState().nextSendAt = 0
-    rpcState().outbox.forEach(e => { e.sent = false })
+    rpcState().outbox.forEach(e => { e.sent = false; if (!e.lastSendFailed) e.nextAttemptAt = 0 })
+    sendHello()
     persist()
     if (rpcState().handlers.onState) rpcState().handlers.onState(true)
     flush()
-    sendHello()
   }
   rpcState().connect.onClose = () => {
     trace('connection_close')
@@ -429,6 +488,7 @@ export function startServer(h) {
     }
     // 能收到有效业务包就是连接已恢复的证据，不依赖遗漏的 onOpen。
     if (!rpcState().connected) resumeConnection()
+    if (msg.t === 'hello_ack') { rpcState().peerProtocol = msg.protocolVersion >= 3 ? 3 : 2; rpcState().peerCapabilities = msg.capabilities || {}; replayPendingEvents(); flush(); return }
     if (msg.t === 'watch_diagnostics_request') {
       const snapshot = { t: 'watch_diagnostics', watchVersion: WATCH_VERSION,
         sid: String(loadState().sid || '').slice(0, 80),
@@ -438,11 +498,22 @@ export function startServer(h) {
       sendControl(snapshot)
       return
     }
+    if (msg.t === 'event_rejected' || msg.t === 'effort_ack') {
+      if ((rpcState().peerProtocol || 0) >= 3) return // v3 requires the exact durable committed receipt.
+      const event = rpcState().outbox.find(e => e.msg.eventId === msg.eventId)?.msg
+      if (!event) return
+      msg = { t: 'committed', sid: event.sid, eventId: event.eventId, status: 'rejected', commitRev: 0, detail: msg }
+    }
     if (['received', 'committed'].includes(msg.t)) trace(msg.t, msg)
     if (msg.t === 'conflict_reviewed') {
-      const conflicts = readStored('sync_conflicts') || []
-      for (const c of conflicts) if (c.event.eventId === msg.eventId) c.reviewed = true
-      writeStored('sync_conflicts', conflicts)
+      serial(async () => {
+        const saved = await writeStoredAtomic('sync_conflicts', value => {
+          const conflicts = value || []
+          for (const c of conflicts) if (c.event.eventId === msg.eventId) c.reviewed = true
+          return conflicts
+        })
+        if (!saved.ok) rpcState().handlers.onError?.({ code: 'conflict_review_save_failed' })
+      })
       return
     }
     if (msg.t === 'received') {
@@ -454,28 +525,78 @@ export function startServer(h) {
       const item = rpcState().outbox.find(e => e.msg.eventId === msg.eventId && e.msg.sid === msg.sid)
       if (!item || !['applied', 'conflict', 'rejected'].includes(msg.status)) return
       serial(async () => {
+        const affected = [item.msg]
         if (msg.status !== 'applied') {
-          const conflicts = readStored('sync_conflicts') || []
-          if (conflicts.filter(c => !c.reviewed).length >= 100 && !conflicts.some(c => c.event.eventId === msg.eventId)) { rpcState().handlers.onError?.({ code: 'conflict_archive_full' }); return }
-          if (!conflicts.some(c => c.event.eventId === msg.eventId)) conflicts.push({ event: item.msg, decision: msg, at: Date.now() })
-          // Never discard a rejected edit until the original and the decision can be recovered.
-          const retained = conflicts.filter(c => !c.reviewed).concat(conflicts.filter(c => c.reviewed).slice(-20))
-          try { if (!(await writeStoredConfirmed('sync_conflicts', retained))) return } catch { return }
-          storage.set({ key: 'last_notice', value: '存在同步冲突，离线操作已保留，请核对手机训练记录', fail() {} })
+          const ids = new Set([msg.eventId])
+          let changed = true
+          while (changed) {
+            changed = false
+            for (const event of [...rpcState().outbox.map(e => e.msg), ...(loadState().pendingEdits || []), ...pendingCloseEvents(), ...pendingSummaries().map(e => e.summaryEvent)]) if (!ids.has(event.eventId) && event.dependsOn?.some(id => ids.has(id))) {
+              ids.add(event.eventId); affected.push(event); changed = true
+            }
+          }
+          const archived = await writeStoredAtomic('sync_conflicts', value => {
+            const conflicts = value || []
+            for (const event of affected) if (!conflicts.some(c => c.event.eventId === event.eventId)) conflicts.push({ event,
+              decision: event.eventId === msg.eventId ? msg : { ...msg, eventId: event.eventId, status: 'rejected', reason: 'dependency_failed', parent: msg.eventId }, at: Date.now() })
+            const retained = conflicts.filter(c => !c.reviewed).concat(conflicts.filter(c => c.reviewed).slice(-20))
+            if (retained.filter(c => !c.reviewed).length > 100) throw new Error('conflict_archive_full')
+            return retained
+          })
+          if (!archived.ok) { rpcState().handlers.onError?.({ code: 'conflict_archive_full' }); return }
+          storage.set({ key: 'last_notice', value: '存在同步冲突，离线操作及其依赖已保留，请核对手机训练记录', fail() {} })
         }
-        const s = loadState()
-        if (msg.status === 'applied') {
-          for (const edit of s.pendingEdits || []) if (edit.eventId === msg.eventId) edit.committedRev = msg.commitRev
-        } else s.pendingEdits = (s.pendingEdits || []).filter(e => e.eventId !== msg.eventId)
-        save(s)
-        // A snapshot can beat its commit receipt. Reconcile again after removing/tagging the
-        // pending edit, so a rejected optimistic value cannot remain on top of phone state.
-        if (s.active && s.syncBase && s.syncBase.commitRev >= msg.commitRev) {
-          try { rpcState().handlers.onSync?.(s.syncBase) } catch { return }
+        const recorded = await writeStoredAtomic('event_decisions', value => {
+          const decisions = value || {}
+          for (const event of affected) decisions[event.eventId] = { sid: event.sid, status: event.eventId === msg.eventId ? msg.status : 'rejected', commitRev: msg.commitRev }
+          const pins = decisionPins()
+          let size = Object.keys(decisions).length
+          for (const id of Object.keys(decisions)) { if (size <= 4096) break; if (!pins.has(id)) { delete decisions[id]; size-- } }
+          if (size > 4096) throw new Error('event_decisions_full')
+          return decisions
+        })
+        if (!recorded.ok) return
+        const ids = new Set(affected.map(e => e.eventId))
+        const saved = await writeStoredAtomic('session_state', s => {
+          if (!s) return {}
+          if (msg.status === 'applied') {
+            if (item.msg.t === 'watch_start' && s.sid === msg.sid) s.pendingStart = false
+            for (const edit of s.pendingEdits || []) if (edit.eventId === msg.eventId) edit.committedRev = msg.commitRev }
+          else s.pendingEdits = (s.pendingEdits || []).filter(e => !ids.has(e.eventId))
+          return s
+        })
+        if (!saved.ok) return
+        for (const event of affected) {
+          const journal = journalEntry(event.sid)
+          if (journal && (event.t === 'session_close' || event.t === 'summary')) {
+            if (!(await markEntry(event.sid, { ...(event.t === 'session_close' ? { closeCommitted: true } : {}),
+              ...(msg.status === 'applied' ? {} : { delivery: 'blocked', lastError: msg.status }) }))) return
+          }
         }
-        if (!(await writeStoredConfirmed('session_state', loadState()))) return
-        ackEvent(null, msg.eventId)
+        for (const event of affected) ackEvent(null, event.eventId)
+        const state = loadState()
+        if (state.active && state.syncBase && state.syncBase.commitRev >= msg.commitRev) { try { rpcState().handlers.onSync?.(state.syncBase) } catch (_) {} }
         rpcState().lastCommitAt = Date.now()
+      })
+      return
+    }
+    if (msg.transferId?.startsWith('p:') && ['sync_begin', 'sync_chunk', 'sync_resume', 'sync_cancel'].includes(msg.t)) {
+      const caps = rpcState().peerCapabilities || {}
+      if (!caps.selectiveChunkAck || !caps.persistentTransfers) return
+      serial(async () => {
+        const r = rpcState()
+        r.persistentReceiver ||= persistentReceiver({ read: key => readStored(key),
+          write: async (key, value) => (await writeStoredAtomic(key, () => value)).ok },
+          async (message, meta) => {
+            const result = await commitWireSnapshot(message, meta)
+            if (result.ok) {
+              // Only update the page after the session+applied marker is durable.
+              const snapshot = loadState().syncBase
+              if (snapshot) { try { r.handlers.onSync?.(snapshot) } catch (_) {} }
+            }
+            return result
+          })
+        for (const reply of await r.persistentReceiver.receive(msg)) sendControl(reply)
       })
       return
     }
@@ -492,14 +613,12 @@ export function startServer(h) {
       rpcState().peerProtocol = 3
     }
     else if (msg.t === 'sync') rpcState().peerProtocol = 2
-    if (msg.t === 'event_rejected') {
-      const state = loadState(); state.pendingEdits = (state.pendingEdits || []).filter(e => e.eventId !== msg.eventId); save(state)
-      ackEvent(null, msg.eventId)
-      storage.set({ key: 'last_notice', value: '手机训练结构已改变，一条离线操作未应用，请核对训练记录', fail() {} })
-      if (rpcState().handlers.onError) rpcState().handlers.onError({ code: 'target_changed' })
+    if (msg.t === 'ack') {
+      // Legacy exact ACK is the old protocol's durable business receipt, not received/code=0.
+      // Never let a v2 ACK downgrade a v3 transaction, and never cumulatively clear IDs.
+      if ((rpcState().peerProtocol || 0) < 3 && msg.eventId) serial(() => acceptLegacyAck(msg.eventId))
       return
     }
-    if (msg.t === 'ack') { ackEvent(msg.upto, msg.eventId); return }
     if (msg.t === 'plan_catalog') {
       storage.set({ key: 'plan_catalog', value: msg, fail() {} })
       if (rpcState().handlers.onCatalog) rpcState().handlers.onCatalog(msg)
@@ -508,8 +627,7 @@ export function startServer(h) {
     }
     if (msg.t === 'watch_start_ack') {
       const s = loadState()
-      if (s.sid === msg.sid && msg.status === 'started') { s.pendingStart = false; save(s) }
-      if (msg.status === 'started') ackEvent(msg.at, msg.eventId)
+      if ((rpcState().peerProtocol || 0) < 3 && msg.status === 'started' && msg.eventId) serial(() => acceptLegacyAck(msg.eventId))
       if (rpcState().handlers.onStartAck) rpcState().handlers.onStartAck(msg)
       return
     }
@@ -570,14 +688,7 @@ export function startServer(h) {
     if (msg.t === 'pause' && rpcState().handlers.onPause) { rpcState().handlers.onPause(msg); return }
     if (msg.t === 'set' && rpcState().handlers.onSet) { rpcState().handlers.onSet(msg); return }
     if (msg.t === 'unset' && rpcState().handlers.onUnset) { rpcState().handlers.onUnset(msg); return }
-    if (msg.t === 'effort_ack') {
-      // 手机拒绝了这次评分（并发修改）：把手机现值当作权威，提示用户重新登记，
-      // 并清掉这条待确认事件，避免反复重放覆盖。
-      ackEvent(null, msg.eventId)
-      storage.set({ key: 'last_notice', value: '手机已修改本组强度，请重新登记', fail() {} })
-      rpcState().handlers.onError?.({ code: 'effort_conflict', sid: msg.sid })
-      return
-    }
+    if (msg.t === 'effort_ack') return // normalized into a durable decision above
     if (msg.t === 'effort' && rpcState().handlers.onEffort) { rpcState().handlers.onEffort(msg); return }
     if (msg.t === 'weight' && rpcState().handlers.onWeight) { rpcState().handlers.onWeight(msg); return }
     if (msg.t === 'reps' && rpcState().handlers.onReps) { rpcState().handlers.onReps(msg); return }
@@ -604,6 +715,7 @@ export function stopServer() {
   cancelAppTimeout(rpcState().flushTimer); rpcState().flushTimer = null
   cancelAppTimeout(rpcState().replayTimer); rpcState().replayTimer = null; rpcState().replaying = false
   try { if (rpcState().connect) rpcState().connect.close({ success() {}, fail() {} }) } catch (e) { /* 已关闭 */ }
+  rpcState().controls = []
   rpcState().connect = null
   rpcState().boundConnection = null
   rpcState().connected = false
@@ -613,9 +725,12 @@ export function stopServer() {
 /** 事件类：进 outbox，保证闪退/断线不丢。返回是否已在队列里（不代表手机已保存）。 */
 export function sendEvent(obj) {
   if (!obj) return false
+  if (runtime().sessionDraft) { stageSessionEvent(runtime().sessionDraft, obj); return true }
   initialize()
   // A page replay must not re-clone/rewrite the full session or restart delivery.
   if (obj.eventId && rpcState().outbox.some(e => e.msg.eventId === obj.eventId)) return true
+  const frozen = obj.eventId && loadState().pendingEdits?.find(e => e.dependencyEvents === true && e.eventId === obj.eventId)
+  if (frozen || obj.dependencyEvents === true) { const ok = enqueue(JSON.parse(JSON.stringify(frozen || obj))); if (ok) flush(); return ok }
   if (obj.at == null) obj.at = Date.now()
   if (!obj.eventId) {
     const identity = allocateEventIdentity(obj.sid)
@@ -674,11 +789,15 @@ function freezeOwnClose(obj) {
 
 /** 控制类：尽力而为，不进 outbox（休息倒计时等旧消息重连后回放反而错）。 */
 export function sendControl(obj) {
-  if (!rpcState().connected || !rpcState().connect || !obj) return
-  try {
-    trace('control_attempt', obj)
-    rpcState().connect.send({ data: obj, success() { trace('control_success', obj) }, fail(error, code) { trace('control_fail', obj, error, code) } })
-  } catch (error) { trace('control_exception', obj, error) }
+  const r = rpcState()
+  if (!r.connected || !r.connect || !obj) return false
+  const controls = r.controls ||= []
+  const key = JSON.stringify(obj)
+  if (controls.some(e => e.key === key)) return true
+  if (controls.length >= 64) { trace('control_queue_full', obj); return false }
+  controls.push({ key, msg: JSON.parse(key), nextAttemptAt: 0 })
+  flush()
+  return true
 }
 
 export function pendingCount() { initialize(); return rpcState().outbox.length }

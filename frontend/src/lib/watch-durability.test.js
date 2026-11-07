@@ -53,7 +53,7 @@ it('serializes session snapshots and retains the latest state while a write is d
   expect(p.storageStatus()).toEqual({failed:false,pending:false})
 })
 
-it('shares one outbox across independent page bundles and sends only durable events', () => {
+it('shares one outbox across independent page bundles and sends only durable events', async () => {
   vi.useFakeTimers()
   const h = harness(), first = h.transport(), second = h.transport()
   first.startServer({onError:e=>h.failures.push(e)}); h.connection.onOpen()
@@ -67,7 +67,11 @@ it('shares one outbox across independent page bundles and sends only durable eve
   expect(first.pendingCount()).toBe(2); expect(second.pendingCount()).toBe(2)
   vi.advanceTimersByTime(120)
   expect(h.sent.filter(x=>x.data.eventId).map(x=>x.data.eventId)).toEqual(['a','b'])
+  const written = h.writes.length
   h.connection.onMessage({t:'ack',eventId:'a'})
+  expect(second.pendingCount()).toBe(2) // not cleared before the ACK decision is durable
+  let index = written
+  for (let round = 0; round < 20; round++) { await Promise.resolve(); while (index < h.writes.length) h.commit(index++) }
   expect(second.pendingCount()).toBe(1)
 })
 
@@ -78,6 +82,8 @@ it('releases a lost send callback after six seconds and ignores its later comple
   rpc.sendEvent({t:'set',sid:'s',ex:0,set:1,eventId:'a',at:1}); h.commit(1)
   const first = h.sent.find(x=>x.data.eventId==='a')
   expect(first).toBeTruthy()
+  vi.advanceTimersByTime(6000)
+  expect(h.sent.filter(x=>x.data.eventId==='a')).toHaveLength(1)
   vi.advanceTimersByTime(6000)
   expect(h.sent.filter(x=>x.data.eventId==='a')).toHaveLength(2)
   first.success()

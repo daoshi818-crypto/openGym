@@ -3,11 +3,13 @@
 // (so the close journal and the event clock behave exactly as they do on the watch).
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
+import { persistentReceiver } from '../../../watch-app/src/lib/persistent-transfer.js'
+import { commitPageAction } from '../../../watch-app/src/lib/local-action.js'
 import { rotationStep, valueStep } from '../../../watch-app/src/lib/value-step.js'
 import { captureRow, rowTarget, setDotWindow } from '../../../watch-app/src/lib/workout-interaction.js'
 
 // Real page imports, not stubs: keep VM tests in sync with the shipped page modules.
-export const watchInteractionDeps = { rotationStep, valueStep, captureRow, rowTarget, setDotWindow }
+export const watchInteractionDeps = { replayPendingEvents: () => {}, commitPageAction, rotationStep, valueStep, captureRow, rowTarget, setDotWindow }
 
 export const watchSource = path => readFileSync(new URL('../../../watch-app/src/' + path, import.meta.url), 'utf8')
 export const stripImports = code => code
@@ -18,8 +20,15 @@ export const stripImports = code => code
 
 export function loadWatchModule(name, ctx, names) {
   if (['rpc', 'persistence'].includes(name) && !ctx.appTimeout) loadWatchModule('app-timers', ctx, ['appTimeout', 'cancelAppTimeout', 'appInterval', 'cancelAppInterval'])
+  if (name === 'rpc') ctx.persistentReceiver = persistentReceiver
   if (name === 'rpc' && !ctx.acceptWireChunk) loadWatchModule('sync-wire', ctx, ['wireHash', 'wireBytes', 'acceptWireChunk', 'expandWireDelta'])
-  if (name === 'session' && !names.includes('readSessionHr')) names = [...names, 'readSessionHr']
+  if (['rpc', 'session'].includes(name) && !ctx.selectReadyEvent) loadWatchModule('event-dependencies', ctx, ['dependenciesFor', 'selectReadyEvent', 'dependencyDecision'])
+  if (['rpc', 'session', 'close-journal'].includes(name) && !ctx.writeStoredAtomic && ctx.storage) loadWatchModule('persistence', ctx, ['writeStoredAtomic'])
+  if (name === 'close-journal' && !ctx.wireBytes) loadWatchModule('sync-wire', ctx, ['wireBytes'])
+  if (name === 'close-journal') names = [...new Set([...names, 'pendingCloseEvents', 'markEntry'])]
+  if (name === 'rpc' && !ctx.pendingCloseEvents) ctx.pendingCloseEvents = () => [] // Legacy isolated transport fixtures.
+  if (name === 'session' && !ctx.wireHash) loadWatchModule('sync-wire', ctx, ['wireHash', 'expandWireDelta'])
+  if (name === 'session') names = [...new Set([...names, 'readSessionHr', 'commitSessionAction', 'stageSessionEvent', 'commitLocalClose', 'commitWireSnapshot', 'commitSessionStart', 'recoverLocalClose'])]
   const body = stripImports(watchSource('lib/' + name + '.js'))
   // Each module gets its own function scope, like a real ES module: the flattened global
   // would otherwise let one module's top-level `save`/`loadState` overwrite another's.
@@ -36,7 +45,7 @@ export function watchPersistence(disk = new Map(), shared = {}) {
     set: ({ key, value, success }) => { disk.set(key, JSON.parse(JSON.stringify(value))); if (success) success() },
   }
   const ctx = { storage, runtime: () => shared, Date, setTimeout, clearTimeout, setInterval, clearInterval }
-  loadWatchModule('persistence', ctx, ['readStored', 'writeStored', 'writeStoredConfirmed', 'retryStorage', 'storageStatus'])
+  loadWatchModule('persistence', ctx, ['readStored', 'writeStored', 'writeStoredConfirmed', 'retryStorage', 'storageStatus', 'writeStoredAtomic'])
   return { disk, shared, storage, ctx }
 }
 

@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { expect, it, vi } from 'vitest'
-const code = name => readFileSync(new URL('../../../watch-app/src/lib/'+name+'.js', import.meta.url),'utf8').replace(/^import[^\n]*\n/gm,'').replace(/export function /g,'function ')
+const code = name => readFileSync(new URL('../../../watch-app/src/lib/'+name+'.js', import.meta.url),'utf8').replace(/^import[^\n]*\n/gm,'').replace(/export async function /g,'async function ').replace(/export function /g,'function ')
 it('owns one HR subscription across pages and saves samples against the latest session', () => {
   const shared = {}, values = new Map(), samples = []
   const health = { DATA_TYPES: { HEART_RATE:1 }, subscribeSample: vi.fn(o=>samples.push(o)), unsubscribeSample: vi.fn() }

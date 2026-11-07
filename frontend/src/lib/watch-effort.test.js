@@ -49,84 +49,84 @@ function setup({ scale = 'rpe', sets = 3 } = {}) {
 }
 
 // These scenarios use deliberate taps; the touch-lock suite covers trailing events.
-const complete = workout => { vi.advanceTimersByTime(1001); workout.state.restUntil = 0; workout.refresh(); vi.advanceTimersByTime(1001); workout.onCurrentSetAction(); vi.advanceTimersByTime(1001) }
+const complete = async workout => { vi.advanceTimersByTime(1001); workout.state.restUntil = 0; workout.refresh(); vi.advanceTimersByTime(1001); await workout.onCurrentSetAction(); vi.advanceTimersByTime(1001) }
 
 describe('per-set effort on the watch (RPE/RIR)', () => {
-  it('offers current-set registration before completion without marking the set done', () => {
+  it('offers current-set registration before completion without marking the set done', async () => {
     const { workout, sessions, sendEvent } = setup()
     expect(workout.effortEntryOn).toBe(true)
-    workout.openEffort(); workout.effortMove(1); workout.confirmEffort()
+    workout.openEffort(); workout.effortMove(1); await workout.confirmEffort()
     expect(sessions.loadState().workout.rows[0][0]).toMatchObject({ rpe: 6, done: false })
     expect(sessions.loadState().restUntil).toBe(0)
     expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({ t: 'effort', ex: 0, set: 1, value: 6 }))
   })
 
-  it('never shows the previous set rating on the next training screen and keeps summaries concise', () => {
+  it('never shows the previous set rating on the next training screen and keeps summaries concise', async () => {
     const { workout, sessions } = setup()
-    complete(workout)
-    workout.openEffort(); workout.effortMove(1); workout.confirmEffort()
+    await complete(workout)
+    workout.openEffort(); workout.effortMove(1); await workout.confirmEffort()
     expect(workout.effortEntryText).toBe('RPE 6')
     expect(workout.effortEntryLabel).toBe('第1组强度')
-    workout.onSkipRest()
+    await workout.onSkipRest()
     expect(workout.effortTarget).toMatchObject({ setId: 'a2', setNo: 2 })
     expect(workout.effortEntryLabel).toBe('第2组强度')
     expect(workout.effortEntryText).toBe('未登记')
-    workout.openEffort(); workout.effortMove(1); workout.effortMove(1); workout.confirmEffort()
+    workout.openEffort(); workout.effortMove(1); workout.effortMove(1); await workout.confirmEffort()
     expect(sessions.loadState().workout.rows[0][0].rpe).toBe(6)
     expect(sessions.loadState().workout.rows[0][1]).toMatchObject({ rpe: 6.5, done: false })
-    complete(workout)
+    await complete(workout)
     expect(workout.effortEntryText).toBe('RPE 6.5')
     expect(workout.effortTarget.setId).toBe('a2')
   })
 
-  it('retargets an unrated next set after rest expires, but pins any open draft to its original set', () => {
+  it('retargets an unrated next set after rest expires, but pins any open draft to its original set', async () => {
     const { workout, sessions } = setup()
-    complete(workout)
+    await complete(workout)
     workout.openEffort(); workout.effortMove(1)
     vi.advanceTimersByTime(95_000); workout.tickClock()
     expect(workout.effortOn).toBe(true)
     expect(workout.effortTarget.setId).toBe('a1')
-    workout.confirmEffort()
+    await workout.confirmEffort()
     expect(sessions.loadState().workout.rows[0][0].rpe).toBe(6)
     expect(workout.effortTarget.setId).toBe('a2')
     expect(workout.effortEntryText).toBe('未登记')
   })
 
-  it('hides effort explanations until a rating is selected in the picker', () => {
+  it('hides effort explanations until a rating is selected in the picker', async () => {
     const { workout } = setup()
     workout.openEffort()
     expect(workout.effortMeaning).toBe('')
     workout.effortMove(1)
     expect(workout.effortMeaning).toBe('还能再做约4次，较轻松')
-    workout.confirmEffort()
+    await workout.confirmEffort()
     expect(workout.effortEntryText).toBe('RPE 6')
     expect(source('Workout/index.ux')).toContain('<text class="effort-meaning" if="{{ effortDraft != null }}">')
   })
 
-  it('keeps the picker bound to stable exercise/set IDs across exercise reordering', () => {
+  it('keeps the picker bound to stable exercise/set IDs across exercise reordering', async () => {
     const { workout, sessions } = setup()
-    complete(workout); workout.openEffort(); workout.effortMove(1)
+    await complete(workout); workout.openEffort(); workout.effortMove(1)
     const s = sessions.loadState()
     s.workout.exercises.unshift({ name: 'Row', entryInstanceId: 'e2', sets: 1, setIds: ['b1'] })
     s.workout.rows.unshift([{ setId: 'b1', done: false, at: 0, w: 30, r: 10 }])
     sessions.save(s); workout.state = sessions.loadState(); workout.refresh()
-    workout.confirmEffort()
+    await workout.confirmEffort()
     const rows = sessions.loadState().workout.rows
     expect(rows[0][0].rpe).toBeUndefined()
     expect(rows[1][0].rpe).toBe(6)
   })
 
-  it('does not leak a previous RIR into the next set or display unrelated pending edits as effort status', () => {
+  it('does not leak a previous RIR into the next set or display unrelated pending edits as effort status', async () => {
     const { workout, sessions } = setup({ scale: 'rir' })
-    complete(workout); workout.openEffort(); workout.effortMove(1); workout.confirmEffort()
+    await complete(workout); workout.openEffort(); workout.effortMove(1); await workout.confirmEffort()
     expect(workout.effortEntryText).toBe('RIR 0')
-    workout.onSkipRest()
+    await workout.onSkipRest()
     expect(workout.effortEntryText).toBe('未登记')
     expect(workout.effortTarget.setId).toBe('a2')
     expect(sessions.loadState().workout.rows[0][1].rir).toBeUndefined()
   })
 
-  it('shows only the phone’s scale and hides the entry when effort is off', () => {
+  it('shows only the phone’s scale and hides the entry when effort is off', async () => {
     const rpe = setup({ scale: 'rpe' }), rir = setup({ scale: 'rir' }), none = setup({ scale: 'none' })
     expect(rpe.workout.effortScale).toBe('rpe')
     expect(rir.workout.effortScale).toBe('rir')
@@ -140,10 +140,10 @@ describe('per-set effort on the watch (RPE/RIR)', () => {
     expect(source('Workout/index.ux')).not.toContain('量表设置')
   })
 
-  it('starts empty, first move lands on the scale floor and each deliberate step moves 0.5', () => {
+  it('starts empty, first move lands on the scale floor and each deliberate step moves 0.5', async () => {
     for (const [scale, floor, ceil] of [['rpe', 6, 10], ['rir', 0, 10]]) {
       const { workout } = setup({ scale })
-      complete(workout)
+      await complete(workout)
       workout.openEffort()
       expect(workout.effortOn).toBe(true)
       expect(workout.effortDraftLabel).toBe('—')
@@ -159,16 +159,16 @@ describe('per-set effort on the watch (RPE/RIR)', () => {
     }
   })
 
-  it('writes the rating to the set that was just completed, even after the focus moved to set 3', () => {
+  it('writes the rating to the set that was just completed, even after the focus moved to set 3', async () => {
     const { workout, sessions } = setup({ sets: 3 })
-    complete(workout)                          // completes set 1, focus -> set 2
+    await complete(workout)                          // completes set 1, focus -> set 2
     workout.state.setIdx = 1; sessions.save(workout.state); workout.refresh()
-    complete(workout)                          // completes set 2, focus -> set 3
+    await complete(workout)                          // completes set 2, focus -> set 3
     expect(workout.state.setIdx).toBe(2)
     workout.openEffort()
     expect(workout.effortTarget.setNo).toBe(2)
     workout.effortMove(1); workout.effortMove(1)   // RPE 6 -> 6.5
-    workout.confirmEffort()
+    await workout.confirmEffort()
     const rows = sessions.loadState().workout.rows[0]
     expect(rows[0].rpe).toBeUndefined()            // set 1 untouched
     expect(rows[1].rpe).toBe(6.5)                  // set 2 got it
@@ -176,9 +176,9 @@ describe('per-set effort on the watch (RPE/RIR)', () => {
     expect(workout.effortOn).toBe(false)
   })
 
-  it('never pauses or restarts the rest: open, slide, confirm and cancel leave the deadline alone', () => {
+  it('never pauses or restarts the rest: open, slide, confirm and cancel leave the deadline alone', async () => {
     const { workout, sessions, sendEvent } = setup({ sets: 3 })
-    complete(workout)                          // starts a 90 s rest
+    await complete(workout)                          // starts a 90 s rest
     const before = { ...workout.state }
     vi.advanceTimersByTime(20_000)
     workout.tickClock()
@@ -190,16 +190,16 @@ describe('per-set effort on the watch (RPE/RIR)', () => {
     expect(workout.state.restUntil).toBe(before.restUntil)
     expect(workout.state.restVersion).toBe(before.restVersion)
     expect(workout.state.pausedAt || 0).toBe(0)
-    workout.openEffort(); workout.effortMove(1); workout.confirmEffort()
+    workout.openEffort(); workout.effortMove(1); await workout.confirmEffort()
     expect(workout.state.restUntil).toBe(before.restUntil)
     expect(workout.state.restVersion).toBe(before.restVersion)
     expect(sendEvent.mock.calls.filter(([m]) => m.t === 'rest')).toHaveLength(0)
     expect(sessions.loadState().restUntil).toBe(before.restUntil)
   })
 
-  it('keeps the draft and shows “rest is over” when the rest expires while editing', () => {
+  it('keeps the draft and shows “rest is over” when the rest expires while editing', async () => {
     const { workout, sessions } = setup({ sets: 3 })
-    complete(workout)
+    await complete(workout)
     workout.openEffort()
     workout.effortMove(1); workout.effortMove(1)
     const draft = workout.effortDraft
@@ -210,21 +210,21 @@ describe('per-set effort on the watch (RPE/RIR)', () => {
     expect(workout.effortRestLabel).toBe('休息已结束')
     expect(workout.state.restUntil).toBe(0)     // the page's own expiry ran, once
     expect(sessions.loadState().restUntil).toBe(0)
-    workout.confirmEffort()
+    await workout.confirmEffort()
     expect(sessions.loadState().workout.rows[0][0].rpe).toBe(6.5)
   })
 
-  it('cancels without writing and shows the saved value on reopen; clear is explicit', () => {
+  it('cancels without writing and shows the saved value on reopen; clear is explicit', async () => {
     const { workout, sessions } = setup({ sets: 3 })
-    complete(workout)
-    workout.openEffort(); workout.effortMove(1); workout.effortMove(1); workout.confirmEffort()
+    await complete(workout)
+    workout.openEffort(); workout.effortMove(1); workout.effortMove(1); await workout.confirmEffort()
     expect(sessions.loadState().workout.rows[0][0].rpe).toBe(6.5)
     workout.openEffort()
     expect(workout.effortDraft).toBe(6.5)       // shows the stored value
     workout.effortMove(1)
     workout.closeEffort()                       // cancel keeps 6.5
     expect(sessions.loadState().workout.rows[0][0].rpe).toBe(6.5)
-    workout.openEffort(); workout.clearEffort()
+    workout.openEffort(); await workout.clearEffort()
     const row = sessions.loadState().workout.rows[0][0]
     expect(row.rpe).toBeUndefined()
     expect(row.rir).toBeUndefined()
@@ -232,20 +232,20 @@ describe('per-set effort on the watch (RPE/RIR)', () => {
     expect(workout.effortEntryText).toBe('未登记')
   })
 
-  it('keeps 0 RIR as a real rating, not a clear', () => {
+  it('keeps 0 RIR as a real rating, not a clear', async () => {
     const { workout, sessions } = setup({ scale: 'rir', sets: 3 })
-    complete(workout)
+    await complete(workout)
     workout.openEffort(); workout.effortMove(-1)   // first move starts at the floor: 0
     expect(workout.effortDraft).toBe(0)
     expect(workout.effortMeaning).toBe('无法再完成一次标准动作')
-    workout.confirmEffort()
+    await workout.confirmEffort()
     expect(sessions.loadState().workout.rows[0][0].rir).toBe(0)
     expect(workout.effortEntryText).toBe('RIR 0')
   })
 
-  it('shows an out-of-step historical value as-is and does not rewrite it on open', () => {
+  it('shows an out-of-step historical value as-is and does not rewrite it on open', async () => {
     const { workout, sessions } = setup({ sets: 3 })
-    complete(workout)
+    await complete(workout)
     const s = sessions.loadState()
     s.workout.rows[0][0].rpe = 7.3
     s.workout.rows[0][0].effortAt = 5
@@ -259,25 +259,25 @@ describe('per-set effort on the watch (RPE/RIR)', () => {
     expect(sessions.loadState().workout.rows[0][0].rpe).toBe(7.3)
   })
 
-  it('refuses to save a draft across a phone scale change', () => {
+  it('refuses to save a draft across a phone scale change', async () => {
     const { workout, sessions } = setup({ sets: 3 })
-    complete(workout)
+    await complete(workout)
     workout.openEffort(); workout.effortMove(1)
     const s = sessions.loadState()
     s.effortScale = 'rir'
     sessions.save(s)
     workout.state = sessions.loadState()
-    workout.confirmEffort()
+    await workout.confirmEffort()
     expect(workout.effortNotice).toBe('手机已切换量表，请重新打开')
     expect(workout.effortOn).toBe(true)
     expect(sessions.loadState().workout.rows[0][0].rpe).toBeUndefined()
     expect(sessions.loadState().workout.rows[0][0].rir).toBeUndefined()
   })
 
-  it('stops editing when the target set is undone or the session ends', () => {
+  it('stops editing when the target set is undone or the session ends', async () => {
     for (const how of ['undo', 'end']) {
       const { workout, sessions } = setup({ sets: 3 })
-      complete(workout)
+      await complete(workout)
       workout.openEffort()
       const s = sessions.loadState()
       if (how === 'undo') { s.workout.rows[0][0].done = false; sessions.save(s); workout.state = sessions.loadState() }
@@ -288,37 +288,37 @@ describe('per-set effort on the watch (RPE/RIR)', () => {
     }
   })
 
-  it('keeps the completion panel available and unrated does not block saving', () => {
+  it('keeps the completion panel available and unrated does not block saving', async () => {
     const { workout } = setup({ sets: 1 })
-    complete(workout)
+    await complete(workout)
     // All sets done: the existing save/continue panel still opens, with an optional effort entry.
     expect(workout.closeMode).toBe('complete')
     expect(workout.effortEntryOn).toBe(true)
     expect(source('Workout/index.ux')).toContain('value="{{ \'登记本组强度 · \' + effortEntryText }}"')
   })
 
-  it('sends one effort event carrying stable ids, scale, value, version and base version', () => {
+  it('sends one effort event carrying stable ids, scale, value, version and base version', async () => {
     const { workout, sendEvent } = setup({ sets: 3 })
-    complete(workout)
-    workout.openEffort(); workout.effortMove(1); workout.confirmEffort()
+    await complete(workout)
+    workout.openEffort(); workout.effortMove(1); await workout.confirmEffort()
     const event = sendEvent.mock.calls.map(([m]) => m).find(m => m.t === 'effort')
     expect(event).toMatchObject({ sid: 's1', ex: 0, set: 1, scale: 'rpe', value: 6, clear: false })
     expect(event.effortVersion).toBeGreaterThan(0)
     expect(event.baseEffortVersion).toBe(0)
   })
 
-  it('applies a phone-side rating with its own version and rejects an older one', () => {
+  it('applies a phone-side rating with its own version and rejects an older one', async () => {
     const { workout, sessions } = setup({ sets: 3 })
-    complete(workout)
+    await complete(workout)
     workout.onRemoteEffort({ sid: 's1', ex: 0, set: 1, scale: 'rpe', value: 9, effortVersion: 900 })
     expect(sessions.loadState().workout.rows[0][0].rpe).toBe(9)
     workout.onRemoteEffort({ sid: 's1', ex: 0, set: 1, scale: 'rpe', value: 6, effortVersion: 500 })
     expect(sessions.loadState().workout.rows[0][0].rpe).toBe(9)   // older does not overwrite
   })
 
-  it('offers the last completed set for a late rating after the page was reopened', () => {
+  it('offers the last completed set for a late rating after the page was reopened', async () => {
     const { workout, sessions, sendEvent } = setup({ sets: 3 })
-    complete(workout)
+    await complete(workout)
     // A new page instance (app restart / navigation back): the in-memory capture is gone, but
     // the most recently completed set is still the one a late rating belongs to.
     const reopened = page('Workout/index.ux', { ...sessions, startServer() {}, sendControl: vi.fn(), sendEvent,
@@ -330,20 +330,21 @@ describe('per-set effort on the watch (RPE/RIR)', () => {
     expect(reopened.effortEntryOn).toBe(true)
   })
 
-  it('does not inherit a rating on an added set or after undo/redo', () => {
+  it('does not inherit a rating on an added set or after undo/redo', async () => {
     const { workout, sessions } = setup({ sets: 2 })
-    complete(workout)
-    workout.openEffort(); workout.effortMove(1); workout.confirmEffort()
-    workout.onMenuAddSet()
+    await complete(workout)
+    workout.openEffort(); workout.effortMove(1); await workout.confirmEffort()
+    await workout.onMenuAddSet()
     const rows = sessions.loadState().workout.rows[0]
     expect(rows[rows.length - 1].rpe).toBeUndefined()
     // Undo the completed set and complete it again: no implicit copy of the old rating.
     workout.state.setIdx = 0
-    workout.onUndo()
+    sessions.save(workout.state) // fixture cursor must exist in the durable candidate
+    await workout.onUndo()
     const afterUndo = sessions.loadState().workout.rows[0][0]
     expect(afterUndo.done).toBe(false)
     expect(afterUndo.rpe).toBe(6)   // the rating itself is data on the set and stays until cleared
-    workout.onComplete()
+    await workout.onComplete()
     expect(sessions.loadState().workout.rows[0][0].rpe).toBe(6)
   })
 })

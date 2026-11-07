@@ -120,7 +120,7 @@ describe('watch backlog fairness and durable replay', () => {
     h.connection.onOpen()
     expect(events(h).at(-1).eventId).toBe('event-0')
   })
-  it('spaces rapid clicks, commits exact IDs and recovers all records after restart', () => {
+  it('spaces rapid clicks, commits exact IDs and recovers all records after restart', async () => {
     vi.useFakeTimers()
     const h = device()
     h.connection.onOpen()
@@ -130,6 +130,7 @@ describe('watch backlog fairness and durable replay', () => {
     expect(h.ctx.pendingCount()).toBe(60)
     h.connection.onMessage({ t: 'ack', eventId: 'event-0' })
     h.connection.onMessage({ t: 'ack', eventId: 'event-0' })
+    await vi.advanceTimersByTimeAsync(0)
     expect(h.ctx.pendingCount()).toBe(59)
     h.ctx.stopServer()
     const restored = device(0, h.disk)
@@ -138,6 +139,7 @@ describe('watch backlog fairness and durable replay', () => {
     vi.advanceTimersByTime(10000)
     expect(new Set(events(restored).map(e => e.eventId)).size).toBe(59)
     for (const row of [...restored.disk.get('rpc_outbox')]) restored.connection.onMessage({ t: 'ack', eventId: row.msg.eventId })
+    await vi.advanceTimersByTimeAsync(0)
     expect(restored.ctx.pendingCount()).toBe(0)
     expect(restored.disk.get('rpc_outbox')).toEqual([])
   })
@@ -158,10 +160,12 @@ describe('application lifetime transport', () => {
   it('releases a lost send callback and retries after page destruction', () => {
     vi.useFakeTimers()
     const h = device(1, new Map(), true)
-    h.connection.send = ({ data }) => { h.sent.push(data) }
+    h.connection.send = ({ data, success }) => { h.sent.push(data); if (!data.eventId) success() }
     h.connection.onOpen()
     h.pageTimers.destroy()
     vi.advanceTimersByTime(6500)
+    expect(events(h)).toHaveLength(1) // Timeout releases the gate, but must respect failure backoff.
+    vi.advanceTimersByTime(5500)
     expect(events(h).length).toBeGreaterThan(1)
     expect(h.ctx.pendingCount()).toBe(1)
   })
@@ -189,5 +193,19 @@ describe('application lifetime transport', () => {
     h.storage.set = ({ success }) => success()
     h.ctx.retryStorage()
     expect(h.ctx.storageStatus()).toEqual({ failed: false, pending: false })
+  })
+})
+
+
+describe('bounded Outbox insertion',()=>{
+  it('refuses oversized insertion without dropping an existing durable event',()=>{
+    vi.useFakeTimers()
+    const h=device(1), errors=[]
+    h.ctx.startServer({onError:e=>errors.push(e)})
+    const before=structuredClone(h.disk.get('rpc_outbox'))
+    expect(h.ctx.sendEvent({t:'weight',sid:'s',eventId:'oversized',at:3,dependencyEvents:true,dependsOn:[],weight:'x'.repeat(2*1024*1024)})).toBe(false)
+    expect(h.ctx.pendingCount()).toBe(1)
+    expect(h.disk.get('rpc_outbox')).toEqual(before)
+    expect(errors).toContainEqual({code:'outbox_capacity'})
   })
 })

@@ -92,60 +92,80 @@ describe('watch completed sets and rest clock', () => {
     return { sessions, workout, sendControl, sendEvent, brightness, restOver, writes }
   }
 
-  it('allows deliberate undo after completion protection expires', () => {
-    const { workout, sendEvent } = resting()
-    vi.advanceTimersByTime(1001); workout.onSkipRest(); vi.advanceTimersByTime(1001)
+  it('persists a second crown input arriving during a slow write before pause can succeed', async () => {
+    const {workout,sessions,sendEvent}=resting(), original=sessions.storage.set, delayed=[]
+    const initial=workout.state.restUntil
+    sessions.storage.set=item=> item.key==='session_state' ? delayed.push(item) : original(item)
+    await workout.onRotation({delta:1,state:2})
+    const flush=workout.flushRestNudge()
+    expect(delayed).toHaveLength(1); expect(sendEvent).not.toHaveBeenCalled()
+    await workout.onRotation({delta:1,state:2})
+    const pause=workout.onPause()
+    original(delayed[0]); for(let i=0;i<20;i++) await Promise.resolve()
+    expect(delayed).toHaveLength(2); expect(workout.state.pausedAt).toBeFalsy()
+    original(delayed[1]); for(let i=0;i<20;i++) await Promise.resolve()
+    expect(delayed).toHaveLength(3)
+    original(delayed[2]); await flush; await pause
+    expect(sessions.loadState().pausedAt).toBeTruthy()
+    expect(sendEvent.mock.calls.filter(([m])=>m.t==='rest').slice(0,2).map(([m])=>m.endsAt)).toEqual([initial+5000,initial+10000])
+  })
+
+  it('allows deliberate undo after completion protection expires', async () => {
+    const { workout, sessions, sendEvent } = resting()
+    vi.advanceTimersByTime(1001); await workout.onSkipRest(); vi.advanceTimersByTime(1001)
     workout.state.workout.rows[0] = [workout.state.workout.rows[0][0]]
     workout.state.workout.exercises[0].sets = 1
-    workout.onCurrentSetAction()
+    sessions.save(workout.state)
+    await workout.onCurrentSetAction()
     vi.advanceTimersByTime(1001)
     workout.cancelClose()
-    workout.onCurrentSetAction()
+    await workout.onCurrentSetAction()
     expect(workout.rowDone).toBe(false)
     expect(sendEvent.mock.calls.filter(([m]) => m.t === 'set')).toHaveLength(1)
     expect(sendEvent.mock.calls.filter(([m]) => m.t === 'unset')).toHaveLength(1)
     const beforePaused = sendEvent.mock.calls.length
     workout.paused = true
-    workout.onCurrentSetAction()
+    await workout.onCurrentSetAction()
     expect(sendEvent.mock.calls).toHaveLength(beforePaused)
     expect(workout.rowDone).toBe(false)
     workout.paused = false
-    vi.advanceTimersByTime(1001); workout.onCurrentSetAction()
+    vi.advanceTimersByTime(1001); await workout.onCurrentSetAction()
     expect(workout.rowDone).toBe(true)
     expect(sendEvent.mock.calls.filter(([m]) => m.t === 'set')).toHaveLength(2)
   })
 
-  it('updates a crown burst immediately and saves/sends only after rotation settles', () => {
-    const { workout, writes, sendEvent: sendControl } = resting()
+  it('updates a crown burst immediately and saves/sends only after rotation settles', async () => {
+    const { workout, sessions, writes, sendEvent: sendControl } = resting()
     const initial = workout.state.restUntil
-    for (let i = 0; i < 80; i++) workout.onRotation({ delta: 1, state: 2 })
+    for (let i = 0; i < 80; i++) await workout.onRotation({ delta: 1, state: 2 })
     expect(workout.state.restUntil).toBe(initial + 400000)
     expect(workout.restLabel).toBe('7:40')
     expect(writes).not.toHaveBeenCalled()
     expect(sendControl).not.toHaveBeenCalled()
-    vi.advanceTimersByTime(300)
-    expect(writes).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(300)
+    expect(writes.mock.calls.filter(([w]) => w.key === 'session_state')).toHaveLength(1)
     expect(sendControl).toHaveBeenCalledOnce()
     expect(sendControl.mock.calls[0][0]).toMatchObject({ t: 'rest', leftSec: 460 })
   })
 
-  it('keeps rest rendering at a display-sized cadence and batches a crown focus save', () => {
+  it('keeps rest rendering at a display-sized cadence and batches a crown focus save', async () => {
     const { workout, writes } = resting()
     expect(workout.clockPeriod).toBe(500)
     writes.mockClear()
-    workout.stepSet(1)
+    await workout.stepSet(1)
     expect(writes).toHaveBeenCalledOnce()
   })
 
-  it('prompts on the final set without closing, ignores trailing taps and continues once', () => {
+  it('prompts on the final set without closing, ignores trailing taps and continues once', async () => {
     const { workout, sessions, sendEvent } = resting()
-    vi.advanceTimersByTime(1001); workout.onSkipRest(); vi.advanceTimersByTime(1001)
+    vi.advanceTimersByTime(1001); await workout.onSkipRest(); vi.advanceTimersByTime(1001)
     workout.state.workout.rows[0] = [workout.state.workout.rows[0][0]]
     workout.state.workout.exercises[0].sets = 1
-    workout.onComplete()
+    sessions.save(workout.state)
+    await workout.onComplete()
     expect(workout.closeMode).toBe('complete')
     expect(sessions.loadState().active).toBe(true)
-    workout.saveEnd(); workout.cancelClose(); workout.onCurrentSetAction()
+    await workout.saveEnd(); workout.cancelClose(); await workout.onCurrentSetAction()
     expect(workout.closeMode).toBe('complete')
     expect(workout.rowDone).toBe(true)
     expect(sendEvent.mock.calls.some(([m]) => m.t === 'session_close')).toBe(false)
@@ -156,17 +176,17 @@ describe('watch completed sets and rest clock', () => {
     const restored = training(sessions, { startServer() {}, sendEvent })
     restored.onInit()
     expect(restored.closeMode).toBe('')
-    workout.onMenuAddSet()
+    await workout.onMenuAddSet()
     expect(workout.allFinished).toBe(false)
-    vi.advanceTimersByTime(1001); workout.onSkipRest(); vi.advanceTimersByTime(1001); workout.onComplete()
+    vi.advanceTimersByTime(1001); await workout.onSkipRest(); vi.advanceTimersByTime(1001); await workout.onComplete()
     expect(workout.closeMode).toBe('complete')
     vi.advanceTimersByTime(1001)
-    workout.saveEnd()
+    await workout.saveEnd()
     expect(sessions.loadState().active).toBe(false)
-    expect(sendEvent.mock.calls.at(-1)[0]).toMatchObject({ t: 'session_close', disposition: 'saved' })
+    expect(sendEvent.mock.calls.findLast(([m]) => m.t === 'session_close')[0]).toMatchObject({ t: 'session_close', disposition: 'saved' })
   })
 
-  it('prompts once for restored or synced completion and re-arms after undo', () => {
+  it('prompts once for restored or synced completion and re-arms after undo', async () => {
     const { workout, sessions } = resting()
     workout.state.workout.rows[0].forEach(r => { r.done = true })
     sessions.save(workout.state)
@@ -186,7 +206,7 @@ describe('watch completed sets and rest clock', () => {
     expect(workout.closeMode).toBe('')
   })
 
-  it('shows the completion choice for a real phone snapshot and isolates crown/swipes', () => {
+  it('shows the completion choice for a real phone snapshot and isolates crown/swipes', async () => {
     const sessions = session(), c = connection(), rpc = transport(c, sessions)
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
     const router = { push: vi.fn(), replace: vi.fn() }, workout = training(sessions, rpc, { router })
@@ -194,7 +214,7 @@ describe('watch completed sets and rest clock', () => {
     c.onMessage({ data: { ...plan, t: 'sync', rows: [[0, 1, 2].map(() => ({ done: true, w: '60', r: '8' }))] } })
     expect(workout.closeMode).toBe('complete')
     const position = [workout.state.exIdx, workout.state.setIdx]
-    workout.onRotation({ delta: 1, state: 1 })
+    await workout.onRotation({ delta: 1, state: 1 })
     workout.touchStart({ touches: [{ clientX: 50, clientY: 180 }] })
     workout.touchEnd({ changedTouches: [{ clientX: 200, clientY: 180 }] })
     expect([workout.state.exIdx, workout.state.setIdx]).toEqual(position)
@@ -204,22 +224,23 @@ describe('watch completed sets and rest clock', () => {
     expect(source('Workout/index.ux')).toContain('value="继续训练" onclick="cancelClose"')
   })
 
-  it('does not complete the next set when a second click arrives during rest', () => {
+  it('does not complete the next set when a second click arrives during rest', async () => {
     const { workout, sendEvent } = resting()
-    vi.advanceTimersByTime(1001); workout.onSkipRest(); vi.advanceTimersByTime(1001)
-    workout.onCurrentSetAction()
+    vi.advanceTimersByTime(1001); await workout.onSkipRest(); vi.advanceTimersByTime(1001)
+    await workout.onCurrentSetAction()
     expect(workout.state.setIdx).toBe(1)
-    workout.onCurrentSetAction()
+    await workout.onCurrentSetAction()
     expect(workout.state.workout.rows[0].filter(row => row.done)).toHaveLength(1)
     expect(sendEvent.mock.calls.filter(([m]) => m.t === 'set')).toHaveLength(1)
   })
 
-  it('shows the actual upcoming set and restores completed context after reopening', () => {
+  it('shows the actual upcoming set and restores completed context after reopening', async () => {
     const { workout, sessions } = resting()
-    vi.advanceTimersByTime(1001); workout.onSkipRest(); vi.advanceTimersByTime(1001)
+    vi.advanceTimersByTime(1001); await workout.onSkipRest(); vi.advanceTimersByTime(1001)
     workout.state.workout.rows[0][1].w = '65'
     workout.state.workout.rows[0][1].r = '6'
-    workout.onCurrentSetAction()
+    sessions.save(workout.state)
+    await workout.onCurrentSetAction()
     expect(workout.nextDetails).toBe('第 2 / 3 组 · 65kg × 6次')
     expect(workout.restExerciseName).toBe('Squat')
     expect(workout.nextLabel).toBe('下一组')
@@ -227,44 +248,46 @@ describe('watch completed sets and rest clock', () => {
     reopened.onInit()
     expect(reopened.restExerciseName).toBe(workout.restExerciseName)
     expect(reopened.nextDetails).toBe(workout.nextDetails)
-    vi.advanceTimersByTime(1001); workout.onSkipRest(); vi.advanceTimersByTime(1001)
-    workout.onCurrentSetAction()
-    vi.advanceTimersByTime(1001); workout.onSkipRest(); vi.advanceTimersByTime(1001)
-    workout.onCurrentSetAction()
+    vi.advanceTimersByTime(1001); await workout.onSkipRest(); vi.advanceTimersByTime(1001)
+    await workout.onCurrentSetAction()
+    vi.advanceTimersByTime(1001); await workout.onSkipRest(); vi.advanceTimersByTime(1001)
+    await workout.onCurrentSetAction()
     expect(workout.nextLabel).toBe('本次训练已完成')
   })
 
-  it('names the upcoming exercise only when it changes', () => {
-    const { workout } = resting()
-    vi.advanceTimersByTime(1001); workout.onSkipRest(); vi.advanceTimersByTime(1001)
+  it('names the upcoming exercise only when it changes', async () => {
+    const { workout, sessions } = resting()
+    vi.advanceTimersByTime(1001); await workout.onSkipRest(); vi.advanceTimersByTime(1001)
     workout.state.workout.exercises.push({ name: 'Row', sets: 1, reps: '10' })
     workout.state.workout.rows.push([{ w: '30', r: '10', done: false, at: 0 }])
     workout.state.workout.rows[0][0].done = true
     workout.state.workout.rows[0][1].done = true
     workout.state.setIdx = 2
+    sessions.save(workout.state)
     workout.refresh()
-    vi.advanceTimersByTime(1001); workout.onCurrentSetAction()
+    vi.advanceTimersByTime(1001); await workout.onCurrentSetAction()
     expect(workout.restExerciseName).toBe('Squat')
     expect(workout.nextLabel).toBe('下一动作 · Row')
     expect(workout.nextDetails).toBe('第 1 / 1 组 · 30kg × 10次')
   })
 
-  it('updates local wall time across midnight even while elapsed time is paused', () => {
-    const { workout } = resting()
+  it('updates local wall time across midnight even while elapsed time is paused', async () => {
+    const { workout, sessions } = resting()
     vi.setSystemTime(new Date(2026, 9, 20, 23, 59, 30))
     workout.state.startedAt = Date.now() - 60000
     workout.state.segmentStartedAt = workout.state.startedAt
     workout.state.restUntil = 0
+    sessions.save(workout.state)
     workout.refresh()
     expect(workout.clockLabel).toBe('23:59')
     expect(workout.elapsedLabel).toBe('1:00')
-    workout.onPause()
+    await workout.onPause()
     vi.advanceTimersByTime(60000)
     expect(workout.clockLabel).toBe('00:00')
     expect(workout.elapsedLabel).toBe('1:00')
   })
 
-  it('keeps rest on one page while allowing the exercise list and crown time adjustment', () => {
+  it('keeps rest on one page while allowing the exercise list and crown time adjustment', async () => {
     const { workout } = resting()
     workout.openExercises = vi.fn()
     for (const [dx, dy] of [[0, -100], [0, 100], [-100, 0]]) {
@@ -281,38 +304,39 @@ describe('watch completed sets and rest clock', () => {
     workout.touchEnd({ changedTouches: [{ clientX: 280, clientY: 180 }] })
     expect(workout.openExercises).toHaveBeenCalledOnce()
     const before = workout.state.restUntil
-    workout.onRotation({ delta: 1, state: 2 })
+    await workout.onRotation({ delta: 1, state: 2 })
     expect(workout.state.restUntil).toBe(before + 5000)
   })
 
-  it('does not route crown events to hidden, operation or paused training pages', () => {
+  it('does not route crown events to hidden, operation or paused training pages', async () => {
     const { workout } = resting()
-    vi.advanceTimersByTime(1001); workout.onSkipRest(); vi.advanceTimersByTime(1001)
+    vi.advanceTimersByTime(1001); await workout.onSkipRest(); vi.advanceTimersByTime(1001)
     workout.onHide()
-    workout.onRotation({ delta: 1, state: 2 })
+    await workout.onRotation({ delta: 1, state: 2 })
     expect(workout.state.setIdx).toBe(0)
     workout.onShow()
     workout.openActions()
-    workout.onRotation({ delta: 1, state: 2 })
+    await workout.onRotation({ delta: 1, state: 2 })
     expect(workout.state.setIdx).toBe(0)
     workout.pageIndex = 0
-    workout.onPause()
-    workout.onRotation({ delta: 1, state: 2 })
+    await workout.onPause()
+    await workout.onRotation({ delta: 1, state: 2 })
     expect(workout.state.setIdx).toBe(0)
   })
 
-  it.each(['saved', 'abandoned'])('closes from the action list once with %s semantics', disposition => {
+  it.each(['saved', 'abandoned'])('closes from the action list once with %s semantics', async disposition => {
     const { workout, sessions } = resting()
-    vi.advanceTimersByTime(1001); workout.onSkipRest(); vi.advanceTimersByTime(1001)
-    workout.onCurrentSetAction()
+    vi.advanceTimersByTime(1001); await workout.onSkipRest(); vi.advanceTimersByTime(1001)
+    await workout.onCurrentSetAction()
     workout.onHide()
     const sendEvent = vi.fn(), router = { replace: vi.fn() }
     const list = page('ExerciseList/index.ux', { ...sessions, sendEvent, router })
     list.onInit()
+    const closing = list.closeWorkout(disposition)
     list.closeWorkout(disposition)
-    list.closeWorkout(disposition)
+    await closing
     expect(sessions.loadState().active).toBe(false)
-    expect(sendEvent).toHaveBeenCalledOnce()
+    expect(sendEvent.mock.calls.filter(([m]) => m.t === 'session_close')).toHaveLength(1)
     expect(sendEvent.mock.calls[0][0]).toMatchObject({ t: 'session_close', sid: plan.sid, disposition })
     if (disposition === 'saved') {
       expect(sendEvent.mock.calls[0][0].completedSets).toHaveLength(1)
@@ -325,36 +349,36 @@ describe('watch completed sets and rest clock', () => {
     }
   })
 
-  it('keeps an in-progress crown edit across a phone snapshot and rest echo', () => {
+  it('keeps an in-progress crown edit across a phone snapshot and rest echo', async () => {
     const { workout, sessions, sendEvent: sendControl } = resting()
-    workout.onRotation({ delta: 1, state: 2 })
+    await workout.onRotation({ delta: 1, state: 2 })
     workout.onSyncUpdate({ ...plan, restUntil: Date.now() + 60000 })
     workout.onRemoteRest({ sid: plan.sid, leftSec: 60, seq: 1 })
     expect(workout.restLabel).toBe('1:05')
-    vi.advanceTimersByTime(300)
+    await vi.advanceTimersByTimeAsync(300)
     expect(sessions.loadState().restUntil).toBe(workout.state.restUntil)
     expect(sendControl.mock.calls[0][0].leftSec).toBe(65)
   })
 
-  it('sends zero when crown adjustment ends the rest and does not resurrect it', () => {
+  it('sends zero when crown adjustment ends the rest and does not resurrect it', async () => {
     const { workout, sendEvent: sendControl, brightness } = resting()
-    for (let i = 0; i < 12; i++) workout.onRotation({ delta: -1, state: 2 })
+    for (let i = 0; i < 12; i++) await workout.onRotation({ delta: -1, state: 2 })
     expect(workout.state.restUntil).toBe(0)
-    vi.advanceTimersByTime(300)
+    await vi.advanceTimersByTimeAsync(300)
     expect(sendControl).toHaveBeenCalledOnce()
     expect(sendControl.mock.calls[0][0]).toMatchObject({ t: 'rest', leftSec: 0 })
     expect(brightness.setKeepScreenOn).toHaveBeenLastCalledWith(expect.objectContaining({ keepScreenOn: false }))
   })
 
-  it('clamps long crown rotations to the phone maximum of fifteen minutes', () => {
+  it('clamps long crown rotations to the phone maximum of fifteen minutes', async () => {
     const { workout, sendEvent: sendControl } = resting()
-    for (let i = 0; i < 500; i++) workout.onRotation({ delta: 1, state: 2 })
+    for (let i = 0; i < 500; i++) await workout.onRotation({ delta: 1, state: 2 })
     expect(workout.restLabel).toBe('15:00')
-    vi.advanceTimersByTime(300)
+    await vi.advanceTimersByTimeAsync(300)
     expect(sendControl.mock.calls[0][0].leftSec).toBe(900)
   })
 
-  it('waits until the display API is ready before acquiring the screen lock', () => {
+  it('waits until the display API is ready before acquiring the screen lock', async () => {
     const sessions = session(), brightness = { setKeepScreenOn: vi.fn() }
     const state = sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
     state.restUntil = Date.now() + 10000
@@ -366,17 +390,17 @@ describe('watch completed sets and rest clock', () => {
     expect(brightness.setKeepScreenOn).toHaveBeenCalledWith(expect.objectContaining({ keepScreenOn: true }))
   })
 
-  it('cancels a queued crown change when skipping and starting a different rest', () => {
+  it('cancels a queued crown change when skipping and starting a different rest', async () => {
     const { workout, sendEvent: sendControl } = resting()
-    workout.onRotation({ delta: 1, state: 2 })
-    workout.onSkipRest()
+    await workout.onRotation({ delta: 1, state: 2 })
+    await workout.onSkipRest()
     workout.onRemoteRest({ sid: plan.sid, leftSec: 20, seq: Date.now() + 1 })
     vi.advanceTimersByTime(1000)
     expect(sendControl.mock.calls.map(([m]) => m.leftSec)).toEqual([0])
     expect(workout.restLabel).toBe('0:19')
   })
 
-  it('reconciles elapsed sleep by deadline and releases the screen on natural expiration', () => {
+  it('reconciles elapsed sleep by deadline and releases the screen on natural expiration', async () => {
     const { workout, brightness, restOver } = resting()
     vi.setSystemTime(Date.now() + 17250)
     workout.onShow()
@@ -391,22 +415,22 @@ describe('watch completed sets and rest clock', () => {
     expect(restOver).toHaveBeenCalledOnce()
   })
 
-  it('flushes crown edits on hide and restores the rest screen lock on show', () => {
+  it('flushes crown edits on hide and restores the rest screen lock on show', async () => {
     const { workout, sendEvent: sendControl, brightness } = resting()
-    workout.onRotation({ delta: 1, state: 2 })
-    workout.onHide()
+    await workout.onRotation({ delta: 1, state: 2 })
+    await workout.onHide()
     expect(sendControl).toHaveBeenCalledOnce()
     expect(brightness.setKeepScreenOn).toHaveBeenLastCalledWith(expect.objectContaining({ keepScreenOn: false }))
     workout.onShow()
     expect(workout.restLabel).toBe('1:05')
     expect(brightness.setKeepScreenOn).toHaveBeenLastCalledWith(expect.objectContaining({ keepScreenOn: true }))
-    vi.advanceTimersByTime(300)
+    await vi.advanceTimersByTimeAsync(300)
     expect(sendControl).toHaveBeenCalledOnce()
   })
 
-  it('acquires/relinquishes the screen lock for authoritative rest snapshots', () => {
+  it('acquires/relinquishes the screen lock for authoritative rest snapshots', async () => {
     const { workout, brightness } = resting()
-    vi.advanceTimersByTime(1001); workout.onSkipRest(); vi.advanceTimersByTime(1001)
+    vi.advanceTimersByTime(1001); await workout.onSkipRest(); vi.advanceTimersByTime(1001)
     workout.onSyncUpdate({ ...plan, rest: { leftSec: 10, totalSec: 10, seq: Date.now() + 1 } })
     expect(brightness.setKeepScreenOn).toHaveBeenLastCalledWith(expect.objectContaining({ keepScreenOn: true }))
     vi.advanceTimersByTime(10000)
@@ -414,10 +438,10 @@ describe('watch completed sets and rest clock', () => {
     expect(brightness.setKeepScreenOn).toHaveBeenLastCalledWith(expect.objectContaining({ keepScreenOn: false }))
   })
 
-  it('drops delayed crown work when a session ends', () => {
+  it('drops delayed crown work when a session ends', async () => {
     const { workout, sendControl, sessions, brightness } = resting()
-    workout.onRotation({ delta: 1, state: 2 })
-    workout.onEnd()
+    await workout.onRotation({ delta: 1, state: 2 })
+    await workout.onEnd()
     vi.advanceTimersByTime(1000)
     expect(sendControl).not.toHaveBeenCalled()
     expect(sessions.loadState().active).toBe(false)
@@ -433,7 +457,7 @@ describe('watch direct workout entry', () => {
     return { index, router }
   }
 
-  it('opens an already active session on launch without a continue tap', () => {
+  it('opens an already active session on launch without a continue tap', async () => {
     const sessions = session()
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
     const { index, router } = home(sessions)
@@ -442,7 +466,7 @@ describe('watch direct workout entry', () => {
     expect(router.replace).toHaveBeenCalledExactlyOnceWith({ uri: '/Workout' })
   })
 
-  it('navigates once when native ready fires before show', () => {
+  it('navigates once when native ready fires before show', async () => {
     const sessions = session()
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
     const { index, router } = home(sessions)
@@ -451,7 +475,7 @@ describe('watch direct workout entry', () => {
     expect(router.replace).toHaveBeenCalledOnce()
   })
 
-  it('persists a phone plan and opens it once when the page is ready', () => {
+  it('persists a phone plan and opens it once when the page is ready', async () => {
     const sessions = session(), { index, router } = home(sessions)
     index.onPlan(plan)
     expect(sessions.loadState()).toMatchObject({ active: true, sid: plan.sid })
@@ -462,7 +486,7 @@ describe('watch direct workout entry', () => {
     expect(router.replace).toHaveBeenCalledOnce()
   })
 
-  it('opens a sync-only phone session without resetting its rows', () => {
+  it('opens a sync-only phone session without resetting its rows', async () => {
     const sessions = session(), { index, router } = home(sessions)
     index.onReady()
     index.onSync({ ...plan, t: 'sync', rows: [[{ w: '75', r: '6', done: true }]] })
@@ -470,7 +494,7 @@ describe('watch direct workout entry', () => {
     expect(sessions.loadState().workout.rows[0][0].done).toBe(true)
   })
 
-  it('preserves conflict confirmation and rejects a different active session', () => {
+  it('preserves conflict confirmation and rejects a different active session', async () => {
     const sessions = session()
     sessions.startSession({ sid: 'local', exercises: plan.exercises })
     const { index, router } = home(sessions, { conflict: JSON.stringify(plan) })
@@ -481,7 +505,7 @@ describe('watch direct workout entry', () => {
     expect(router.replace).not.toHaveBeenCalled()
   })
 
-  it('keeps cached plans idle and does not navigate a hidden home page', () => {
+  it('keeps cached plans idle and does not navigate a hidden home page', async () => {
     const sessions = session(), { index, router } = home(sessions)
     index.onReady()
     index.onCatalog({ plans: [{ id: 'p', name: 'Plan', exercises: plan.exercises }] })
@@ -493,17 +517,17 @@ describe('watch direct workout entry', () => {
 })
 
 describe('watch business message boundary', () => {
-  it('selects an explicit action-list row using the documented bound item parameter', () => {
+  it('selects an explicit action-list row using the documented bound item parameter', async () => {
     const sessions = session(), back = vi.fn()
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
     const list = page('ExerciseList/index.ux', { ...sessions, sendEvent() {}, router: { back } })
     list.onInit(); list.toggleEx(0)
     expect(list.expanded).toBe(0)
-    list.pickRow({ exIdx: 0, setIdx: 2 })
+    await list.pickRow({ exIdx: 0, setIdx: 2 })
     expect(sessions.loadState().setIdx).toBe(2)
     expect(back).toHaveBeenCalledOnce()
   })
-  it('opens the action-list end panel with the second right swipe and exposes explicit end actions', () => {
+  it('opens the action-list end panel with the second right swipe and exposes explicit end actions', async () => {
     const sessions = session(), sendEvent = vi.fn(), replace = vi.fn(), back = vi.fn()
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
     const list = page('ExerciseList/index.ux', { ...sessions, sendEvent, router: { back, replace } })
@@ -547,7 +571,7 @@ describe('watch business message boundary', () => {
     expect(replace).not.toHaveBeenCalled()
   })
 
-  it('keeps the end panel through a long swipe and accepts a later deliberate return', () => {
+  it('keeps the end panel through a long swipe and accepts a later deliberate return', async () => {
     const sessions = session(), back = vi.fn()
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
     let now = Date.now()
@@ -574,7 +598,7 @@ describe('watch business message boundary', () => {
     expect(list.endOn).toBe(false)
   })
 
-  it('crosses the action boundary with crown or button navigation and syncs the phone focus', () => {
+  it('crosses the action boundary with crown or button navigation and syncs the phone focus', async () => {
     const sessions = session(), sendEvent = vi.fn()
     const state = sessions.startSession({ name: 'two', sid: 'two', exercises: [
       { name: 'Squat', sets: 1, reps: '8', weight: '60' },
@@ -582,17 +606,17 @@ describe('watch business message boundary', () => {
     ] })
     const workout = training(sessions, { startServer() {}, sendEvent, pendingCount: () => 0, isConnected: () => true })
     workout.onInit()
-    workout.stepSet(1)
+    await workout.stepSet(1)
     expect(workout.state.exIdx).toBe(1)
     expect(workout.state.setIdx).toBe(0)
     expect(sendEvent.mock.calls.at(-1)[0]).toMatchObject({ t: 'focus', ex: 1, set: 1 })
-    workout.stepSet(-1)
+    await workout.stepSet(-1)
     expect(workout.state.exIdx).toBe(0)
     expect(workout.state.setIdx).toBe(0)
     expect(sendEvent.mock.calls.at(-1)[0]).toMatchObject({ t: 'focus', ex: 0, set: 1 })
   })
 
-  it('keeps the main training surface focused and moves metrics to operations', () => {
+  it('keeps the main training surface focused and moves metrics to operations', async () => {
     const ux = source('Workout/index.ux')
     // The compact main page keeps the two big fields label-free; the operation page is the
     // one that spells the prescription out (weight/reps labels live there).
@@ -636,20 +660,22 @@ describe('watch business message boundary', () => {
     workout.hrDirty = true
     c.onMessage({ data: { t: 'ended', sid: plan.sid, endedAt: Date.now() - 300000, reason: 'finished' } })
     // The close is committed through the durable journal before the session is cleared.
-    await new Promise(r => setTimeout(r, 0))
+    await new Promise(r => setTimeout(r, 300))
     expect(sessions.loadState().active).toBe(false)
     expect(replace).toHaveBeenCalledWith({ uri: '/Index' })
     const summary = c.sent.find(m => m.t === 'summary')
     expect(summary.minutes).toBeCloseTo(5, 1)
     expect(summary.calories).toBeGreaterThan(0)
     c.onMessage({ data: plan })
+    await new Promise(r => setTimeout(r, 300))
     expect(c.sent.at(-1)).toMatchObject({ t: 'plan_ack', status: 'closed' })
     expect(sessions.loadState().active).toBe(false)
     c.onClose(); c.onOpen()
+    await new Promise(r => setTimeout(r, 300))
     expect(c.sent.filter(m => m.t === 'summary')).toHaveLength(2)
   })
 
-  it('leaves another session active when an old end arrives', () => {
+  it('leaves another session active when an old end arrives', async () => {
     const sessions = session(), c = connection(), rpc = transport(c, sessions)
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
     rpc.startServer({ onEnded: vi.fn() })
@@ -658,7 +684,7 @@ describe('watch business message boundary', () => {
     expect(c.sent.some(m => m.t === 'summary')).toBe(false)
   })
 
-  it('intercepts system back and gives the crown selected-field editing and rest adjustment', () => {
+  it('intercepts system back and gives the crown selected-field editing and rest adjustment', async () => {
     const sessions = session(), rpc = transport(connection())
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
     const requestFocus = vi.fn(), workout = training(sessions, rpc, { $element: () => ({ requestFocus }) })
@@ -668,21 +694,21 @@ describe('watch business message boundary', () => {
     expect(JSON.parse(source('manifest.json')).router.pages.Workout.followHand).toBe('disable')
     expect(workout.onBackPress()).toBe(true)
     expect(workout.menuOn).toBe(false)
-    workout.onRotation({ delta: 1, state: 1 })
+    await workout.onRotation({ delta: 1, state: 1 })
     expect(workout.state.setIdx).toBe(0) // no selected field: crown is inert
-    workout.editReps(); workout.onRotation({ delta: 1, state: 1 })
+    workout.editReps(); await workout.onRotation({ delta: 1, state: 1 })
     expect(workout.state.workout.rows[0][0].r).toBe('9')
     workout.state.restUntil = Date.now() + 30000
     workout.refresh()
     const before = workout.state.restUntil
-    workout.onRotation({ delta: 1, state: 2 })
+    await workout.onRotation({ delta: 1, state: 2 })
     expect(workout.state.restUntil).toBeGreaterThanOrEqual(before + 4000)
     const after = workout.state.restUntil
-    workout.onRotation({ delta: 1, state: 3 })
+    await workout.onRotation({ delta: 1, state: 3 })
     expect(workout.state.restUntil).toBe(after)
   })
 
-  it('lets the crown fine tune keypad values without typing', () => {
+  it('lets the crown fine tune keypad values without typing', async () => {
     const sessions = session()
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
     const keypad = page('Keypad/index.ux', { ...sessions, router: { back() {} } })
@@ -709,7 +735,7 @@ describe('watch business message boundary', () => {
       expect(source('Workout/index.ux')).toContain('ontouchcancel="touchCancel"')
     })
 
-  it('locks a diagonal gesture to the first deliberate swipe axis', () => {
+  it('locks a diagonal gesture to the first deliberate swipe axis', async () => {
     const sessions = session(), rpc = transport(connection()), router = { push: vi.fn() }
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
     const workout = training(sessions, rpc, { router })
@@ -721,7 +747,7 @@ describe('watch business message boundary', () => {
     expect(workout.pageIndex).toBe(0)
   })
 
-  it('ignores taps and canceled gestures and keeps changedTouches compatibility', () => {
+  it('ignores taps and canceled gestures and keeps changedTouches compatibility', async () => {
     const sessions = session(), rpc = transport(connection())
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
     const workout = training(sessions, rpc)
@@ -740,7 +766,7 @@ describe('watch business message boundary', () => {
     expect(workout.pageIndex).toBe(1)
   })
 
-  it('opens on the first set and preserves the cursor across repeated plan deliveries', () => {
+  it('opens on the first set and preserves the cursor across repeated plan deliveries', async () => {
     const sessions = session(), c = connection(), rpc = transport(c, sessions)
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
     const workout = training(sessions, rpc)
@@ -749,7 +775,7 @@ describe('watch business message boundary', () => {
     c.onMessage({ data: plan })
     c.onMessage({ data: plan })
     expect(workout.groupLabel).toBe('第 1 / 3 组')
-    workout.onComplete()
+    await workout.onComplete()
     expect(workout.groupLabel).toBe('第 2 / 3 组')
     c.onMessage({ data: plan })
     expect(workout.groupLabel).toBe('第 2 / 3 组')
@@ -775,7 +801,7 @@ describe('watch business message boundary', () => {
       expect(field === 'w' ? workout.weightVal : workout.repsVal).toBe(value + (field === 'w' ? ' kg' : ' 次'))
     })
 
-  it('keeps the shown value when Keypad is confirmed without typing', () => {
+  it('keeps the shown value when Keypad is confirmed without typing', async () => {
     const sessions = session()
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
     const keypad = page('Keypad/index.ux', { ...sessions, sendControl() {}, router: { back() {} } })
@@ -784,7 +810,7 @@ describe('watch business message boundary', () => {
     expect(sessions.loadState().workout.rows[0][0].w).toBe('60')
   })
 
-  it('keeps a saved Keypad edit across a phone snapshot arriving before the page returns', () => {
+  it('keeps a saved Keypad edit across a phone snapshot arriving before the page returns', async () => {
     const sessions = session(), c = connection(), rpc = transport(c, sessions)
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
     const workout = training(sessions, rpc)
@@ -808,18 +834,21 @@ describe('watch business message boundary', () => {
     expect(workout.weightVal).toBe('85 kg')
   })
 
-  it('retries unacknowledged edits after reconnecting instead of leaving them permanently sent', () => {
+  it('retries unacknowledged edits after reconnecting instead of leaving them permanently sent', async () => {
     const c = connection(), rpc = transport(c)
     rpc.startServer({})
     rpc.sendEvent({ t: 'weight', sid: plan.sid, ex: 0, set: 1, weight: '80', at: 100 })
     c.onClose(); c.onOpen()
+    await new Promise(r => setTimeout(r, 300))
     expect(c.sent.filter(m => m.t === 'weight')).toHaveLength(2)
-    c.onMessage({ data: { t: 'ack', upto: 100 } })
+    c.onMessage({ data: { t: 'ack', eventId: c.sent.find(m => m.t === 'weight').eventId, upto: 100 } })
+    await new Promise(r => setTimeout(r, 0))
     c.onClose(); c.onOpen()
+    await new Promise(r => setTimeout(r, 300))
     expect(c.sent.filter(m => m.t === 'weight')).toHaveLength(2)
   })
 
-  it('converges to the phone set count when a refreshed plan precedes a repeated group change', () => {
+  it('converges to the phone set count when a refreshed plan precedes a repeated group change', async () => {
     const sessions = session(), c = connection(), rpc = transport(c, sessions)
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
     const workout = training(sessions, rpc)
@@ -833,7 +862,7 @@ describe('watch business message boundary', () => {
     expect(sessions.loadState().workout.rows[0]).toHaveLength(3)
   })
 
-  it('applies phone completion once and advances the matching current set', () => {
+  it('applies phone completion once and advances the matching current set', async () => {
     const sessions = session(), c = connection(), rpc = transport(c, sessions)
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
     const workout = training(sessions, rpc)
@@ -845,7 +874,7 @@ describe('watch business message boundary', () => {
     expect(workout.groupLabel).toBe('第 2 / 3 组')
   })
 
-  it('advances past a phone-completed set from another exercise', () => {
+  it('advances past a phone-completed set from another exercise', async () => {
     const sessions = session(), c = connection(), rpc = transport(c, sessions)
     const exercises = Array.from({ length: 4 }, (_, i) => ({ name: 'Exercise ' + i, sets: 4, reps: '8', weight: '60' }))
     const state = sessions.startSession({ name: 'Four exercises', sid: 'four', exercises })
@@ -861,7 +890,7 @@ describe('watch business message boundary', () => {
     expect(workout.state.exIdx).toBe(1)
     expect(workout.state.setIdx).toBe(1)
     expect(workout.state.workout.rows[0][3].done).toBe(true)
-    workout.onCurrentSetAction()
+    await workout.onCurrentSetAction()
     expect(workout.state.workout.rows[0][3].done).toBe(true)
   })
 
@@ -886,7 +915,7 @@ describe('watch business message boundary', () => {
       expect(c.sent.find(m => m.t === 'hello')).toMatchObject({ watchVersion: 'test-watch', receipts: true })
     })
 
-  it('reports invalid envelopes and handler failures instead of claiming delivery', () => {
+  it('reports invalid envelopes and handler failures instead of claiming delivery', async () => {
     const c = connection()
     transport(c).startServer({ onPlan() { throw new Error('render failed') } })
     c.onMessage({ data: '{bad json' })
@@ -897,7 +926,7 @@ describe('watch business message boundary', () => {
     })
   })
 
-  it('reports bounded inner structure and a stable failure reason without workout contents', () => {
+  it('reports bounded inner structure and a stable failure reason without workout contents', async () => {
     const c = connection(), onPlan = vi.fn()
     transport(c).startServer({ onPlan })
     c.onMessage({ data: JSON.stringify({ unexpected: { secret: 'private workout' } }) })
@@ -917,7 +946,7 @@ describe('watch business message boundary', () => {
     expect(onPlan).not.toHaveBeenCalled()
   })
 
-  it('keeps business data fields and file events intact and never unwraps an invalid type', () => {
+  it('keeps business data fields and file events intact and never unwraps an invalid type', async () => {
     const c = connection(), onPlan = vi.fn(), onFile = vi.fn()
     transport(c).startServer({ onPlan, onFile })
     const business = { ...plan, data: { note: 'keep me' } }
@@ -931,14 +960,14 @@ describe('watch business message boundary', () => {
     expect(onPlan).not.toHaveBeenCalled()
   })
 
-  it('does not claim applied when no page handler can process the plan', () => {
+  it('does not claim applied when no page handler can process the plan', async () => {
     const c = connection()
     transport(c).startServer({})
     c.onMessage({ data: plan })
     expect(c.sent.find(m => m.t === 'plan_ack')).toMatchObject({ status: 'no_handler' })
   })
 
-  it('updates subscribers across page modules sharing the App runtime and SDK instance', () => {
+  it('updates subscribers across page modules sharing the App runtime and SDK instance', async () => {
     const c = connection(), shared = {}
     const indexRpc = transport(c, {}, shared), workoutRpc = transport(c, {}, shared)
     const home = vi.fn(() => ({ status: 'applied' }))
@@ -951,7 +980,7 @@ describe('watch business message boundary', () => {
     expect(workout).not.toHaveBeenCalled()
   })
 
-  it('refreshes Index handlers when the page becomes visible again', () => {
+  it('refreshes Index handlers when the page becomes visible again', async () => {
     const startServer = vi.fn()
     const home = page('Index/index.ux', { startServer, storage: { getSync: () => [] }, loadState: () => ({}),
       router: {}, startSession() {} })
@@ -961,18 +990,19 @@ describe('watch business message boundary', () => {
     expect(startServer).toHaveBeenCalledOnce()
   })
 
-  it('distinguishes an existing resumable session and an empty plan from an applied plan', () => {
+  it('distinguishes an existing resumable session and an empty plan from an applied plan', async () => {
     const c = connection(), rpc = transport(c)
     const home = page('Index/index.ux', { startServer: rpc.startServer,
       loadState: () => ({ active: true, sid: 'today', workout: { name: 'Saved', exercises: plan.exercises } }) })
     home.onInit()
     c.onMessage({ data: plan })
+    await new Promise(r => setTimeout(r, 300))
     expect(c.sent.at(-1)).toMatchObject({ t: 'plan_ack', status: 'retained', page: 'Index' })
     c.onMessage({ data: { ...plan, sid: 'new', exercises: [] } })
     expect(c.sent.at(-1)).toMatchObject({ status: 'rejected', reason: 'empty_exercises' })
   })
 
-  it('applies plan and authoritative rows on Workout and reports a different-session rejection', () => {
+  it('applies plan and authoritative rows on Workout and reports a different-session rejection', async () => {
     const sessions = session()
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises }, null)
     const c = connection(), rpc = transport(c, { loadState: sessions.loadState })
@@ -998,7 +1028,7 @@ describe('watch business message boundary', () => {
     expect(sessions.loadState().workout.rows[0][0].w).toBe('75')
   })
 
-  it('reports the same watch version that is declared in the installable manifest', () => {
+  it('reports the same watch version that is declared in the installable manifest', async () => {
     const manifest = JSON.parse(source('manifest.json'))
     const context = {}
     runInNewContext(source('lib/version.js').replace('export const WATCH_VERSION', 'this.WATCH_VERSION'), context)
@@ -1018,7 +1048,7 @@ describe('watch local diagnostic viewer', () => {
   }
   const event = (stage, extra = {}) => ({ at: Date.parse('2026-10-27T10:10:00Z'), stage, type: 'set', ...extra })
 
-  it('shows a fixed newest-first snapshot, error code, UTC time and wrapping pages', () => {
+  it('shows a fixed newest-first snapshot, error code, UTC time and wrapping pages', async () => {
     const { watch, deps, snapshot } = viewer([event('send_attempt'), event('send_success'), event('send_fail', { code: '77', detail: 'offline' })])
     watch.showDiagnostics()
     expect(watch.diagnosticOn).toBe(true)
@@ -1038,7 +1068,7 @@ describe('watch local diagnostic viewer', () => {
     expect(deps.save).not.toHaveBeenCalled()
   })
 
-  it('handles an empty snapshot and closes with the back key', () => {
+  it('handles an empty snapshot and closes with the back key', async () => {
     const { watch, deps } = viewer()
     watch.showDiagnostics()
     expect(watch.diagnosticTitle).toContain('1/1')
@@ -1049,7 +1079,7 @@ describe('watch local diagnostic viewer', () => {
     expect(deps.save).not.toHaveBeenCalled()
   })
 
-  it('blocks crown and swipe workout actions while viewing diagnostics', () => {
+  it('blocks crown and swipe workout actions while viewing diagnostics', async () => {
     const { watch, deps } = viewer()
     watch.showDiagnostics()
     watch.touch = { x: 100, y: 100 }

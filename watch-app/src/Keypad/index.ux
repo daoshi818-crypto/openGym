@@ -3,7 +3,7 @@ import { bindRuntime } from '../lib/runtime.js'
 // 计算器输入页：改重量/次数。路由参数直接使用 exIdx、setIdx、field。
 import router from '@blueos.app.appmanager.router'
 import storage from '@blueos.storage.storage'
-import { loadState, setRowValue } from '../lib/session.js'
+import { loadState, setRowValue, commitSessionAction } from '../lib/session.js'
 import { rotationStep, valueStep } from '../lib/value-step.js'
 import { rowTarget } from '../lib/workout-interaction.js'
 
@@ -99,7 +99,7 @@ export default {
   useKeyboard() { this.inputMode = 'keypad' },
   useQuick() { this.inputMode = 'quick' },
 
-  commit() {
+  async commit() {
     if (!this.changed) { router.back(); return }
     const v = this.buffer === '' ? '' : String(parseFloat(this.buffer) || 0)
     // 编辑期间手机仍可能更新其他行，提交时只改最新会话里的目标字段。
@@ -109,9 +109,20 @@ export default {
     const set = this.setId ? s.workout.rows[ex]?.findIndex(r => r.setId === this.setId) : this.setIdx
     const row = s.workout.rows[ex] && s.workout.rows[ex][set]
     if (!(ex >= 0) || !(set >= 0) || !row || row.done || s.pausedAt || s.restUntil) { this.notice = '目标已变化，未保存'; return }
-    const value = this.field === 'w' && this.editUnit !== (s.weightUnit || 'kg') && v !== '' ? Math.round(Number(v) * (this.editUnit === 'lb' ? 0.45359237 : 1 / 0.45359237) * 1000) / 1000 : v
-    setRowValue(s, ex, set, this.field, value, true)
+    if (this.saving) return
+    this.saving = true
+    try {
+    const result = await commitSessionAction(s.sid, latest => {
+      const ix = this.entryInstanceId ? latest.workout.exercises.findIndex(e => e.entryInstanceId === this.entryInstanceId) : ex
+      const iy = this.setId ? latest.workout.rows[ix]?.findIndex(r => r.setId === this.setId) : set
+      const target = latest.workout.rows[ix]?.[iy]
+      if (!target || target.done || latest.pausedAt || latest.restUntil) throw new Error('target_changed')
+      const value = this.field === 'w' && this.editUnit !== (latest.weightUnit || 'kg') && v !== '' ? Math.round(Number(v) * (this.editUnit === 'lb' ? 0.45359237 : 1 / 0.45359237) * 1000) / 1000 : v
+      setRowValue(latest, ix, iy, this.field, value, true)
+    })
+    if (!result.ok) { this.notice = '存储失败，未保存，请重试'; return }
     router.back()
+    } catch { this.notice = '存储失败，未保存，请重试' } finally { this.saving = false }
   },
 }
 </script>

@@ -31,7 +31,7 @@ export function splitWire(message, transferId) {
     hash: wireHash(text), data }))
 }
 export function acceptWireChunk(pending, msg, now) {
-  for (const id of Object.keys(pending)) if (now - pending[id].at > 30000) delete pending[id]
+  for (const id of Object.keys(pending)) if (now - pending[id].at > 180000) delete pending[id]
   if (typeof msg.transferId !== 'string' || msg.transferId.length > 128 || !Number.isInteger(msg.count) || msg.count < 1 || msg.count > 132 ||
       !Number.isInteger(msg.index) || msg.index < 0 || msg.index >= msg.count || typeof msg.data !== 'string' || msg.data.length > 1000) throw new Error('invalid_chunk')
   let transfer = pending[msg.transferId]

@@ -1,11 +1,19 @@
 import { createWatchLifecycle } from './watch-session.js'
 import { watchSnapshotOf } from './watch-workout.js'
+import { dependencyDecision } from '../../../watch-app/src/lib/event-dependencies.js'
 import { watchConflict } from './watch-revision.js'
 import { watchSidOf } from './session-resume.js'
 
 const TYPES = new Set(['hello', 'watch_start', 'session_close', 'session_close_ack', 'pause', 'rest',
   'effort', 'weight', 'reps', 'set', 'unset', 'add_set', 'remove_set', 'focus', 'end', 'summary'])
 const copy = value => JSON.parse(JSON.stringify(value))
+const decisionOf = record => {
+  if (record.decision) return record.decision
+  const committed = record.replies?.find(r => r.msg?.t === 'committed')?.msg
+  if (committed) return committed
+  const ack = record.replies?.find(r => r.kind === 'ack' && r.eventId)
+  return ack ? { eventId: ack.eventId, sid: record.sid, status: 'applied' } : null
+}
 const keyOf = ev => JSON.stringify([ev.sid || '', ev.eventId || ev._inboxId || [ev.t, ev.ex, ev.set, ev.at]])
 
 // The bridge claims synchronously. Business work, durable checkpoint and replies run serially.
@@ -34,8 +42,17 @@ export function createDurableWatchLifecycle(deps) {
                 sendEnded: msg => replies.push({ kind: 'ended', msg: copy(msg) }),
                 sendSync: () => replies.push({ kind: 'sync' }),
               }
-              const conflict = watchConflict(deps.getState(), ev)
-              if (conflict) {
+              const decisions = Object.entries(deps.getState().watchCommits || {}).map(([key, record]) => {
+                // Old versions stored only replies; sid is part of the persisted exact key.
+                let sid
+                try { sid = JSON.parse(key)[0] } catch { /* malformed records cannot prove a parent */ }
+                return decisionOf({ ...record, sid })
+              })
+              const dependency = dependencyDecision(ev, id => decisions.find(d => d?.eventId === id))
+              const conflict = dependency.status === 'ready' ? watchConflict(deps.getState(), ev) : null
+              if (dependency.status !== 'ready') {
+                replies.push({ kind: 'send', msg: { t: 'event_rejected', eventId: ev.eventId, reason: dependency.reason, parent: dependency.parent } })
+              } else if (conflict) {
                 replies.push({ kind: 'send', msg: { t: 'event_rejected', eventId: ev.eventId, reason: 'concurrent_edit', detail: copy(conflict) } }, { kind: 'sync' })
               } else createWatchLifecycle(staged)(ev)
               if (ev.protocolVersion >= 3 && ev.eventId) {
@@ -73,7 +90,7 @@ export function createDurableWatchLifecycle(deps) {
                 // Hello must always reconcile fresh state, rather than replaying an old answer.
                 if (ev.t !== 'hello') {
                   s.watchCommits ||= {}
-                  s.watchCommits[key] = { replies, rev: s.watchCommitRev }
+                  s.watchCommits[key] = { replies, decision: replies.find(r => r.msg?.t === 'committed')?.msg || (ev.eventId ? { eventId: ev.eventId, sid: ev.sid, status: replies.some(r => r.kind === 'ack') ? 'applied' : replies.some(r => r.msg?.status === 'conflict') ? 'conflict' : 'rejected' } : null), rev: s.watchCommitRev }
                   const keys = Object.keys(s.watchCommits)
                   for (const old of keys.slice(0, Math.max(0, keys.length - 4000))) delete s.watchCommits[old]
                 }
@@ -105,7 +122,7 @@ export function createDurableWatchLifecycle(deps) {
             try {
               if (reply.kind === 'sync') {
                 const snapshot = watchSnapshotOf(deps.getState(), deps.getTimer())
-                if (snapshot) await deps.sendSync(snapshot)
+                if (snapshot) Promise.resolve(deps.sendSync(snapshot)).catch(() => {})
               } else if (reply.kind === 'ack') await deps.sendAck(reply.at, reply.eventId)
               else if (reply.kind === 'ended') await deps.sendEnded(reply.msg)
               else await deps.send(reply.msg)

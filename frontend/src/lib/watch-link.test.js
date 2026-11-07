@@ -9,6 +9,7 @@ const native = vi.hoisted(() => ({
   getVersion: vi.fn(),
   sendPlan: vi.fn(), sendEvent: vi.fn(), openWatchApp: vi.fn(),
   drainInbox: vi.fn(), completeInbox: vi.fn(),
+  loadSyncTransfer: vi.fn(), saveSyncTransfer: vi.fn(),
 }))
 vi.mock('./mobile.js', () => ({ MOBILE: true, isAndroid: async () => true }))
 vi.mock('@capacitor/core', () => ({ registerPlugin: () => native }))
@@ -197,13 +198,13 @@ describe('watch connection state', () => {
     await link.connectWatch()
     native.events.watchEvent({ t: 'hello', protocolVersion: 3, capabilities: { durableCommit: true, snapshotChunks: true } })
     await link.pushSyncToWatch({ sid: 's', commitRev: 1, exercises: [], rows: [], ackedEvents: [] })
-    expect(native.sendEvent).toHaveBeenCalledTimes(1)
+    expect(native.sendEvent.mock.calls.map(([v]) => JSON.parse(v.json)).filter(v => v.t === 'sync')).toHaveLength(1)
     await vi.advanceTimersByTimeAsync(6500)
-    expect(native.sendEvent).toHaveBeenCalledTimes(2)
+    expect(native.sendEvent.mock.calls.map(([v]) => JSON.parse(v.json)).filter(v => v.t === 'sync')).toHaveLength(2)
     const sent = JSON.parse(native.sendEvent.mock.calls.at(-1)[0].json)
     native.events.watchEvent({ t: 'sync_ack', sid: 's', status: 'applied', wireHash: sent.wireHash, commitRev: sent.commitRev })
     await vi.advanceTimersByTimeAsync(65000)
-    expect(native.sendEvent).toHaveBeenCalledTimes(2)
+    expect(native.sendEvent.mock.calls.map(([v]) => JSON.parse(v.json)).filter(v => v.t === 'sync')).toHaveLength(2)
   })
   it('drains persisted native events after bind and deletes only the committed id', async () => {
     const receive = vi.fn(() => true)
@@ -421,5 +422,45 @@ describe('explicit watch transport diagnostics', () => {
     expect((await link.getWatchDiagnostics()).watchDiagnosticRequest.status).toBe('pending')
     native.events.watchEvent({ t: 'watch_diagnostics', requestId: second.sent.requestId })
     expect(await second.result).toBe(true)
+  })
+})
+
+
+describe('independent bilateral snapshot capabilities',()=>{
+  it.each([[false,false],[true,false],[false,true],[true,true]])('negotiates selective=%s persistent=%s independently',async(selective,persistent)=>{
+    native.isSupported.mockResolvedValue({available:true}); native.sendEvent.mockResolvedValue({ok:true,code:0})
+    await link.connectWatch()
+    native.events.watchEvent({t:'hello',protocolVersion:3,capabilities:{durableCommit:true,snapshotChunks:true,dependencyEvents:false,selectiveChunkAck:selective,persistentTransfers:persistent}})
+    for(let i=0;i<20;i++) await Promise.resolve()
+    const hello=native.sendEvent.mock.calls.map(([m])=>JSON.parse(m.json)).find(m=>m.t==='hello_ack')
+    expect(hello.capabilities).toMatchObject({dependencyEvents:false,selectiveChunkAck:selective,persistentTransfers:persistent})
+  })
+})
+
+
+describe('persistent phone adapter does not occupy the coordinator',()=>{
+  it('persists TX through the native adapter and sends a business commit while a large transfer awaits its begin ACK',async()=>{
+    vi.useFakeTimers()
+    let saved={generation:0,active:null,queued:null}
+    native.loadSyncTransfer.mockImplementation(async()=>({json:JSON.stringify(saved)}))
+    native.saveSyncTransfer.mockImplementation(async({json})=>{saved=JSON.parse(json);return{ok:true}})
+    native.sendEvent.mockResolvedValue({ok:true,code:0})
+    await link.connectWatch()
+    native.events.watchEvent({t:'hello',protocolVersion:3,capabilities:{durableCommit:true,snapshotChunks:true,dependencyEvents:true,selectiveChunkAck:true,persistentTransfers:true}})
+    await vi.advanceTimersByTimeAsync(0)
+    expect(await link.pushSyncToWatch({sid:'s',commitRev:2,padding:'x'.repeat(19500)})).toBe(true)
+    await vi.advanceTimersByTimeAsync(0)
+    const begin=native.sendEvent.mock.calls.map(([m])=>JSON.parse(m.json)).find(m=>m.t==='sync_begin')
+    expect(begin.count).toBeGreaterThanOrEqual(20)
+    expect(saved.active.meta.transferId).toBe(begin.transferId)
+    expect(saved.active.chunks.join('')).toContain('xxxxx')
+    await link.sendToWatch({t:'committed',sid:'s',eventId:'business-during-transfer',status:'applied',commitRev:3})
+    expect(native.sendEvent.mock.calls.map(([m])=>JSON.parse(m.json)).at(-1)).toMatchObject({t:'committed',eventId:'business-during-transfer'})
+    expect(saved.active.acknowledged).toEqual([])
+    await link.disconnectWatch()
+    const calls=native.sendEvent.mock.calls.length
+    await vi.advanceTimersByTimeAsync(65000)
+    expect(native.sendEvent).toHaveBeenCalledTimes(calls)
+    expect(saved.active.meta.transferId).toBe(begin.transferId)
   })
 })

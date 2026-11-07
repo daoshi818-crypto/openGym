@@ -1,3 +1,4 @@
+import { persistentSender } from '../../../watch-app/src/lib/persistent-transfer.js'
 // 手表连接（vivo 智能终端 SDK）：设置页的「连接手表」与训练页的自动推计划都走这里。
 //
 // 手机侧不再扫描/选择设备。DeviceRpcManager 绑定 vivo 运动健康后，
@@ -42,6 +43,31 @@ let syncProtocol = 2
 let syncBase = null
 const sentSnapshots = new Map()
 let pendingSync = null, syncRetryTimer = null, syncQueue = Promise.resolve()
+let persistentEnabled = false, persistentPumpTimer = null, persistentPumping = false, persistentAgain = false
+let persistentHasWork = false
+const snapshotSender = persistentSender({
+  read: async () => { const p = await watchPlugin(); if (!p) throw new Error('transfer_unavailable'); return JSON.parse((await p.WatchRpc.loadSyncTransfer()).json) },
+  write: async (_, value) => { const p = await watchPlugin(); if (!p) return false; await p.WatchRpc.saveSyncTransfer({ json: JSON.stringify(value) }); return true },
+}, snapshot => { syncBase = snapshot })
+function kickPersistent(delay = 0) {
+  if (!persistentEnabled) return
+  if (persistentPumping) { persistentAgain = true; return }
+  clearTimeout(persistentPumpTimer)
+  persistentPumpTimer = setTimeout(pumpPersistent, delay)
+  persistentPumpTimer.unref?.()
+}
+async function pumpPersistent() {
+  if (!persistentEnabled || persistentPumping) return
+  persistentPumping = true; persistentAgain = false
+  let delay = null
+  try {
+    const message = await snapshotSender.next()
+    if (message) await sendWatchEvent(message)
+    delay = await snapshotSender.wakeIn()
+    persistentHasWork = delay != null
+  } catch (error) { lastError = 'snapshot: ' + error.message; delay = 6000 }
+  finally { persistentPumping = false; if (persistentAgain) kickPersistent(); else if (delay != null) kickPersistent(Math.max(20, delay)) }
+}
 function scheduleSyncRetry(attempt) {
   clearTimeout(syncRetryTimer)
   if (pendingSync !== attempt) return
@@ -72,7 +98,7 @@ function transmitSync(attempt) {
 let outboundBarrier = null
 let commitStatus = { phase: 'idle', pending: 0, error: '' }
 const commitListeners = new Set()
-export function hasPendingWatchWork() { return commitStatus.pending > 0 || commitStatus.phase === 'saving' || !!pendingSync || planPushInFlight || !!pendingPlan }
+export function hasPendingWatchWork() { return commitStatus.pending > 0 || commitStatus.phase === 'saving' || (!!pendingSync || persistentHasWork) || planPushInFlight || !!pendingPlan }
 export function onWatchCommitStatus(cb) { commitListeners.add(cb); cb(commitStatus); return () => commitListeners.delete(cb) }
 export function holdWatchOutbound() {
   if (outboundBarrier) return () => {}
@@ -207,9 +233,17 @@ function onNativeWatchEvent(ev) {
       return
     }
     if (ev.watchVersion) watchVersion = String(ev.watchVersion)
+    if (['sync_begin_ack', 'sync_chunk_ack', 'sync_resume', 'sync_applied', 'sync_cancel_ack', 'unknown_transfer', 'sync_error'].includes(ev.t) && ev.transferId?.startsWith('p:')) {
+      if (persistentEnabled) snapshotSender.receipt(ev).then(() => kickPersistent()).catch(error => { lastError = error.message; kickPersistent(6000) })
+      return
+    }
     if (ev.t === 'hello') {
       watchVersion = ev.watchVersion ? String(ev.watchVersion) : 'not_reported'
       watchReceiptsSupported = ev.receipts === true
+      persistentEnabled = ev.protocolVersion >= 3 && ev.capabilities?.durableCommit === true && ev.capabilities?.snapshotChunks === true && ev.capabilities?.selectiveChunkAck === true && ev.capabilities?.persistentTransfers === true
+      sendWatchEvent({ t: 'hello_ack', protocolVersion: 3, capabilities: { durableCommit: true, snapshotChunks: true, dependencyEvents: ev.capabilities?.dependencyEvents === true, selectiveChunkAck: ev.capabilities?.selectiveChunkAck === true, persistentTransfers: ev.capabilities?.persistentTransfers === true } })
+      if (persistentEnabled) snapshotSender.resume().then(() => kickPersistent()).catch(error => { lastError = error.message; kickPersistent(6000) })
+      else clearTimeout(persistentPumpTimer)
       syncProtocol = ev.protocolVersion >= 3 && ev.capabilities?.durableCommit && ev.capabilities?.snapshotChunks ? 3 : 2
       syncBase = null; sentSnapshots.clear()
       clearTimeout(syncRetryTimer); pendingSync = null
@@ -304,6 +338,7 @@ export async function connectWatch() {
 }
 
 export async function disconnectWatch() {
+  clearTimeout(persistentPumpTimer); persistentEnabled = false
   watchDiagnosticProbe?.finish('disconnected')
   clearTimeout(syncRetryTimer); pendingSync = null
   const p = await watchPlugin()
@@ -495,7 +530,7 @@ async function flushPendingPlan() {
 
 async function sendWatchEvent(obj) {
   if (!MOBILE || !obj) return false
-  while (outboundBarrier) await outboundBarrier.promise
+  while (outboundBarrier && ['sync', 'sync_chunk', 'sync_delta', 'sync_begin'].includes(obj.t)) await outboundBarrier.promise
   const S = trainingStore?.getState(), A = S?.active
   if (A && obj.sid === String(A.watchSid || A.start) && Number.isInteger(obj.ex)) {
     const entry = A.entries[obj.ex], rows = entry?.sets.filter(r => !isWarmupRow(r)) || [], row = rows[obj.set - 1]
@@ -513,7 +548,7 @@ async function sendWatchEvent(obj) {
   const p = await watchPlugin()
   if (!p) return false
   try {
-    if (!['ack', 'committed', 'received', 'effort_ack', 'event_rejected', 'watch_start_ack'].includes(obj.t)) await trainingStore?.checkpoint?.()
+    if (!obj.t.startsWith('sync') && !['hello_ack', 'ack', 'committed', 'received', 'effort_ack', 'event_rejected', 'watch_start_ack'].includes(obj.t)) await trainingStore?.checkpoint?.()
     const r = await p.WatchRpc.sendEvent({ json: JSON.stringify(obj) })
     if (r && !r.ok) lastError = r.data || 'send event failed'
     return !!(r && r.ok)
@@ -621,6 +656,10 @@ export async function pushSyncToWatch(snapshot) {
   // Hash and delta against an acknowledged phone baseline, never against optimistic watch edits.
   const { wireHash: ignored, ...value } = { ...snapshot, t: 'sync', protocolVersion: 3, ackedEvents: (snapshot.ackedEvents || []).slice(-128) }
   const next = { ...value, wireHash: wireHash(value) }
+  if (persistentEnabled) {
+    await snapshotSender.enqueue(next)
+    persistentHasWork = true; kickPersistent(); return true
+  }
   sentSnapshots.set(next.wireHash, next)
   while (sentSnapshots.size > 8) sentSnapshots.delete(sentSnapshots.keys().next().value)
   clearTimeout(syncRetryTimer)

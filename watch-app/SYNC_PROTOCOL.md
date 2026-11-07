@@ -1,85 +1,158 @@
-# Sync protocol: watch 0.6.13 / phone 1.6.5
+# Sync protocol: watch 0.6.21 / phone 1.6.18
 
-## Commit boundary
+## Durable local actions and exact commit boundary
 
-Watch commands remain in the persistent outbox until a precise terminal event receipt.
-Only IDs in the successfully written outbox batch may be transmitted. Transport code=0
-is not a business commit.
+The phone remains authoritative. Watch interaction follows **local durable document →
+publish success UI → background upload**, without waiting for phone ACK. `commitSessionAction`
+uses the existing per-key storage gate to atomically write the business change AND frozen
+`pendingEdits` in `session_state`. Candidate data is not visible in the shared cache until
+`storage.set.success`. Errors retain prior effective state and show a save failure. Concurrent
+ordinary HR writes are rebased; stale page objects cannot roll back newer input or snapshots.
+The 5 s watchdog is a logical timeout: firmware writes cannot physically be cancelled, so
+late physical writes after timeout remain a device/SDK verification boundary.
 
-The Android receiver saves supported business messages to an AtomicFile inbox before
-notifying JS. The inbox preserves arrival order, deduplicates identities and refuses new
-messages on overflow rather than evicting pending work. Limits: 512 items, 2 MiB total,
-128 KiB per message. Drain returns at most 32 items. A failed read/write is reported;
-the watch retains its original command.
+Outbox insertion happens after the local commit. Boot/page replay reuses the exact persisted
+intention if the process died between session write and Outbox write. A stable eventId and
+frozen target/base/dependency payload are never regenerated for retry or capability downgrade.
+Outbox entries become sendable only after their batch is durable (or their close-journal
+source is durable). SDK success / RPC code=0 merely releases the transport gate.
 
-The global JS coordinator claims messages synchronously and processes them serially.
-Nested workout updates, finish/history and the exact decision are collected in one
-store transaction. The coordinator checkpoints localStorage and the serial native file
-mirror before completing the native inbox entry and sending replies. Android state files
-use AtomicFile as well. Failed checkpoints retain the staged head and block outgoing
-plans/snapshots; retry does not repeat finish/rest effects. A persisted decision is replayed
-after duplicate delivery or restart. The decision window is 4000 events.
+Local end freezes prerequisites, close event and final summary. Once close-journal is durable,
+the UI may leave. Closed-session tombstone and last summary are saved before clearing session;
+failures retain `closeIntent` for boot recovery. Close and summary have distinct exact receipts.
+A close ACK never clears an uncommitted summary. Blocked descendants retain a journal/archive
+record; no app-data reset or cumulative ACK is used.
 
-`received` means the native inbox contains the command. It never clears the watch outbox.
-`committed` names exactly one event and returns applied/conflict/rejected with commitRev.
-A rejected/conflicting edit is archived on the watch before its outbox entry is removed.
-Unreviewed conflicts are never evicted; at 100 unresolved records, removal stops until
-records can be reviewed. The phone retains conflict details and offers keeping the phone
-value or submitting the watch value again against the current revision.
+Actual receive chain:
+`WatchRpcPlugin.emit → WatchInbox.put/AtomicFile → received → watch-link → global Durable
+Coordinator → watch-session/watch-events reducer → Store.withWatchTransaction → checkpoint
+(localStorage + serialized native mirror) → complete exact Inbox ID → exact committed`.
+The two storage media are NOT claimed to form a cross-medium ACID transaction. Checkpoint
+failure retains the staged decision, retries without repeating finish/rest effects, and holds
+new outbound plans/snapshots. Snapshot registration does not await the transfer, so subsequent
+business transactions and committed replies keep progressing.
 
-## Negotiation and reconciliation
+`received` never deletes business. `committed` names exactly one event and is applied,
+conflict or rejected with commitRev. V3 ignores auxiliary v2 ack/start/effort/rejection as
+terminal proof. Legacy exact ACKs first persist a local decision and pending-state change.
+Conflict/rejection and transitive dependent payloads must be durably archived before removal;
+if the archive is full/fails, pending business stays queued. Reviewed conflicts are separately
+bounded. No sequence or timestamp maximum is an ACK watermark.
 
-The watch hello advertises protocolVersion=3, durableCommit, snapshotChunks and deltas.
-The phone switches only when the required capabilities are present. The watch switches
-its outgoing commands after receiving a validated v3 snapshot. Old phones and old watches
-continue using precise v2 ACKs and full snapshots.
+## Dependency scheduling and field conflict checks
 
-Stable entryInstanceId/setId identify targets. A session sid is also its epoch; resumed
-segments already have distinct sid values. Phone commits increment per-session syncRev.
-Each changed field records its revision and actor. Commands carry baseCommitRev and an
-installation identity/device sequence; event IDs also contain a boot nonce to avoid reuse
-if the device clock or identity storage rolls back. Device sequence is never a cumulative
-ACK watermark and is never compared across actors.
+`dependencyEvents` is independently negotiated in both directions, not inferred from v3.
+Every new local intention freezes sid/epoch, eventId, installation actor, device sequence,
+baseCommitRev, stable entryInstanceId/setId, structure revision, and dependsOn before upload.
+All pending parents (including committed but not yet included in the authoritative baseline)
+participate. Different row fields weight/reps/effort can be independent. Completion writes
+row done+weight+reps plus rest/focus; unset writes done+rest/focus. Rest, pause, focus,
+structure, start/close, unknown types and missing stable IDs are conservative barriers.
+Different sid values never become independent merely by comparing revisions.
 
-Weight, reps, done, effort and set structure detect intervening changes by another actor
-in the same field. Different fields and ordered edits by the same watch actor merge.
-The phone resolves incoming v3 edits by revision, without comparing phone and watch wall
-clocks. Display timestamps and absolute rest deadlines still require reasonably aligned
-device clocks; this release does not implement a clock-offset estimation protocol.
+The watch can select a durable ready independent event while another is backing off. It
+requires exact applied decisions for parents. Conflict/rejection archives all dependents;
+unknown parents wait on the watch, not on the phone's queue head. The phone rejects invalid,
+missing/evicted, cyclic/self, cross-session or non-applied dependencies with an exact terminal
+reason before mutation. Phone field revisions include actor AND exact eventId; a newer field
+from the same actor still requires an explicit parent when extensions are used. Different
+fields merge; same-field and multi-field operations maintain the dependency order.
 
-Snapshots retain a bounded 128 recent event IDs on v3. Committed pending edits additionally
-carry committedRev, so older receipt IDs do not need to remain in every snapshot. Pending
-local edits, rest, pause and focus are replayed over the phone baseline until confirmed.
-RPC and page objects share a persistence cache; reconciliation reads that cache to avoid
-reintroducing pending edits from a stale page object.
+Pre-upgrade intentions are not rewritten: a legacy prefix drains first. Non-negotiated v3
+is strict head-first; newly frozen extension intentions also drain head-first on a v2 phone,
+using legacy exact ACKs. Original v2 payloads retain their established FIFO send-order pipeline.
+The phone stores internal exact decisions for legacy events without inventing wire committed
+receipts, and can infer applied from old persisted ACK-only records. An expired unknown parent
+is rejected, never assumed applied. Clients must review such retained conflicts.
 
-Deltas reference both baseline commitRev and content hash. The phone bases a delta only
-on a snapshot explicitly acknowledged by the watch. Missing revisions, mismatched targets
-or checksum failures request a full snapshot. Full/delta payloads over the normal budget
-are split and only applied when every fragment is present and the checksum matches.
-Receiver bounds: two in-progress transfers, 128 KiB per transfer, 132 fragments,
-30-second expiry. Transfers larger than the bound fail visibly rather than allocating
-unbounded memory. The hash is an integrity check, not authentication.
+## One physical send gate per endpoint
 
-Watch retries and phone snapshot retries back off to approximately 60 seconds. The watch
-uses one command at a time after v3 negotiation to preserve dependencies. Snapshot retries
-stop on the exact matching business receipt. Disconnect/closed sessions cancel stale
-pending snapshots. Reconnect and foreground drain recover pending native work.
+Watch: all connect.send calls (including controls) pass one App-lifetime gate. P0 control /
+P1 business, after 8 ready controls a ready business event gets a turn; 120 ms business pacing;
+6 s callback timeout; generation/token rejects stale callbacks; failure backoff 2–60 s.
+Dependency-blocked work sleeps at least 1 s instead of a hot retry loop. Page navigation only
+replaces UI subscribers; application timers own retries, replay and storage watchdogs.
+Hello is queued before reconnect persistence can flush a business batch.
+
+Android: every RpcClient.callAsync, including native received, passes WatchSendGate. P0
+control, P1 training and P2 snapshot; fairness after 8 high-priority or 16 non-P2 sends;
+128 waiting + one active; 6.5 s timeout and connection generation. Each chunk releases the
+SDK gate and priority is re-evaluated. Callback completion cannot remove business records.
+Native Inbox/received does not depend on React page mount. No 2–3 SDK concurrency is enabled.
+
+## Negotiation matrix / snapshots
+
+Three paths remain: v2 full snapshots/exact ACK; existing v3 chunk/delta+durable committed;
+new persistent extension. Watch hello advertises durableCommit, snapshotChunks, deltas,
+dependencyEvents, selectiveChunkAck and persistentTransfers. Phone hello_ack echoes each
+extension independently. Persistent transfer needs durableCommit + snapshotChunks + BOTH
+selectiveChunkAck and persistentTransfers. One flag alone does not enable it.
+
+Snapshots preserve pendingEdits and committedRev overlays until a matching/newer authoritative
+baseline includes them. Same-sid revisions are ordered; different sid values are not compared
+as one counter. Deltas reference both persisted baseline commitRev and hash, never an optimistic
+page value. Old-v3 Delta remains supported. The new persistent phone path currently sends FULL
+snapshots only (no unproven persistent-Delta optimization). Missing base/hash/target triggers
+safe full fallback, never partial application. Absolute rest deadlines still rely on reasonable
+clock alignment; no clock-offset estimation or cross-device timing subtraction is implemented.
+
+## Persistent selective transfer
+
+Messages: sync_begin / sync_begin_ack, sync_chunk / sync_chunk_ack, sync_resume, sync_applied,
+sync_cancel / sync_cancel_ack, unknown_transfer, sync_error. Metadata carries exact transferId,
+sid, revision, generation, count, UTF-8 bytes, hash, encoding=json-utf8 and
+hashAlgorithm=fnv1a-utf16-v1. JSON serialization is frozen once; chunks are at most 1000 UTF-16
+units without splitting surrogate pairs; byte limit is UTF-8. FNV-1a iterates UTF-16 code units,
+matching old wireHash compatibility. This is integrity protection, NOT authentication.
+
+TX persists byte-identical snapshot/chunks, metadata and ACK bitmap before sending. One active
+and one coalesced queued job; same-revision changed content gets a new generation, without
+repeatedly cancelling active work on every clock update. Each next() yields one application
+message through the gate (window 1). Only unconfirmed blocks are selected. Lost ACK can cause
+safe duplicate transmission; sync_resume reports the receiver's actual durable bitmap.
+
+RX uses two fixed slots with 132 chunk keys each, separate from training state. Metadata/chunk
+writes must succeed before their ACK. Identical valid duplicate chunks do not rewrite storage.
+After full count/order/UTF-8/hash/sid/revision/Delta-base validation, atomic session apply includes
+the transfer marker; then RX metadata records applied before replying sync_applied. Last 8
+training markers close the apply-success/index-failure crash window. Retained (stale) snapshots
+persist retained status and never become the sender's Delta baseline.
+
+Non-transient errors persist a cancel reason and retry exact sync_cancel across restart until
+cancel_ack/unknown_transfer. Only that transfer is removed. Afterwards queued full content is
+promoted, or an exact full source is rebuilt with new generation and backoff. If no full source
+exists, the cancel/error task remains (full_snapshot_required); business is never deleted.
+Temporary storage/capacity failure retains the same task/backoff. TTL is 24 h, including retry
+and restart, rather than the incompatible old 30 s. Legacy in-memory chunks expire after 180 s
+(to cover the 60 s backoff); they do not promise restart continuation. Manual disconnect stops
+the phone pump without discarding its persisted task; a new hello resumes it.
+
+## Bounds and retention
+
+- Local active pending intentions: 256; overflow rejects the local operation before success UI.
+- Outbox: 4096 / 2 MiB for new insertion, refuses overflow; existing oversized legacy data is
+  retained, not trimmed. Source intentions/journal remain available for later replay.
+- Phone Native Inbox: 512 / 2 MiB / 128 KiB per message, drain batches of 32; no pending eviction.
+- Phone exact decisions: last 4000; missing old parents yield explicit rejected decisions.
+- Watch exact decisions: 4096, pins include Outbox, pendingEdits and close prerequisites;
+  if all are pinned at capacity, receipt processing stops safely instead of evicting parents.
+- Conflict archive: 100 unresolved + last 20 reviewed, refuse removal at unresolved overflow.
+- Close journal: 128 entries / 1 MiB UTF-8; only terminal delivered/discarded AND close-committed
+  entries may be pruned; pending/blocked training never silently removed.
+- Snapshot: 128 KiB / 132 chunks / 24 h, RX two slots (264 fixed chunk keys), TX active+queued;
+  native TX metadata AtomicFile is separate from Inbox/training and limited to 1 MiB.
+- Legacy v3 snapshot history: 8; recent acknowledged event IDs in snapshot: 128.
 
 ## Verification and limits
 
-Tests run actual watch modules with fake device APIs and the actual phone reducer/store.
-Coverage includes storage failures, callback loss, batch durability, native restart/FIFO/
-overflow, atomic finish decisions, lost ACKs, snapshot/receipt reordering, delta gaps,
-Unicode chunk ordering/corruption and same/different-field conflicts. Compiled square and
-round layouts are checked with BlueOS Studio's compiler.
-
-The native inbox makes receipt recoverable while JS is unavailable. Business changes still
-run in JS after it resumes; no new native business executor or background service is added.
-Physical WATCH GT background, force-stop, power-loss, latency, battery and clock-adjustment
-acceptance remains necessary. New phone features require the production APK signed with
-the existing production key; the local .test APK has a different pairing identity.
-
+Host regression covers atomic failure/late callbacks, close crash windows, immediate restart,
+E001 backoff/independent E002-E003/dependent E004, exact ACK loss and decisions, multi-field
+conflicts, real chunk drop/lost ACK/reordered duplicates/both-endpoint restart, corrupt/expired
+snapshots, cancellation/full fallback, same-revision coalescing, new/old protocol combinations,
+page lifetime and Native gate fairness/tokens. Native JUnit tests are part of the release build.
+`frontend/scripts/watch-sync-probe.mjs` reports 30-sample host timings with monotonic clock,
+write-call counts and process RSS high-water; mock callback delays are NOT physical flash/BLE
+or displayed-frame measurements. No physical watch was attached for this implementation.
 
 ## On-demand uplink diagnostics
 

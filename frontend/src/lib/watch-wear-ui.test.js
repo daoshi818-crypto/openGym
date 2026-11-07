@@ -42,13 +42,13 @@ describe('Index 启动页（官方 IdleScreen 映射）', () => {
 
   const plan = (id, name, n, today) => ({ id, name, today, exercises: Array.from({ length: n }, (_, i) => ({ name: name + ' 动作' + (i + 1) })) })
 
-  it('没有本地缓存也没有手机计划时提示去同步，而不是“今日暂无计划”', () => {
+  it('没有本地缓存也没有手机计划时提示去同步，而不是“今日暂无计划”', async () => {
     const { page: p } = indexPage()
     expect(p.plans).toEqual([])
     expect(p.needSync).toBe(true)
   })
 
-  it('有手机计划时不再提示同步，并把今日计划排在“开始训练”上', () => {
+  it('有手机计划时不再提示同步，并把今日计划排在“开始训练”上', async () => {
     const { page: p, callbacks } = indexPage()
     callbacks.onCatalog({ plans: [plan('p1', '推日', 5, true), plan('p2', '拉日', 2, false)] })
     expect(p.needSync).toBe(false)
@@ -59,14 +59,14 @@ describe('Index 启动页（官方 IdleScreen 映射）', () => {
     expect(p.plans[1].preview).toBe('拉日 动作1、拉日 动作2')
   })
 
-  it('只有缓存计划（没有今日）时用“快速开始”', () => {
+  it('只有缓存计划（没有今日）时用“快速开始”', async () => {
     const { page: p, callbacks } = indexPage()
     callbacks.onCatalog({ plans: [plan('p1', '推日', 3, false)] })
     expect(p.startLabel).toBe('快速开始')
     expect(p.selected.id).toBe('p1')
   })
 
-  it('本地有活动训练时优先“继续当前训练”', () => {
+  it('本地有活动训练时优先“继续当前训练”', async () => {
     const active = { active: true, pendingStart: false, workout: { name: '推日', exercises: [{ name: '卧推' }] } }
     const { page: p } = indexPage({ active })
     expect(p.canResume).toBe(true)
@@ -97,14 +97,14 @@ describe('ExerciseList 动作总览（官方 OverviewScreen 映射）', () => {
     const sendEvent = vi.fn()
     const router = { back: vi.fn(), replace: vi.fn(), push: vi.fn() }
     const p = page('ExerciseList/index.ux', {
-      loadState: () => state, save: vi.fn(), endSession: vi.fn(), closeSession: vi.fn(), sendEvent,
+      loadState: () => state, save: vi.fn(), commitLocalClose: async (sid, disposition) => ({ok:true, entry:{closeEvent:{t:'session_close',sid,disposition}}}), endSession: vi.fn(), closeSession: vi.fn(), sendEvent,
       router, runtime: () => shared,
     })
     p.onInit()
     return { p, sendEvent, state, router, shared }
   }
 
-  it('每个动作显示已完成/总数，并高亮当前动作', () => {
+  it('每个动作显示已完成/总数，并高亮当前动作', async () => {
     const { p } = listPage()
     expect(p.trainName).toBe('推日')
     expect(p.list.map(x => [x.name, x.doneCount, x.totalCount, x.current])).toEqual([
@@ -113,18 +113,18 @@ describe('ExerciseList 动作总览（官方 OverviewScreen 映射）', () => {
     ])
   })
 
-  it('放弃训练第一次只进入二次确认，第二次才真的放弃', () => {
+  it('放弃训练第一次只进入二次确认，第二次才真的放弃', async () => {
     const { p, sendEvent } = listPage()
-    p.abandonWorkout()
+    await p.abandonWorkout()
     expect(p.abandonArmed).toBe(true)
     expect(p.hint).toContain('再次点击')
     expect(sendEvent).not.toHaveBeenCalled()
-    p.abandonWorkout()
+    await p.abandonWorkout()
     expect(p.abandonArmed).toBe(false)
     expect(sendEvent).toHaveBeenCalledWith(expect.objectContaining({ t: 'session_close', disposition: 'abandoned' }))
   })
 
-  it('保存入口回到统一结束确认，不在列表直接关闭会话', () => {
+  it('保存入口回到统一结束确认，不在列表直接关闭会话', async () => {
     const { p, sendEvent, router, shared, state } = listPage()
     p.saveWorkout()
     expect(sendEvent).not.toHaveBeenCalled()
@@ -133,10 +133,10 @@ describe('ExerciseList 动作总览（官方 OverviewScreen 映射）', () => {
     expect(router.replace).not.toHaveBeenCalled()
   })
 
-  it('从结束区返回会清掉二次确认状态', () => {
+  it('从结束区返回会清掉二次确认状态', async () => {
     const { p } = listPage()
     p.endOn = true
-    p.abandonWorkout()
+    await p.abandonWorkout()
     expect(p.abandonArmed).toBe(true)
     p.backToExercises()
     expect(p.endOn).toBe(false)
@@ -171,9 +171,9 @@ describe('Workout 休息页（官方 RestScreen 映射）', () => {
     return { sessions, workout, sendEvent }
   }
 
-  it('休息中显示剩余百分比与本次累计休息时长', () => {
+  it('休息中显示剩余百分比与本次累计休息时长', async () => {
     const { workout } = setup()
-    workout.onCurrentSetAction()
+    await workout.onCurrentSetAction()
     vi.advanceTimersByTime(1000)
     workout.tickClock()
     // 90 秒的休息，刚过 1 秒：剩余约 99%。
@@ -183,17 +183,17 @@ describe('Workout 休息页（官方 RestScreen 映射）', () => {
     expect(pct).toBeLessThanOrEqual(100)
   })
 
-  it('休息结束后不再显示百分比', () => {
+  it('休息结束后不再显示百分比', async () => {
     const { workout } = setup()
-    workout.onCurrentSetAction()
+    await workout.onCurrentSetAction()
     workout.state.restUntil = 0
     workout.tickClock()
     expect(workout.restPctLabel).not.toContain('%')
   })
 
-  it('休息页的评分入口仍然指向刚完成的那一组（不是下一组）', () => {
+  it('休息页的评分入口仍然指向刚完成的那一组（不是下一组）', async () => {
     const { workout } = setup()
-    workout.onCurrentSetAction()
+    await workout.onCurrentSetAction()
     expect(workout.effortEntryOn).toBe(true)
     // 目标 = 刚完成组 a1，而不是焦点所在的下一组 a2。
     expect(workout.effortTarget.setId).toBe('a1')

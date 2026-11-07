@@ -2,7 +2,7 @@
 import { bindRuntime, runtime } from '../lib/runtime.js'
 // 动作列表页：查看动作和组，点组返回训练页并切换游标。
 import router from '@blueos.app.appmanager.router'
-import { loadState, save, endSession, closeSession } from '../lib/session.js'
+import { loadState, save, commitSessionAction, stageSessionEvent, endSession, closeSession, commitLocalClose } from '../lib/session.js'
 import { sendEvent } from '../lib/rpc.js'
 
 export default {
@@ -136,35 +136,31 @@ export default {
     if (!(ex >= 0) || !s.workout.exercises[ex]) { this.hint = '该动作已被删除'; return }
     const rows = s.workout.rows[ex] || [], first = rows.findIndex(r => !r.done), set = first < 0 ? 0 : first
     if (!rows[set]) { this.hint = '该动作已没有可选的组'; return }
-    this.pickRow({ sid: s.sid, entryInstanceId: item.entryInstanceId, exIdx: ex, setId: rows[set].setId, setIdx: set })
+    return this.pickRow({ sid: s.sid, entryInstanceId: item.entryInstanceId, exIdx: ex, setId: rows[set].setId, setIdx: set })
   },
 
   // 一次有效轻触 = 一次导航：先同步运行态与持久化（网络与回执不参与），再返回训练页。
-  pickRow(d) {
-    if (this.endOn || this.interactionBlocked() || this.navPending) return
-    const s = loadState()
-    if (!s.active || !s.workout) { router.replace({ uri: '/Summary' }); return }
-    if (!d || (d.sid && d.sid !== s.sid)) { this.hint = '训练已变化'; return }
-    const ex = d.entryInstanceId ? s.workout.exercises.findIndex(e => e.entryInstanceId === d.entryInstanceId) : Number(d.exIdx)
-    if (!(ex >= 0 && ex < s.workout.exercises.length)) { this.hint = '该动作已被删除'; return }
-    const rows = s.workout.rows[ex] || []
-    if (!rows.length) { this.hint = '该动作已没有可选的组'; return }
-    let set = Number(d.setIdx)
-    if (d.setId) {
-      const stable = rows.findIndex(r => r.setId === d.setId)
-      if (stable < 0) { this.hint = '该组已被删除'; return }
-      set = stable
-    }
-    if (!Number.isInteger(set) || !(set >= 0 && set < rows.length)) { this.hint = '该组已被删除'; return }
-    this.hint = ''
-    s.exIdx = ex
-    s.setIdx = set
-    s.focusAt = Date.now()
-    save(s)
-    sendEvent({ t: 'focus', sid: s.sid, entryInstanceId: s.workout.exercises[ex].entryInstanceId, setId: rows[set].setId, ex, set: set + 1, at: s.focusAt, source: 'watch' })
-    this.navPending = true
-    this.focusPanel()
-    router.back()
+  async pickRow(d) {
+    if (this.endOn || this.interactionBlocked() || this.navPending || this.focusSaving) return
+    const sid = loadState().sid
+    this.focusSaving = true
+    try {
+      const result = await commitSessionAction(sid, s => {
+        if (!d || (d.sid && d.sid !== s.sid)) throw new Error('训练已变化')
+        const ex = d.entryInstanceId ? s.workout.exercises.findIndex(e => e.entryInstanceId === d.entryInstanceId) : Number(d.exIdx)
+        if (!(ex >= 0 && ex < s.workout.exercises.length)) throw new Error('该动作已被删除')
+        const rows = s.workout.rows[ex] || []
+        const set = d.setId ? rows.findIndex(r => r.setId === d.setId) : Number(d.setIdx)
+        if (!Number.isInteger(set) || !rows[set]) throw new Error('该组已被删除')
+        s.exIdx = ex; s.setIdx = set; s.focusAt = Date.now()
+        stageSessionEvent(s, { t: 'focus', sid: s.sid, entryInstanceId: s.workout.exercises[ex].entryInstanceId,
+          setId: rows[set].setId, ex, set: set + 1, at: s.focusAt, source: 'watch' })
+      })
+      if (!result.ok) { this.hint = '未保存，请重试'; return }
+      for (const event of result.value.pendingEdits || []) sendEvent(event)
+      this.hint = ''; this.navPending = true; this.focusPanel(); router.back()
+    } catch (error) { this.hint = String(error.message || '未保存，请重试') }
+    finally { this.focusSaving = false }
   },
 
   onExit() {
@@ -173,15 +169,19 @@ export default {
     router.back()
   },
 
-  closeWorkout(disposition) {
+  async closeWorkout(disposition) {
+    if (this.closeSaving) return
     const s = loadState()
     if (!s.active || !s.workout) { router.replace({ uri: '/Index' }); return }
-    const closedAt = Date.now()
-    const session = disposition === 'saved' ? endSession(s, s.profile, closedAt) : null
-    if (!session) closeSession(s.sid)
-    sendEvent({ t: 'session_close', sid: s.sid, disposition, closedAt, at: closedAt,
-      ...(session ? { workout: s.workout, startedAt: s.startedAt, weightUnit: s.weightUnit || 'kg', summary: { minutes: session.minutes, avgHr: session.avgHr, maxHr: session.maxHr, calories: session.calories, volume: session.volume }, completedSets: session.sets } : {}) })
-    router.replace({ uri: disposition === 'saved' ? '/Summary' : '/Index' })
+    this.closeSaving = true
+    try {
+      const result = await commitLocalClose(s.sid, disposition)
+      if (!result.ok) { this.hint = '存储失败，未结束，请重试'; return }
+      for (const event of [...(result.entry.pendingEvents || []), result.entry.closeEvent]) sendEvent(event)
+      if (result.entry.delivery === 'pending') sendEvent(result.entry.summaryEvent)
+      router.replace({ uri: disposition === 'saved' ? '/Summary' : '/Index' })
+    } catch (_) { this.hint = '存储失败，未结束，请重试' }
+    finally { this.closeSaving = false }
   },
   // 放弃不可逆：第一次点击只进入武装态并给出警告，第二次才真的放弃（官方 Finish 的二次确认）。
   abandonWorkout() {
@@ -193,7 +193,7 @@ export default {
     }
     this.abandonArmed = false
     this.hint = ''
-    this.closeWorkout('abandoned')
+    return this.closeWorkout('abandoned')
   },
   saveWorkout() {
     if (this.interactionBlocked() || this.navPending) return

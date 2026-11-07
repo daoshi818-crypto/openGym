@@ -66,6 +66,26 @@ public class WatchRpcPlugin extends Plugin {
     private final List<String> logs = new ArrayList<>();
     private WatchInbox inbox;
     private String inboxError = "";
+    // App process owned, not React mounted. Handler posts also avoid recursive SDK callbacks.
+    private final android.os.Handler sendHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final WatchSendGate<Request, Response> sendGate = new WatchSendGate<>(new WatchSendGate.Timer() {
+        public Object after(long millis, Runnable action) { sendHandler.postDelayed(action, millis); return action; }
+        public void cancel(Object token) { if (token instanceof Runnable) sendHandler.removeCallbacks((Runnable) token); }
+    }, (request, done) -> RpcClient.getInstance().callAsync(request, done::accept));
+
+    private void sendRpc(Request request, Callback callback) { sendRpc(request, callback, 0); }
+    private void sendRpc(Request request, Callback callback, int priority) {
+        sendHandler.post(() -> sendGate.offer(request, priority, callback::onResponse));
+    }
+    private static int messagePriority(String json) {
+        try {
+            String type = new JSONObject(json).optString("t");
+            if (type.equals("sync") || type.equals("sync_chunk") || type.equals("sync_delta") || type.equals("sync_begin")) return 2;
+            if (type.equals("set") || type.equals("unset") || type.equals("weight") || type.equals("reps") || type.equals("effort") || type.equals("rest") || type.equals("pause") || type.equals("focus") || type.equals("add_set") || type.equals("remove_set") || type.equals("session_close") || type.equals("plan")) return 1;
+        } catch (Exception ignored) { }
+        return 0;
+    }
+
 
     private synchronized WatchInbox inbox() throws IOException {
         if (inbox == null) {
@@ -105,6 +125,29 @@ public class WatchRpcPlugin extends Plugin {
             synchronized (this) { ret.put("json", new String(new AtomicFile(new File(getContext().getFilesDir(), "opengym-state.json")).readFully(), StandardCharsets.UTF_8)); }
             call.resolve(ret);
         } catch (Exception e) { call.reject("state read failed", e); }
+    }
+
+    // Snapshot sender metadata is separate from training state and Native Inbox.
+    @PluginMethod
+    public void loadSyncTransfer(PluginCall call) {
+        try {
+            JSObject ret = new JSObject();
+            synchronized (this) {
+                AtomicFile file = new AtomicFile(new File(getContext().getFilesDir(), "watch-sync-tx.json"));
+                ret.put("json", file.getBaseFile().exists() ? new String(file.readFully(), StandardCharsets.UTF_8) : "null");
+            }
+            call.resolve(ret);
+        } catch (Exception e) { call.reject("transfer read failed", e); }
+    }
+    @PluginMethod
+    public void saveSyncTransfer(PluginCall call) {
+        try {
+            String json = call.getString("json");
+            if (json == null || json.getBytes(StandardCharsets.UTF_8).length > 1048576) throw new IOException("transfer size");
+            new JSONObject(json);
+            synchronized (this) { atomicWrite(new AtomicFile(new File(getContext().getFilesDir(), "watch-sync-tx.json")), json.getBytes(StandardCharsets.UTF_8)); }
+            call.resolve();
+        } catch (Exception e) { call.reject("transfer write failed", e); }
     }
 
     @PluginMethod
@@ -194,7 +237,7 @@ public class WatchRpcPlugin extends Plugin {
                         JSONObject receipt = new JSONObject(); receipt.put("t", "received");
                         receipt.put("eventId", data.optString("eventId")); receipt.put("sid", data.optString("sid"));
                         try {
-                            RpcClient.getInstance().callAsync(new Request.Builder().action(Constant.Action.ACTION_DEVICE_BUSINESS_DATA)
+                            sendRpc(new Request.Builder().action(Constant.Action.ACTION_DEVICE_BUSINESS_DATA)
                                     .pkgName(TARGET_PACKAGE).data(receipt.toString()).timeout(Constant.DEFAULT_TIMEOUT).build(), new Callback() {
                                 @Override public void onResponse(Response response) { }
                             });
@@ -285,6 +328,7 @@ public class WatchRpcPlugin extends Plugin {
             if (device.has("connected")) {
                 boolean connected = device.getBoolean("connected");
                 boolean changed = watchConnected != connected;
+                if (watchConnected != connected) sendHandler.post(sendGate::invalidate);
                 watchConnected = connected;
                 if (initialized && changed) notifyState(connected ? "connected" : "ready", null);
             }
@@ -303,7 +347,7 @@ public class WatchRpcPlugin extends Plugin {
                 .data("{}")
                 .timeout(Constant.DEFAULT_TIMEOUT)
                 .build();
-        RpcClient.getInstance().callAsync(request, response -> {
+        sendRpc(request, response -> {
             log("DEVICE_INFO code=" + (response == null ? -1 : response.getCode()));
             if (response != null && response.getCode() == 0) {
                 updateDeviceInfo(response.getData());
@@ -497,7 +541,7 @@ public class WatchRpcPlugin extends Plugin {
                     .timeout(Constant.DEFAULT_TIMEOUT)
                     .build();
             log("REGISTER probe send");
-            RpcClient.getInstance().callAsync(req, response -> {
+            sendRpc(req, response -> {
                 if (response == null) {
                     log("REGISTER probe response null");
                     return;
@@ -526,7 +570,7 @@ public class WatchRpcPlugin extends Plugin {
                         .data(json)
                         .timeout(Constant.DEFAULT_TIMEOUT)
                         .build();
-                RpcClient.getInstance().callAsync(request, new Callback() {
+                sendRpc(request, new Callback() {
                     @Override
                     public void onResponse(Response response) {
                         JSObject ret = new JSObject();
@@ -547,7 +591,7 @@ public class WatchRpcPlugin extends Plugin {
                         ret.put("data", response.getData());
                         call.resolve(ret);
                     }
-                });
+                }, messagePriority(json));
             } catch (Exception e) {
                 log("TX failed: " + e.getMessage());
                 call.reject((plan ? "send plan failed: " : "send event failed: ") + e.getMessage());
@@ -587,6 +631,7 @@ public class WatchRpcPlugin extends Plugin {
 
     @PluginMethod
     public void disconnect(PluginCall call) {
+        sendHandler.post(sendGate::invalidate);
         // SDK 没有公开的 unbind；停止业务收发并把状态交回前端即可。
         sessionActive = false;
         watchConnected = false;
@@ -626,7 +671,7 @@ public class WatchRpcPlugin extends Plugin {
                         .data(payload.toString())
                         .timeout(Constant.DEFAULT_TIMEOUT)
                         .build();
-                RpcClient.getInstance().callAsync(request, response -> {
+                sendRpc(request, response -> {
                     lastLaunchCode = response == null ? -1 : response.getCode();
                     log("LAUNCH response code=" + lastLaunchCode);
                     JSObject ret = new JSObject();

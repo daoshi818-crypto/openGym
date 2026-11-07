@@ -1,4 +1,5 @@
 <script>
+import { commitPageAction } from '../lib/local-action.js'
 import { bindRuntime, runtime } from '../lib/runtime.js'
 // 主训练页（单屏 + 手势）：重量/次数保持可见，休息态只保留必要操作。
 import router from '@blueos.app.appmanager.router'
@@ -7,8 +8,8 @@ import { rotationStep, valueStep } from '../lib/value-step.js'
 import { captureRow, rowTarget, setDotWindow } from '../lib/workout-interaction.js'
 import brightness from '@blueos.hardware.display.brightness'
 import {
-  loadState, readSessionHr, save, replacePlan, applySync, toggleSet, nextUndone, nextUndoneFrom,
-  endSession, closeSession, addSet, removeSet, addRestTime, setRowValue, setEffort, calories,
+  loadState, readSessionHr, save, commitSessionAction, stageSessionEvent, replacePlan, applySync, toggleSet, nextUndone, nextUndoneFrom,
+  endSession, closeSession, commitLocalClose, addSet, removeSet, addRestTime, setRowValue, setEffort, calories,
 } from '../lib/session.js'
 import {
   effortScaleOf, effortValueOf, effortKindOf, stepEffortValue, effortMeaning,
@@ -170,7 +171,7 @@ export default {
     const delta = Number(ev.delta) || (ev.direction === true ? 1 : ev.direction === false ? -1 : 0)
     if (!delta) return
     if (this.isRest || this.restCrownDirty) this.queueRestNudge(delta > 0 ? 5 : -5)
-    else this.adjustSelectedField(rotationStep(ev))
+    else return this.adjustSelectedField(rotationStep(ev))
   },
   onBackPress() {
     if (this.diagnosticOn) { this.closeDiagnostics(); return true }
@@ -250,18 +251,20 @@ export default {
     this.touchCancel()
     this.trailingTapBlockedUntil = 0
     this.visible = false
-    this.flushRestNudge()
+    const pending = this.flushRestNudge()
     this.setRestScreenLock(false)
     if (this.timer) clearInterval(this.timer)
     this.timer = null
+    return pending
   },
 
   onDestroy() {
     this.visible = false
     this.touchCancel()
     if (this.timer) clearInterval(this.timer)
-    this.flushRestNudge()
+    const pending = this.flushRestNudge()
     this.setRestScreenLock(false)
+    return pending
   },
 
   setRestScreenLock(keepOn) {
@@ -359,6 +362,7 @@ export default {
   },
 
   onMenuAddSet() {
+    return commitPageAction(this, function() {
     const s = this.state
     this.weightUnit = s.weightUnit || 'kg'
     const ex = s.exIdx
@@ -369,9 +373,11 @@ export default {
     this.menuOn = false
     this.emitEvent({ t: 'add_set', sid: s.sid, ex, set: s.setIdx + 1, sets: rows.length, weight: rows[s.setIdx].w, reps: rows[s.setIdx].r, at: Date.now() })
     this.refresh()
+    }, { commitSessionAction, loadState, replayPendingEvents })
   },
 
   onMenuRemoveSet() {
+    return commitPageAction(this, function() {
     const s = this.state
     const ex = s.exIdx
     const rows = s.workout.rows[ex]
@@ -382,12 +388,14 @@ export default {
     this.menuOn = false
     this.emitEvent({ t: 'remove_set', sid: s.sid, ex, removedSetIds, set: removed, sets: rows.length, at: Date.now() })
     this.refresh()
+    }, { commitSessionAction, loadState, replayPendingEvents })
   },
 
   onMenuPrev() { this.menuOn = false; this.stepSet(-1) },
   onMenuNext() { this.menuOn = false; this.stepSet(1) },
 
   stepSet(dir) {
+    return commitPageAction(this, function() {
     const s = this.state
     if (!s.workout || !s.workout.rows.length) return
     let nx = s.exIdx
@@ -406,9 +414,11 @@ export default {
     s.focusAt = Date.now(); save(s)
     this.emitEvent({ t: 'focus', sid: s.sid, ex: nx, set: ni + 1, at: s.focusAt, source: 'watch' })
     this.refresh()
+    }, { commitSessionAction, loadState, replayPendingEvents })
   },
 
   stepExercise(dir) {
+    return commitPageAction(this, function() {
     const s = this.state
     if (!s.workout || !s.workout.exercises.length) return
     const nx = Math.max(0, Math.min(s.exIdx + dir, s.workout.exercises.length - 1))
@@ -422,6 +432,7 @@ export default {
     save(s)
     this.emitEvent({ t: 'focus', sid: s.sid, ex: nx, set: s.setIdx + 1, at: Date.now(), source: 'watch' })
     this.refresh()
+    }, { commitSessionAction, loadState, replayPendingEvents })
   },
 
   onPrevSet() { this.stepSet(-1) },
@@ -449,6 +460,7 @@ export default {
   editWeight() { this.selectField('w') },
   editReps() { this.selectField('r') },
   adjustSelectedField(direction) {
+    return commitPageAction(this, function() {
     if (!direction || !this.selectedField || !this.fieldTarget || this.interactionBlocked()) return
     const s = loadState(), found = rowTarget(s, this.fieldTarget)
     if (!found || found.row.done || s.pausedAt || s.restUntil || this.fieldTarget.weightUnit !== (s.weightUnit || 'kg') || found.exIdx !== s.exIdx || found.setIdx !== s.setIdx) {
@@ -462,6 +474,7 @@ export default {
     this.state = s
     setRowValue(s, found.exIdx, found.setIdx, this.selectedField, value, true)
     this.flushPendingRowEdits(); this.refresh()
+    }, { commitSessionAction, loadState, replayPendingEvents })
   },
   refreshSetDots(page) {
     const view = setDotWindow(this.state, page)
@@ -471,6 +484,7 @@ export default {
   prevDotSegment() { if (!this.interactionBlocked() && this.dotHasPrev) this.refreshSetDots(this.dotPage - 1) },
   nextDotSegment() { if (!this.interactionBlocked() && this.dotHasNext) this.refreshSetDots(this.dotPage + 1) },
   pickSetDot(target) {
+    return commitPageAction(this, function() {
     if (this.interactionBlocked() || this.isRest || this.paused || this.closeMode || this.effortOn || this.lastOpen || this.finishOn) return
     const s = loadState(), found = rowTarget(s, target)
     if (!found || found.row.done || s.sid !== this.state.sid || s.pausedAt || s.restUntil) return
@@ -480,9 +494,11 @@ export default {
     this.emitEvent({ t: 'focus', sid: s.sid, entryInstanceId: s.workout.exercises[s.exIdx].entryInstanceId,
       setId: found.row.setId, ex: s.exIdx, set: s.setIdx + 1, at: s.focusAt, source: 'watch' })
     this.refresh()
+    }, { commitSessionAction, loadState, replayPendingEvents })
   },
 
   onComplete() {
+    return commitPageAction(this, function() {
     if (this.isRest || this.paused || this.closeMode || this.interactionBlocked() || Date.now() < (this.completionIgnoreUntil || 0)) return
     const s = this.state
     const exIdx = s.exIdx, setIdx = s.setIdx
@@ -508,9 +524,11 @@ export default {
     }
     else this.allFinished = true
     this.refresh()
+    }, { commitSessionAction, loadState, replayPendingEvents })
   },
 
   onUndo() {
+    return commitPageAction(this, function() {
     const s = this.state
     const exIdx = s.exIdx, setIdx = s.setIdx
     const row = s.workout.rows[exIdx] && s.workout.rows[exIdx][setIdx]
@@ -521,12 +539,13 @@ export default {
     this.allFinished = false
     this.emitEvent({ t: 'unset', sid: s.sid, ex: exIdx, set: setIdx + 1, at: Date.now() })
     this.refresh()
+    }, { commitSessionAction, loadState, replayPendingEvents })
   },
 
   onCurrentSetAction() {
     if (this.closeMode || this.paused || this.interactionBlocked() || Date.now() < (this.completionIgnoreUntil || 0)) return
-    if (this.rowDone) this.onUndo()
-    else this.onComplete()
+    if (this.rowDone) return this.onUndo()
+    else return this.onComplete()
   },
 
   onRemoteSet(msg) {
@@ -624,6 +643,7 @@ export default {
     const localRound = localRest ? { restUntil: this.state.restUntil, restTargetSec: this.state.restTargetSec,
       restVersion: this.state.restVersion, restId: this.state.restId, restStartedAt: this.state.restStartedAt } : null
     if (!localRest) this.cancelRestNudge()
+    if (localRound) this.state = loadState()
     applySync(this.state, msg)
     if (localRound) Object.assign(this.state, localRound)
     this.profile = this.state.profile || this.profile
@@ -646,6 +666,7 @@ export default {
   },
 
   onSkipRest() {
+    return commitPageAction(this, function() {
     if (Date.now() < (this.autoFocusIgnoreUntil || 0)) return
     this.cancelRestNudge()
     const s = this.state
@@ -658,11 +679,12 @@ export default {
     this.emitEvent({ t: 'rest', sid: s.sid, ...restOf(s) })
     save(s)
     this.refresh()
+    }, { commitSessionAction, loadState, replayPendingEvents })
   },
 
   nudgeRest(deltaSec) {
     this.applyRestNudge(deltaSec)
-    this.flushRestNudge()
+    return this.flushRestNudge()
   },
 
   queueRestNudge(deltaSec) {
@@ -681,20 +703,53 @@ export default {
     this.restCrownDirty = false
   },
 
-  flushRestNudge() {
-    const dirty = this.restCrownDirty
-    this.cancelRestNudge()
-    const s = this.state
-    if (!dirty || !s || !s.active) return
-    const left = Math.max(0, Math.ceil((s.restUntil - Date.now()) / 1000))
-    s.restVersion = Math.max(Date.now(), (s.restVersion || 0) + 1)
-    save(s)
-    this.emitEvent({ t: 'rest', sid: s.sid, ...restOf(s) })
+  async flushRestNudge() {
+    if (this.restFlushPending) {
+      const result = await this.restFlushPending
+      if (!result.ok) return false
+      return this.restCrownDirty ? this.flushRestNudge() : true
+    }
+    if (!this.restCrownDirty) return true
+    const sid = this.state.sid, generation = this.restInputGeneration
+    const base = this.restCrownBase, round = { restUntil: this.state.restUntil, restTargetSec: this.state.restTargetSec,
+      restLeftSec: this.state.restLeftSec, restVersion: this.state.restVersion, restId: this.state.restId }
+    if (this.restCrownTimer) clearTimeout(this.restCrownTimer)
+    this.restCrownTimer = null
+    const operation = commitSessionAction(sid, state => {
+      if (state.restId !== base.restId || state.restVersion !== base.restVersion) throw new Error('休息已变化，请重试')
+      Object.assign(state, round)
+      stageSessionEvent(state, { t: 'rest', sid, ...restOf(state) })
+    })
+    this.restFlushPending = operation
+    try {
+      const result = await operation
+      if (!result.ok) { this.syncWarning = true; this.syncLabel = '存储失败，休息调整未保存，请重试'; return false }
+      replayPendingEvents()
+      // Isolated page adapters also use the same frozen intention (sendEvent deduplicates).
+      const event = result.value.pendingEdits?.[result.value.pendingEdits.length - 1]
+      if (event) sendEvent(event)
+      if (this.state.sid !== sid || !loadState().active) return true
+      if (this.restInputGeneration === generation) {
+        this.restCrownDirty = false; this.restCrownBase = null
+        this.state = loadState()
+        if (this.visible) this.refresh()
+      } else {
+        // New input is a preview on top of this exact persisted round, not a rollback.
+        this.restCrownBase = { restId: round.restId, restVersion: round.restVersion }
+        this.restFlushPending = null
+        return this.flushRestNudge()
+      }
+      return true
+    } finally {
+      if (this.restFlushPending === operation) this.restFlushPending = null
+    }
   },
 
   applyRestNudge(deltaSec) {
     const s = this.state
     if (!s || !s.active || !s.restUntil || !Number.isFinite(deltaSec)) return
+    if (!this.restCrownDirty) this.restCrownBase = { restId: s.restId, restVersion: s.restVersion }
+    this.restInputGeneration = (this.restInputGeneration || 0) + 1
     const now = Date.now()
     const target = Math.min(now + 900000, s.restUntil + deltaSec * 1000)
     s.restTargetSec = Math.max(0, Math.min(900, (s.restTargetSec || 0) + (target - s.restUntil) / 1000))
@@ -929,13 +984,14 @@ export default {
       return
     }
     if (this.effortDraft == null) { this.closeEffort(); return }
-    this.commitEffort(this.effortDraft)
+    return this.commitEffort(this.effortDraft)
   },
   clearEffort() {
     if (!this.effortOn || !this.effortHasSaved) return
-    this.commitEffort(null)
+    return this.commitEffort(null)
   },
   commitEffort(value) {
+    return commitPageAction(this, function() {
     const found = this.effortTargetRow()
     if (!this.effortTargetValid()) {
       this.effortNotice = '目标组已变化，无法登记'
@@ -956,6 +1012,7 @@ export default {
     this.effortNotice = ''
     this.focusCrown()
     this.refresh()
+    }, { commitSessionAction, loadState, replayPendingEvents })
   },
   onRemoteEffort(msg) {
     const s = this.state
@@ -1221,14 +1278,15 @@ export default {
     const latest = loadState()
     if (latest.sid === this.state.sid) this.state.pendingEdits = latest.pendingEdits || []
   },
-  onPause() { this.setPaused(!this.state.pausedAt, Date.now(), true) },
+  onPause() { return this.setPaused(!this.state.pausedAt, Date.now(), true) },
   onRemotePause(msg) {
     if (msg.sid !== this.state.sid || msg.seq <= (this.state.pauseVersion || 0)) return
     this.setPaused(!!msg.paused, msg.at || Date.now(), false)
   },
-  setPaused(paused, at, notify) {
+  async setPaused(paused, at, notify) {
+    if ((await this.flushRestNudge()) === false) return false
+    return commitPageAction(this, function() {
     const s = this.state
-    this.flushRestNudge()
     if (paused && !s.pausedAt) {
       s.restLeftSec = restOf(s).leftSec; s.restUntil = 0; s.pausedAt = at
       this.stopHrCapture()
@@ -1241,6 +1299,7 @@ export default {
     if (!paused) this.startHrCapture()
     if (notify) { this.emitEvent({ t: 'pause', sid: s.sid, paused, seq: at, at }); this.emitEvent({ t: 'rest', sid: s.sid, ...restOf(s) }) }
     this.refresh()
+    }, { commitSessionAction, loadState, replayPendingEvents })
   },
   askEnd() { this.finishOn = false; this.closeMode = 'end' },
   askAbandon() { this.closeMode = 'abandon' },
@@ -1256,26 +1315,27 @@ export default {
   },
   saveEnd() {
     if (this.closeMode === 'complete' && Date.now() < this.completionIgnoreUntil) return
-    this.onEnd('saved')
+    return this.onEnd('saved')
   },
-  discardEnd() { this.onEnd('discarded') },
-  abandonEnd() { this.onEnd('abandoned') },
-  onEnd(reason, notifyPhone = true) {
+  discardEnd() { return this.onEnd('discarded') },
+  abandonEnd() { return this.onEnd('abandoned') },
+  async onEnd(reason, notifyPhone = true) {
     if (typeof reason !== 'string') reason = 'manual'
-    const s = this.state
-    if (!s || !s.active) return
-    this.cancelRestNudge()
-    this.setRestScreenLock(false)
-    this.stopHrCapture()
-    const closedAt = Date.now()
-    const session = reason === 'saved' ? endSession(s, s.profile) : null
-    if (!session) closeSession(s.sid)
-    if (notifyPhone) sendEvent({ t: 'session_close', sid: s.sid, disposition: reason, closedAt, at: closedAt,
-      ...(session ? { workout: s.workout, startedAt: s.startedAt, weightUnit: s.weightUnit || 'kg', summary: { minutes: session.minutes, avgHr: session.avgHr, maxHr: session.maxHr, calories: session.calories, volume: session.volume }, completedSets: session.sets } : {}) })
-    this.state = loadState()
-    if (this.timer) clearInterval(this.timer)
-    if (this.hrFlush) clearInterval(this.hrFlush)
-    router.replace({ uri: reason === 'saved' ? '/Summary' : '/Index' })
+    if (this.localCommitPending || this.closeSaving || !this.state?.active) return
+    this.closeSaving = true
+    try {
+      if ((await this.flushRestNudge()) === false) { this.syncWarning = true; this.syncLabel = '休息调整未保存，请重试'; return }
+      const result = await commitLocalClose(this.state.sid, reason)
+      if (!result.ok) { this.syncWarning = true; this.syncLabel = '存储失败，未结束，请重试'; return }
+      this.cancelRestNudge(); this.setRestScreenLock(false); this.stopHrCapture()
+      for (const event of [...(result.entry.pendingEvents || []), result.entry.closeEvent]) sendEvent(event)
+      if (result.entry.delivery === 'pending') sendEvent(result.entry.summaryEvent)
+      this.state = loadState()
+      if (this.timer) clearInterval(this.timer)
+      if (this.hrFlush) clearInterval(this.hrFlush)
+      router.replace({ uri: reason === 'saved' ? '/Summary' : '/Index' })
+    } catch (_) { this.syncWarning = true; this.syncLabel = '存储失败，未结束，请重试' }
+    finally { this.closeSaving = false }
   },
 }
 

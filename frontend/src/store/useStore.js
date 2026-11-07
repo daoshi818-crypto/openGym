@@ -1372,12 +1372,12 @@ export const useStore = create((set, get) => {
       if (MOBILE) await saveMirror(true)
     },
 
-    update(mut, push = true, { watchActor = 'phone', skipWatchStamp = false } = {}) {
+    update(mut, push = true, { watchActor = 'phone', watchEventId = null, skipWatchStamp = false } = {}) {
       if (watchDraft) {
         const before = clone(watchDraft)
         mut(watchDraft)
         ensureWatchIdentity(watchDraft.active)
-        stampWatchRevision(before, watchDraft, watchActor)
+        stampWatchRevision(before, watchDraft, watchActor, watchEventId)
         return
       }
       const prev = get().S
@@ -1388,7 +1388,7 @@ export const useStore = create((set, get) => {
         S.active.watchRemovedSets = [...new Set([...(S.active.watchRemovedSets || []), ...(prev.active.entries || []).flatMap(e => (e.sets || []).map(r => r.setId)).filter(id => id && !live.has(id))])].slice(-4000)
       }
       ensureWatchIdentity(S.active)
-      if (!skipWatchStamp) stampWatchRevision(prev, S, watchActor)
+      if (!skipWatchStamp) stampWatchRevision(prev, S, watchActor, watchEventId)
       if (prev.active && !prev.active.editingWorkoutId && watchSidOf(prev.active) !== watchSidOf(S.active)) {
         const sid = watchSidOf(prev.active)
         if (sid && !S.watchClosed?.[sid]) {
