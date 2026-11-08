@@ -27,3 +27,12 @@ describe('dependency scheduling contract', () => {
     expect(selectReadyEvent([item(ev('a','1'))], new Set(), {}, 1, true)).toBeNull()
   })
 })
+
+it('only an exact phone-resolved conflict in the same session permits a dependent event', () => {
+  const child = { ...ev('child', '1'), dependsOn: ['parent'] }
+  expect(dependencyDecision(child, () => ({ sid: 's', status: 'conflict', resolution: 'phone' })).status).toBe('ready')
+  for (const parent of [{ sid: 'other', status: 'conflict', resolution: 'phone' },
+    { sid: 's', status: 'rejected', resolution: 'phone' }, { sid: 's', status: 'received', resolution: 'phone' }]) {
+    expect(dependencyDecision(child, () => parent).status).toBe('rejected')
+  }
+})

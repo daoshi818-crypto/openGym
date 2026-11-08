@@ -29,8 +29,11 @@ export function watchConflict(S, ev) {
   if (ev.sessionEpoch && ev.sessionEpoch !== ev.sid) return { field: 'session', reason: 'stale_epoch', watch: ev }
   const entry = a.entries?.find(e => e.entryInstanceId === ev.entryInstanceId)
   const row = entry?.sets?.find(r => r.setId === ev.setId)
-  const fields = ev.t === 'set' ? ['done', ...(ev.weight != null ? ['weight'] : []), ...(ev.reps != null ? ['reps'] : [])]
-    : ev.t === 'unset' ? ['done'] : ['weight', 'reps', 'effort'].includes(ev.t) ? [ev.t] : ['add_set', 'remove_set'].includes(ev.t) ? ['structure'] : []
+  // The reducer accepts weight/reps payloads on all four row edit types.
+  // Validate every field it can mutate, including bundled or legacy payloads.
+  const fields = ['weight', 'reps', 'set', 'unset'].includes(ev.t)
+    ? [...(['set', 'unset'].includes(ev.t) ? ['done'] : []), ...(ev.weight != null ? ['weight'] : []), ...(ev.reps != null ? ['reps'] : [])]
+    : ev.t === 'effort' ? ['effort'] : ['add_set', 'remove_set'].includes(ev.t) ? ['structure'] : []
   const globals = ['set','unset'].includes(ev.t) ? ['restVersion','watchFocus'] : ev.t === 'rest' ? ['restVersion'] : ev.t === 'focus' ? ['watchFocus'] : ev.t === 'pause' ? ['pauseVersion','restVersion'] : []
   const actor = ev.installationId || 'watch'
   for (const field of globals) {

@@ -269,7 +269,7 @@ export function replacePlan(state, workout) {
 }
 
 // 手机重连后的权威快照：手机是唯一数据源，手表整体接受。
-export function applySync(state, snapshot) {
+export function applySync(state, snapshot, options) {
   if (!snapshot || !Array.isArray(snapshot.exercises)) return state
   if (snapshot.sid && state.sid && snapshot.sid !== state.sid) return state
   if (snapshot.protocolVersion >= 3 ? snapshot.commitRev < (state.commitRev || 0) : snapshot.rev && snapshot.rev < (state.snapshotRev || 0)) return state
@@ -282,7 +282,7 @@ export function applySync(state, snapshot) {
   state.structureRevision = snapshot.structureRevision || state.structureRevision
   if (snapshot.effortScale != null) state.effortScale = snapshot.effortScale === 'rpe' || snapshot.effortScale === 'rir' ? snapshot.effortScale : 'none'
   state.snapshotRev = snapshot.rev || state.snapshotRev || 0
-  const stored = snapshot.protocolVersion >= 3 ? readStored(K_STATE) : null
+  const stored = options?.pendingEdits ? { sid: state.sid, pendingEdits: options.pendingEdits } : snapshot.protocolVersion >= 3 ? readStored(K_STATE) : null
   const edits = snapshot.sid && snapshot.sid !== state.sid ? [] :
     stored?.sid === state.sid && Array.isArray(stored.pendingEdits) ? stored.pendingEdits : state.pendingEdits || []
   const focused = state.workout && state.workout.exercises[state.exIdx]
@@ -345,6 +345,16 @@ export function applySync(state, snapshot) {
   persist(state)
   return state
 }
+// A receipt can arrive after its snapshot. Rebuild the durable projection after
+// retiring its overlay; notifying a page alone must never leave that overlay in rows/focus.
+export function reconcileCommittedSnapshot(state, revision) {
+  if (!state.active || !state.syncBase || !Number.isFinite(revision) || state.syncBase.sid !== state.sid || state.syncBase.commitRev < revision) return state
+  const previousDraft = runtime().sessionDraft
+  runtime().sessionDraft = state
+  try { return applySync(state, state.syncBase, { pendingEdits: state.pendingEdits || [] }) }
+  finally { runtime().sessionDraft = previousDraft }
+}
+
 export function nextUndoneFrom(s, exIdx = s.exIdx, setIdx = s.setIdx) {
   const count = s.workout.rows.length
   const start = Math.max(0, Math.min(Number(exIdx) || 0, Math.max(0, count - 1)))

@@ -5,16 +5,20 @@ import { watchPersistence, loadWatchModule, stripImports, watchSource, watchInte
 import { applyEdit, applyFocus, applyRest, restOf } from '../../../watch-app/src/lib/protocol.js'
 import * as effort from '../../../watch-app/src/lib/effort-scale.js'
 import { lastTimeView } from '../../../watch-app/src/lib/watch-last-time.js'
+import { createDurableWatchLifecycle } from './watch-commit.js'
+import { stampWatchRevision } from './watch-revision.js'
+import { watchSnapshotOf } from './watch-workout.js'
 import { wireHash } from '../../../watch-app/src/lib/sync-wire.js'
-function boot() {
+function boot(connected = false) {
   const h = watchPersistence(), c = h.ctx
   Object.assign(c, watchInteractionDeps, effort, { lastTimeView, console, applyEdit, applyFocus, applyRest, restOf, WATCH_VERSION: 'test', startSessionHr: vi.fn(), stopSessionHr: vi.fn(), tick: vi.fn(), restOver: vi.fn(), router: { push: vi.fn(), replace: vi.fn() } })
   loadWatchModule('event-id', c, ['allocateEventIdentity', 'rememberEventAt'])
   loadWatchModule('close-journal', c, ['prepareClose', 'pendingSummaries', 'pendingEntry', 'journalEntry', 'markEntry', 'markDelivered', 'releaseCandidate', 'markPhase'])
   loadWatchModule('session', c, ['startSession', 'save', 'loadState', 'closeSession', 'buildSessionSummary', 'summaryEventOf', 'toggleSet', 'nextUndone', 'nextUndoneFrom', 'addRestTime', 'applySync', 'calories'])
-  c.interconnect = { instance: () => ({ getReadyState: ({ success }) => success({ status: 0 }), send: vi.fn() }) }
+  const sent = [], connection = { getReadyState: ({ success }) => success({ status: connected ? 1 : 0 }), send: ({ data, success }) => { sent.push(data); success?.() } }
+  c.interconnect = { instance: () => connection }
   loadWatchModule('rpc', c, ['startServer', 'sendEvent', 'replayPendingEvents', 'pendingCount', 'isConnected', 'persistenceStatus', 'synchronizationStatus'])
-  return { ...h, c }
+  return { ...h, c, sent, connection }
 }
 function plan(sid = 's') { return { sid, protocolVersion: 3, name: '5+2', exercises: [5, 2].map((sets, i) => ({ name: 'Exercise ' + i, entryInstanceId: 'ex' + i, sets, setIds: Array.from({ length: sets }, (_, j) => 'row' + i + '-' + j), weight: '50', reps: '8', restSec: 90 })) } }
 function snapshot(h, sid = 's', rev = 1) {
@@ -174,4 +178,149 @@ it('legacy pending without sid replays only in its original session and remains 
   s = h.c.loadState(); s.active = false; h.c.save(s)
   const next = snapshot(h, 'new'); expect((await h.c.commitWireSnapshot(next, transfer(next, 'p:new'))).ok).toBe(true)
   expect(h.c.loadState().setIdx).toBe(0); expect(h.c.loadState().pendingEdits[0]).toMatchObject({ sid: 'old', eventId: 'legacy' })
+})
+
+// Exercise phone revisions + exact receipts, not just old watch snapshots.
+function paired() {
+  const h = boot(true), workout = plan()
+  const S = { unit: 'kg', workouts: [], active: { start: Date.now(), watchSid: 's', name: '5+2',
+    entries: workout.exercises.map(ex => ({ id: 'plain-bench', name: ex.name, entryInstanceId: ex.entryInstanceId,
+      sets: ex.setIds.map(setId => ({ setId, w: 50, r: '8', done: false })) })) } }
+  stampWatchRevision({}, S)
+  let timer = null, cursor = 0
+  const replies = [], snapshots = []
+  const deps = { getState: () => S, getTimer: () => timer, checkpoint: async () => {},
+    update: (fn, ev) => { const prev = structuredClone(S); fn(S); stampWatchRevision(prev, S, ev?.installationId || 'watch', ev?.eventId) },
+    rest: ev => { timer = ev.leftSec ? { ...ev, source: 'watch' } : null },
+    send: msg => replies.push(structuredClone(msg)), sendAck() {}, sendEnded() {}, finish() {},
+    sendSync: snap => snapshots.push({ ...snap, t: 'sync', protocolVersion: 3 }) }
+  const receive = createDurableWatchLifecycle(deps)
+  h.c.startSession(workout)
+  const { ctx: p } = bluePage(h, true)
+  p.bindRpc()
+  h.connection.onMessage({ t: 'hello_ack', protocolVersion: 3, capabilities: { dependencyEvents: true } })
+  async function sync(value) {
+    const msg = { ...value, wireHash: wireHash(value) }
+    const result = await h.c.commitWireSnapshot(msg, transfer(msg, 'p:pair-' + msg.commitRev))
+    expect(result.ok).toBe(true)
+    p.onSyncUpdate(msg, { persisted: true })
+    await vi.advanceTimersByTimeAsync(1)
+  }
+  async function pump(withSnapshots = true) {
+    for (let i = 0; i < 90; i++) {
+      for (const msg of h.sent.slice(cursor)) if (msg.eventId && msg.t !== 'hello') receive(msg)
+      cursor = h.sent.length
+      await receive.idle()
+      for (const msg of replies.splice(0)) h.connection.onMessage(msg)
+      if (withSnapshots && snapshots.length) await sync(snapshots.pop())
+      if (withSnapshots) snapshots.length = 0
+      await vi.advanceTimersByTimeAsync(150)
+      if (!h.c.pendingCount() && cursor === h.sent.length) break
+    }
+  }
+  return { ...h, p, S, deps, receive, sync, pump, snapshots }
+}
+it('phone receipts and snapshots preserve rapid watch-only 5+2 completion across the fifth set', async () => {
+  vi.useFakeTimers(); const a = paired()
+  await a.sync({ ...watchSnapshotOf(a.S, null), t: 'sync', protocolVersion: 3 })
+  try {
+    for (let i = 0; i < 7; i++) {
+      await vi.advanceTimersByTimeAsync(710)
+      a.p.touchStart({ touches: [{ clientX: 100, clientY: 100 }] }); a.p.touchCancel()
+      expect(await a.p.onComplete()).toBe(true)
+      a.p.touchStart({ touches: [{ clientX: 100, clientY: 100 }] }); a.p.touchCancel()
+      expect(await a.p.onSkipRest()).toBe(true)
+      await a.pump(i % 2 === 0)
+      expect(a.S.active.entries.flatMap(e => e.sets).filter(r => r.done)).toHaveLength(i + 1)
+      expect(a.c.synchronizationStatus().conflicts).toBe(0)
+      expect([a.p.state.exIdx, a.p.state.setIdx]).toEqual(i < 4 ? [0, i + 1] : i < 6 ? [1, i - 4] : [1, 1])
+      expect(a.p.localCommitPending).toBe(false)
+    }
+  } finally { a.receive.dispose() }
+})
+
+it('real Workout restores phone authority when a persisted snapshot overtakes a negative receipt', async () => {
+  vi.useFakeTimers(); const a = paired()
+  await a.sync({ ...watchSnapshotOf(a.S, null), t: 'sync', protocolVersion: 3 })
+  try {
+    a.c.sendEvent({ t: 'weight', sid: 's', ex: 0, set: 1, weight: '65', at: Date.now() })
+    const ev = a.c.loadState().pendingEdits.at(-1)
+    const before = structuredClone(a.S)
+    a.S.active.entries[0].sets[0].w = 80; stampWatchRevision(before, a.S)
+    await a.sync({ ...watchSnapshotOf(a.S, null), t: 'sync', protocolVersion: 3 })
+    expect(a.c.loadState().workout.rows[0][0].w).toBe('65')
+    a.connection.onMessage({ t: 'committed', sid: 's', eventId: ev.eventId, status: 'conflict', resolution: 'phone', commitRev: a.S.active.syncRev })
+    await vi.advanceTimersByTimeAsync(10)
+    expect(a.c.loadState().workout.rows[0][0].w).toBe(80)
+    expect(a.p.state.workout.rows[0][0].w).toBe(80)
+    expect(a.c.pendingCount()).toBe(0)
+    expect(a.c.synchronizationStatus().conflicts).toBe(0)
+  } finally { a.receive.dispose() }
+})
+
+it('drains a full rapid 5+2 backlog without rolling focus back at the exercise boundary', async () => {
+  vi.useFakeTimers(); const a = paired()
+  await a.sync({ ...watchSnapshotOf(a.S, null), t: 'sync', protocolVersion: 3 })
+  try {
+    for (let i = 0; i < 7; i++) {
+      await vi.advanceTimersByTimeAsync(710)
+      a.p.touchStart({ touches: [{ clientX: 100, clientY: 100 }] }); a.p.touchCancel()
+      expect(await a.p.onComplete()).toBe(true)
+      a.p.touchStart({ touches: [{ clientX: 100, clientY: 100 }] }); a.p.touchCancel()
+      expect(await a.p.onSkipRest()).toBe(true)
+    }
+    expect(a.c.loadState().pendingEdits.filter(e => e.t === 'set')).toHaveLength(7)
+    await a.pump()
+    expect(a.c.pendingCount()).toBe(0)
+    expect(a.S.active.entries.flatMap(e => e.sets).filter(r => r.done)).toHaveLength(7)
+    expect([a.p.state.exIdx, a.p.state.setIdx]).toEqual([1, 1])
+    expect(a.p.localCommitPending).toBe(false)
+    expect(a.c.synchronizationStatus().conflicts).toBe(0)
+  } finally { a.receive.dispose() }
+})
+
+it('phone wins a conflicting parent while unrelated pending work and heart rate survive reconciliation', async () => {
+  vi.useFakeTimers(); const a = paired()
+  await a.sync({ ...watchSnapshotOf(a.S, null), t: 'sync', protocolVersion: 3 })
+  try {
+    a.c.sendEvent({ t: 'weight', sid: 's', ex: 0, set: 1, weight: '65', at: Date.now() })
+    a.c.sendEvent({ t: 'reps', sid: 's', ex: 0, set: 2, reps: '12', at: Date.now() + 1 })
+    const ev = a.c.loadState().pendingEdits.find(e => e.t === 'weight')
+    const local = a.c.loadState(); local.hr.count = 3; local.hr.max = 150; a.c.save(local)
+    const before = structuredClone(a.S)
+    a.S.active.entries[0].sets[0].w = 80; stampWatchRevision(before, a.S)
+    await a.sync({ ...watchSnapshotOf(a.S, null), t: 'sync', protocolVersion: 3 })
+    a.connection.onMessage({ t: 'committed', sid: 's', eventId: ev.eventId, status: 'conflict', resolution: 'phone', commitRev: a.S.active.syncRev })
+    await vi.advanceTimersByTimeAsync(10)
+    expect(a.p.state.workout.rows[0][0].w).toBe(80)
+    expect(a.c.loadState().pendingEdits.some(e => e.t === 'reps')).toBe(true)
+    expect(a.p.state.workout.rows[0][1].r).toBe('12')
+    expect(a.c.loadState().hr.count).toBe(3)
+    await a.pump()
+    expect(a.S.active.entries[0].sets[0].w).toBe(80)
+    expect(a.S.active.entries[0].sets[1].r).toBe('12')
+  } finally { a.receive.dispose() }
+})
+
+it.each(['sync_conflicts', 'event_decisions', 'session_state'])('retains the exact pending event when phone resolution cannot save %s', async key => {
+  vi.useFakeTimers(); const a = paired()
+  await a.sync({ ...watchSnapshotOf(a.S, null), t: 'sync', protocolVersion: 3 })
+  try {
+    a.c.sendEvent({ t: 'weight', sid: 's', ex: 0, set: 1, weight: '65', at: Date.now() })
+    const ev = a.c.loadState().pendingEdits.at(-1)
+    const before = structuredClone(a.S)
+    a.S.active.entries[0].sets[0].w = 80; stampWatchRevision(before, a.S)
+    await a.sync({ ...watchSnapshotOf(a.S, null), t: 'sync', protocolVersion: 3 })
+    const receipt = { t: 'committed', sid: 's', eventId: ev.eventId, status: 'conflict', resolution: 'phone', commitRev: a.S.active.syncRev }
+    const original = a.storage.set
+    a.storage.set = item => item.key === key ? item.fail() : original(item)
+    a.connection.onMessage(receipt); await vi.advanceTimersByTimeAsync(10)
+    expect(a.c.pendingCount()).toBe(1)
+    expect(a.c.loadState().pendingEdits.some(e => e.eventId === ev.eventId)).toBe(true)
+    a.storage.set = original
+    a.connection.onMessage(receipt); await vi.advanceTimersByTimeAsync(10)
+    expect(a.c.pendingCount()).toBe(0)
+    expect(a.p.state.workout.rows[0][0].w).toBe(80)
+    expect(a.disk.get('event_decisions')[ev.eventId]).toMatchObject({ status: 'conflict', resolution: 'phone' })
+  } finally { a.receive.dispose() }
 })

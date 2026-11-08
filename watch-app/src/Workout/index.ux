@@ -1271,8 +1271,8 @@ const pageDefinition = {
     this.kcalLabel = String((s.baseCalories || 0) + calories(s, s.profile, Math.max(0, ((s.pausedAt || Date.now()) - (s.segmentStartedAt || s.startedAt) - (s.pausedMs || 0)) / 60000)))
     const n = pendingCount()
     const sync = synchronizationStatus()
-    this.syncWarning = persistenceStatus().failed || storageStatus().failed || sync.conflicts > 0 || sync.phonePending > 0 || n > 0 || !isConnected()
-    this.syncLabel = persistenceStatus().failed || storageStatus().failed ? '存储失败，请保留应用' : sync.conflicts > 0 ? '存在冲突，请核对手机' : sync.phonePending > 0 ? '手机待处理 ' + sync.phonePending + ' 条' : n > 0 ? '待上传 ' + n + ' 条' : isConnected() ? (sync.lastCommitAt ? '已同步' : '已连接') : '离线记录'
+    this.syncWarning = persistenceStatus().failed || storageStatus().failed || sync.phonePending > 0 || n > 0 || !isConnected()
+    this.syncLabel = persistenceStatus().failed || storageStatus().failed ? '存储失败，请保留应用' : sync.phonePending > 0 ? '手机待处理 ' + sync.phonePending + ' 条' : n > 0 ? '待上传 ' + n + ' 条' : isConnected() ? (sync.lastCommitAt ? '已同步' : '已连接') : '离线记录'
   },
 
   showDiagnostics() {

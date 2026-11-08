@@ -25,7 +25,7 @@ export function dependencyDecision(event, lookup) {
   for (const id of ids) {
     const parent = lookup(id)
     if (!parent) return { status: 'missing', reason: 'dependency_missing', parent: id }
-    if (parent.status !== 'applied') return { status: 'rejected', reason: 'dependency_' + parent.status, parent: id }
+    if (parent.status !== 'applied' && !(parent.status === 'conflict' && parent.resolution === 'phone')) return { status: 'rejected', reason: 'dependency_' + parent.status, parent: id }
     if (parent.sid !== event.sid) return { status: 'rejected', reason: 'session_dependency', parent: id }
   }
   return { status: 'ready' }

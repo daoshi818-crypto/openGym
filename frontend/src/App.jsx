@@ -1,3 +1,4 @@
+import { broadcastPhoneRest } from './lib/watch-rest-broadcast.js'
 import { isOn } from './lib/modules.js'
 import ModulesPage from './views/Modules.jsx'
 import IntegrationsPage from './views/Integrations.jsx'
@@ -120,15 +121,14 @@ function Shell() {
   }, [watchPlan, ready, watchOn])
   const watchCatalog = useMemo(() => MOBILE ? JSON.stringify({ ...watchCatalogOf(S), at: 0 }) : 'null', [S.routines, S.week, S.dayPlan, S.watchPlanIds, S.workouts])
   const restTimer = useUI(s => s.timer)
+  const restStopSource = useUI(s => s.restStopSource)
   useEffect(() => {
     if (MOBILE && ready && watchOn) sendToWatch({ ...JSON.parse(watchCatalog), at: Date.now() })
   }, [watchCatalog, ready, watchOn])
   useEffect(() => {
-    if (!MOBILE || !ready || !watchOn || !S.active?.start || restTimer?.source === 'watch') return
-    const version = restTimer?.seq || Date.now()
-    useStore.getState().update(s => { if (s.active) s.active.restVersion = version })
-    pushRestToWatch(watchSidOf(S.active), restTimer && !restTimer.ready ? restTimer.paused ? restTimer.left : Math.max(0, Math.ceil((restTimer.endsAt - Date.now()) / 1000)) : 0, restTimer)
-  }, [ready, watchOn, S.active?.start, restTimer?.endsAt, restTimer?.paused, restTimer?.ready, restTimer?.total])
+    broadcastPhoneRest({ enabled: MOBILE && ready && watchOn, active: S.active, timer: restTimer, stopSource: restStopSource,
+      update: fn => useStore.getState().update(fn), send: pushRestToWatch })
+  }, [ready, watchOn, S.active?.start, restTimer?.endsAt, restTimer?.paused, restTimer?.ready, restTimer?.total, restStopSource])
   // 原生悬浮窗：启动/回前台恢复持久样式，并用原生休息状态裁决旧 WebView 计时。
   const overlayStyle = S.overlayStyle === 'ring' ? 'ring' : 'card'
   useEffect(() => {

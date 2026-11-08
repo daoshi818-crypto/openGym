@@ -233,3 +233,17 @@ alone does not complete/unset a row. Dots are 18px (current 22px), in unchanged 
 regions. They represent sets; the exercise-title/list route still selects exercises.
 Host regression tests model SDK Proxy/bound-method semantics and the actual render method;
 they do not prove freedom from physical-watch black screens, firmware hangs or disconnects.
+
+
+## Phone authority (phone 1.6.20 / watch 0.6.23)
+
+For concurrent field edits the durable exact committed receipt retains `status: conflict`
+for compatibility and adds `resolution: phone`. The phone checkpoints that decision before
+replying. The watch archives that exact event as automatically settled, rebuilds the
+projection from an adequately new committed snapshot plus surviving pending edits, then
+acknowledges only that event locally. If the snapshot is missing it requests a full sync.
+An exact same-session parent with conflict + resolution=phone permits child delivery;
+each child still undergoes dependency, identity and complete payload field validation.
+Legacy conflict/rejected receipts keep their conservative dependency archival semantics
+and retain unreviewed original payloads. Neither a received receipt nor transport success
+is promoted to an applied decision. No manual field conflict prompt is shown.

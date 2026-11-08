@@ -39,7 +39,11 @@ export default {
     if (s.active) {
       this.workoutName = s.workout.name; this.exerciseCount = s.workout.exercises.length
       this.status = s.pendingStart ? '离线训练 · 待同步' : '训练进行中'
-    } else this.status = storage.getSync({ key: 'last_notice' }) || (this.plans.length ? '缓存计划 · 待同步' : '今日暂无计划')
+    } else {
+      const notice = storage.getSync({ key: 'last_notice' })
+      this.status = notice === '存在同步冲突，离线操作及其依赖已保留，请核对手机训练记录'
+        ? '两端状态以手机为准' : notice || (this.plans.length ? '缓存计划 · 待同步' : '今日暂无计划')
+    }
     // 本地没有计划缓存、手机也没下发过计划：说明还没同步过，不是“今天没有计划”。
     this.needSync = !catalog && !this.plans.length && !s.active
   },

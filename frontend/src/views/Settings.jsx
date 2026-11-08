@@ -35,7 +35,7 @@ import { getMediaStatus, subscribeMediaStatus, pendingRefCount } from '../lib/me
 import { limitsFrom, fmtMB, MB } from '../lib/media-limits.js'
 import { setRestAccent, overlayStatus, requestOverlay, hideOverlay, setOverlayStyle } from '../lib/rest-alert.js'
 import { watchAvailable, watchState, onWatchState, connectWatch, disconnectWatch, openWatchApp, getWatchDeviceInfo, watchDevice, watchLastError, getWatchLogs, getWatchDiagnostics, requestWatchDiagnostics } from '../lib/watch-link.js'
-import { onWatchCommitStatus, retryWatchConflict } from '../lib/watch-link.js'
+import { onWatchCommitStatus } from '../lib/watch-link.js'
 import { CUSTOM, accentKey, adjustedIn, applyAccent, cleanHex, inkOn, isGrey } from '../lib/accent.js'
 import { checkForUpdate, downloadAndInstall, fetchChecksum, forgetDownloadedUpdate, RELEASES_PAGE } from '../lib/update.js'
 import { forgetCoach } from '../lib/coach-api.js'
@@ -92,7 +92,6 @@ const standalone = () => {
 }
 
 function WatchPairSheet({ close }) {
-  const conflicts = useStore(s => s.S.watchConflicts) || {}
   const [status, setStatus] = useState(() => watchState())
   const [delivery, setDelivery] = useState({ phase: 'idle', pending: 0 })
   useEffect(() => onWatchCommitStatus(setDelivery), [])
@@ -148,13 +147,6 @@ function WatchPairSheet({ close }) {
 
   const connected = status === 'connected'
   const dev = info && (info.device || info)
-  const conflictPhoneValue = record => {
-    const field = record.detail?.field || record.event.t, row = record.detail?.phone
-    if (field === 'reps') return row?.sec ?? row?.reps ?? row?.r ?? '请查看训练页'
-    if (field === 'effort') return row?.rpe ?? row?.rir ?? record.detail?.value ?? '未登记'
-    if (field === 'done') return row?.done ? '已完成' : '未完成'
-    return row?.w ?? '请查看训练页'
-  }
   return <>
     <h3>{t('Connect watch')}</h3>
     <p className="muted small">
@@ -177,22 +169,7 @@ function WatchPairSheet({ close }) {
     {delivery.phase !== 'idle' && <p className={delivery.phase === 'storage_failed' ? 'small danger' : 'muted small'} role="status">
       {delivery.phase === 'storage_failed' ? '保存失败，手表记录仍保留，释放手机存储后会重试' : delivery.pending ? `手机待保存 ${delivery.pending} 条` : '收到的手表记录已保存'}
     </p>}
-    {Object.entries(conflicts).filter(([, record]) => !record.resolved).map(([key, record]) => <div className="item" key={key} style={{ display: 'block' }}>
-      <p className="small danger">同一组存在修改冲突，已保留双方记录</p>
-      <p className="small">第 {(record.event.ex || 0) + 1} 个动作 · 第 {record.event.set || 1} 组 · {record.detail?.field || record.event.t}</p>
-      <p className="small">手表：{record.event.weight ?? record.event.reps ?? record.event.value ?? record.event.t} · 手机：{conflictPhoneValue(record)}</p>
-      <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-        <Button variant="ghost" onClick={async () => {
-          useStore.getState().update(s => { s.watchConflicts[key].resolved = 'phone' })
-          try { await useStore.getState().checkpointWatchState(); await sendToWatch({ t: 'conflict_reviewed', eventId: record.event.eventId }) }
-          catch {
-            useStore.getState().update(s => { if (s.watchConflicts?.[key]) delete s.watchConflicts[key].resolved })
-            setError('保存失败，请释放手机存储后重试')
-          }
-        }}>保留手机值</Button>
-        <Button variant="ghost" onClick={() => { if (!retryWatchConflict(key, record)) setError('同步服务未就绪，请重试连接') }}>重新提交手表值</Button>
-      </div>
-    </div>)}
+    <p className="muted small">两端状态不一致时自动以手机为准。</p>
     {error && <p className="small danger" role="alert">{error}</p>}
     {launchResult && <p className="small muted" role="status">{launchResult}</p>}
     {showLogs && <>

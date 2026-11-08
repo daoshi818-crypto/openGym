@@ -290,3 +290,38 @@ describe('negotiated durable protocol', () => {
   })
 
 })
+
+it('durably resolves to phone, replays the exact decision, and validates children independently', async () => {
+  const a = phone(), ev = { ...event(a), dependencyEvents: true, dependsOn: [] }
+  try {
+    const before = structuredClone(a.S)
+    a.S.active.entries[0].sets[0].w = 80; stampWatchRevision(before, a.S)
+    a.receive(ev); await a.receive.idle()
+    const decision = a.deps.send.mock.calls.map(([m]) => m).find(m => m.t === 'committed')
+    expect(decision).toMatchObject({ eventId: ev.eventId, status: 'conflict', resolution: 'phone' })
+    expect(Object.values(a.S.watchConflicts)[0].resolved).toBe('phone')
+    a.receive(ev); await a.receive.idle()
+    expect(a.deps.send.mock.calls.map(([m]) => m).filter(m => m.t === 'committed')).toEqual([decision, decision])
+    const child = { ...ev, t: 'reps', eventId: 'child', deviceSeq: 2, weight: undefined, reps: '12', dependsOn: [ev.eventId] }
+    a.receive(child); await a.receive.idle()
+    expect(a.deps.send).toHaveBeenCalledWith(expect.objectContaining({ eventId: 'child', status: 'applied' }))
+    const staleWeight = { ...ev, t: 'reps', reps: '15', eventId: 'still-phone', deviceSeq: 3, dependsOn: [ev.eventId] }
+    a.receive(staleWeight); await a.receive.idle()
+    expect(a.deps.send).toHaveBeenCalledWith(expect.objectContaining({ eventId: 'still-phone', status: 'conflict', resolution: 'phone' }))
+    expect(a.S.active.entries[0].sets[0].w).toBe(80)
+    expect(a.S.active.entries[0].sets[0].r).toBe('12')
+  } finally { a.receive.dispose() }
+})
+
+it('migrates old manual conflicts to phone only after a successful durable hello checkpoint', async () => {
+  const a = phone()
+  try {
+    a.S.watchConflicts = { old: { event: event(a), at: 1 } }
+    a.deps.checkpoint.mockRejectedValueOnce(new Error('disk full'))
+    a.receive({ t: 'hello', sid: 's', protocolVersion: 3 }); await a.receive.idle()
+    expect(a.deps.send).not.toHaveBeenCalledWith(expect.objectContaining({ t: 'conflict_reviewed' }))
+    a.receive.retry(); await a.receive.idle()
+    expect(a.S.watchConflicts.old.resolved).toBe('phone')
+    expect(a.deps.send).toHaveBeenCalledWith({ t: 'conflict_reviewed', eventId: 'v3:A' })
+  } finally { a.receive.dispose() }
+})

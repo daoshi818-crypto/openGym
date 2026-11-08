@@ -62,13 +62,14 @@ export function createDurableWatchLifecycle(deps) {
                 const applied = replies.some(r => r.kind === 'ack') || ev.t === 'session_close_ack'
                 const commit = { t: 'committed', eventId: ev.eventId, sid: ev.sid,
                   status: conflict || conflicted ? 'conflict' : rejected || !applied ? 'rejected' : 'applied',
+                  ...(conflict || conflicted ? { resolution: 'phone' } : {}),
                   commitRev: deps.getState().active?.syncRev || 0,
                   ...(conflict ? { detail: copy(conflict) } : conflicted ? { detail: conflicted.msg } : rejected ? { detail: rejected.msg } : !applied ? { detail: { reason: start?.msg.status || 'no_target' } } : {}) }
                 for (let i = replies.length - 1; i >= 0; i--) if (replies[i].kind === 'ack' || ['effort_ack', 'event_rejected'].includes(replies[i].msg?.t)) replies.splice(i, 1)
                 replies.unshift({ kind: 'send', msg: commit })
                 if (commit.status === 'conflict') deps.update(s => {
                   s.watchConflicts ||= {}
-                  s.watchConflicts[key] = { event: copy(ev), detail: commit.detail, at: Date.now() }
+                  s.watchConflicts[key] = { event: copy(ev), detail: commit.detail, resolved: 'phone', at: Date.now() }
                 })
                 if (ev.resolutionOf && commit.status === 'applied') deps.update(s => {
                   if (s.watchConflicts?.[ev.resolutionOf]) s.watchConflicts[ev.resolutionOf].resolved = 'watch'
@@ -78,6 +79,9 @@ export function createDurableWatchLifecycle(deps) {
                   if (original) replies.push({ kind: 'send', msg: { t: 'conflict_reviewed', eventId: original.eventId } })
                 }
               }
+              if (ev.t === 'hello') deps.update(s => {
+                for (const record of Object.values(s.watchConflicts || {})) if (!record.resolved) record.resolved = 'phone'
+              })
               if (ev.t === 'hello') for (const record of Object.values(deps.getState().watchConflicts || {})) {
                 if (record.resolved) replies.push({ kind: 'send', msg: { t: 'conflict_reviewed', eventId: record.event.eventId } })
               }

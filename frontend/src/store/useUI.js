@@ -231,6 +231,7 @@ export const useUI = create((set, get) => ({
   toastAction: null,   // { label, run, id } while the toast offers an action (Undo)
   swipeHint: null,     // { idx, i, id }: the set row showing the one-time swipe hint (Workout.jsx)
   setFlash: null,      // { idx, i, id }: the set row a copy or an undo just brought, flashed once
+  restStopSource: 'phone', // Null timers must retain who stopped them for watch echo suppression.
   timer: null,         // rest countdown between sets — { left, total, endsAt, forIdx, ready?, paused?, kind? }
                        // kind: 'switch' for the short pause between the two sides of a timed set
                        // forIdx: index of the active entry whose set started the rest (undefined when unknown)
@@ -385,7 +386,7 @@ export const useUI = create((set, get) => ({
   },
   followWatchRest(ev) {
     const left = ev.paused ? Math.max(0, Number(ev.leftSec) || 0) : ev.endsAt ? Math.max(0, Math.ceil((ev.endsAt - Date.now()) / 1000)) : Math.max(0, Number(ev.leftSec) || 0)
-    if (!left) { get().stopRest(); return }
+    if (!left) { get().stopRest('watch'); return }
     const total = Math.max(left, Number(ev.totalSec) || left)
     get().startRest(left, get().timer?.forIdx)
     set({ timer: { ...get().timer, total, restId: ev.restId, startedAt: ev.startedAt,
@@ -410,13 +411,13 @@ export const useUI = create((set, get) => ({
     get().followNativeRest({ endsAt: Number(native.endsAt) || Date.now() + left * 1000, left,
       total: Math.round((Number(native.totalMs) || left * 1000) / 1000), paused: !!native.paused })
   },
-  stopRest() {
+  stopRest(source = 'phone') {
     stopRestTicking()
     // Skip, Dismiss, a rest replacing this one and "rest off" all take the native alarm and
     // its notifications down with it, or the alert fires after the user already moved on.
     disarmRestAlert()
     if (get().timer) cancelPushRestTimer()
-    set({ timer: null })
+    set({ timer: null, restStopSource: source })
   },
 
   /* ---- work timer (issue #16) ----

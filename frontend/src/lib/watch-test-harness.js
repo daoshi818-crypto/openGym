@@ -28,7 +28,7 @@ export function loadWatchModule(name, ctx, names) {
   if (name === 'close-journal') names = [...new Set([...names, 'pendingCloseEvents', 'markEntry'])]
   if (name === 'rpc' && !ctx.pendingCloseEvents) ctx.pendingCloseEvents = () => [] // Legacy isolated transport fixtures.
   if (name === 'session' && !ctx.wireHash) loadWatchModule('sync-wire', ctx, ['wireHash', 'expandWireDelta'])
-  if (name === 'session') names = [...new Set([...names, 'readSessionHr', 'commitSessionAction', 'stageSessionEvent', 'commitLocalClose', 'commitWireSnapshot', 'commitSessionStart', 'recoverLocalClose'])]
+  if (name === 'session') names = [...new Set([...names, 'readSessionHr', 'commitSessionAction', 'stageSessionEvent', 'commitLocalClose', 'commitWireSnapshot', 'commitSessionStart', 'recoverLocalClose', 'reconcileCommittedSnapshot'])]
   const body = stripImports(watchSource('lib/' + name + '.js'))
   // Each module gets its own function scope, like a real ES module: the flattened global
   // would otherwise let one module's top-level `save`/`loadState` overwrite another's.

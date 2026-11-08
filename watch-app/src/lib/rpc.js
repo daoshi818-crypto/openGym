@@ -16,7 +16,7 @@ import { wireHash, wireBytes, acceptWireChunk, expandWireDelta } from './sync-wi
 //    日志重建 outbox，而不是依赖打烊前是否调用过 sendEvent。
 import interconnect from '@blueos.bluexlink.connectionManager'
 import storage from '@blueos.storage.storage'
-import { loadState, buildSessionSummary, summaryEventOf, closeSession, save, stageSessionEvent, recoverLocalClose, commitWireSnapshot } from './session.js'
+import { loadState, buildSessionSummary, summaryEventOf, closeSession, save, stageSessionEvent, recoverLocalClose, commitWireSnapshot, reconcileCommittedSnapshot } from './session.js'
 import { allocateEventIdentity, rememberEventAt } from './event-id.js'
 import { pendingSummaries, pendingCloseEvents, pendingEntry, journalEntry, prepareClose, releaseCandidate, markPhase, markEntry, markDelivered } from './close-journal.js'
 import { WATCH_VERSION } from './version.js'
@@ -528,7 +528,9 @@ export function startServer(h) {
         const affected = [item.msg]
         if (msg.status !== 'applied') {
           const ids = new Set([msg.eventId])
-          let changed = true
+          // New phone-wins receipts settle only this exact event. Each child is
+          // still delivered and independently validated by the phone.
+          let changed = msg.resolution !== 'phone'
           while (changed) {
             changed = false
             for (const event of [...rpcState().outbox.map(e => e.msg), ...(loadState().pendingEdits || []), ...pendingCloseEvents(), ...pendingSummaries().map(e => e.summaryEvent)]) if (!ids.has(event.eventId) && event.dependsOn?.some(id => ids.has(id))) {
@@ -538,17 +540,16 @@ export function startServer(h) {
           const archived = await writeStoredAtomic('sync_conflicts', value => {
             const conflicts = value || []
             for (const event of affected) if (!conflicts.some(c => c.event.eventId === event.eventId)) conflicts.push({ event,
-              decision: event.eventId === msg.eventId ? msg : { ...msg, eventId: event.eventId, status: 'rejected', reason: 'dependency_failed', parent: msg.eventId }, at: Date.now() })
+              decision: event.eventId === msg.eventId ? msg : { ...msg, eventId: event.eventId, status: 'rejected', reason: 'dependency_failed', parent: msg.eventId }, reviewed: msg.resolution === 'phone', ...(msg.resolution === 'phone' ? { resolution: 'phone' } : {}), at: Date.now() })
             const retained = conflicts.filter(c => !c.reviewed).concat(conflicts.filter(c => c.reviewed).slice(-20))
             if (retained.filter(c => !c.reviewed).length > 100) throw new Error('conflict_archive_full')
             return retained
           })
           if (!archived.ok) { rpcState().handlers.onError?.({ code: 'conflict_archive_full' }); return }
-          storage.set({ key: 'last_notice', value: '存在同步冲突，离线操作及其依赖已保留，请核对手机训练记录', fail() {} })
         }
         const recorded = await writeStoredAtomic('event_decisions', value => {
           const decisions = value || {}
-          for (const event of affected) decisions[event.eventId] = { sid: event.sid, status: event.eventId === msg.eventId ? msg.status : 'rejected', commitRev: msg.commitRev }
+          for (const event of affected) decisions[event.eventId] = { sid: event.sid, status: event.eventId === msg.eventId ? msg.status : 'rejected', ...(msg.resolution === 'phone' ? { resolution: 'phone' } : {}), commitRev: msg.commitRev }
           const pins = decisionPins()
           let size = Object.keys(decisions).length
           for (const id of Object.keys(decisions)) { if (size <= 4096) break; if (!pins.has(id)) { delete decisions[id]; size-- } }
@@ -563,7 +564,7 @@ export function startServer(h) {
             if (item.msg.t === 'watch_start' && s.sid === msg.sid) s.pendingStart = false
             for (const edit of s.pendingEdits || []) if (edit.eventId === msg.eventId) edit.committedRev = msg.commitRev }
           else s.pendingEdits = (s.pendingEdits || []).filter(e => !ids.has(e.eventId))
-          return s
+          return reconcileCommittedSnapshot(s, msg.commitRev)
         })
         if (!saved.ok) return
         for (const event of affected) {
@@ -576,6 +577,7 @@ export function startServer(h) {
         for (const event of affected) ackEvent(null, event.eventId)
         const state = loadState()
         if (state.active && state.syncBase && state.syncBase.commitRev >= msg.commitRev) { try { rpcState().handlers.onSync?.(state.syncBase, { persisted: true }) } catch (_) {} }
+        if (msg.status !== 'applied' && (!state.syncBase || state.syncBase.commitRev < msg.commitRev)) sendControl({ t: 'sync_request', sid: msg.sid, reason: 'phone_authority' })
         rpcState().lastCommitAt = Date.now()
       })
       return
