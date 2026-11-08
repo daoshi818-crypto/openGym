@@ -10,7 +10,17 @@ export async function commitPageAction(page, operation, deps) {
   const deferred = ['setRestScreenLock', 'syncClockTimer', 'focusCrown', 'stopHrCapture', 'startHrCapture', 'cancelRestNudge']
   try {
     const result = await deps.commitSessionAction(page.state.sid, state => {
-      draft = Object.create(page)
+      // BlueOS Page is a Proxy with receiver-ignoring setters and bound methods.
+      // Never inherit from it: assignments would mutate the live Page, and helper
+      // calls would bypass this draft. Own writes stay private; raw helpers use it.
+      draft = new Proxy({}, {
+        get(target, name) {
+          if (Object.prototype.hasOwnProperty.call(target, name)) return target[name]
+          const method = deps.pageDefinition && deps.pageDefinition[name]
+          if (typeof method === 'function' && !Object.prototype.hasOwnProperty.call(page, name)) return method
+          return page[name]
+        },
+      })
       draft.sessionActionDraft = true
       draft.state = state
       draft.flushPendingRowEdits = () => {} // Replayed once, after the shared document commits.

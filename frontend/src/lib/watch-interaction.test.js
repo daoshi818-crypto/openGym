@@ -117,11 +117,11 @@ describe('actual watch workout page wiring', () => {
     page.touchEnd({ changedTouches: [{ clientX: 100, clientY: 200 }] })
     expect(page.pageIndex).toBe(index ? 0 : 1)
   })
-  it('picks only unfinished dots, retaining stable IDs', async () => {
+  it('picks unfinished or completed dots, retaining stable IDs', async () => {
     const { page, s } = workout(), dots = setDotWindow(s).dots
     await page.pickSetDot(dots[2]); expect(s.setIdx).toBe(2)
-    s.workout.rows[0][1].done = true; await page.pickSetDot(dots[1]); expect(s.setIdx).toBe(2)
-    s.workout.rows[0].splice(0, 1); await page.pickSetDot(dots[0]); expect(s.setIdx).toBe(2)
+    s.workout.rows[0][1].done = true; await page.pickSetDot(dots[1]); expect(s.setIdx).toBe(1)
+    s.workout.rows[0].splice(0, 1); await page.pickSetDot(dots[0]); expect(s.setIdx).toBe(1)
   })
 })
 

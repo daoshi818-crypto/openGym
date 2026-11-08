@@ -122,6 +122,7 @@ function initReps(ex) { return ex.reps == null ? '' : ex.reps }
 
 // 每次改动立即落盘。storage.set 是异步的，失败回调必须给（文档要求）。
 function persist(state) {
+  if (runtime().sessionDraft === state) return
   writeStored(K_STATE, state)
 }
 
@@ -162,7 +163,7 @@ export function stageSessionEvent(state, event) {
     source: 'watch', protocolVersion: 3, dependencyEvents: true }
   msg.entryInstanceId ||= ex?.entryInstanceId; msg.setId ||= row?.setId
   if (msg.t === 'add_set') msg.newSetIds = (state.workout.rows[msg.ex] || []).map(r => r.setId)
-  msg.dependsOn = dependenciesFor(msg, pending)
+  msg.dependsOn = dependenciesFor(msg, pending.filter(e => !e.sid || e.sid === state.sid))
   pending.push(JSON.parse(JSON.stringify(msg)))
   return pending[pending.length - 1]
 }
@@ -217,7 +218,10 @@ export async function commitWireSnapshot(message, meta) {
     if (latest.closeIntent || runtime().closingSid === snapshot.sid) throw new Error('session_closing')
     if (latest.sid === snapshot.sid && snapshot.commitRev < (latest.commitRev || 0)) status = 'retained'
     else {
-      const candidate = JSON.parse(JSON.stringify(latest))
+      // Never carry cursor/HR/rest/UI flags into a different training. Unresolved
+      // old intentions remain available to the existing durable replay path.
+      const candidate = latest.sid === snapshot.sid ? JSON.parse(JSON.stringify(latest))
+        : { ...blankState(), pendingEdits: JSON.parse(JSON.stringify(latest.pendingEdits || [])).map(e => e.sid ? e : { ...e, sid: latest.sid }) }
       runtime().sessionDraft = candidate
       try {
         if (!candidate.active) Object.assign(candidate, { active: true, sid: snapshot.sid, startedAt: snapshot.startedAt, workout: { exercises: [], rows: [] } })
@@ -309,7 +313,7 @@ export function applySync(state, snapshot) {
   })
   // 手机尚未回传对应确认值的本地编辑，不能被在途旧快照覆盖。
   state.pendingEdits = edits
-  state.pendingEdits = edits.filter(e => !(snapshot.ackedEvents || []).includes(e.eventId) && !(snapshot.protocolVersion >= 3 && e.committedRev != null && e.committedRev <= snapshot.commitRev))
+  state.pendingEdits = edits.filter(e => (e.sid && e.sid !== state.sid) || (!(snapshot.ackedEvents || []).includes(e.eventId) && !(snapshot.protocolVersion >= 3 && e.committedRev != null && e.committedRev <= snapshot.commitRev)))
   const maxEx = Math.max(0, state.workout.exercises.length - 1)
   state.exIdx = Math.max(0, Math.min(Number(state.exIdx) || 0, maxEx))
   const focusedIndex = focused ? state.workout.exercises.findIndex(ex => focused.entryInstanceId ? ex.entryInstanceId === focused.entryInstanceId : focused.id ? ex.id === focused.id : ex.name === focused.name) : -1
@@ -336,7 +340,7 @@ export function applySync(state, snapshot) {
   else if (!state.restVersion) state.restUntil = snapshot.restUntil || 0
   if (snapshot.baseCalories != null) state.baseCalories = snapshot.baseCalories
   if (snapshot.profile) state.profile = snapshot.profile
-  for (const edit of state.pendingEdits) applyEdit(state, edit)
+  for (const edit of state.pendingEdits) if (!edit.sid || edit.sid === state.sid) applyEdit(state, edit)
   state.rev = Math.max(state.rev || 0, snapshot.rev || 0)
   persist(state)
   return state

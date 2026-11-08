@@ -1,4 +1,4 @@
-# Sync protocol: watch 0.6.21 / phone 1.6.18
+# Sync protocol: watch 0.6.22 / phone 1.6.19
 
 ## Durable local actions and exact commit boundary
 
@@ -208,3 +208,28 @@ Regression tests cover delayed/repeated snapshots, completion then skip/undo, cu
 effort isolation, timer expiry while editing, reorder and RIR zero. Compiled square and
 round panel heights are checked statically; real-device transport delay and rendering
 remain device acceptance checks rather than outcomes proven by these tests.
+
+
+## BlueOS Page transaction isolation (0.6.22)
+
+BlueOS binds definition methods to its live Page context and its Proxy setter ignores the
+receiver. A draft must NOT inherit from that context with Object.create(page): writes can
+reach the live page and method assignments do not replace the bound methods. Workout now
+passes its raw definition into commitPageAction; an independent facade stores own writes
+and resolves raw helpers against the draft, deferring native effects and UI publication
+until storage confirms. No draft flag is ever published to the live Page.
+
+While commitWireSnapshot builds its candidate, persist() does not issue an ordinary write;
+the atomic session document and applied-transfer marker remain the only storage commit.
+Durable receiver/commit notifications carry an internal (not wire) persisted option, so
+pages adopt the committed document rather than reapplying/re-saving the snapshot. A changed
+sid resets old session-only overlays, touch guards and rest scratch state. Different-session
+pending edits remain queued but cannot change the new session or become its dependencies.
+Legacy edits lacking a sid are treated as current within their original document, and are
+labelled with its sid when carried across a new session. No protocol capability is changed.
+
+Set dots select both completed and unfinished rows using stable row identity; selection
+alone does not complete/unset a row. Dots are 18px (current 22px), in unchanged 44px hit
+regions. They represent sets; the exercise-title/list route still selects exercises.
+Host regression tests model SDK Proxy/bound-method semantics and the actual render method;
+they do not prove freedom from physical-watch black screens, firmware hangs or disconnects.

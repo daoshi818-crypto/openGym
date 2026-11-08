@@ -46,7 +46,7 @@ export default {
   bindRpc() {
     startServer({
       onCatalog: msg => { this.onCatalog(msg); if (!this.canResume) this.status = this.plans.length ? '选择训练计划' : '今日暂无计划' },
-      onPlan: msg => this.onPlan(msg), onSync: msg => this.onSync(msg),
+      onPlan: msg => this.onPlan(msg), onSync: (msg, options) => this.onSync(msg, options),
       onStartAck: msg => { if (msg.status === 'conflict') this.conflict = msg.snapshot },
       onEnded: () => { this.canResume = false; this.readLocal() },
       onState: connected => { if (!this.canResume) this.status = connected ? this.plans.length ? '选择训练计划' : '今日暂无计划' : '缓存计划 · 待同步' },
@@ -76,12 +76,14 @@ export default {
     this.enterWorkout()
     return { status: retained ? 'retained' : 'applied', page: 'Index', exercises: msg.exercises.length }
   },
-  onSync(msg) {
+  onSync(msg, options) {
     if (!msg || !Array.isArray(msg.exercises) || !msg.exercises.length) return { status: 'rejected', reason: 'empty_exercises', page: 'Index' }
     let s = loadState()
     if (s.active && s.sid !== msg.sid) return { status: 'conflict', activeSid: s.sid, page: 'Index' }
+    if (options && options.persisted && !s.active) return { status: 'retained', page: 'Index' }
     if (!s.active) s = startSession({ name: msg.workout, sid: msg.sid, exercises: msg.exercises }, msg.profile)
-    applySync(s, msg); this.canResume = true; this.readLocal()
+    if (!(options && options.persisted)) applySync(s, msg)
+    this.canResume = true; this.readLocal()
     this.enterWorkout()
     return { status: 'applied', page: 'Index' }
   },

@@ -21,7 +21,7 @@ import { storageStatus } from '../lib/persistence.js'
 import { applyEdit, applyFocus, applyRest, restOf } from '../lib/protocol.js'
 import { lastTimeView } from '../lib/watch-last-time.js'
 
-export default {
+const pageDefinition = {
   data: {
     exName: '', syncWarning: false,
     selectedField: null, setDots: [], dotSegmented: false, dotHasPrev: false, dotHasNext: false, inputNotice: '',
@@ -133,7 +133,7 @@ export default {
     const latest = loadState()
     if (!latest.active || !latest.workout) { this.stopHrCapture(); router.replace({ uri: '/Index' }); return }
     if (latest.active && latest.workout) {
-      this.state = latest
+      this.adoptSession(latest)
       this.autoFocusEx = latest.exIdx; this.autoFocusSet = latest.setIdx; this.autoFocusIgnoreUntil = 0
       this.profile = latest.profile || null
     }
@@ -202,6 +202,23 @@ export default {
     this.clearFieldSelection(); router.push({ uri: '/ExerciseList' })
   },
 
+  adoptSession(latest) {
+    if (this.state && this.state.sid !== latest.sid) {
+      this.cancelRestNudge()
+      this.resetInteraction()
+      this.closeMode = ''; this.effortOn = false; this.menuOn = false
+      this.finishOn = false; this.lastOpen = false; this.leaveChoice = false
+      this.diagnosticOn = false; this.pageIndex = 0; this.selectedField = null; this.inputNotice = ''
+      this.effortTarget = null; this.effortDraft = null; this.effortBaseVersion = 0
+      this.effortStale = false; this.effortNotice = ''; this.effortScaleAtOpen = 'none'
+      this.completionIgnoreUntil = 0; this.restStartAt = 0
+      this.restSeq = 0; this.remoteRestSeq = 0; this.restCrownBase = null
+      this.autoFocusEx = latest.exIdx; this.autoFocusSet = latest.setIdx
+    }
+    this.state = latest
+    this.profile = latest.profile || null
+  },
+
   bindRpc() {
     const handle = (method, ...args) => {
       // 隐藏的训练页仍会收到 RPC；保留输入页刚保存的编辑和其他页面的更新。
@@ -228,7 +245,7 @@ export default {
     }
     startServer({
       onPlan: (msg) => handle('onPlanUpdate', msg),
-      onSync: (msg) => handle('onSyncUpdate', msg),
+      onSync: (msg, options) => handle('onSyncUpdate', msg, options),
       onRest: (msg) => handle('onRemoteRest', msg),
       onPause: (msg) => handle('onRemotePause', msg),
       onStartAck: msg => {
@@ -373,7 +390,7 @@ export default {
     this.menuOn = false
     this.emitEvent({ t: 'add_set', sid: s.sid, ex, set: s.setIdx + 1, sets: rows.length, weight: rows[s.setIdx].w, reps: rows[s.setIdx].r, at: Date.now() })
     this.refresh()
-    }, { commitSessionAction, loadState, replayPendingEvents })
+    }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
   },
 
   onMenuRemoveSet() {
@@ -388,7 +405,7 @@ export default {
     this.menuOn = false
     this.emitEvent({ t: 'remove_set', sid: s.sid, ex, removedSetIds, set: removed, sets: rows.length, at: Date.now() })
     this.refresh()
-    }, { commitSessionAction, loadState, replayPendingEvents })
+    }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
   },
 
   onMenuPrev() { this.menuOn = false; this.stepSet(-1) },
@@ -414,7 +431,7 @@ export default {
     s.focusAt = Date.now(); save(s)
     this.emitEvent({ t: 'focus', sid: s.sid, ex: nx, set: ni + 1, at: s.focusAt, source: 'watch' })
     this.refresh()
-    }, { commitSessionAction, loadState, replayPendingEvents })
+    }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
   },
 
   stepExercise(dir) {
@@ -432,7 +449,7 @@ export default {
     save(s)
     this.emitEvent({ t: 'focus', sid: s.sid, ex: nx, set: s.setIdx + 1, at: Date.now(), source: 'watch' })
     this.refresh()
-    }, { commitSessionAction, loadState, replayPendingEvents })
+    }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
   },
 
   onPrevSet() { this.stepSet(-1) },
@@ -474,7 +491,7 @@ export default {
     this.state = s
     setRowValue(s, found.exIdx, found.setIdx, this.selectedField, value, true)
     this.flushPendingRowEdits(); this.refresh()
-    }, { commitSessionAction, loadState, replayPendingEvents })
+    }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
   },
   refreshSetDots(page) {
     const view = setDotWindow(this.state, page)
@@ -487,14 +504,14 @@ export default {
     return commitPageAction(this, function() {
     if (this.interactionBlocked() || this.isRest || this.paused || this.closeMode || this.effortOn || this.lastOpen || this.finishOn) return
     const s = loadState(), found = rowTarget(s, target)
-    if (!found || found.row.done || s.sid !== this.state.sid || s.pausedAt || s.restUntil) return
+    if (!found || s.sid !== this.state.sid || s.pausedAt || s.restUntil) return
     this.clearFieldSelection(); this.state = s
     this.autoFocusEx = found.exIdx; this.autoFocusSet = found.setIdx; this.autoFocusIgnoreUntil = 0
     s.exIdx = found.exIdx; s.setIdx = found.setIdx; s.focusAt = Date.now(); save(s)
     this.emitEvent({ t: 'focus', sid: s.sid, entryInstanceId: s.workout.exercises[s.exIdx].entryInstanceId,
       setId: found.row.setId, ex: s.exIdx, set: s.setIdx + 1, at: s.focusAt, source: 'watch' })
     this.refresh()
-    }, { commitSessionAction, loadState, replayPendingEvents })
+    }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
   },
 
   onComplete() {
@@ -524,7 +541,7 @@ export default {
     }
     else this.allFinished = true
     this.refresh()
-    }, { commitSessionAction, loadState, replayPendingEvents })
+    }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
   },
 
   onUndo() {
@@ -539,7 +556,7 @@ export default {
     this.allFinished = false
     this.emitEvent({ t: 'unset', sid: s.sid, ex: exIdx, set: setIdx + 1, at: Date.now() })
     this.refresh()
-    }, { commitSessionAction, loadState, replayPendingEvents })
+    }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
   },
 
   onCurrentSetAction() {
@@ -635,17 +652,29 @@ export default {
     this.refresh()
   },
 
-  onSyncUpdate(msg) {
+  onSyncUpdate(msg, options) {
     if (!msg || !Array.isArray(msg.exercises) || !msg.exercises.length) {
       return { status: 'rejected', page: 'Workout', reason: 'empty_exercises' }
     }
-    const localRest = this.restCrownDirty && (!msg.sid || msg.sid === this.state.sid)
-    const localRound = localRest ? { restUntil: this.state.restUntil, restTargetSec: this.state.restTargetSec,
-      restVersion: this.state.restVersion, restId: this.state.restId, restStartedAt: this.state.restStartedAt } : null
-    if (!localRest) this.cancelRestNudge()
-    if (localRound) this.state = loadState()
-    applySync(this.state, msg)
-    if (localRound) Object.assign(this.state, localRound)
+    if (options && options.persisted) {
+      // The receiver already committed the snapshot and replayed pending edits.
+      // Never apply it twice, or let a late old-session notification replace UI.
+      const latest = loadState()
+      if (!latest.active || !latest.workout || latest.sid !== msg.sid) return { status: 'retained', page: 'Workout' }
+      if (latest.sid === this.state.sid && this.restCrownDirty) {
+        Object.assign(latest, { restUntil: this.state.restUntil, restTargetSec: this.state.restTargetSec,
+          restVersion: this.state.restVersion, restId: this.state.restId, restStartedAt: this.state.restStartedAt })
+      }
+      this.adoptSession(latest)
+    } else {
+      const localRest = this.restCrownDirty && (!msg.sid || msg.sid === this.state.sid)
+      const localRound = localRest ? { restUntil: this.state.restUntil, restTargetSec: this.state.restTargetSec,
+        restVersion: this.state.restVersion, restId: this.state.restId, restStartedAt: this.state.restStartedAt } : null
+      if (!localRest) this.cancelRestNudge()
+      if (localRound) this.state = loadState()
+      applySync(this.state, msg)
+      if (localRound) Object.assign(this.state, localRound)
+    }
     this.profile = this.state.profile || this.profile
     if (this.state.pausedAt) this.stopHrCapture()
     else this.startHrCapture()
@@ -679,7 +708,7 @@ export default {
     this.emitEvent({ t: 'rest', sid: s.sid, ...restOf(s) })
     save(s)
     this.refresh()
-    }, { commitSessionAction, loadState, replayPendingEvents })
+    }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
   },
 
   nudgeRest(deltaSec) {
@@ -1012,7 +1041,7 @@ export default {
     this.effortNotice = ''
     this.focusCrown()
     this.refresh()
-    }, { commitSessionAction, loadState, replayPendingEvents })
+    }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
   },
   onRemoteEffort(msg) {
     const s = this.state
@@ -1299,7 +1328,7 @@ export default {
     if (!paused) this.startHrCapture()
     if (notify) { this.emitEvent({ t: 'pause', sid: s.sid, paused, seq: at, at }); this.emitEvent({ t: 'rest', sid: s.sid, ...restOf(s) }) }
     this.refresh()
-    }, { commitSessionAction, loadState, replayPendingEvents })
+    }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
   },
   askEnd() { this.finishOn = false; this.closeMode = 'end' },
   askAbandon() { this.closeMode = 'abandon' },
@@ -1339,6 +1368,7 @@ export default {
   },
 }
 
+export default pageDefinition
 </script>
 
 <template>
@@ -1477,8 +1507,8 @@ export default {
 .effort-entry-value { font-size: 28px; color: #FFFFFF; }
 .set-dots { width: 338px; min-height: 44px; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: center; }
 .set-hit { width: 44px; height: 44px; align-items: center; justify-content: center; }
-.set-dot { width: 10px; height: 10px; border-radius: 5px; background-color: #333638; }
-.set-current { width: 14px; height: 14px; border-radius: 7px; background-color: #000000; border: 2px solid #FFFFFF; }
+.set-dot { width: 18px; height: 18px; border-radius: 9px; background-color: #333638; }
+.set-current { width: 22px; height: 22px; border-radius: 11px; background-color: #000000; border: 2px solid #FFFFFF; }
 .set-done { background-color: #FFFFFF; }
 .segment { background-color: #000000; color: #929297; font-size: 26px; }
 .primary-footer { width: 314px; height: 44px; margin-bottom: 24px; flex-direction: row; align-items: center; justify-content: space-between; flex-shrink: 0; }

@@ -575,7 +575,7 @@ export function startServer(h) {
         }
         for (const event of affected) ackEvent(null, event.eventId)
         const state = loadState()
-        if (state.active && state.syncBase && state.syncBase.commitRev >= msg.commitRev) { try { rpcState().handlers.onSync?.(state.syncBase) } catch (_) {} }
+        if (state.active && state.syncBase && state.syncBase.commitRev >= msg.commitRev) { try { rpcState().handlers.onSync?.(state.syncBase, { persisted: true }) } catch (_) {} }
         rpcState().lastCommitAt = Date.now()
       })
       return
@@ -592,7 +592,7 @@ export function startServer(h) {
             if (result.ok) {
               // Only update the page after the session+applied marker is durable.
               const snapshot = loadState().syncBase
-              if (snapshot) { try { r.handlers.onSync?.(snapshot) } catch (_) {} }
+              if (snapshot) { try { r.handlers.onSync?.(snapshot, { persisted: true }) } catch (_) {} }
             }
             return result
           })
