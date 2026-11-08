@@ -27,3 +27,22 @@
 - 18 语言 / 2619 键、2045 条源码翻译检查通过；生成教练资源、API 文档、plain-node core-loadable 和 git diff --check 通过。
 
 本次没有实体设备，未采集真实点击至UI/落盘、通信/恢复延迟p50/p95、内存峰值、物理写盘次数及黑屏固件日志。不得把定时器模拟和桌面编译当作真机性能测量或系统崩溃修复证明。此前两份无关本地修改须保持原SHA256、不进入提交。
+
+## GitHub 验证
+实施提交：56b5664b9f22b00bde3f4f75e8d52c46cab36f64，正常推送 main。
+
+- 正式构建流水线：https://github.com/daoshi818-crypto/openGym/actions/runs/42454319554 。verify 作业通过：508 文件 /6197 前端测试、2 手机启动测试、669 服务端测试；服务端0失败、0跳过。verify、build 和发布均成功；已完成安装包回下载、版本、哈希及 Android 签名核验。
+- 独立 Tests 流水线：https://github.com/daoshi818-crypto/openGym/actions/runs/42454319496 ，test、api、api-image、mcp 四作业全部成功。
+- 无关的 api/coach/prompts/ask.md 与 frontend/ios/App/Podfile 未进入实施提交，提交前后 SHA256 保持原值。
+
+## 发布与回下载核验
+- 正式发布：https://github.com/daoshi818-crypto/openGym/releases/tag/v1.6.20 ，latest 指向 v1.6.20；发布标签对应实施提交 56b5664b9f22b00bde3f4f75e8d52c46cab36f64。
+- 三个安装包及其三份校验文件共六个附件已回下载，文件大小和 SHA256 全部与 GitHub 发布摘要一致；三个安装包与对应 .sha256 一致，两个 RPK 与本地原生编译包逐字节一致。
+- APK：ch.duartesantos.opengym，versionName 1.6.20 / versionCode 66，222677393 字节；SHA256 为 bd558913c1e12e871e1374611e23595b62e35244757a695d1c5ff55224aef089。
+- apksigner 验证成功（v1/v2/v3），签名证书 SHA256 为 8bf64970048540fe913005d05becee1ecad819e7171518dabcd15817301a0149，与现有正式版本一致。工具仍报告 META-INF 中 Gradle 元数据未受 JAR 签名保护等警告；完整输出保存在 apk-signature-verification.txt。
+- 两个 RPK 均为 com.zcode.gymtimer / opengym，0.6.23 / code 38，目标分别为 watch-square、watch-round；META-INF/CERT 与 VRU 存在。本次检查了签名部分存在、清单及包摘要，未独立验证 BlueOS 签名证书密码学链。
+- main 的 update.json 已由流水线提交 910d38ce9 更新；GitHub API、raw origin 和 jsDelivr CDN 均返回 v1.6.20 及正确 APK/校验文件链接。
+- 本地交付目录：D:/gym/deliverables/openGym-v1.6.20。release-verification.json 记录版本/清单/签名检查，published-asset-digests.json 记录六附件的公开摘要比较；诊断目录保留完整流水线、回下载、签名和更新元数据日志。
+
+## 真机复测路径（尚未执行）
+双端覆盖升级后，先测试两个动作5＋2组，手机不操作，手表连续完成/跳休息，重点检查第5组进入下一动作；再从手机结束并新建训练，检查第一个动作第1组和控件响应。另测试手机修改重量后手表继续操作，确认自动采用手机值且其他记录继续同步。组圆点用于选组；动作标题/动作列表用于切换动作。
