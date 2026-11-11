@@ -1,3 +1,4 @@
+import { createCommandStateCache } from './watch-command-state.js'
 import { persistentSender } from '../../../watch-app/src/lib/persistent-transfer.js'
 // 手表连接（vivo 智能终端 SDK）：设置页的「连接手表」与训练页的自动推计划都走这里。
 //
@@ -6,7 +7,7 @@ import { persistentSender } from '../../../watch-app/src/lib/persistent-transfer
 // 协议仍是 plan / set / end / rest / weight / unset / ack，只是底层从 GATT 换成 RPC。
 import { MOBILE, isAndroid } from './mobile.js'
 import { isWarmupRow } from './workout-model.js'
-import { wireHash, splitWire, compactWire } from '../../../watch-app/src/lib/sync-wire.js'
+import { splitWire, compactWire, canonicalWire } from '../../../watch-app/src/lib/sync-wire.js'
 import { watchPlanOf, watchSnapshotOf } from './watch-workout.js'
 
 let pluginP = null
@@ -43,13 +44,50 @@ let peerNegotiated = false
 let syncProtocol = 2
 let syncBase = null
 const sentSnapshots = new Map()
+const commandStates = createCommandStateCache()
+let commandReceiptsEnabled = false
+let coveredCommandPlan = null
+function planContentKey(workout, sid, profile) {
+  return JSON.stringify({ sid, name: workout.name, exercises: workout.exercises, profile,
+    weightUnit: workout.weightUnit, structureRevision: workout.structureRevision,
+    effortScale: workout.effortScale, capabilities: workout.capabilities })
+}
+function coverPlan(plan, snapshot) {
+  plan.snapshotHash = snapshot.wireHash
+  plan.coveredByCommand = true
+  plan.delivery = 'awaiting_receipt'
+  if (pendingPlan === plan) pendingPlan = null
+}
+function commandPlanCurrent(plan) {
+  const active = trainingStore?.getState()?.active
+  return coveredCommandPlan && plan.sid === coveredCommandPlan.snapshot.sid &&
+    (!trainingStore || (String(active?.watchSid || active?.start) === plan.sid && (active?.syncRev || 0) === coveredCommandPlan.snapshot.commitRev))
+}
+// Called only after the entire command decision and correction are on disk.
+// The durable reply/outbox owns retry; this suppresses only App's derived echo.
+export function coverWatchCommandPlan(state) {
+  const snapshot = state && commandStates.lookup({ sid: state.sid, wireHash: state.wireHash, commitRev: state.commitRev })
+  if (!snapshot || !commandReceiptsEnabled) return
+  const active = trainingStore?.getState()?.active
+  if (trainingStore && (String(active?.watchSid || active?.start) !== snapshot.sid || (active?.syncRev || 0) !== snapshot.commitRev)) return
+  const key = planContentKey({ ...snapshot, name: snapshot.workout }, snapshot.sid, snapshot.profile)
+  coveredCommandPlan = { key, snapshot }
+  if (latestPlan?.automatic && planContentKey(latestPlan.workout, latestPlan.sid, latestPlan.profile) === key) coverPlan(latestPlan, snapshot)
+}
+export function prepareWatchCommandState(event, snapshot) {
+  return commandReceiptsEnabled ? commandStates.prepare(event, snapshot) : null
+}
 let pendingSync = null, syncRetryTimer = null, syncQueue = Promise.resolve()
 let persistentEnabled = false, persistentPumpTimer = null, persistentPumping = false, persistentAgain = false
 let persistentHasWork = false
 const snapshotSender = persistentSender({
   read: async () => { const p = await watchPlugin(); if (!p) throw new Error('transfer_unavailable'); return JSON.parse((await p.WatchRpc.loadSyncTransfer()).json) },
   write: async (_, value) => { const p = await watchPlugin(); if (!p) return false; await p.WatchRpc.saveSyncTransfer({ json: JSON.stringify(value) }); return true },
-}, snapshot => { syncBase = snapshot; confirmSnapshotPlan(snapshot) }, () => Date.now(), null, snapshot => compactWire(syncBase, snapshot))
+}, snapshot => { adoptSyncBase(snapshot); confirmSnapshotPlan(snapshot) }, () => Date.now(), null, snapshot => compactWire(syncBase, snapshot))
+function adoptSyncBase(snapshot) {
+  // Delayed transfer receipts must not roll back a newer inline receipt baseline.
+  if (!syncBase || syncBase.sid !== snapshot.sid || snapshot.commitRev >= syncBase.commitRev) syncBase = snapshot
+}
 function confirmSnapshotPlan(snapshot) {
   if (latestPlan?.sid !== snapshot.sid || latestPlan.snapshotHash !== snapshot.wireHash) return
   publishPlanReceipt(latestPlan, { t: 'sync_applied', sid: snapshot.sid, wireHash: snapshot.wireHash, commitRev: snapshot.commitRev, status: 'applied', receivedAt: Date.now() })
@@ -250,11 +288,12 @@ function onNativeWatchEvent(ev) {
       watchVersion = ev.watchVersion ? String(ev.watchVersion) : 'not_reported'
       watchReceiptsSupported = ev.receipts === true
       persistentEnabled = ev.protocolVersion >= 3 && ev.capabilities?.durableCommit === true && ev.capabilities?.snapshotChunks === true && ev.capabilities?.selectiveChunkAck === true && ev.capabilities?.persistentTransfers === true
-      sendWatchEvent({ t: 'hello_ack', protocolVersion: 3, capabilities: { durableCommit: true, snapshotChunks: true, dependencyEvents: ev.capabilities?.dependencyEvents === true, selectiveChunkAck: ev.capabilities?.selectiveChunkAck === true, persistentTransfers: ev.capabilities?.persistentTransfers === true } })
+      commandReceiptsEnabled = ev.protocolVersion >= 3 && ev.capabilities?.commandReceipts === true && ev.capabilities?.durableCommit === true
+      sendWatchEvent({ t: 'hello_ack', protocolVersion: 3, capabilities: { durableCommit: true, snapshotChunks: true, commandReceipts: commandReceiptsEnabled, dependencyEvents: ev.capabilities?.dependencyEvents === true, selectiveChunkAck: ev.capabilities?.selectiveChunkAck === true, persistentTransfers: ev.capabilities?.persistentTransfers === true } })
       if (persistentEnabled) snapshotSender.resume().then(() => kickPersistent()).catch(error => { lastError = error.message; kickPersistent(6000) })
       else clearTimeout(persistentPumpTimer)
       syncProtocol = ev.protocolVersion >= 3 && ev.capabilities?.durableCommit && ev.capabilities?.snapshotChunks ? 3 : 2
-      syncBase = null; sentSnapshots.clear()
+      syncBase = null; sentSnapshots.clear(); coveredCommandPlan = null
       clearTimeout(syncRetryTimer); pendingSync = null
     }
     if (ev.t === 'plan_ack') {
@@ -266,9 +305,9 @@ function onNativeWatchEvent(ev) {
     }
     if (ev.t === 'sync_ack') {
       lastSyncReceipt = { ...ev, receivedAt: Date.now() }
-      const snapshot = sentSnapshots.get(ev.wireHash)
+      const snapshot = sentSnapshots.get(ev.wireHash) || commandStates.lookup(ev)
       const exact = snapshot && ev.sid === snapshot.sid && ev.commitRev === snapshot.commitRev
-      if (exact && ev.status === 'applied') { syncBase = snapshot; confirmSnapshotPlan(snapshot) }
+      if (exact && ev.status === 'applied') { adoptSyncBase(snapshot); confirmSnapshotPlan(snapshot) }
       if (exact && pendingSync?.snapshot.wireHash === ev.wireHash && ['applied', 'retained', 'closed', 'conflict'].includes(ev.status)) {
         clearTimeout(syncRetryTimer); pendingSync = null
       }
@@ -276,7 +315,7 @@ function onNativeWatchEvent(ev) {
     }
     if (ev.t === 'sync_request') {
       syncBase = null
-      const snapshot = [...sentSnapshots.values()].at(-1)
+      const snapshot = trainingStore && watchSnapshotOf(trainingStore.getState(), trainingStore.getTimer?.()) || [...sentSnapshots.values()].at(-1)
       if (snapshot) pushSyncToWatch(snapshot)
       return
     }
@@ -349,6 +388,7 @@ export async function connectWatch() {
 }
 
 export async function disconnectWatch() {
+  coveredCommandPlan = null
   peerNegotiated = false
   clearTimeout(persistentPumpTimer); persistentEnabled = false
   watchDiagnosticProbe?.finish('disconnected')
@@ -458,12 +498,17 @@ export async function getWatchDiagnostics() {
 // ---- 训练页 API：把今天的训练推给手表 ----
 
 /** 训练开始时调用一次；训练中途计划变了（加/删动作）再调一次，手表整包热替换。 */
-export async function pushPlanToWatch(workout, sid, profile = null) {
+export async function pushPlanToWatch(workout, sid, profile = null, { automatic = false } = {}) {
   if (!MOBILE || !workout) return
   const planId = Date.now() + '-' + (++planSequence)
-  latestPlan = { workout, sid: String(sid || ''), profile, planId, delivery: 'queued', receipt: null }
+  latestPlan = { workout, sid: String(sid || ''), profile, planId, automatic, delivery: 'queued', receipt: null }
   lastPublishedPlan = { sid: latestPlan.sid, planId, exercises: workout.exercises?.length || 0, at: Date.now() }
   pendingPlan = latestPlan
+  if (automatic && commandPlanCurrent(latestPlan) && coveredCommandPlan.key === planContentKey(workout, latestPlan.sid, profile)) {
+    coverPlan(latestPlan, coveredCommandPlan.snapshot)
+    if (syncBase?.wireHash === coveredCommandPlan.snapshot.wireHash) confirmSnapshotPlan(syncBase)
+    return true
+  }
   await bindNative()
   if (state === 'off' || state === 'error') await connectWatch()
   return flushPendingPlan()
@@ -476,6 +521,7 @@ export function clearWatchPlan(sid, reason = 'no_active_session', endedAt = Date
   if (latestPlan?.sid) pushEndedToWatch({ sid: latestPlan.sid, reason, endedAt })
   latestPlan = null
   pendingPlan = null
+  coveredCommandPlan = null
 }
 
 async function flushPendingPlan() {
@@ -495,6 +541,7 @@ async function flushPendingPlan() {
       try {
         await trainingStore?.checkpoint?.()
         if (outboundBarrier) { pendingPlan ||= next; break }
+        if (next.coveredByCommand && commandPlanCurrent(next) && next.snapshotHash === coveredCommandPlan.snapshot.wireHash) continue
       } catch (error) {
         lastError = 'watch state save: ' + (error?.message || String(error))
         pendingPlan ||= next
@@ -676,8 +723,8 @@ export async function pushSyncToWatch(snapshot) {
   if (!MOBILE || !snapshot) return false
   if (syncProtocol < 3) return sendWatchEvent({ ...snapshot, t: 'sync' })
   // Hash and delta against an acknowledged phone baseline, never against optimistic watch edits.
-  const { wireHash: ignored, ...value } = { ...snapshot, t: 'sync', protocolVersion: 3, ackedEvents: (snapshot.ackedEvents || []).slice(-128) }
-  const next = { ...value, wireHash: wireHash(value) }
+  const next = canonicalWire(snapshot)
+  commandStates.remember(next)
   const plan = latestPlan?.sid === snapshot.sid ? latestPlan : null
   if (persistentEnabled) {
     if (!(await snapshotSender.enqueue(next))) return false

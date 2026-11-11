@@ -177,7 +177,7 @@ function sendHello() {
   sendControl({
     t: 'hello',
     watchVersion: WATCH_VERSION, protocolVersion: 3, stableIds: true,
-    capabilities: { durableCommit: true, snapshotChunks: true, deltas: true, dependencyEvents: true, selectiveChunkAck: true, persistentTransfers: true },
+    capabilities: { durableCommit: true, snapshotChunks: true, deltas: true, dependencyEvents: true, selectiveChunkAck: true, persistentTransfers: true, commandReceipts: true },
     receipts: true,
     sid: s.sid || '',
     rev: s.rev || 0,
@@ -297,7 +297,12 @@ function flush() {
   }
   rpcState().sendingTimer = appTimeout(() => { if (release()) { trace('send_timeout', next.msg); backoff(); scheduleFlush() } }, 6000)
   try {
-    rpcState().connect.send({ data: next.msg,
+    // Transport proof describes the base actually applied NOW. It must not
+    // rewrite the frozen event's causal baseCommitRev or durable identity.
+    const state = !control && r.peerCapabilities?.commandReceipts ? loadState() : null
+    const base = state?.active && state.sid === next.msg.sid ? state.syncBase : null
+    const data = base?.wireHash ? { ...next.msg, appliedHash: base.wireHash, appliedRev: base.commitRev } : next.msg
+    rpcState().connect.send({ data,
       success: () => { if (!release()) return; trace('send_success', next.msg); if (control) { r.controls = r.controls.filter(e => e !== control); scheduleFlush(); return }; const item = rpcState().outbox.find(e => e.msg.eventId === token.eventId); if (item) { item.lastSendFailed = false; item.sent = true; item.sentAt = Date.now(); item.attempts = (item.attempts || 0) + 1; item.nextAttemptAt = Date.now() + Math.min(60000, 4000 * Math.pow(2, Math.min(4, item.attempts - 1))) + Math.floor(Math.random() * 1000) }; scheduleFlush() },
       fail: (error, code) => { if (!release()) return; trace('send_fail', next.msg, error, code); backoff(); scheduleFlush() }
     })
@@ -558,13 +563,23 @@ export function startServer(h) {
         })
         if (!recorded.ok) return
         const ids = new Set(affected.map(e => e.eventId))
+        let needsSnapshot = false
         const saved = await writeStoredAtomic('session_state', s => {
           if (!s) return {}
           if (msg.status === 'applied') {
             if (item.msg.t === 'watch_start' && s.sid === msg.sid) s.pendingStart = false
             for (const edit of s.pendingEdits || []) if (edit.eventId === msg.eventId) edit.committedRev = msg.commitRev }
           else s.pendingEdits = (s.pendingEdits || []).filter(e => !ids.has(e.eventId))
-          return reconcileCommittedSnapshot(s, msg.commitRev)
+          try {
+            if (msg.state && s.active && s.sid === msg.sid && msg.state.sid !== msg.sid) throw new Error('receipt_session')
+            return reconcileCommittedSnapshot(s, msg.commitRev, s.sid === msg.sid ? msg.state : null)
+          }
+          catch (_) {
+            // The decision is still durable, but its correction cannot be applied
+            // to this base. Keep the overlay until fresh phone state arrives.
+            needsSnapshot = true
+            return reconcileCommittedSnapshot(s, msg.commitRev)
+          }
         })
         if (!saved.ok) return
         for (const event of affected) {
@@ -577,7 +592,8 @@ export function startServer(h) {
         for (const event of affected) ackEvent(null, event.eventId)
         const state = loadState()
         if (state.active && state.syncBase && state.syncBase.commitRev >= msg.commitRev) { try { rpcState().handlers.onSync?.(state.syncBase, { persisted: true }) } catch (_) {} }
-        if (msg.status !== 'applied' && (!state.syncBase || state.syncBase.commitRev < msg.commitRev)) sendControl({ t: 'sync_request', sid: msg.sid, reason: 'phone_authority' })
+        if (msg.state && state.active && state.sid === msg.sid && state.syncBase?.wireHash === msg.state.wireHash) sendControl({ t: 'sync_ack', sid: msg.sid, wireHash: state.syncBase.wireHash, commitRev: state.syncBase.commitRev, status: 'applied' })
+        if (needsSnapshot || (msg.status !== 'applied' && (!state.syncBase || state.syncBase.commitRev < msg.commitRev))) sendControl({ t: 'sync_request', sid: msg.sid, reason: 'phone_authority' })
         rpcState().lastCommitAt = Date.now()
       })
       return

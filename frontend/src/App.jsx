@@ -31,7 +31,7 @@ import { restContextOf, restContextWire } from './lib/rest-context.js'
 import { watchSidOf } from './lib/session-resume.js'
 import { rememberClose } from './lib/watch-events.js'
 import { createDurableWatchLifecycle } from './lib/watch-commit.js'
-import { holdWatchOutbound, completeWatchInbox, drainWatchInbox, setWatchCommitStatus } from './lib/watch-link.js'
+import { holdWatchOutbound, completeWatchInbox, drainWatchInbox, setWatchCommitStatus, prepareWatchCommandState, coverWatchCommandPlan } from './lib/watch-link.js'
 import { exitWorkoutEdit, startFlow, finishWorkoutFromWatch } from './sheets.jsx'
 import Icon from './components/Icon.jsx'
 import WatchSaveReview from './components/WatchSaveReview.jsx'
@@ -93,7 +93,7 @@ function Shell() {
   useEffect(() => {
     if (!MOBILE || !ready || !watchOn) return
     const receive = createDurableWatchLifecycle({
-      getState: () => useStore.getState().S,
+      getState: () => useStore.getState().S, commandState: prepareWatchCommandState, commandStateCommitted: coverWatchCommandPlan,
       update: (fn, ev) => useStore.getState().update(fn, true, { watchActor: ev?.installationId || 'watch', watchEventId: ev?.eventId }), getTimer: () => useUI.getState().timer,
       sendEnded: pushEndedToWatch, sendSync: pushSyncToWatch, sendAck: pushAckToWatch,
       finish: finishWorkoutFromWatch,
@@ -116,7 +116,7 @@ function Shell() {
   useEffect(() => {
     if (!MOBILE || !ready || !watchOn) return
     const plan = JSON.parse(watchPlan)
-    if (plan) pushPlanToWatch({ ...plan.workout, protocolVersion: plan.protocolVersion, weightUnit: plan.weightUnit, structureRevision: plan.structureRevision, effortScale: plan.effortScale, capabilities: plan.capabilities }, plan.sid, plan.profile)
+    if (plan) pushPlanToWatch({ ...plan.workout, protocolVersion: plan.protocolVersion, weightUnit: plan.weightUnit, structureRevision: plan.structureRevision, effortScale: plan.effortScale, capabilities: plan.capabilities }, plan.sid, plan.profile, { automatic: true })
     else clearWatchPlan(undefined, S.active?.editingWorkoutId ? 'history_editor' : 'no_active_session')
   }, [watchPlan, ready, watchOn])
   const watchCatalog = useMemo(() => MOBILE ? JSON.stringify({ ...watchCatalogOf(S), at: 0 }) : 'null', [S.routines, S.week, S.dayPlan, S.watchPlanIds, S.workouts])

@@ -257,3 +257,31 @@ each child still undergoes dependency, identity and complete payload field valid
 Legacy conflict/rejected receipts keep their conservative dependency archival semantics
 and retain unreviewed original payloads. Neither a received receipt nor transport success
 is promoted to an applied decision. No manual field conflict prompt is shown.
+
+
+## Inline command corrections (phone 1.6.22 / watch 0.6.25)
+
+`commandReceipts` is an explicit hello/hello_ack capability in addition to durableCommit.
+The fixed command vocabulary is unchanged. For supported weight/reps/set/unset/focus/rest/
+pause/effort, a durable `committed` may include `state: sync_delta` instead of registering
+another snapshot task. This delta and its exact event decision are frozen in the same phone
+checkpoint and replayed unchanged for duplicates. Legacy peers and unsupported/structural/
+oversized/unknown-base cases keep the existing reliable transfer path.
+
+Frozen event `baseCommitRev` remains its causal conflict base. The SDK send copy may add
+`appliedHash` and `appliedRev` from the watch's currently persisted same-session syncBase.
+These select only the encoding base; they neither change the event identity/causal intent
+nor acknowledge any business. The phone retains at most16 canonical bases/512KiB as an
+optimization; eviction/restart falls back safely. A command correction includes only its
+own ackedEvents ID. Targeted `exerciseCells` may update default weight/reps while preserving
+all other exercise structure; generic transfer compaction stays conservative.
+
+The phone first checks exact delta reconstruction/checksum. Corrections are <=4500 UTF-8
+JSON bytes and the entire committed envelope <=6000. The watch atomically expands against
+its persisted phone base, reapplies remaining local edits, persists the state, then retires
+outbox work and emits exact `sync_ack`. Persistence failure keeps the intention retryable.
+A checksum/revision gap requests fresh full phone state; overlapping independent in-flight
+commands can legitimately need this recovery. Late older applied receipts never reduce a
+newer same-session phone baseline. sync_request uses current phone training state even if
+all prior snapshots used the persistent adapter. Closing journals and old peer semantics
+are unchanged. See ../docs/dev/WATCH_COMMAND_SYNC_1_6_22.zh-CN.md for evidence and measurements.

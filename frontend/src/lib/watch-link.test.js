@@ -552,3 +552,170 @@ it('does not publish a superseded training snapshot after checkpoint resumes', a
     expect(native.sendPlan).not.toHaveBeenCalled()
   } finally { unbind() }
 })
+
+
+describe('negotiated compact command baselines', () => {
+  const caps = { durableCommit: true, snapshotChunks: true, commandReceipts: true }
+  const initial = () => ({ sid: 's', commitRev: 1, exercises: [{ name: 'Bench'.repeat(80), sets: 1 }], rows: [[{ setId: 'a', done: false }]], ackedEvents: [] })
+  const messages = () => native.sendEvent.mock.calls.map(([m]) => JSON.parse(m.json))
+  it('opts in explicitly and adopts an exact inline ACK without regressing on an older ACK', async () => {
+    native.sendEvent.mockResolvedValue({ ok: true })
+    await link.connectWatch()
+    native.events.watchEvent({ t: 'hello', protocolVersion: 3, capabilities: { ...caps, commandReceipts: false } })
+    await link.pushSyncToWatch(initial())
+    const base = messages().at(-1), event = { t: 'set', protocolVersion: 3, eventId: 'click', sid: 's', baseCommitRev: 1, appliedRev: 1, appliedHash: base.wireHash }
+    const next = { ...initial(), commitRev: 2, rows: [[{ setId: 'a', done: true }]] }
+    expect(link.prepareWatchCommandState(event, next)).toBeNull()
+    native.events.watchEvent({ t: 'hello', protocolVersion: 3, capabilities: caps })
+    for (let i = 0; i < 30; i++) await Promise.resolve()
+    expect(messages().findLast(m => m.t === 'hello_ack').capabilities.commandReceipts).toBe(true)
+    const correction = link.prepareWatchCommandState(event, next)
+    expect(correction.t).toBe('sync_delta')
+    native.events.watchEvent({ t: 'sync_ack', status: 'applied', sid: 's', commitRev: 2, wireHash: 'invalid' })
+    await link.pushSyncToWatch(next)
+    expect(messages().at(-1).t).toBe('sync')
+    native.events.watchEvent({ t: 'sync_ack', status: 'applied', sid: 's', commitRev: 2, wireHash: correction.wireHash })
+    native.events.watchEvent({ t: 'sync_ack', status: 'applied', sid: 's', commitRev: 1, wireHash: base.wireHash })
+    await link.pushSyncToWatch({ ...next, commitRev: 3 })
+    expect(messages().at(-1)).toMatchObject({ t: 'sync_delta', baseCommitRev: 2, baseHash: correction.wireHash })
+    native.events.watchEvent({ t: 'hello', protocolVersion: 2, capabilities: caps })
+    expect(link.prepareWatchCommandState(event, next)).toBeNull()
+  })
+  it('recovers with fresh phone state after a persistent-only transfer', async () => {
+    vi.useFakeTimers()
+    let saved = { generation: 0, active: null, queued: null }
+    native.loadSyncTransfer.mockImplementation(async () => ({ json: JSON.stringify(saved) }))
+    native.saveSyncTransfer.mockImplementation(async ({ json }) => { saved = JSON.parse(json); return { ok: true } })
+    native.sendEvent.mockResolvedValue({ ok: true })
+    const state = { unit: 'kg', workouts: [], active: { start: 1, watchSid: 's', name: 'Recovery', syncRev: 1,
+      entries: [{ entryInstanceId: 'e', name: 'Bench', sets: [{ setId: 'a', w: 60, r: 8, done: false }] }] } }
+    const unbind = link.bindWatchLifecycle(() => true, { getState: () => state, getTimer: () => null })
+    try {
+      await link.connectWatch()
+      native.events.watchEvent({ t: 'hello', protocolVersion: 3, capabilities: { ...caps, selectiveChunkAck: true, persistentTransfers: true } })
+      await vi.advanceTimersByTimeAsync(0)
+      const { watchSnapshotOf } = await import('./watch-workout.js')
+      await link.pushSyncToWatch(watchSnapshotOf(state, null))
+      await vi.advanceTimersByTimeAsync(0)
+      const oldMeta = { ...saved.active.meta }
+      state.active.syncRev = 4; state.active.entries[0].sets[0].done = true
+      native.events.watchEvent({ t: 'sync_request', sid: 's' })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(saved.queued.authoritativeSnapshot || saved.queued.snapshot).toMatchObject({ sid: 's', commitRev: 4, rows: [[{ done: true }]] })
+      native.events.watchEvent({ ...oldMeta, t: 'sync_applied', status: 'applied' })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(saved.active.meta.revision).toBe(4)
+    } finally { unbind() }
+  })
+  it('keeps a newer inline baseline when an older persistent transfer is acknowledged late', async () => {
+    vi.useFakeTimers()
+    let saved = { generation: 0, active: null, queued: null }
+    native.loadSyncTransfer.mockImplementation(async () => ({ json: JSON.stringify(saved) }))
+    native.saveSyncTransfer.mockImplementation(async ({ json }) => { saved = JSON.parse(json); return { ok: true } })
+    native.sendEvent.mockResolvedValue({ ok: true })
+    await link.connectWatch()
+    native.events.watchEvent({ t: 'hello', protocolVersion: 3, capabilities: { ...caps, selectiveChunkAck: true, persistentTransfers: true } })
+    await vi.advanceTimersByTimeAsync(0)
+    await link.pushSyncToWatch(initial())
+    await vi.advanceTimersByTimeAsync(0)
+    const oldMeta = { ...saved.active.meta }, oldSnapshot = saved.active.authoritativeSnapshot || saved.active.snapshot
+    const next = { ...initial(), commitRev: 2, rows: [[{ setId: 'a', done: true }]] }
+    const correction = link.prepareWatchCommandState({ t: 'set', protocolVersion: 3, eventId: 'click', sid: 's', appliedRev: 1, appliedHash: oldSnapshot.wireHash }, next)
+    native.events.watchEvent({ t: 'sync_ack', status: 'applied', sid: 's', commitRev: 2, wireHash: correction.wireHash })
+    native.events.watchEvent({ ...oldMeta, t: 'sync_applied', status: 'applied' })
+    await vi.advanceTimersByTimeAsync(0)
+    await link.pushSyncToWatch({ ...next, commitRev: 3 })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(saved.active.snapshot).toMatchObject({ t: 'sync_delta', baseCommitRev: 2, baseHash: correction.wireHash })
+  })
+})
+
+
+describe('App automatic plan refresh after a durable command', () => {
+  it('cancels an automatic plan already awaiting storage without suppressing a later revision', async () => {
+    native.sendEvent.mockResolvedValue({ ok: true })
+    const { watchPlanOf, watchSnapshotOf } = await import('./watch-workout.js')
+    const { ensureWatchIdentity } = await import('./watch-identity.js')
+    const S = { unit: 'kg', workouts: [], active: { start: 1, watchSid: 's', name: 'Bench', syncRev: 1,
+      entries: [{ entryInstanceId: 'e', name: 'Bench', sets: [{ setId: 'a', w: 60, r: 8 }] }] } }
+    ensureWatchIdentity(S.active, 's')
+    let resume, waiting = false
+    const unbind = link.bindWatchLifecycle(() => true, { getState: () => S, getTimer: () => null,
+      checkpoint: () => waiting ? new Promise(resolve => { resume = resolve }) : Promise.resolve() })
+    const publish = () => { const p = watchPlanOf(S); return link.pushPlanToWatch({ ...p.workout,
+      protocolVersion: p.protocolVersion, weightUnit: p.weightUnit, structureRevision: p.structureRevision,
+      effortScale: p.effortScale, capabilities: p.capabilities }, p.sid, p.profile, { automatic: true }) }
+    try {
+      await link.connectWatch()
+      native.events.watchEvent({ t: 'hello', protocolVersion: 3, capabilities: { durableCommit: true, snapshotChunks: true, commandReceipts: true } })
+      await link.pushSyncToWatch(watchSnapshotOf(S, null))
+      const base = native.sendEvent.mock.calls.map(([v]) => JSON.parse(v.json)).findLast(m => m.t === 'sync')
+      S.active.syncRev = 2; S.active.entries[0].sets[0].w = 62.5
+      const correction = link.prepareWatchCommandState({ t: 'weight', sid: 's', protocolVersion: 3,
+        eventId: 'w:1', appliedHash: base.wireHash, appliedRev: 1 }, watchSnapshotOf(S, null))
+      expect(correction).not.toBeNull()
+      waiting = true
+      const publication = publish()
+      for (let i = 0; i < 30; i++) await Promise.resolve()
+      expect(resume).toBeTypeOf('function')
+      native.sendEvent.mockClear()
+      link.coverWatchCommandPlan(correction)
+      waiting = false; resume(); await publication
+      expect(native.sendEvent).not.toHaveBeenCalled()
+      S.active.syncRev = 3
+      await publish()
+      expect(native.sendEvent).toHaveBeenCalledOnce()
+    } finally { unbind() }
+  })
+  it.each(['during', 'after'])('does not echo first-row edits when the effect runs %s checkpoint', async timing => {
+    native.sendEvent.mockResolvedValue({ ok: true })
+    const { watchPlanOf } = await import('./watch-workout.js')
+    const { createDurableWatchLifecycle } = await import('./watch-commit.js')
+    const { stampWatchRevision } = await import('./watch-revision.js')
+    const S = { unit: 'kg', workouts: [], active: { start: 1, watchSid: 's', name: 'Bench day', syncRev: 1,
+      entries: [{ entryInstanceId: 'e', name: 'Bench', sets: [{ setId: 'a', w: 60, r: 8, done: false }] }] } }
+    const { ensureWatchIdentity } = await import('./watch-identity.js')
+    ensureWatchIdentity(S.active, 's')
+    const publish = automatic => {
+      const p = watchPlanOf(S)
+      return link.pushPlanToWatch({ ...p.workout, protocolVersion: p.protocolVersion, weightUnit: p.weightUnit,
+        structureRevision: p.structureRevision, effortScale: p.effortScale, capabilities: p.capabilities }, p.sid, p.profile, { automatic })
+    }
+    let effect = false
+    const receive = createDurableWatchLifecycle({ getState: () => S, getTimer: () => null,
+      update: (fn, ev) => { const before = structuredClone(S); fn(S); stampWatchRevision(before, S, ev?.installationId || 'watch', ev?.eventId) },
+      checkpoint: async () => { if (effect && timing === 'during') { effect = false; await publish(true) } },
+      commandState: link.prepareWatchCommandState, commandStateCommitted: link.coverWatchCommandPlan,
+      holdOutbound: link.holdWatchOutbound, send: link.sendToWatch, sendSync: link.pushSyncToWatch,
+      sendAck: link.pushAckToWatch, sendEnded: link.pushEndedToWatch, finish() {},
+    })
+    const unbind = link.bindWatchLifecycle(receive, { getState: () => S, getTimer: () => null })
+    try {
+      await link.connectWatch()
+      native.events.watchEvent({ t: 'hello', protocolVersion: 3, capabilities: { durableCommit: true, snapshotChunks: true, commandReceipts: true } })
+      await publish(false)
+      for (let i = 0; i < 50; i++) await Promise.resolve()
+      const messages = () => native.sendEvent.mock.calls.map(([v]) => JSON.parse(v.json))
+      const base = messages().findLast(m => m.t === 'sync')
+      native.events.watchEvent({ t: 'sync_ack', status: 'applied', sid: 's', commitRev: 1, wireHash: base.wireHash })
+      native.sendEvent.mockClear()
+      const event = { t: 'weight', sid: 's', protocolVersion: 3, eventId: 'watch:1', installationId: 'watch', seq: 1,
+        entryInstanceId: 'e', setId: 'a', ex: 0, set: 1, weight: '62.5', at: Date.now(), baseCommitRev: 1, appliedRev: 1, appliedHash: base.wireHash }
+      effect = true
+      receive(event); await receive.idle()
+      if (timing === 'after') await publish(true)
+      for (let i = 0; i < 50; i++) await Promise.resolve()
+      expect(S.active.entries[0].sets[0].w).toBe(62.5)
+      const commit = messages().find(m => m.t === 'committed')
+      expect(commit.state?.t).toBe('sync_delta')
+      expect(messages().map(m => m.t)).toEqual(['committed'])
+      native.events.watchEvent({ t: 'sync_ack', status: 'applied', sid: 's', commitRev: commit.commitRev, wireHash: commit.state.wireHash })
+      expect((await link.getWatchDiagnostics()).planDelivery).toBe('applied')
+      await publish(false)
+      expect(messages().filter(m => m.t === 'sync' || m.t === 'sync_delta')).toHaveLength(1)
+      S.active.entries[0].name = 'New exercise'
+      await publish(true)
+      expect(messages().filter(m => m.t === 'sync' || m.t === 'sync_delta')).toHaveLength(2)
+    } finally { receive.dispose(); unbind() }
+  })
+})

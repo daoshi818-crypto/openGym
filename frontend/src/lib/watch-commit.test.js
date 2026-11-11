@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import { createDurableWatchLifecycle } from './watch-commit.js'
+import { canonicalWire, diffWire } from '../../../watch-app/src/lib/sync-wire.js'
+import { watchSnapshotOf } from './watch-workout.js'
+import { ensureWatchIdentity } from './watch-identity.js'
 
 const state = () => ({ workouts: [], active: { start: 1000, entries: [{ id: 'plain-bench', sets: [{ w: 60, r: '8', done: false }] }] } })
 function app(S = state(), overrides = {}) {
@@ -73,4 +76,58 @@ describe('durable watch commits', () => {
     expect(a.deps.sendEnded).toHaveBeenCalled()
     a.receive.dispose()
   })
+})
+
+
+describe('command receipts carry the durable phone state', () => {
+  it('sends the exact canonical delta after the checkpoint instead of a second transfer', async () => {
+    let base
+    const a = app(undefined, { commandState: (ev, snapshot) => diffWire(base, canonicalWire(snapshot)) })
+    ensureWatchIdentity(a.S.active)
+    base = canonicalWire(watchSnapshotOf(a.S, null))
+    a.receive({ ...event(), protocolVersion: 3, baseHash: base.wireHash }); await a.receive.idle()
+    const receipt = a.deps.send.mock.calls.find(([msg]) => msg.t === 'committed')[0]
+    expect(receipt.state).toMatchObject({ t: 'sync_delta', baseHash: base.wireHash })
+    expect(a.deps.sendSync).not.toHaveBeenCalled()
+    expect(Object.values(a.disk().watchCommits)[0].decision).toEqual(receipt)
+    const b = app(a.disk())
+    b.receive({ ...event(), protocolVersion: 3, baseHash: base.wireHash }); await b.receive.idle()
+    expect(b.deps.send).toHaveBeenCalledWith(receipt)
+    expect(b.deps.sendSync).not.toHaveBeenCalled()
+    a.receive.dispose(); b.receive.dispose()
+  })
+  it('keeps the transfer fallback when no exact command baseline is available', async () => {
+    const a = app(undefined, { commandState: () => null })
+    a.receive({ ...event(), protocolVersion: 3 }); await a.receive.idle()
+    expect(a.deps.send.mock.calls[0][0].state).toBeUndefined()
+    expect(a.deps.sendSync).toHaveBeenCalledOnce()
+    a.receive.dispose()
+  })
+})
+
+it('keeps a separate transfer when the entire inline receipt exceeds the SDK budget', async () => {
+  const a = app(undefined, { commandState: () => ({ t: 'sync_delta', padding: '字'.repeat(2100) }) })
+  a.receive({ ...event(), protocolVersion: 3 }); await a.receive.idle()
+  expect(a.deps.send.mock.calls.find(([msg]) => msg.t === 'committed')[0].state).toBeUndefined()
+  expect(a.deps.sendSync).toHaveBeenCalledOnce()
+  a.receive.dispose()
+})
+
+
+it('covers automatic plan echoes only after checkpoint succeeds and before releasing outbound', async () => {
+  const order = [], correction = { t: 'sync_delta', sid: '1000', wireHash: 'new', commitRev: 1 }
+  const a = app(undefined, {
+    commandState: () => correction,
+    checkpoint: vi.fn().mockRejectedValueOnce(new Error('disk full')).mockImplementation(async () => { order.push('saved') }),
+    commandStateCommitted: vi.fn(() => order.push('covered')),
+    holdOutbound: () => () => order.push('released'), send: vi.fn(() => order.push('sent')),
+  })
+  try {
+    a.receive({ ...event(), protocolVersion: 3 }); await a.receive.idle()
+    expect(a.deps.commandStateCommitted).not.toHaveBeenCalled()
+    expect(order).toEqual([])
+    a.receive.retry(); await a.receive.idle()
+    expect(a.deps.commandStateCommitted).toHaveBeenCalledWith(correction)
+    expect(order).toEqual(['saved', 'covered', 'released', 'sent'])
+  } finally { a.receive.dispose() }
 })

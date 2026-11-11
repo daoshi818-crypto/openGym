@@ -42,6 +42,11 @@ the page or pushing the fixed footer off screen. See [GT1 rebuild and acceptance
 
 ## Transport and Persistence
 
+Watch 0.6.25 / phone 1.6.22 negotiate inline canonical command corrections. Ordinary
+commands can converge through one durable committed reply plus a small applied ACK;
+startup, structural changes and baseline gaps retain reliable snapshot transfer.
+See [command flow and measurements](../docs/dev/WATCH_COMMAND_SYNC_1_6_22.zh-CN.md).
+
 Watch 0.6.13 pairs with phone 1.6.5 for durable inbox/commit receipts, negotiated
 revision deltas, bounded checksummed snapshot chunks, explicit field conflicts and
 adaptive retry. Old peers keep the v2 path. See [SYNC_PROTOCOL.md](SYNC_PROTOCOL.md).

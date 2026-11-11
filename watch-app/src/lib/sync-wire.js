@@ -6,6 +6,12 @@ export function wireHash(value) {
   for (let i = 0; i < text.length; i++) { hash ^= text.charCodeAt(i); hash = Math.imul(hash, 16777619) }
   return (hash >>> 0).toString(16)
 }
+// One canonical encoding for transfers and inline command receipts.
+export function canonicalWire(snapshot) {
+  const { wireHash: ignored, ...value } = { ...snapshot, t: 'sync', protocolVersion: 3,
+    ackedEvents: (snapshot.ackedEvents || []).slice(-128) }
+  return { ...value, wireHash: wireHash(value) }
+}
 export function wireBytes(text) {
   let bytes = 0
   for (let i = 0; i < text.length; i++) {
@@ -51,23 +57,39 @@ export function acceptWireChunk(pending, msg, now) {
   if (!['sync', 'sync_delta'].includes(message.t) || message.sid !== msg.sid) throw new Error('invalid_snapshot')
   return message
 }
-export function diffWire(base, next) {
-  if (!base || base.sid !== next.sid || JSON.stringify(base.exercises) !== JSON.stringify(next.exercises)) return null
+const exerciseStructure = exercise => {
+  const { weight, reps, ...structure } = exercise
+  return JSON.stringify(structure)
+}
+export function diffWire(base, next, command = false) {
+  if (!base || base.sid !== next.sid) return null
+  const exerciseCells = []
+  if (JSON.stringify(base.exercises) !== JSON.stringify(next.exercises)) {
+    if (!command || base.exercises?.length !== next.exercises?.length) return null
+    for (let ex = 0; ex < next.exercises.length; ex++) {
+      if (exerciseStructure(base.exercises[ex]) !== exerciseStructure(next.exercises[ex])) return null
+      if (JSON.stringify(base.exercises[ex]) !== JSON.stringify(next.exercises[ex])) exerciseCells.push({ ex, exercise: next.exercises[ex] })
+    }
+  }
   const changes = {}, cells = []
   for (const key of Object.keys(next)) {
-    if (['rows', 't', 'wireHash'].includes(key)) continue
+    if (['rows', 'exercises', 't', 'wireHash'].includes(key)) continue
     if (JSON.stringify(base[key]) !== JSON.stringify(next[key])) changes[key] = next[key]
   }
   for (let ex = 0; ex < next.rows.length; ex++) for (let set = 0; set < next.rows[ex].length; set++) {
     if (JSON.stringify(base.rows?.[ex]?.[set]) !== JSON.stringify(next.rows[ex][set])) cells.push({ ex, set, row: next.rows[ex][set] })
   }
   return { t: 'sync_delta', sid: next.sid, baseCommitRev: base.commitRev, baseHash: base.wireHash,
-    commitRev: next.commitRev, changes, cells, wireHash: next.wireHash }
+    commitRev: next.commitRev, changes, cells, ...(exerciseCells.length ? { exerciseCells } : {}), wireHash: next.wireHash }
 }
 export function expandWireDelta(base, delta) {
   if (!base || base.sid !== delta.sid || base.commitRev !== delta.baseCommitRev || base.wireHash !== delta.baseHash) throw new Error('revision_gap')
   if (delta.commitRev < base.commitRev) throw new Error('stale_delta')
   const next = { ...JSON.parse(JSON.stringify(base)), ...delta.changes, wireHash: delta.wireHash }
+  for (const cell of delta.exerciseCells || []) {
+    if (!Number.isInteger(cell.ex) || !next.exercises?.[cell.ex] || !cell.exercise || exerciseStructure(next.exercises[cell.ex]) !== exerciseStructure(cell.exercise)) throw new Error('delta_structure')
+    next.exercises[cell.ex] = cell.exercise
+  }
   for (const cell of delta.cells || []) {
     if (!Number.isInteger(cell.ex) || !Number.isInteger(cell.set) || !next.rows?.[cell.ex]?.[cell.set] || next.rows[cell.ex][cell.set].setId !== cell.row?.setId) throw new Error('delta_target')
     next.rows[cell.ex][cell.set] = cell.row

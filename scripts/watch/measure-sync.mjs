@@ -2,10 +2,14 @@
 // Run from the repository root: node scripts/watch/measure-sync.mjs
 import { watchPlanOf, watchSnapshotOf } from '../../frontend/src/lib/watch-workout.js'
 import { ensureWatchIdentity } from '../../frontend/src/lib/watch-identity.js'
-import { wireHash, compactWire } from '../../watch-app/src/lib/sync-wire.js'
+import { canonicalWire, wireHash, compactWire } from '../../watch-app/src/lib/sync-wire.js'
 import { persistentSender, persistentReceiver } from '../../watch-app/src/lib/persistent-transfer.js'
 import { watchPersistence, loadWatchModule } from '../../frontend/src/lib/watch-test-harness.js'
+import { createDurableWatchLifecycle } from '../../frontend/src/lib/watch-commit.js'
+import { createCommandStateCache } from '../../frontend/src/lib/watch-command-state.js'
+import { stampWatchRevision } from '../../frontend/src/lib/watch-revision.js'
 const now = 1794412800000
+Date.now = () => now
 const bytes = value => Buffer.byteLength(JSON.stringify(value), 'utf8')
 const copy = value => JSON.parse(JSON.stringify(value))
 function fixture(counts) {
@@ -46,9 +50,35 @@ function events(S, base) {
     restId: String(now), startedAt: now, endsAt: now + 90000, leftSec: 90, totalSec: 90, paused: false, seq: now } })
   return { weight: copy(weight), set: copy(set) }
 }
+async function commandRoundTrip(source, base, event, inline) {
+  const S = copy(source), states = createCommandStateCache(), replies = [], snapshots = []
+  states.remember(base)
+  let timer = null
+  const command = inline ? { ...event, appliedHash: base.wireHash, appliedRev: base.commitRev } : event
+  const receive = createDurableWatchLifecycle({ getState: () => S, getTimer: () => timer,
+    update: (fn, ev) => { const before = copy(S); fn(S); stampWatchRevision(before, S, ev?.installationId || 'watch', ev?.eventId) },
+    rest: ev => { timer = ev.leftSec ? { ...ev, source: 'watch' } : null },
+    checkpoint: async () => {}, commandState: inline ? states.prepare : undefined,
+    send: msg => replies.push(copy(msg)), sendAck() {}, sendEnded() {}, finish() {},
+    sendSync: snap => snapshots.push(canonicalWire(snap)),
+  })
+  try { receive(command); await receive.idle() } finally { receive.dispose() }
+  const committed = replies.find(m => m.t === 'committed')
+  if (committed?.status !== 'applied' || inline && !committed.state) throw new Error('fixture command was not applied inline')
+  let stateTransfer = null, appliedAck = null
+  if (snapshots.length) stateTransfer = await transfer(compactWire(base, snapshots.at(-1)))
+  if (committed.state) appliedAck = { t: 'sync_ack', sid: base.sid, wireHash: committed.state.wireHash, commitRev: committed.commitRev, status: 'applied' }
+  const replyBytes = replies.reduce((sum, msg) => sum + bytes(msg), 0)
+  const ackBytes = appliedAck ? bytes(appliedAck) : 0
+  return { commandBytes: bytes(command), replyBytes, appliedAckBytes: ackBytes, stateTransfer,
+    total: bytes(command) + replyBytes + ackBytes + (stateTransfer?.total || 0),
+    messages: 1 + replies.length + (appliedAck ? 1 : 0) + (stateTransfer ? stateTransfer.downMessages + stateTransfer.upMessages : 0) }
+}
 const results = []
 for (const counts of [[5, 2], Array(10).fill(5), Array(20).fill(5)]) {
   const S = fixture(counts), base = snapshot(S), ev = events(S, base)
+  const commandBefore = await commandRoundTrip(S, base, ev.set, false), commandAfter = await commandRoundTrip(S, base, ev.set, true)
+  const weightBefore = await commandRoundTrip(S, base, ev.weight, false), weightAfter = await commandRoundTrip(S, base, ev.weight, true)
   S.active.entries[0].sets[0].done = true; S.active.entries[0].sets[0].at = now
   S.active.syncRev++
   S.active.watchEvents = [ev.set.eventId]
@@ -58,7 +88,7 @@ for (const counts of [[5, 2], Array(10).fill(5), Array(20).fill(5)]) {
   results.push({ exercises: counts.length, sets: counts.reduce((a, b) => a + b, 0), planBytes: bytes(watchPlanOf(fixture(counts))),
     bootstrapBytes: bytes(base), setEventBytes: bytes(ev.set), weightEventBytes: bytes(ev.weight),
     nextFullBytes: bytes(next), nextDeltaBytes: bytes(delta),
-    fullTransfer: await transfer(next), deltaTransfer: await transfer(delta) })
+    fullTransfer: await transfer(next), deltaTransfer: await transfer(delta), commandBefore, commandAfter, weightBefore, weightAfter })
 }
 const xunjiWeightExample = { command: 'Change_Move_Data', payload: { moveidx: 2, setidx: 1, data: '80', type: 'weight' }, trainID: 123456 }
 console.log(JSON.stringify({ scope: 'UTF-8 business JSON only; fixed fixture, no retries. No SDK framing/radio bytes. Competitor example only; KeepStrong total unknown.',

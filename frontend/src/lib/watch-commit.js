@@ -3,6 +3,7 @@ import { watchSnapshotOf } from './watch-workout.js'
 import { dependencyDecision } from '../../../watch-app/src/lib/event-dependencies.js'
 import { watchConflict } from './watch-revision.js'
 import { watchSidOf } from './session-resume.js'
+import { wireBytes } from '../../../watch-app/src/lib/sync-wire.js'
 
 const TYPES = new Set(['hello', 'watch_start', 'session_close', 'session_close_ack', 'pause', 'rest',
   'effort', 'weight', 'reps', 'set', 'unset', 'add_set', 'remove_set', 'focus', 'end', 'summary'])
@@ -66,6 +67,16 @@ export function createDurableWatchLifecycle(deps) {
                   commitRev: deps.getState().active?.syncRev || 0,
                   ...(conflict ? { detail: copy(conflict) } : conflicted ? { detail: conflicted.msg } : rejected ? { detail: rejected.msg } : !applied ? { detail: { reason: start?.msg.status || 'no_target' } } : {}) }
                 for (let i = replies.length - 1; i >= 0; i--) if (replies[i].kind === 'ack' || ['effort_ack', 'event_rejected'].includes(replies[i].msg?.t)) replies.splice(i, 1)
+                // Freeze the canonical phone correction in the SAME durable decision.
+                // Never regenerate a duplicate's delta against newer phone state.
+                if (replies.some(r => r.kind === 'sync')) {
+                  const snapshot = watchSnapshotOf(deps.getState(), deps.getTimer())
+                  const state = deps.commandState?.(ev, snapshot)
+                  if (state && wireBytes(JSON.stringify({ ...commit, state })) <= 6000) {
+                    commit.state = copy(state)
+                    for (let i = replies.length - 1; i >= 0; i--) if (replies[i].kind === 'sync') replies.splice(i, 1)
+                  }
+                }
                 replies.unshift({ kind: 'send', msg: commit })
                 if (commit.status === 'conflict') deps.update(s => {
                   s.watchConflicts ||= {}
@@ -112,6 +123,11 @@ export function createDurableWatchLifecycle(deps) {
           // Complete only the exact native entry whose decision is now on disk. Failure to
           // delete it is harmless: the next drain replays the durable decision.
           for (const id of item.inboxIds) { try { await deps.completeInbox?.(id) } catch { /* retry on drain */ } }
+          // Cancel an automatic page plan echo only after durable publication.
+          // This cache callback cannot invalidate or block the persisted decision.
+          for (const reply of item.replies) if (reply.msg?.t === 'committed' && reply.msg.state) {
+            try { deps.commandStateCommitted?.(reply.msg.state) } catch { /* optimization only */ }
+          }
           replying = true
           release?.(); release = null
           if (item.startedSid) {

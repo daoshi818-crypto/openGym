@@ -6,10 +6,12 @@ import { applyEdit, applyFocus, applyRest, restOf } from '../../../watch-app/src
 import * as effort from '../../../watch-app/src/lib/effort-scale.js'
 import { lastTimeView } from '../../../watch-app/src/lib/watch-last-time.js'
 import { createDurableWatchLifecycle } from './watch-commit.js'
+import { ensureWatchIdentity } from './watch-identity.js'
 import { stampWatchRevision } from './watch-revision.js'
 import { watchSnapshotOf } from './watch-workout.js'
+import { createCommandStateCache } from './watch-command-state.js'
 import { broadcastPhoneRest } from './watch-rest-broadcast.js'
-import { wireHash } from '../../../watch-app/src/lib/sync-wire.js'
+import { canonicalWire, wireHash } from '../../../watch-app/src/lib/sync-wire.js'
 function boot(connected = false, disk) {
   const h = watchPersistence(disk), c = h.ctx
   Object.assign(c, watchInteractionDeps, effort, { lastTimeView, console, applyEdit, applyFocus, applyRest, restOf, WATCH_VERSION: 'test', startSessionHr: vi.fn(), stopSessionHr: vi.fn(), tick: vi.fn(), restOver: vi.fn(), router: { push: vi.fn(), replace: vi.fn() } })
@@ -182,15 +184,18 @@ it('legacy pending without sid replays only in its original session and remains 
 })
 
 // Exercise phone revisions + exact receipts, not just old watch snapshots.
-function paired(bootstrapPlan = true) {
+function paired(bootstrapPlan = true, compact = false) {
+  const commandStates = createCommandStateCache()
   const h = boot(true), workout = plan()
   const S = { unit: 'kg', workouts: [], active: { start: Date.now(), watchSid: 's', name: '5+2',
     entries: workout.exercises.map(ex => ({ id: 'plain-bench', name: ex.name, entryInstanceId: ex.entryInstanceId,
       sets: ex.setIds.map(setId => ({ setId, w: 50, r: '8', done: false })) })) } }
+  ensureWatchIdentity(S.active)
   stampWatchRevision({}, S)
   let timer = null, cursor = 0
   const replies = [], snapshots = []
   const deps = { getState: () => S, getTimer: () => timer, checkpoint: async () => {},
+    commandState: compact ? commandStates.prepare : undefined,
     update: (fn, ev) => { const prev = structuredClone(S); fn(S); stampWatchRevision(prev, S, ev?.installationId || 'watch', ev?.eventId) },
     rest: ev => { timer = ev.leftSec ? { ...ev, source: 'watch' } : null },
     send: msg => replies.push(structuredClone(msg)), sendAck() {}, sendEnded() {}, finish() {},
@@ -199,9 +204,10 @@ function paired(bootstrapPlan = true) {
   if (bootstrapPlan) h.c.startSession(workout)
   const { ctx: p } = bluePage(h, true)
   p.bindRpc()
-  h.connection.onMessage({ t: 'hello_ack', protocolVersion: 3, capabilities: { dependencyEvents: true } })
+  h.connection.onMessage({ t: 'hello_ack', protocolVersion: 3, capabilities: { dependencyEvents: true, commandReceipts: compact } })
   async function sync(value) {
-    const msg = { ...value, wireHash: wireHash(value) }
+    const msg = canonicalWire(value)
+    commandStates.remember(msg)
     const result = await h.c.commitWireSnapshot(msg, transfer(msg, 'p:pair-' + msg.commitRev))
     expect(result.ok).toBe(true)
     p.onSyncUpdate(msg, { persisted: true })
@@ -219,7 +225,7 @@ function paired(bootstrapPlan = true) {
       if (!device.c.pendingCount() && cursor === device.sent.length) break
     }
   }
-  return { ...h, p, S, deps, receive, sync, pump, snapshots }
+  return { ...h, p, S, deps, receive, sync, pump, snapshots, commandStates, replies }
 }
 it('phone receipts and snapshots preserve rapid watch-only 5+2 completion across the fifth set', async () => {
   vi.useFakeTimers(); const a = paired()
@@ -426,5 +432,129 @@ it.each(['saved', 'abandoned'])('offline %s survives watch process restart and l
     expect(a.S.watchClosed.s.disposition).toBe(disposition)
     expect(restarted.c.pendingCount()).toBe(0)
     expect(restarted.c.journalEntry('s').closeCommitted).toBe(true)
+  } finally { a.receive.dispose() }
+})
+
+
+it('negotiated command receipts alone converge every complete/skip across rapid 5+2', async () => {
+  vi.useFakeTimers(); const a = paired(true, true)
+  await a.sync(watchSnapshotOf(a.S, null))
+  try {
+    for (let i = 0; i < 7; i++) {
+      await vi.advanceTimersByTimeAsync(710)
+      a.p.touchStart({ touches: [{ clientX: 100, clientY: 100 }] }); a.p.touchCancel()
+      expect(await a.p.onComplete()).toBe(true)
+      a.p.touchStart({ touches: [{ clientX: 100, clientY: 100 }] }); a.p.touchCancel()
+      expect(await a.p.onSkipRest()).toBe(true)
+      await a.pump(false)
+      expect(a.snapshots).toHaveLength(0)
+      const state = a.c.loadState()
+      expect(state.workout.rows.flat().filter(r => r.done)).toHaveLength(i + 1)
+      expect(a.S.active.entries.flatMap(e => e.sets).filter(r => r.done)).toHaveLength(i + 1)
+      expect(state.pendingEdits).toHaveLength(0)
+      expect(state.syncBase.commitRev).toBe(a.S.active.syncRev)
+      expect(state.syncBase.wireHash).toBe(canonicalWire(state.syncBase).wireHash)
+      expect(a.c.synchronizationStatus().conflicts).toBe(0)
+    }
+    expect(a.p.allFinished).toBe(true)
+    expect(a.sent.some(m => m.t === 'sync_request')).toBe(false)
+  } finally { a.receive.dispose() }
+})
+
+
+it('inline phone authority settles conflicting weight and preserves independent reps without a transfer', async () => {
+  vi.useFakeTimers(); const a = paired(true,true); await a.sync(watchSnapshotOf(a.S,null))
+  try {
+    a.c.sendEvent({t:'weight',sid:'s',ex:0,set:1,weight:'65',at:Date.now()})
+    a.c.sendEvent({t:'reps',sid:'s',ex:0,set:2,reps:'12',at:Date.now()+1})
+    const before=structuredClone(a.S);a.S.active.entries[0].sets[0].w=80;stampWatchRevision(before,a.S)
+    await a.pump(false)
+    expect(a.snapshots).toHaveLength(0)
+    const state=a.c.loadState()
+    expect(state.workout.rows[0][0].w).toBe(80)
+    expect(state.workout.rows[0][1].r).toBe('12')
+    expect(state.pendingEdits).toHaveLength(0)
+    expect(a.c.synchronizationStatus().conflicts).toBe(0)
+    expect(a.disk.get('sync_conflicts').every(c=>c.reviewed&&c.resolution==='phone')).toBe(true)
+  }finally{a.receive.dispose()}
+})
+
+it('lost inline decisions survive watch restart and replay exactly once without replaying rest', async () => {
+  vi.useFakeTimers();const a=paired(true,true);await a.sync(watchSnapshotOf(a.S,null))
+  let drop=true,restCalls=0;const send=a.deps.send,rest=a.deps.rest
+  a.deps.send=msg=>{if(!drop)send(msg)};a.deps.rest=ev=>{restCalls++;rest(ev)}
+  try{
+    await a.p.onComplete();await a.pump(false)
+    expect(a.c.pendingCount()).toBeGreaterThan(0)
+    const first=Object.values(a.S.watchCommits)[0].decision
+    const restarted=boot(true,a.disk);restarted.c.startServer({})
+    restarted.connection.onMessage({t:'hello_ack',protocolVersion:3,capabilities:{dependencyEvents:true,commandReceipts:true}})
+    drop=false;await a.pump(false,restarted)
+    expect(restarted.c.pendingCount()).toBe(0)
+    expect(restarted.c.loadState().pendingEdits).toHaveLength(0)
+    expect(restarted.c.loadState().workout.rows[0][0].done).toBe(true)
+    expect(a.S.active.entries.flatMap(e=>e.sets).filter(r=>r.done)).toHaveLength(1)
+    expect(restCalls).toBe(1)
+    expect(Object.values(a.S.watchCommits)[0].decision).toEqual(first)
+    expect(a.snapshots).toHaveLength(0)
+  }finally{a.receive.dispose()}
+})
+
+it('corrupt inline state requests fresh recovery without inventing an applied baseline', async () => {
+  vi.useFakeTimers();const a=paired(true,true);await a.sync(watchSnapshotOf(a.S,null))
+  const base=a.c.loadState().syncBase,send=a.deps.send
+  a.deps.send=msg=>send(msg.state?{...msg,state:{...msg.state,wireHash:'corrupt'}}:msg)
+  try{
+    await a.p.onComplete();await a.pump(false)
+    expect(a.sent.some(m=>m.t==='sync_request')).toBe(true)
+    expect(a.c.loadState().syncBase).toEqual(base)
+    expect(a.c.loadState().pendingEdits.length).toBeGreaterThan(0)
+    await a.sync(watchSnapshotOf(a.S,null))
+    expect(a.c.loadState().pendingEdits).toHaveLength(0)
+    expect(a.c.loadState().workout.rows[0][0].done).toBe(true)
+  }finally{a.receive.dispose()}
+})
+
+it.each(['event_decisions','session_state'])('inline state remains retryable when %s cannot be persisted',async key=>{
+  vi.useFakeTimers();const a=paired(true,true);await a.sync(watchSnapshotOf(a.S,null))
+  try{
+    a.c.sendEvent({t:'reps',sid:'s',ex:0,set:2,reps:'12',at:Date.now()})
+    const ev=a.c.loadState().pendingEdits[0]
+    a.receive({...ev,appliedHash:a.c.loadState().syncBase.wireHash,appliedRev:a.c.loadState().commitRev});await a.receive.idle()
+    const receipt=a.replies.splice(0).find(m=>m.t==='committed'),original=a.storage.set
+    a.storage.set=item=>item.key===key?item.fail():original(item)
+    a.connection.onMessage(receipt);await vi.advanceTimersByTimeAsync(10)
+    expect(a.c.pendingCount()).toBe(1)
+    expect(a.c.loadState().pendingEdits.some(e=>e.eventId===ev.eventId)).toBe(true)
+    a.storage.set=original;a.connection.onMessage(receipt);await vi.advanceTimersByTimeAsync(10)
+    expect(a.c.pendingCount()).toBe(0)
+    expect(a.c.loadState().pendingEdits).toHaveLength(0)
+    expect(a.c.loadState().syncBase.wireHash).toBe(receipt.state.wireHash)
+  }finally{a.receive.dispose()}
+})
+
+it('recovers an overlapping independent command receipt and ignores its duplicate after recovery', async () => {
+  vi.useFakeTimers(); const a = paired(true, true); await a.sync(watchSnapshotOf(a.S, null))
+  try {
+    a.c.sendEvent({ t: 'reps', sid: 's', ex: 0, set: 2, reps: '11', at: Date.now() })
+    a.c.sendEvent({ t: 'weight', sid: 's', ex: 1, set: 2, weight: '65', at: Date.now() + 1 })
+    const state = a.c.loadState(), base = state.syncBase
+    const events = state.pendingEdits.filter(e => e.committedRev == null)
+    expect(events).toHaveLength(2)
+    for (const ev of events) a.receive({ ...ev, appliedHash: base.wireHash, appliedRev: base.commitRev })
+    await a.receive.idle()
+    const replies = a.replies.splice(0).filter(m => m.t === 'committed')
+    expect(replies).toHaveLength(2)
+    expect(replies.every(m => m.state?.baseHash === base.wireHash)).toBe(true)
+    for (const receipt of replies) { a.connection.onMessage(receipt); await vi.advanceTimersByTimeAsync(10) }
+    expect(a.sent.some(m => m.t === 'sync_request')).toBe(true)
+    await a.sync(watchSnapshotOf(a.S, null))
+    const recovered = a.c.loadState()
+    expect(recovered.pendingEdits).toHaveLength(0)
+    expect(recovered.workout.rows[0][1].r).toBe('11')
+    expect(recovered.workout.rows[1][1].w).toBe(65)
+    a.connection.onMessage(replies[0]); await vi.advanceTimersByTimeAsync(10)
+    expect(a.c.loadState().syncBase).toEqual(recovered.syncBase)
+    expect(a.c.loadState().pendingEdits).toHaveLength(0)
   } finally { a.receive.dispose() }
 })

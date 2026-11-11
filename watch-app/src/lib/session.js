@@ -347,7 +347,17 @@ export function applySync(state, snapshot, options) {
 }
 // A receipt can arrive after its snapshot. Rebuild the durable projection after
 // retiring its overlay; notifying a page alone must never leave that overlay in rows/focus.
-export function reconcileCommittedSnapshot(state, revision) {
+export function reconcileCommittedSnapshot(state, revision, delta) {
+  if (delta && state.active && !state.closeIntent && state.sid === delta.sid &&
+      (!state.syncBase || state.syncBase.commitRev < revision ||
+        (state.syncBase.commitRev === revision && state.syncBase.wireHash !== delta.wireHash))) {
+    if (delta.t !== 'sync_delta' || delta.commitRev !== revision) throw new Error('receipt_version')
+    const snapshot = expandWireDelta(state.syncBase, delta)
+    const previousDraft = runtime().sessionDraft
+    runtime().sessionDraft = state
+    try { return applySync(state, snapshot, { pendingEdits: state.pendingEdits || [] }) }
+    finally { runtime().sessionDraft = previousDraft }
+  }
   if (!state.active || !state.syncBase || !Number.isFinite(revision) || state.syncBase.sid !== state.sid || state.syncBase.commitRev < revision) return state
   const previousDraft = runtime().sessionDraft
   runtime().sessionDraft = state
