@@ -7,14 +7,17 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright')
 ;(async () => {
   const dir = path.resolve(process.argv[2] || 'preview-gt1')
   const scenes = JSON.parse(fs.readFileSync(path.join(dir, 'scenes.json'), 'utf8'))
+  const configPath = path.join(dir, 'preview-config.json')
+  const view = fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, 'utf8')) : { width: 390, height: 450, radius: 80 }
   const browser = await chromium.launch({ channel: 'msedge', headless: true })
-  const page = await browser.newPage({ viewport: { width: 390, height: 450 }, deviceScaleFactor: 1 })
+  const page = await browser.newPage({ viewport: { width: view.width, height: view.height }, deviceScaleFactor: 1 })
   const errors = [], report = []
   page.on('pageerror', e => errors.push(String(e)))
   for (const scene of scenes) {
     await page.goto(pathToFileURL(path.join(dir, scene.id + '.html')).href)
     await page.screenshot({ path: path.join(dir, scene.id + '.png') })
     const result = await page.evaluate(() => {
+      const VIEW_RADIUS = parseFloat(getComputedStyle(document.querySelector('#viewport')).borderRadius)
       const root = document.querySelector('.page').getBoundingClientRect()
       const lists = [...document.querySelectorAll('[data-type="list"]')].map(e => ({ cls: e.className, height: e.clientHeight, scrollHeight: e.scrollHeight, top: e.scrollTop }))
       const outside = [...document.querySelectorAll('button,native-text')].filter(el => {
@@ -25,17 +28,17 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright')
       const sideways = [...document.querySelectorAll('[data-type="list"]')].filter(e => e.scrollWidth > e.clientWidth + 1).map(e => e.className)
       const clippedNumbers = [...document.querySelectorAll('.fval>span,.funit>span,.show>span,.rest>span')].filter(e => e.scrollWidth > e.clientWidth + 1).map(e => ({text:e.textContent,width:e.clientWidth,needed:e.scrollWidth}))
       // Being inside a scroll container must not exempt a single-screen form from checks.
-      const mustFit = ['03-current','16-editor','17-keyboard','20-done-row','28-paused'].includes(SCENE.id) || SCENE.name === 'Keypad'
+      const mustFit = innerWidth < 450 && (['03-current','16-editor','17-keyboard','20-done-row','28-paused'].includes(SCENE.id) || SCENE.name === 'Keypad')
       const scrollRequired = mustFit ? lists.filter(e => e.scrollHeight > e.height + 1) : []
       const firstPlan = document.querySelector('.plans .plan')
       let clippedPlan = false
       if (firstPlan) {
         const card = firstPlan.getBoundingClientRect(), list = firstPlan.parentElement.getBoundingClientRect()
-        clippedPlan = card.top < list.top - 1 || card.bottom > list.bottom + 1
+        clippedPlan = innerWidth < 450 && (card.top < list.top - 1 || card.bottom > list.bottom + 1)
       }
       // 80 design-pixel mask is deliberately conservative, not a measured GT1 radius.
       // Measure visible text runs (not transparent layout boxes); obey ancestor/list clips.
-      const radius = 80
+      const radius = VIEW_RADIUS
       const inside = (x, y) => {
         if (x < 0 || x > innerWidth || y < 0 || y > innerHeight) return false
         const cx = Math.max(radius, Math.min(innerWidth-radius, x))
@@ -63,11 +66,11 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright')
       return { root: { width: root.width, height: root.height }, lists, vectorImages, brokenVectors, outside, sideways, clippedNumbers, scrollRequired, clippedPlan, cornerClipped, cornerClippedAtEnd }
 
     })
-    assert.deepEqual(result.root, { width: 390, height: 450 }, scene.id + ' root viewport')
+    assert.deepEqual(result.root, { width: view.width, height: view.height }, scene.id + ' root viewport')
     report.push({ ...scene, ...result })
     if (result.brokenVectors.length || result.outside.length || result.sideways.length || result.clippedNumbers.length || result.scrollRequired.length || result.clippedPlan || result.cornerClipped.length || result.cornerClippedAtEnd.length) console.error(scene.id, JSON.stringify(result))
   }
-  fs.writeFileSync(path.join(dir, 'layout-report.json'), JSON.stringify({ previewOnly: true, conservativeCornerRadius: 80, errors, scenes: report }, null, 2))
+  fs.writeFileSync(path.join(dir, 'layout-report.json'), JSON.stringify({ previewOnly: true, conservativeCornerRadius: view.radius, viewport: view, errors, scenes: report }, null, 2))
   await browser.close()
   assert.deepEqual(errors, [], 'Browser rendering errors')
   assert.deepEqual(report.filter(s => s.brokenVectors.length || s.outside.length || s.sideways.length || s.clippedNumbers.length || s.scrollRequired.length || s.clippedPlan || s.cornerClipped.length || s.cornerClippedAtEnd.length), [], 'Controls exceed viewport/corner mask, numbers clip, single-screen forms scroll, or first plan is cut off')

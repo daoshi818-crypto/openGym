@@ -109,15 +109,21 @@ export function persistentReceiver(store, apply, now = () => Date.now()) {
     }),
   }
 }
-export function persistentSender(store, onApplied = () => {}, now = () => Date.now(), fullSnapshot = null) {
+export function persistentSender(store, onApplied = () => {}, now = () => Date.now(), fullSnapshot = null, encode = null) {
   const serial = serialOwner(), key = 'sync_tx_v1'
+  function prepare(snapshot, generation, compact) {
+    const wire = compact && encode ? encode(copy(snapshot)) : snapshot
+    const job = makeTransfer(copy(wire), generation, now())
+    if (wire.t === 'sync_delta' && snapshot.t === 'sync') job.authoritativeSnapshot = copy(snapshot)
+    return job
+  }
   const stateOf = async () => (await store.read(key)) || { generation: 0, active: null, queued: null }
   return {
     enqueue: snapshot => serial(async () => {
       const state = await stateOf(), content = JSON.stringify(snapshot)
-      if ([state.active, state.queued].some(j => j && JSON.stringify(j.snapshot) === content)) return true
+      if ([state.active, state.queued].some(j => j && JSON.stringify(j.authoritativeSnapshot || j.snapshot) === content)) return true
       if (state.active?.meta.sid === snapshot.sid && snapshot.commitRev < state.active.meta.revision) return false
-      const job = makeTransfer(copy(snapshot), ++state.generation, now())
+      const job = prepare(snapshot, ++state.generation, !state.active)
       if (!state.active) state.active = job
       else state.queued = job // Never cancel an in-flight same-revision generation on every clock tick.
       await put(store, key, state); return true
@@ -150,15 +156,18 @@ export function persistentSender(store, onApplied = () => {}, now = () => Date.n
         if (!job.acknowledged.includes(msg.index)) job.acknowledged.push(msg.index)
       } else if (msg.t === 'sync_applied' && ['applied', 'retained'].includes(msg.status)) {
         // Retention is durable receipt of an older snapshot, NOT a Delta base.
-        if (msg.status === 'applied') await onApplied(copy(job.snapshot), copy(job.meta))
+        if (msg.status === 'applied') await onApplied(copy(job.authoritativeSnapshot || job.snapshot), copy(job.meta))
         state.failures = 0
-        state.active = state.queued; state.queued = null
+        state.active = state.queued && msg.status === 'applied'
+          ? prepare(state.queued.authoritativeSnapshot || state.queued.snapshot, ++state.generation, true)
+          : state.queued
+        state.queued = null
       } else if (msg.t === 'sync_cancel_ack' || (msg.t === 'unknown_transfer' && job.cancelReason)) {
         // Keep cancellation durable until its exact ACK (or unknown-transfer proof).
         // Never touch business Outbox/pendingEdits/close-journal here.
         let replacement = state.queued
         if (!replacement && job.cancelReason !== 'expired') {
-          const full = job.snapshot.t === 'sync' ? job.snapshot : await fullSnapshot?.(copy(job.snapshot))
+          const full = job.authoritativeSnapshot || (job.snapshot.t === 'sync' ? job.snapshot : await fullSnapshot?.(copy(job.snapshot)))
           if (!full || full.t !== 'sync' || full.sid !== job.meta.sid) {
             job.lastError = 'full_snapshot_required'; job.retryAt = now() + 60000
             await put(store, key, state); return false

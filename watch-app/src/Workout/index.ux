@@ -1331,7 +1331,7 @@ const pageDefinition = {
     }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
   },
   askEnd() { this.finishOn = false; this.closeMode = 'end' },
-  askAbandon() { this.closeMode = 'abandon' },
+  askAbandon() { this.finishOn = false; this.closeMode = 'abandon' },
   cancelClose() {
     if (this.closeMode === 'complete') {
       if (Date.now() < this.completionIgnoreUntil) return
@@ -1422,10 +1422,11 @@ export default pageDefinition
     <list class="operation-scroll"><list-item type="operation-content" class="scroll-content">
       <text class="elapsed-label">已用时</text><text class="elapsed-value">{{ elapsedLabel }}</text>
       <div class="metrics"><text class="hr">{{ hrLabel }}</text><text class="energy">{{ kcalLabel }} 千卡</text></div>
-      <text class="op-title" onclick="openExercises">{{ exName }} ›</text><text class="op-group">{{ groupLabel }}</text><div class="op-prescription"><text class="op-label">重量</text><text class="op-detail">{{ weightNum }} {{ weightSuffix }}</text><text class="op-label">次数</text><text class="op-detail">{{ repsNum }} {{ repsSuffix }}</text></div><text class="op-group">容量 {{ volumeLabel }} {{ weightUnit }}</text>
+      <text class="op-title" onclick="openExercises">{{ exName }} ›</text><text class="op-group">{{ groupLabel }}</text><div class="op-prescription"><div class="op-metric"><text class="op-label">重量</text><text class="op-detail">{{ weightNum }} {{ weightSuffix }}</text></div><div class="op-metric"><text class="op-label">次数</text><text class="op-detail">{{ repsNum }} {{ repsSuffix }}</text></div></div><text class="op-group">容量 {{ volumeLabel }} {{ weightUnit }}</text>
       <div class="mrow"><input class="m" type="button" value="上一组" onclick="onPrevSet" /><input class="m" type="button" value="下一组" onclick="onNextSet" /></div>
       <div class="mrow"><input class="m" type="button" value="加组" onclick="onMenuAddSet" /><input class="m" type="button" value="减组" onclick="onMenuRemoveSet" /></div>
       <div class="mrow"><input class="m" type="button" value="{{ pauseLabel }}" onclick="onPause" /><input class="m m-end" type="button" value="结束训练" onclick="openFinish" /></div>
+      <input class="abandon-button" type="button" value="放弃训练" onclick="askAbandon" />
       <div class="return-button" onclick="showCurrent"><image class="back-icon" src="/common/icons/back.svg" /><text class="back-label">返回当前组</text></div>
     </list-item></list>
   </div>
@@ -1438,12 +1439,19 @@ export default pageDefinition
     <text class="confirm-title">结束本次训练？</text><text class="confirm-remain">{{ confirmRemain }}</text><text class="confirm-note">保留已记录的 RPE / RIR</text>
     <input class="pill confirm-save" type="button" value="保存并结束" onclick="saveEnd" /><input class="pill confirm-back" type="button" value="继续训练" onclick="cancelClose" />
   </div>
+  <div class="completion-panel confirm-panel" if="{{ closeMode === 'abandon' }}">
+    <text class="confirm-title">放弃本次训练？</text><text class="confirm-note">本次训练不会保存到历史</text>
+    <input class="pill confirm-abandon" type="button" value="确认放弃" onclick="abandonEnd" /><input class="pill confirm-back" type="button" value="继续训练" onclick="cancelClose" />
+  </div>
   <div class="effort-layer finish-layer" if="{{ finishOn && !closeMode && !effortOn }}">
     <div class="topbar"><text class="heart">{{ hrLabel }}</text><text class="clock">{{ clockLabel }}</text></div>
+    <list class="finish-scroll"><list-item type="finish-content" class="scroll-content finish-content">
     <text class="finish-name">{{ finishName }}</text>
     <div class="flag" onclick="askEnd"><div class="flag-inner"><div class="pole"></div><div class="pennant"></div></div></div>
     <text class="finish-title" onclick="askEnd">结束训练</text><text class="finish-count">{{ finishCount }}</text>
     <input class="last-effort" type="button" if="{{ lastEffortOn }}" value="{{ lastEffortText + '  ›' }}" onclick="openLastEffort" /><text class="finish-back" onclick="closeFinish">继续训练</text>
+    <input class="abandon-button" type="button" value="放弃训练" onclick="askAbandon" />
+    </list-item></list>
   </div>
   <div class="effort-layer last-layer" if="{{ lastOpen && !closeMode && !finishOn }}">
     <div class="last-head"><div class="last-back" onclick="closeLast"><image class="back-icon" src="/common/icons/back.svg" /><text class="back-label">返回训练</text></div></div><text class="last-title">{{ lastTitle }}</text><text class="last-meta">{{ lastMeta }}</text>
@@ -1470,9 +1478,9 @@ export default pageDefinition
 .page { width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
 .screen { width: 100%; height: 100%; flex-direction: column; align-items: center; }
 .topbar { width: 314px; height: 44px; margin-top: 18px; flex-direction: row; align-items: center; justify-content: space-between; flex-shrink: 0; }
-.clock { width: 92px; font-size: 26px; color: #FFFFFF; text-align: right; lines: 1; }
-.heart { width: 214px; font-size: 18px; color: #FF453A; lines: 1; }
-.status { width: 214px; height: 44px; line-height: 44px; font-size: 16px; color: #FF9F0A; lines: 1; }
+.clock { width: 92px; flex-shrink: 0; font-size: 26px; color: #FFFFFF; text-align: right; lines: 1; }
+.heart { flex: 1; min-width: 0px; font-size: 18px; color: #FF453A; lines: 1; }
+.status { flex: 1; min-width: 0px; height: 44px; line-height: 44px; font-size: 16px; color: #FF9F0A; lines: 1; }
 .training-panel { width: 338px; flex: 1; min-height: 0px; }
 .training-scroll { width: 338px; height: 100%; }
 .training-content { width: 338px; flex-direction: column; align-items: flex-start; }
@@ -1490,7 +1498,7 @@ export default pageDefinition
 .extra-long-value { font-size: 22px; }
 .timed-long-value { font-size: 28px; }
 .long-next { font-size: 26px; }
-.funit { font-size: 18px; color: #929297; margin-left: 6px; }
+.funit { flex-shrink: 0; font-size: 18px; color: #929297; margin-left: 6px; }
 .times { width: 24px; font-size: 29px; color: #929297; text-align: center; }
 .input-notice { width: 338px; min-height: 32px; font-size: 17px; color: #FF9F0A; lines: 2; }
 .last-space { width: 338px; height: 32px; }
@@ -1534,8 +1542,9 @@ export default pageDefinition
 .energy { font-size: 22px; color: #FFFFFF; }
 .op-title { width: 338px; min-height: 32px; font-size: 24px; color: #FFFFFF; lines: 2; }
 .op-prescription { width: 338px; min-height: 44px; flex-direction: row; align-items: center; justify-content: space-between; }
-.op-label { font-size: 18px; color: #929297; }
-.op-detail { font-size: 22px; color: #FFFFFF; }
+.op-label { width: 40px; flex-shrink: 0; font-size: 18px; color: #929297; }
+.op-metric { width: 164px; min-height: 44px; flex-direction: row; align-items: center; }
+.op-detail { flex: 1; min-width: 0px; font-size: 22px; color: #FFFFFF; }
 .op-group { width: 338px; height: 26px; font-size: 18px; color: #929297; }
 .mrow { width: 338px; height: 58px; flex-direction: row; justify-content: space-between; align-items: center; }
 .m { width: 164px; height: 52px; border-radius: 26px; background-color: #242725; font-size: 20px; color: #FFFFFF; }
@@ -1553,6 +1562,10 @@ export default pageDefinition
 .confirm-save { background-color: #0A3418; color: #30D158; }
 .confirm-back { background-color: #242725; color: #FFFFFF; }
 .effort-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
+.finish-scroll { width: 338px; flex: 1; min-height: 0px; margin-bottom: 24px; }
+.finish-content { align-items: center; }
+.abandon-button { width: 338px; height: 48px; flex-shrink: 0; border-radius: 24px; font-size: 20px; background-color: #1C1C1E; color: #FF453A; margin-top: 8px; }
+.confirm-abandon { background-color: #351010; color: #FF453A; }
 .finish-name { width: 338px; height: 48px; font-size: 24px; color: #929297; text-align: center; lines: 2; }
 .flag { width: 132px; height: 132px; border-radius: 66px; background-color: #30D158; align-items: center; justify-content: center; margin-top: 8px; }
 .flag-inner { width: 44px; height: 52px; flex-direction: row; }
@@ -1593,11 +1606,15 @@ export default pageDefinition
 @media screen and (min-width: 450px) {
   .topbar { width: 280px; margin-top: 58px; }
   .training-panel, .training-scroll, .rest-scroll, .operation-scroll, .effort-scroll, .scroll-content, .training-content, .primary-footer, .inputs, .last-space, .last-row, .last-text, .navrow, .set-dots, .ex, .group, .next, .next-details, .rest-ex, .rest, .effort-row, .rrow, .rest-total, .elapsed-value, .metrics, .op-title, .op-group, .mrow, .op-prescription, .return-button, .effort-head, .effort-target, .effort-scale, .effort-pick, .effort-meaning, .effort-hint, .effort-actions, .effort-clear { width: 280px; }
-  .primary-footer { margin-bottom: 58px; }
+  .primary-footer, .finish-scroll, .operation-scroll { margin-bottom: 58px; }
+  .finish-scroll, .abandon-button { width: 280px; }
+  .op-metric { width: 134px; }
   .weight-field { width: 160px; }
   .reps-field { width: 96px; }
   .fval { font-size: 48px; }
   .long-value { font-size: 30px; }
+  .extra-long-value { font-size: 22px; }
+  .rest-panel, .last-hint { margin-bottom: 58px; }
   .timed-long-value { font-size: 22px; }
   .rbtn { width: 84px; }
   .skip { width: 104px; }

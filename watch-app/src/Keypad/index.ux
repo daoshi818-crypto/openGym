@@ -180,8 +180,9 @@ export default {
 .c { color: #FF453A; }
 .notice { width: 338px; min-height: 44px; color: #FF9F0A; font-size: 19px; lines: 2; }
 @media screen and (min-width: 450px) {
- .label { margin-top: 58px; }
- .editor-content { min-height: 466px; padding-bottom: 58px; }
+ .label { margin-top: 0px; }
+ .editor-scroll { width: 280px; flex: 1; height: auto; margin-top: 58px; margin-bottom: 58px; }
+ .editor-content { min-height: 0px; padding-bottom: 0px; }
  .label, .edit-target, .edit-group, .quick, .step-hint, .switch, .actions, .keyboard-value, .grid, .notice { width: 280px; }
  .step-row { width: 280px; }
  .show { width: 168px; font-size: 56px; }

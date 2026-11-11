@@ -121,14 +121,14 @@ function Shell() {
   }, [watchPlan, ready, watchOn])
   const watchCatalog = useMemo(() => MOBILE ? JSON.stringify({ ...watchCatalogOf(S), at: 0 }) : 'null', [S.routines, S.week, S.dayPlan, S.watchPlanIds, S.workouts])
   const restTimer = useUI(s => s.timer)
-  const restStopSource = useUI(s => s.restStopSource)
+  const restStop = useUI(s => s.restStop)
   useEffect(() => {
     if (MOBILE && ready && watchOn) sendToWatch({ ...JSON.parse(watchCatalog), at: Date.now() })
   }, [watchCatalog, ready, watchOn])
   useEffect(() => {
-    broadcastPhoneRest({ enabled: MOBILE && ready && watchOn, active: S.active, timer: restTimer, stopSource: restStopSource,
+    broadcastPhoneRest({ enabled: MOBILE && ready && watchOn, active: S.active, timer: restTimer, stopIntent: restStop,
       update: fn => useStore.getState().update(fn), send: pushRestToWatch })
-  }, [ready, watchOn, S.active?.start, restTimer?.endsAt, restTimer?.paused, restTimer?.ready, restTimer?.total, restStopSource])
+  }, [ready, watchOn, S.active?.start, restTimer?.endsAt, restTimer?.paused, restTimer?.ready, restTimer?.total, restStop])
   // 原生悬浮窗：启动/回前台恢复持久样式，并用原生休息状态裁决旧 WebView 计时。
   const overlayStyle = S.overlayStyle === 'ring' ? 'ring' : 'card'
   useEffect(() => {

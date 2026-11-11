@@ -47,6 +47,18 @@ for (const page of Object.keys(manifest.router.pages)) {
   assert.ok(px(sheet,headerSelector,'marginTop')>=18, page + ' top corner inset')
   assert.ok(px(sheet,headerSelector,'width')<=314, page + ' header corner width')
   if (page === 'Workout') {
+    flexViewport(sheet, '.finish-scroll')
+    assert.equal(tree.filter(n => n.events?.click === 'askAbandon').length, 2, 'Visible abandon entry in operations and finish')
+    assert.ok(tree.some(n => n.type === 'list' && n.class === 'finish-scroll'), 'Finish must scroll natively')
+    const roundWorkout = sheet['@MEDIA'].find(m => m.condition === 'screen and (min-width: 450px)')
+    const roundStyles = { ...sheet }
+    for (const [selector, style] of Object.entries(roundWorkout)) if (selector.startsWith('.')) roundStyles[selector] = { ...sheet[selector], ...style }
+    for (const [name, styles] of [['square', sheet], ['round', roundStyles]]) {
+      assert.ok(2 * px(styles,'.op-metric','width') <= px(styles,'.op-prescription','width'), name + ': operation metrics overlap')
+      assert.equal(styles['.status'].flex, 1, name + ': status must share header width')
+      assert.ok(px(styles,'.clock','width') < px(styles,'.topbar','width'), name + ': clock leaves status room')
+      assert.ok(px(styles,'.abandon-button','height') >= 44, name + ': abandon touch target')
+    }
     flexViewport(sheet, '.training-panel'); flexViewport(sheet, '.operation-scroll'); flexViewport(sheet, '.last-list')
     for (const selector of ['.training-scroll','.rest-scroll','.effort-scroll']) assert.equal(sheet[selector].height, '100%', selector + ' viewport')
     assert.equal(px(sheet,'.training-panel','minHeight'),0)

@@ -6,7 +6,7 @@ import { persistentSender } from '../../../watch-app/src/lib/persistent-transfer
 // 协议仍是 plan / set / end / rest / weight / unset / ack，只是底层从 GATT 换成 RPC。
 import { MOBILE, isAndroid } from './mobile.js'
 import { isWarmupRow } from './workout-model.js'
-import { wireHash, splitWire, diffWire } from '../../../watch-app/src/lib/sync-wire.js'
+import { wireHash, splitWire, compactWire } from '../../../watch-app/src/lib/sync-wire.js'
 import { watchPlanOf, watchSnapshotOf } from './watch-workout.js'
 
 let pluginP = null
@@ -39,6 +39,7 @@ let lastPlanClear = null
 let lastPublishedPlan = null
 let onWatchLifecycle = () => false
 let trainingStore = null
+let peerNegotiated = false
 let syncProtocol = 2
 let syncBase = null
 const sentSnapshots = new Map()
@@ -48,7 +49,11 @@ let persistentHasWork = false
 const snapshotSender = persistentSender({
   read: async () => { const p = await watchPlugin(); if (!p) throw new Error('transfer_unavailable'); return JSON.parse((await p.WatchRpc.loadSyncTransfer()).json) },
   write: async (_, value) => { const p = await watchPlugin(); if (!p) return false; await p.WatchRpc.saveSyncTransfer({ json: JSON.stringify(value) }); return true },
-}, snapshot => { syncBase = snapshot })
+}, snapshot => { syncBase = snapshot; confirmSnapshotPlan(snapshot) }, () => Date.now(), null, snapshot => compactWire(syncBase, snapshot))
+function confirmSnapshotPlan(snapshot) {
+  if (latestPlan?.sid !== snapshot.sid || latestPlan.snapshotHash !== snapshot.wireHash) return
+  publishPlanReceipt(latestPlan, { t: 'sync_applied', sid: snapshot.sid, wireHash: snapshot.wireHash, commitRev: snapshot.commitRev, status: 'applied', receivedAt: Date.now() })
+}
 function kickPersistent(delay = 0) {
   if (!persistentEnabled) return
   if (persistentPumping) { persistentAgain = true; return }
@@ -81,8 +86,7 @@ function transmitSync(attempt) {
   const task = syncQueue.catch(() => {}).then(async () => {
     if (pendingSync !== attempt) return false
     attempt.tries++
-    const delta = diffWire(syncBase, attempt.snapshot)
-    const message = delta && JSON.stringify(delta).length < JSON.stringify(attempt.snapshot).length ? delta : attempt.snapshot
+    const message = compactWire(syncBase, attempt.snapshot)
     try {
       for (const chunk of splitWire(message, attempt.snapshot.sid + ':' + attempt.snapshot.wireHash)) {
         if (pendingSync !== attempt) return false
@@ -162,6 +166,10 @@ export function retryWatchConflict(key, record) {
     at: Date.now() }) === true
 }
 const receiptListeners = new Set()
+function publishPlanReceipt(plan, receipt) {
+  plan.receipt = receipt
+  for (const cb of receiptListeners) { try { cb(plan, receipt) } catch { /* Status subscribers must not interrupt delivery. */ } }
+}
 
 export function watchState() { return state }
 export function onWatchState(cb) {
@@ -217,6 +225,7 @@ function onNativeWatchState(ev) {
   const next = ev && ev.state ? ev.state : 'off'
   if (typeof ev?.connected === 'boolean') device = { ...(device || {}), connected: ev.connected }
   setState(next === 'disconnected' ? 'off' : next, ev && ev.reason ? ev.reason : '')
+  if (next === 'disconnected' || next === 'off' || next === 'error') peerNegotiated = false
   if (next === 'ready' || next === 'connected') {
     if (!pendingPlan && latestPlan) pendingPlan = latestPlan
     Promise.resolve().then(flushPendingPlan)
@@ -227,7 +236,6 @@ function onNativeWatchEvent(ev) {
   try {
     if (!ev) return
     if (ev._inboxId && claimedInboxIds.has(ev._inboxId)) return
-    for (const cb of receiptListeners) { try { cb(ev) } catch { /* Status subscribers must not interrupt delivery. */ } }
     if (ev.t === 'device') {
       device = { ...(device || {}), ...ev }
       return
@@ -238,6 +246,7 @@ function onNativeWatchEvent(ev) {
       return
     }
     if (ev.t === 'hello') {
+      peerNegotiated = true
       watchVersion = ev.watchVersion ? String(ev.watchVersion) : 'not_reported'
       watchReceiptsSupported = ev.receipts === true
       persistentEnabled = ev.protocolVersion >= 3 && ev.capabilities?.durableCommit === true && ev.capabilities?.snapshotChunks === true && ev.capabilities?.selectiveChunkAck === true && ev.capabilities?.persistentTransfers === true
@@ -251,15 +260,16 @@ function onNativeWatchEvent(ev) {
     if (ev.t === 'plan_ack') {
       lastPlanReceipt = { ...ev, receivedAt: Date.now() }
       if (latestPlan && ev.sid === latestPlan.sid && ev.planId === latestPlan.planId) {
-        latestPlan.receipt = lastPlanReceipt
+        publishPlanReceipt(latestPlan, lastPlanReceipt)
       }
       return
     }
     if (ev.t === 'sync_ack') {
       lastSyncReceipt = { ...ev, receivedAt: Date.now() }
       const snapshot = sentSnapshots.get(ev.wireHash)
-      if (snapshot && ['applied', 'retained'].includes(ev.status) && ev.commitRev === snapshot.commitRev) syncBase = snapshot
-      if (pendingSync?.snapshot.wireHash === ev.wireHash && ['applied', 'retained', 'closed', 'conflict'].includes(ev.status)) {
+      const exact = snapshot && ev.sid === snapshot.sid && ev.commitRev === snapshot.commitRev
+      if (exact && ev.status === 'applied') { syncBase = snapshot; confirmSnapshotPlan(snapshot) }
+      if (exact && pendingSync?.snapshot.wireHash === ev.wireHash && ['applied', 'retained', 'closed', 'conflict'].includes(ev.status)) {
         clearTimeout(syncRetryTimer); pendingSync = null
       }
       return
@@ -284,6 +294,7 @@ function onNativeWatchEvent(ev) {
       listenerError = 'watch lifecycle: ' + (e && e.message ? e.message : String(e))
       claimed = false
     }
+    if (ev.t === 'hello' && pendingPlan) Promise.resolve().then(flushPendingPlan)
     if (claimed) { if (ev._inboxId) claimedInboxIds.add(ev._inboxId); return }
     // 手表刚打开：如果计划之前没送到，借这次握手立刻补推。
     if (ev.t === 'hello' && latestPlan) {
@@ -338,6 +349,7 @@ export async function connectWatch() {
 }
 
 export async function disconnectWatch() {
+  peerNegotiated = false
   clearTimeout(persistentPumpTimer); persistentEnabled = false
   watchDiagnosticProbe?.finish('disconnected')
   clearTimeout(syncRetryTimer); pendingSync = null
@@ -470,6 +482,8 @@ async function flushPendingPlan() {
   if (outboundBarrier) return
   if (planPushInFlight || !pendingPlan) return
   if (state !== 'ready' && state !== 'connected') return
+  // A training session must start from a complete, negotiated phone baseline.
+  if (trainingStore && !peerNegotiated) return
   // 在第一个 await 前占用发送位，ready/hello/新计划共用同一串行队列。
   planPushInFlight = true
   try {
@@ -485,6 +499,12 @@ async function flushPendingPlan() {
         lastError = 'watch state save: ' + (error?.message || String(error))
         pendingPlan ||= next
         break
+      }
+      if (trainingStore && syncProtocol >= 3) {
+        const snapshot = watchSnapshotOf(trainingStore.getState(), trainingStore.getTimer?.())
+        if (!snapshot || snapshot.sid !== next.sid || latestPlan !== next) continue
+        if (!(await pushSyncToWatch(snapshot)) && latestPlan === next) { pendingPlan ||= next; break }
+        continue
       }
       const msg = {
         t: 'plan',
@@ -628,10 +648,10 @@ export async function continueOnWatch(snapshot, onStatus) {
   const available = await watchAvailable()
   if (!available.available) { onStatus('手表不可用：' + available.reason); return false }
   onStatus('正在连接手表')
-  let timer
+  let timer, requestedPlan
   const confirmation = new Promise(resolve => {
-    const listener = ev => {
-      if (['plan_ack', 'sync_ack'].includes(ev.t) && ev.sid === snapshot.sid && ['applied', 'retained'].includes(ev.status)) {
+    const listener = (plan, ev) => {
+      if (plan === requestedPlan && plan === latestPlan && ev.sid === snapshot.sid && ['applied', 'retained'].includes(ev.status)) {
         clearTimeout(timer); receiptListeners.delete(listener); resolve(true)
       }
     }
@@ -641,8 +661,10 @@ export async function continueOnWatch(snapshot, onStatus) {
   const result = await openWatchApp()
   if (result.ok) {
     onStatus('请求已发，等待手表确认')
-    await pushPlanToWatch({ name: snapshot.workout, exercises: snapshot.exercises }, snapshot.sid, snapshot.profile)
-    await pushSyncToWatch(snapshot)
+    const publication = pushPlanToWatch({ name: snapshot.workout, exercises: snapshot.exercises }, snapshot.sid, snapshot.profile)
+    requestedPlan = latestPlan
+    await publication
+    if (!trainingStore) await pushSyncToWatch(snapshot)
   }
   const confirmed = await confirmation
   onStatus(confirmed ? '手表已确认，可继续训练' : result.ok ? '手表未确认，请检查连接' : '手表未连接：' + (result.data || result.code))
@@ -656,14 +678,19 @@ export async function pushSyncToWatch(snapshot) {
   // Hash and delta against an acknowledged phone baseline, never against optimistic watch edits.
   const { wireHash: ignored, ...value } = { ...snapshot, t: 'sync', protocolVersion: 3, ackedEvents: (snapshot.ackedEvents || []).slice(-128) }
   const next = { ...value, wireHash: wireHash(value) }
+  const plan = latestPlan?.sid === snapshot.sid ? latestPlan : null
   if (persistentEnabled) {
-    await snapshotSender.enqueue(next)
+    if (!(await snapshotSender.enqueue(next))) return false
+    if (plan) { plan.snapshotHash = next.wireHash; plan.delivery = 'awaiting_receipt' }
+    if (plan && pendingPlan === plan) pendingPlan = null
     persistentHasWork = true; kickPersistent(); return true
   }
+  if (plan) { plan.snapshotHash = next.wireHash; plan.delivery = 'awaiting_receipt' }
   sentSnapshots.set(next.wireHash, next)
   while (sentSnapshots.size > 8) sentSnapshots.delete(sentSnapshots.keys().next().value)
   clearTimeout(syncRetryTimer)
   pendingSync = { snapshot: next, tries: 0 }
+  if (plan && pendingPlan === plan) pendingPlan = null
   return transmitSync(pendingSync)
 }
 

@@ -56,6 +56,13 @@ describe('watch app and plan delivery', () => {
     native.events.watchEvent({ t: 'sync_ack', sid: 'other', status: 'applied' })
     expect(status).not.toHaveBeenCalledWith('手表已确认，可继续训练')
     native.events.watchEvent({ t: 'sync_ack', sid: 'today', status: 'applied' })
+    await drain()
+    expect(status).not.toHaveBeenCalledWith('手表已确认，可继续训练')
+    const plan = JSON.parse(native.sendPlan.mock.calls.at(-1)[0].json)
+    native.events.watchEvent({ t: 'plan_ack', sid: plan.sid, planId: 'stale', status: 'applied' })
+    await drain()
+    expect(status).not.toHaveBeenCalledWith('手表已确认，可继续训练')
+    native.events.watchEvent({ t: 'plan_ack', sid: plan.sid, planId: plan.planId, status: 'applied' })
     expect(await pending).toBe(true)
     expect(status).toHaveBeenLastCalledWith('手表已确认，可继续训练')
   })
@@ -463,4 +470,85 @@ describe('persistent phone adapter does not occupy the coordinator',()=>{
     expect(native.sendEvent).toHaveBeenCalledTimes(calls)
     expect(saved.active.meta.transferId).toBe(begin.transferId)
   })
+})
+
+it('waits for hello and boots training from complete phone rows and revision', async () => {
+  native.sendEvent.mockResolvedValue({ ok: true })
+  const state = { unit: 'kg', workouts: [], active: { start: 1, watchSid: 's', name: 'Boot', syncRev: 7,
+    entries: [{ id: 'plain-bench', entryInstanceId: 'e', sets: [{ setId: 'r', w: 75, r: 9, done: true }] }] } }
+  const unbind = link.bindWatchLifecycle(() => false, { getState: () => state, getTimer: () => null, checkpoint: async () => {} })
+  try {
+    await link.pushPlanToWatch({ name: 'Boot', exercises: [{ name: 'Bench', sets: 1, weight: 50, reps: 8 }] }, 's')
+    expect(native.sendPlan).not.toHaveBeenCalled()
+    native.events.watchEvent({ t: 'hello', protocolVersion: 3, capabilities: { durableCommit: true, snapshotChunks: true } })
+    for (let i = 0; i < 80; i++) await Promise.resolve()
+    expect(native.sendPlan).not.toHaveBeenCalled()
+    expect(native.sendEvent.mock.calls.map(([m]) => JSON.parse(m.json))).toContainEqual(expect.objectContaining({
+      t: 'sync', sid: 's', commitRev: 7, rows: [[{ setId: 'r', w: 75, r: 9, done: true, at: 0 }]]
+    }))
+  } finally { unbind() }
+})
+
+
+it('confirms atomic bootstrap only after an exact applied persistent snapshot receipt', async () => {
+  vi.useFakeTimers()
+  native.isSupported.mockResolvedValue({ available: true })
+  native.sendEvent.mockResolvedValue({ ok: true })
+  let saved = { generation: 0, active: null, queued: null }
+  native.loadSyncTransfer.mockImplementation(async () => ({ json: JSON.stringify(saved) }))
+  native.saveSyncTransfer.mockImplementation(async ({ json }) => { saved = JSON.parse(json); return { ok: true } })
+  const state = { unit: 'kg', workouts: [], active: { start: 1, watchSid: 's', name: 'Boot', syncRev: 7,
+    entries: [{ id: 'plain-bench', entryInstanceId: 'e', sets: [{ setId: 'r', w: 75, r: 9, done: true }] }] } }
+  const unbind = link.bindWatchLifecycle(() => true, { getState: () => state, getTimer: () => null, checkpoint: async () => {} })
+  try {
+    const status = vi.fn()
+    const pending = link.continueOnWatch({ sid: 's', workout: 'Boot', exercises: [{ name: 'Bench', sets: 1 }] }, status)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(native.sendPlan).not.toHaveBeenCalled()
+    native.events.watchEvent({ t: 'hello', protocolVersion: 3, capabilities: { durableCommit: true, snapshotChunks: true, selectiveChunkAck: true, persistentTransfers: true } })
+    await vi.advanceTimersByTimeAsync(0)
+    const meta = saved.active.meta
+    native.events.watchEvent({ t: 'sync_applied', ...meta, status: 'applied', hash: 'bad' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(status).not.toHaveBeenCalledWith('手表已确认，可继续训练')
+    native.events.watchEvent({ ...meta, t: 'sync_applied', status: 'applied' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(await pending).toBe(true)
+    expect((await link.getWatchDiagnostics()).planDelivery).toBe('applied')
+    expect(native.sendPlan).not.toHaveBeenCalled()
+  } finally { unbind() }
+})
+
+
+it('keeps the negotiated legacy plan path for older watches', async () => {
+  native.sendEvent.mockResolvedValue({ ok: true })
+  const state = { active: { start: 1, watchSid: 'old', name: 'Old', entries: [] } }
+  const unbind = link.bindWatchLifecycle(() => true, { getState: () => state, checkpoint: async () => {} })
+  try {
+    await link.pushPlanToWatch({ name: 'Old', exercises: [{ name: 'Bench', sets: 1 }] }, 'old')
+    expect(native.sendPlan).not.toHaveBeenCalled()
+    native.events.watchEvent({ t: 'hello', protocolVersion: 2 })
+    for (let i = 0; i < 50; i++) await Promise.resolve()
+    expect(JSON.parse(native.sendPlan.mock.calls[0][0].json)).toMatchObject({ sid: 'old', t: 'plan' })
+  } finally { unbind() }
+})
+
+it('does not publish a superseded training snapshot after checkpoint resumes', async () => {
+  native.sendEvent.mockResolvedValue({ ok: true })
+  let state = { unit: 'kg', active: { start: 1, watchSid: 'old', name: 'Old', entries: [] } }, release
+  const checkpoint = vi.fn().mockImplementationOnce(() => new Promise(resolve => { release = resolve })).mockResolvedValue(undefined)
+  const unbind = link.bindWatchLifecycle(() => true, { getState: () => state, getTimer: () => null, checkpoint })
+  try {
+    await link.pushPlanToWatch({ name: 'Old', exercises: [] }, 'old')
+    native.events.watchEvent({ t: 'hello', protocolVersion: 3, capabilities: { durableCommit: true, snapshotChunks: true } })
+    for (let i = 0; i < 40; i++) await Promise.resolve()
+    state = { unit: 'kg', active: { start: 2, watchSid: 'new', name: 'New', syncRev: 3, entries: [] } }
+    await link.pushPlanToWatch({ name: 'New', exercises: [] }, 'new')
+    release()
+    for (let i = 0; i < 80; i++) await Promise.resolve()
+    const snapshots = native.sendEvent.mock.calls.map(([m]) => JSON.parse(m.json)).filter(m => m.t === 'sync')
+    expect(snapshots).toHaveLength(1)
+    expect(snapshots[0]).toMatchObject({ sid: 'new', commitRev: 3 })
+    expect(native.sendPlan).not.toHaveBeenCalled()
+  } finally { unbind() }
 })

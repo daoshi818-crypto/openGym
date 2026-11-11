@@ -7,6 +7,7 @@ import { t } from '../lib/i18n.js'
 import { deviceId } from '../lib/push.js'
 import { MOBILE } from '../lib/mobile.js'
 import { armRestAlert, bindNativeRest, disarmRestAlert, holdRestAlert, toneNative, setRestContext, setOverlayStyle } from '../lib/rest-alert.js'
+import { watchSidOf } from '../lib/session-resume.js'
 import { restContextOf, restContextWire } from '../lib/rest-context.js'
 import { useStore } from './useStore.js'
 import { REST_MAX } from '../lib/duration.js'
@@ -231,7 +232,8 @@ export const useUI = create((set, get) => ({
   toastAction: null,   // { label, run, id } while the toast offers an action (Undo)
   swipeHint: null,     // { idx, i, id }: the set row showing the one-time swipe hint (Workout.jsx)
   setFlash: null,      // { idx, i, id }: the set row a copy or an undo just brought, flashed once
-  restStopSource: 'phone', // Null timers must retain who stopped them for watch echo suppression.
+  restStopSource: 'phone',
+  restStop: null,      // A real stop intent belongs to the timer's session; idle cleanup is not an edit.
   timer: null,         // rest countdown between sets — { left, total, endsAt, forIdx, ready?, paused?, kind? }
                        // kind: 'switch' for the short pause between the two sides of a timed set
                        // forIdx: index of the active entry whose set started the rest (undefined when unknown)
@@ -305,7 +307,7 @@ export const useUI = create((set, get) => ({
     // with no beep, no vibration and no flash. Each timer starts from where the page is now.
     pageHiddenAt = document.hidden ? Date.now() : null
     const endsAt = Date.now() + sec * 1000
-    set({ timer: { left: sec, total: sec, endsAt, startedAt: Date.now(), restId: String(Date.now()), seq: restVersion(), source: 'phone', forIdx, ...(forSet != null ? { forSet } : {}), ...(kind === 'switch' ? { kind } : {}) } })
+    set({ timer: { left: sec, total: sec, endsAt, startedAt: Date.now(), restId: String(Date.now()), seq: restVersion(), source: 'phone', sid: watchSidOf(useStore.getState().S.active), forIdx, ...(forSet != null ? { forSet } : {}), ...(kind === 'switch' ? { kind } : {}) } })
     bookRestEnd(endsAt, sec, kind)
     runRest(set, get)
   },
@@ -369,7 +371,7 @@ export const useUI = create((set, get) => ({
   // already called Ready opens it again. Nothing is sent back: the notification already shows it.
   followNativeRest({ endsAt, left, total, paused }) {
     const tm = get().timer
-    const { paused: previousPause, ready: previousReady, ...currentRound } = tm || {}
+    const { paused: previousPause, ready: previousReady, ...currentRound } = tm || { sid: watchSidOf(useStore.getState().S.active) }
     const forIdx = tm?.forIdx
     const kind = { ...(tm?.kind === 'switch' ? { kind: 'switch' } : {}), ...(tm?.forSet != null ? { forSet: tm.forSet } : {}) }
     if (paused) {
@@ -416,8 +418,9 @@ export const useUI = create((set, get) => ({
     // Skip, Dismiss, a rest replacing this one and "rest off" all take the native alarm and
     // its notifications down with it, or the alert fires after the user already moved on.
     disarmRestAlert()
-    if (get().timer) cancelPushRestTimer()
-    set({ timer: null, restStopSource: source })
+    const tm = get().timer
+    if (tm) cancelPushRestTimer()
+    set({ timer: null, restStopSource: source, ...(tm ? { restStop: { source, sid: tm.sid || watchSidOf(useStore.getState().S.active), seq: restVersion(tm) } } : source === 'watch' ? { restStop: null } : {}) })
   },
 
   /* ---- work timer (issue #16) ----
@@ -508,7 +511,7 @@ const saveRest = tm => {
   if (!ss) return
   try {
     if (!tm || tm.ready) { savedRestKey = null; ss.removeItem(REST_KEY); return }
-    const v = { endsAt: tm.endsAt, total: tm.total, restId: tm.restId, startedAt: tm.startedAt, seq: tm.seq, forIdx: tm.forIdx ?? null, forSet: tm.forSet ?? null, kind: tm.kind || null, paused: !!tm.paused, left: tm.left }
+    const v = { sid: tm.sid, source: tm.source, endsAt: tm.endsAt, total: tm.total, restId: tm.restId, startedAt: tm.startedAt, seq: tm.seq, forIdx: tm.forIdx ?? null, forSet: tm.forSet ?? null, kind: tm.kind || null, paused: !!tm.paused, left: tm.left }
     const key = JSON.stringify({ ...v, left: v.paused ? v.left : null })
     if (key === savedRestKey && ss.getItem(REST_KEY) !== null) return
     ss.setItem(REST_KEY, JSON.stringify(v))
@@ -521,9 +524,10 @@ export function restoreRest(now = Date.now()) {
   try { saved = JSON.parse(ss?.getItem(REST_KEY) || 'null') } catch { saved = null }
   if (!saved || useUI.getState().timer) return false
   const total = Math.round(Number(saved.total))
-  const ok = useStore.getState().S?.active && total > 0 && (saved.paused ? saved.left > 0 : saved.endsAt > now)
+  const active = useStore.getState().S?.active
+  const ok = active && (!saved.sid || saved.sid === watchSidOf(active)) && total > 0 && (saved.paused ? saved.left > 0 : saved.endsAt > now)
   if (!ok) { try { ss.removeItem(REST_KEY) } catch { /* nothing to drop */ } return false }
-  const base = { total, restId: saved.restId, startedAt: saved.startedAt, seq: saved.seq, forIdx: saved.forIdx ?? undefined, ...(saved.forSet != null ? { forSet: saved.forSet } : {}), ...(saved.kind === 'switch' ? { kind: 'switch' } : {}) }
+  const base = { total, sid: saved.sid || watchSidOf(active), source: saved.source || 'phone', restId: saved.restId, startedAt: saved.startedAt, seq: saved.seq, forIdx: saved.forIdx ?? undefined, ...(saved.forSet != null ? { forSet: saved.forSet } : {}), ...(saved.kind === 'switch' ? { kind: 'switch' } : {}) }
   if (saved.paused) {
     useUI.setState({ timer: { ...base, left: Math.round(saved.left), endsAt: saved.endsAt, paused: true } })
     if (MOBILE) holdRestAlert(Math.round(saved.left), total)

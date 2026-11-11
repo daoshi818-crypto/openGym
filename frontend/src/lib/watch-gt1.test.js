@@ -133,3 +133,12 @@ describe('GT1 complete-screen rebuild contracts', () => {
     expect(watchSource('manifest.json')).not.toContain('blueos.storage.file')
   })
 })
+
+
+it('exposes abandon on workout operations and finish with a separate confirmation', () => {
+  const src = watchSource('Workout/index.ux')
+  expect(src.match(/value="放弃训练" onclick="askAbandon"/g)).toHaveLength(2)
+  expect(src).toContain("closeMode === 'abandon'")
+  expect(src).toContain('value="确认放弃" onclick="abandonEnd"')
+  expect(src).toContain('class="finish-scroll"')
+})

@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest'
+import { compactWire, wireHash } from '../../../watch-app/src/lib/sync-wire.js'
 import { makeTransfer, persistentReceiver, persistentSender, TRANSFER_TTL } from '../../../watch-app/src/lib/persistent-transfer.js'
 function disk() {
   const map = new Map(); let fail = false
@@ -117,4 +118,51 @@ it('recovers training apply success / receiver index failure through the atomic 
   rx=persistentReceiver(d,async()=>({ok:marked}))
   expect((await rx.receive({...job.meta,t:'sync_begin'}))[0].t).toBe('sync_applied')
   expect(applies).toBe(1)
+})
+
+describe('persistent acknowledged-base compaction', () => {
+  function full(rev, done = false) {
+    const value = { t: 'sync', sid: 's', commitRev: rev, exercises: [{ name: 'Squat', setIds: ['a', 'b'], padding: 'x'.repeat(1800) }],
+      rows: [[{ setId: 'a', done }, { setId: 'b', done: false }]], ackedEvents: [] }
+    return { ...value, wireHash: wireHash(value) }
+  }
+  const applied = job => ({ t: 'sync_applied', ...job.meta, status: 'applied' })
+  it('compacts idle and queued work only against exactly applied full state', async () => {
+    const store = disk(); let base = null
+    const tx = persistentSender(store, value => { base = value }, () => 1000, null, next => compactWire(base, next))
+    const a = full(1), b = full(2, true), c = { ...full(3, true), focusAt: 1000 }
+    await tx.enqueue(a)
+    let job = store.map.get('sync_tx_v1').active
+    expect(job.snapshot.t).toBe('sync')
+    await tx.enqueue(b)
+    expect(store.map.get('sync_tx_v1').queued.snapshot.t).toBe('sync')
+    expect(await tx.receipt({ ...applied(job), hash: 'bad' })).toBe(false)
+    expect(base).toBeNull()
+    await tx.receipt(applied(job))
+    job = store.map.get('sync_tx_v1').active
+    expect(job.snapshot.t).toBe('sync_delta')
+    expect(job.snapshot.baseHash).toBe(a.wireHash)
+    expect(job.authoritativeSnapshot).toEqual(b)
+    await tx.receipt(applied(job))
+    expect(base).toEqual(b)
+    await tx.enqueue(c)
+    expect(store.map.get('sync_tx_v1').active.snapshot.baseHash).toBe(b.wireHash)
+  })
+  it('retained is never a Delta base and a restarted cancellation falls back to full', async () => {
+    const store = disk(); let base = null
+    let tx = persistentSender(store, value => { base = value }, () => 1000, null, next => compactWire(base, next))
+    await tx.enqueue(full(1)); const a = store.map.get('sync_tx_v1').active
+    await tx.receipt(applied(a))
+    await tx.enqueue(full(2, true)); const b = store.map.get('sync_tx_v1').active
+    expect(b.snapshot.t).toBe('sync_delta')
+    tx = persistentSender(store, value => { base = value }, () => 1000)
+    await tx.receipt({ t: 'sync_error', ...b.meta, reason: 'revision_gap' })
+    await tx.receipt({ t: 'sync_cancel_ack', ...b.meta })
+    const retry = store.map.get('sync_tx_v1').active
+    expect(retry.snapshot).toEqual(full(2, true))
+    await tx.enqueue(full(3, true))
+    await tx.receipt({ t: 'sync_applied', ...retry.meta, status: 'retained' })
+    expect(store.map.get('sync_tx_v1').active.snapshot.t).toBe('sync')
+    expect(base).toEqual(full(1))
+  })
 })

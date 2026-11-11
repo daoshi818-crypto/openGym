@@ -76,3 +76,11 @@ export function expandWireDelta(base, delta) {
   if (wireHash(value) !== hash) throw new Error('delta_checksum')
   return next
 }
+
+// Only an exactly applied phone snapshot may be supplied as the base. Compare
+// UTF-8 bytes, not UTF-16 length; a full snapshot wins for bootstrap/structure.
+export function compactWire(base, next) {
+  if (!Array.isArray(base?.rows) || !Array.isArray(next?.rows)) return next
+  const delta = diffWire(base, next)
+  return delta && wireBytes(JSON.stringify(delta)) < wireBytes(JSON.stringify(next)) ? delta : next
+}

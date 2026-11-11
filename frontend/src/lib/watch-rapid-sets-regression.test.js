@@ -8,9 +8,10 @@ import { lastTimeView } from '../../../watch-app/src/lib/watch-last-time.js'
 import { createDurableWatchLifecycle } from './watch-commit.js'
 import { stampWatchRevision } from './watch-revision.js'
 import { watchSnapshotOf } from './watch-workout.js'
+import { broadcastPhoneRest } from './watch-rest-broadcast.js'
 import { wireHash } from '../../../watch-app/src/lib/sync-wire.js'
-function boot(connected = false) {
-  const h = watchPersistence(), c = h.ctx
+function boot(connected = false, disk) {
+  const h = watchPersistence(disk), c = h.ctx
   Object.assign(c, watchInteractionDeps, effort, { lastTimeView, console, applyEdit, applyFocus, applyRest, restOf, WATCH_VERSION: 'test', startSessionHr: vi.fn(), stopSessionHr: vi.fn(), tick: vi.fn(), restOver: vi.fn(), router: { push: vi.fn(), replace: vi.fn() } })
   loadWatchModule('event-id', c, ['allocateEventIdentity', 'rememberEventAt'])
   loadWatchModule('close-journal', c, ['prepareClose', 'pendingSummaries', 'pendingEntry', 'journalEntry', 'markEntry', 'markDelivered', 'releaseCandidate', 'markPhase'])
@@ -181,7 +182,7 @@ it('legacy pending without sid replays only in its original session and remains 
 })
 
 // Exercise phone revisions + exact receipts, not just old watch snapshots.
-function paired() {
+function paired(bootstrapPlan = true) {
   const h = boot(true), workout = plan()
   const S = { unit: 'kg', workouts: [], active: { start: Date.now(), watchSid: 's', name: '5+2',
     entries: workout.exercises.map(ex => ({ id: 'plain-bench', name: ex.name, entryInstanceId: ex.entryInstanceId,
@@ -195,7 +196,7 @@ function paired() {
     send: msg => replies.push(structuredClone(msg)), sendAck() {}, sendEnded() {}, finish() {},
     sendSync: snap => snapshots.push({ ...snap, t: 'sync', protocolVersion: 3 }) }
   const receive = createDurableWatchLifecycle(deps)
-  h.c.startSession(workout)
+  if (bootstrapPlan) h.c.startSession(workout)
   const { ctx: p } = bluePage(h, true)
   p.bindRpc()
   h.connection.onMessage({ t: 'hello_ack', protocolVersion: 3, capabilities: { dependencyEvents: true } })
@@ -206,16 +207,16 @@ function paired() {
     p.onSyncUpdate(msg, { persisted: true })
     await vi.advanceTimersByTimeAsync(1)
   }
-  async function pump(withSnapshots = true) {
+  async function pump(withSnapshots = true, device = h) {
     for (let i = 0; i < 90; i++) {
-      for (const msg of h.sent.slice(cursor)) if (msg.eventId && msg.t !== 'hello') receive(msg)
-      cursor = h.sent.length
+      for (const msg of device.sent.slice(cursor)) if (msg.eventId && msg.t !== 'hello') receive(msg)
+      cursor = device.sent.length
       await receive.idle()
-      for (const msg of replies.splice(0)) h.connection.onMessage(msg)
+      for (const msg of replies.splice(0)) device.connection.onMessage(msg)
       if (withSnapshots && snapshots.length) await sync(snapshots.pop())
       if (withSnapshots) snapshots.length = 0
       await vi.advanceTimersByTimeAsync(150)
-      if (!h.c.pendingCount() && cursor === h.sent.length) break
+      if (!device.c.pendingCount() && cursor === device.sent.length) break
     }
   }
   return { ...h, p, S, deps, receive, sync, pump, snapshots }
@@ -322,5 +323,108 @@ it.each(['sync_conflicts', 'event_decisions', 'session_state'])('retains the exa
     expect(a.c.pendingCount()).toBe(0)
     expect(a.p.state.workout.rows[0][0].w).toBe(80)
     expect(a.disk.get('event_decisions')[ev.eventId]).toMatchObject({ status: 'conflict', resolution: 'phone' })
+  } finally { a.receive.dispose() }
+})
+
+// Reproduce App's mount/session-start rest effect, absent from earlier RPC-only fixtures.
+it('idle phone rest effect does not reject the first watch completion', async () => {
+  vi.useFakeTimers(); const a = paired()
+  await a.sync({ ...watchSnapshotOf(a.S, null), t: 'sync', protocolVersion: 3 })
+  try {
+    broadcastPhoneRest({ enabled: true, active: a.S.active, timer: null, stopSource: 'phone', update: fn => {
+      const before = structuredClone(a.S); fn(a.S); stampWatchRevision(before, a.S)
+    }, send() {} })
+    expect(await a.p.onComplete()).toBe(true)
+    await a.pump()
+    expect(a.S.active.entries[0].sets[0].done).toBe(true)
+    expect(a.c.loadState().workout.rows[0][0].done).toBe(true)
+    expect(a.S.watchConflicts || {}).toEqual({})
+  } finally { a.receive.dispose() }
+})
+it('watch save closes the phone after pending set and rest confirmations', async () => {
+  vi.useFakeTimers(); const a = paired()
+  await a.sync({ ...watchSnapshotOf(a.S, null), t: 'sync', protocolVersion: 3 })
+  a.deps.finish = () => { a.S.workouts.push(a.S.active); a.S.active = null }
+  try {
+    expect(await a.p.onComplete()).toBe(true)
+    await a.p.onEnd('saved')
+    await a.pump(false)
+    expect(a.S.active).toBeNull()
+    expect(a.S.workouts).toHaveLength(1)
+    expect(a.c.journalEntry('s')).toMatchObject({ closeCommitted: true, delivery: 'delivered' })
+    expect(a.c.pendingCount()).toBe(0)
+  } finally { a.receive.dispose() }
+})
+
+it('boots atomically from the full phone snapshot before the first completion', async () => {
+  vi.useFakeTimers(); const a = paired(false)
+  // New peers receive the full snapshot, without first activating a bare plan.
+  await a.sync({ ...watchSnapshotOf(a.S, null), t: 'sync', protocolVersion: 3 })
+  try {
+    expect(await a.p.onComplete()).toBe(true)
+    await a.pump()
+    expect(a.S.active.entries[0].sets[0].done).toBe(true)
+    expect(a.c.loadState().workout.rows[0][0].done).toBe(true)
+    expect(a.S.watchConflicts || {}).toEqual({})
+  } finally { a.receive.dispose() }
+})
+it('save drains after each set was already committed and snapshots consumed', async () => {
+  vi.useFakeTimers(); const a = paired()
+  await a.sync({ ...watchSnapshotOf(a.S, null), t: 'sync', protocolVersion: 3 })
+  a.deps.finish = () => { a.S.workouts.push(a.S.active); a.S.active = null }
+  try {
+    for (let i = 0; i < 7; i++) {
+      await vi.advanceTimersByTimeAsync(710)
+      expect(await a.p.onComplete()).toBe(true)
+      expect(await a.p.onSkipRest()).toBe(true)
+      await a.pump()
+    }
+    await vi.advanceTimersByTimeAsync(710)
+    await a.p.saveEnd()
+    await a.pump(false)
+    expect(a.S.active).toBeNull()
+    expect(a.S.workouts).toHaveLength(1)
+    expect(a.c.pendingCount()).toBe(0)
+    expect(a.c.journalEntry('s')).toMatchObject({ closeCommitted: true, delivery: 'delivered' })
+  } finally { a.receive.dispose() }
+})
+
+
+it.each(['saved', 'abandoned'])('offline %s survives watch process restart and lost phone receipts', async disposition => {
+  vi.useFakeTimers(); const a = paired()
+  await a.sync({ ...watchSnapshotOf(a.S, null), t: 'sync', protocolVersion: 3 })
+  a.deps.finish = () => { a.S.workouts.push(a.S.active); a.S.active = null }
+  try {
+    a.connection.getReadyState = ({ success }) => success({ status: 0 })
+    a.connection.onClose()
+    expect(await a.p.onComplete()).toBe(true)
+    a.p.finishOn = true
+    if (disposition === 'abandoned') {
+      a.p.askAbandon()
+      expect(a.p.closeMode).toBe('abandon')
+      expect(a.p.finishOn).toBe(false)
+      expect(a.c.loadState().active).toBe(true)
+      a.p.cancelClose()
+      expect(a.c.loadState().active).toBe(true)
+      a.p.askAbandon(); await a.p.abandonEnd()
+    } else { a.p.askEnd(); await a.p.saveEnd() }
+    expect(a.c.journalEntry('s').closeEvent.disposition).toBe(disposition)
+    expect(a.S.active).not.toBeNull()
+    const restarted = boot(true, a.disk)
+    restarted.c.startServer({})
+    restarted.connection.onMessage({ t: 'hello_ack', protocolVersion: 3, capabilities: { dependencyEvents: true } })
+    // Phone commits, but the first business receipt is lost in transit.
+    const realSend = a.deps.send
+    let lost = false
+    a.deps.send = msg => { if (!lost && msg.t === 'committed') { lost = true; return } realSend(msg) }
+    await a.pump(false, restarted)
+    await vi.advanceTimersByTimeAsync(6500)
+    await a.pump(false, restarted)
+    expect(lost).toBe(true)
+    expect(a.S.active).toBeNull()
+    expect(a.S.workouts).toHaveLength(disposition === 'saved' ? 1 : 0)
+    expect(a.S.watchClosed.s.disposition).toBe(disposition)
+    expect(restarted.c.pendingCount()).toBe(0)
+    expect(restarted.c.journalEntry('s').closeCommitted).toBe(true)
   } finally { a.receive.dispose() }
 })
