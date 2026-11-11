@@ -91,10 +91,20 @@ selectiveChunkAck and persistentTransfers. One flag alone does not enable it.
 Snapshots preserve pendingEdits and committedRev overlays until a matching/newer authoritative
 baseline includes them. Same-sid revisions are ordered; different sid values are not compared
 as one counter. Deltas reference both persisted baseline commitRev and hash, never an optimistic
-page value. Old-v3 Delta remains supported. The new persistent phone path currently sends FULL
-snapshots only (no unproven persistent-Delta optimization). Missing base/hash/target triggers
-safe full fallback, never partial application. Absolute rest deadlines still rely on reasonable
-clock alignment; no clock-offset estimation or cross-device timing subtraction is implemented.
+page value. Old-v3 Delta remains supported. The persistent phone path also compares UTF-8
+sizes and sends a Delta only against an exactly matched status=applied receipt. Bootstrap,
+new sid, changed exercise structure, missing baseline, or a larger Delta uses the full snapshot.
+Queued work retains its full authoritative source and is compacted only when promoted after
+the active transfer is applied; frozen in-flight bytes never change. The full source persists
+alongside a Delta for restart/cancel fallback. Missing base/hash/target triggers safe full
+fallback, never partial application. Absolute rest deadlines still rely on reasonable clock
+alignment; no clock-offset estimation or cross-device timing subtraction is implemented.
+
+When the global training store is bound, phone startup waits for hello negotiation, checkpoints
+the store, and sends the complete current session through the existing v3 snapshot path rather
+than activating a bare prescription first. Session replacement during checkpoint cannot send
+the old training. Plan delivery is confirmed only by the validated matching snapshot receipt;
+retained is not an applied baseline. Legacy negotiated v2 keeps its plan path.
 
 ## Persistent selective transfer
 
