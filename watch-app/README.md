@@ -45,6 +45,12 @@ the page or pushing the fixed footer off screen. See [GT1 rebuild and acceptance
 
 ## Transport and Persistence
 
+Watch 0.6.27 / phone 1.6.24 preserve interaction evidence against reconnect traffic
+within the existing 64-event / 24KB diagnostic journal, report eviction counts, and
+record why set-dot actions are blocked. This improves diagnosis; the reported native
+second-set touch failure still needs device evidence. See
+[release scope and capture steps](../docs/dev/RELEASE_1_6_24.zh-CN.md).
+
 Watch 0.6.25 / phone 1.6.22 negotiate inline canonical command corrections. Ordinary
 commands can converge through one durable committed reply plus a small applied ACK;
 startup, structural changes and baseline gaps retain reliable snapshot transfer.

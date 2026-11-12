@@ -517,12 +517,35 @@ const pageDefinition = {
   },
   prevDotSegment() { if (!this.interactionBlocked() && this.dotHasPrev) this.refreshSetDots(this.dotPage - 1) },
   nextDotSegment() { if (!this.interactionBlocked() && this.dotHasNext) this.refreshSetDots(this.dotPage + 1) },
+  setDotBlockReason() {
+    if (this.visible === false) return 'hidden'
+    if (this.interactionBlocked(true)) {
+      if (this.touchAxis) return 'touch_axis'
+      if (Date.now() < (this.trailingTapBlockedUntil || 0)) return 'trailing_tap'
+      if (Date.now() < (this.autoFocusIgnoreUntil || 0)) return 'auto_focus'
+      return 'interaction'
+    }
+    if (this.isRest) return 'rest'
+    if (this.paused) return 'paused'
+    if (this.closeMode) return 'close'
+    if (this.effortOn) return 'effort'
+    if (this.lastOpen) return 'last'
+    if (this.finishOn) return 'finish'
+    return ''
+  },
+  logDotBlocked(target, detail, status) {
+    this.logInteraction('dot_blocked', { entryInstanceId: target?.entryInstanceId, setId: target?.setId, set: target?.setIdx, detail, status })
+    return false
+  },
   pickSetDot(target) {
     this.logInteraction('dot_tap', { entryInstanceId: target?.entryInstanceId, setId: target?.setId, set: target?.setIdx }, true)
-    if (this.visible === false || this.interactionBlocked(true) || this.isRest || this.paused || this.closeMode || this.effortOn || this.lastOpen || this.finishOn || !target) return false
+    const reason = this.setDotBlockReason()
+    if (reason || !target) return this.logDotBlocked(target, reason || 'missing_target', 'tap')
     const found = rowTarget(this.state, target)
-    if (!found || !this.setDotPicker?.pending() && found.exIdx === this.state.exIdx && found.setIdx === this.state.setIdx) return false
+    if (!found) return this.logDotBlocked(target, 'stale_target', 'tap')
+    if (!this.setDotPicker?.pending() && found.exIdx === this.state.exIdx && found.setIdx === this.state.setIdx) return this.logDotBlocked(target, 'current_set', 'tap')
     if (!this.setDotPicker) this.setDotPicker = createSetDotPicker(next => this.commitSetDot(next))
+    if (!this.setDotPicker.pending()) this.logInteraction('dot_queued', { setId: target.setId, set: target.setIdx })
     return this.setDotPicker.request({ sid: target.sid, entryInstanceId: target.entryInstanceId, setId: target.setId,
       exIdx: target.exIdx, setIdx: target.setIdx, baseCommitRev: this.state.commitRev || 0 })
   },
@@ -537,16 +560,19 @@ const pageDefinition = {
   },
   commitSetDot(target) {
     this.logInteraction('dot_commit_begin', { setId: target?.setId, set: target?.setIdx })
-    if (this.visible === false || this.interactionBlocked(true) || this.isRest || this.paused || this.closeMode || this.effortOn || this.lastOpen || this.finishOn) return false
+    const reason = this.setDotBlockReason()
+    if (reason) return this.logDotBlocked(target, reason, 'commit')
     const latest = loadState(), found = rowTarget(latest, target)
-    if (!found || latest.sid !== this.state.sid || found.exIdx !== latest.exIdx || latest.pausedAt || latest.restUntil || found.setIdx === latest.setIdx) return false
-    if (persistenceStatus().failed || storageStatus().failed || pendingCount() >= 256 || (latest.pendingEdits || []).length >= 256) {
-      this.inputNotice = '等待同步后再切换'; return false
-    }
+    if (!found) return this.logDotBlocked(target, 'stale_target', 'commit')
+    if (latest.sid !== this.state.sid || found.exIdx !== latest.exIdx || latest.pausedAt || latest.restUntil || found.setIdx === latest.setIdx)
+      return this.logDotBlocked(target, latest.sid !== this.state.sid ? 'session_changed' : found.exIdx !== latest.exIdx ? 'exercise_changed' : latest.pausedAt ? 'paused_state' : latest.restUntil ? 'rest_state' : 'current_set', 'commit')
+    const pressure = persistenceStatus().failed ? 'persistence_failed' : storageStatus().failed ? 'storage_failed' : pendingCount() >= 256 ? 'outbox_full' : (latest.pendingEdits || []).length >= 256 ? 'edit_backlog_full' : ''
+    if (pressure) { this.inputNotice = '等待同步后再切换'; return this.logDotBlocked(target, pressure, 'commit') }
     return commitPageAction(this, function() {
-    if (this.interactionBlocked(true) || this.isRest || this.paused || this.closeMode || this.effortOn || this.lastOpen || this.finishOn) return
+    if (this.interactionBlocked(true) || this.isRest || this.paused || this.closeMode || this.effortOn || this.lastOpen || this.finishOn) return this.logDotBlocked(target, this.setDotBlockReason() || 'interaction', 'draft')
     const s = loadState(), found = rowTarget(s, target)
-    if (!found || s.sid !== this.state.sid || found.exIdx !== s.exIdx || s.pausedAt || s.restUntil || found.setIdx === s.setIdx) return
+    if (!found || s.sid !== this.state.sid || found.exIdx !== s.exIdx || s.pausedAt || s.restUntil || found.setIdx === s.setIdx) return this.logDotBlocked(target, !found ? 'stale_target' : s.sid !== this.state.sid ? 'session_changed' : found.exIdx !== s.exIdx ? 'exercise_changed' : s.pausedAt ? 'paused_state' : s.restUntil ? 'rest_state' : 'current_set', 'draft')
+    this.logInteraction('dot_focus_staged', { setId: target.setId, set: target.setIdx })
     this.clearFieldSelection(); this.state = s
     this.autoFocusEx = found.exIdx; this.autoFocusSet = found.setIdx; this.autoFocusIgnoreUntil = 0
     s.exIdx = found.exIdx; s.setIdx = found.setIdx; s.focusAt = Date.now(); save(s)

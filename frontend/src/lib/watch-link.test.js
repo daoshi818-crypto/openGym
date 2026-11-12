@@ -449,17 +449,24 @@ describe('paged persistent watch diagnostic retrieval', () => {
     expect(first).toMatchObject({ t: 'watch_log_request', offset: 0 })
     native.events.watchEvent({ t: 'watch_log', requestId: 'old', offset: 0, status: 'ok', events: [] })
     native.events.watchEvent({ t: 'watch_log', requestId: first.requestId, offset: 0, status: 'ok', boot: 'b',
-      watchVersion: 'test', total: 2, nextOffset: 1, events: [{ at: 1, stage: 'dot_tap', setId: 'one', secret: 'private' }] })
+      watchVersion: 'test', dropped: 138, droppedInteractions: 0, total: 2, nextOffset: 1, events: [{ at: 1, stage: 'dot_tap', setId: 'one', secret: 'private' }] })
     await drain()
     const second = JSON.parse(native.sendEvent.mock.calls.at(-1)[0].json)
     expect(second).toEqual({ ...first, offset: 1 })
     native.events.watchEvent({ t: 'watch_log', requestId: first.requestId, offset: 1, status: 'ok', boot: 'b',
       total: 2, nextOffset: 2, events: [{ at: 2, stage: 'app_start' }] })
     const log = await result
-    expect(log).toMatchObject({ status: 'received', watchVersion: 'test', events: [{ stage: 'dot_tap' }, { stage: 'app_start' }] })
+    expect(log).toMatchObject({ status: 'received', watchVersion: 'test', dropped: 138, droppedInteractions: 0, events: [{ stage: 'dot_tap' }, { stage: 'app_start' }] })
     expect(JSON.stringify(log)).not.toContain('private')
     expect(lifecycle).not.toHaveBeenCalled(); expect(sync).not.toHaveBeenCalled(); expect(event).not.toHaveBeenCalled()
     expect(native.sendPlan).not.toHaveBeenCalled(); expect(native.connect).not.toHaveBeenCalled()
+  })
+  it('marks retention counts unknown for older watch journals', async () => {
+    const result = link.requestWatchLog()
+    await drain()
+    const req = JSON.parse(native.sendEvent.mock.calls.at(-1)[0].json)
+    native.events.watchEvent({ t: 'watch_log', requestId: req.requestId, offset: 0, status: 'ok', boot: 'legacy', total: 0, nextOffset: 0, events: [] })
+    expect(await result).toMatchObject({ status: 'received', dropped: null, droppedInteractions: null, events: [] })
   })
   it('retries a dropped page once with the same identity, then reports timeout', async () => {
     const result = link.requestWatchLog()

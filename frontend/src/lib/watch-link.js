@@ -537,7 +537,9 @@ async function readWatchLog() {
         header && (header.boot !== reply.boot || header.total !== reply.total))
       return { status: 'invalid_reply', events, collectedAt: Date.now() }
     header ||= { watchVersion: String(reply.watchVersion || '').slice(0, 40), boot: String(reply.boot || '').slice(0, 32),
-      storageFailed: !!reply.storageFailed, unflushed: !!reply.unflushed, total: reply.total }
+      storageFailed: !!reply.storageFailed, unflushed: !!reply.unflushed, total: reply.total,
+      dropped: Number.isSafeInteger(reply.dropped) && reply.dropped >= 0 ? reply.dropped : null,
+      droppedInteractions: Number.isSafeInteger(reply.droppedInteractions) && reply.droppedInteractions >= 0 ? reply.droppedInteractions : null }
     // Keep only scalar diagnostic fields, even if an incompatible peer sends extra data.
     for (const e of reply.events) {
       if (!e || typeof e !== 'object') return { status: 'invalid_reply', events }

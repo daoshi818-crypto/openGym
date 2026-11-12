@@ -7,7 +7,7 @@ function logAction(stage, page, data = {}) {
 // success UI from escaping before the operation + intention document is on disk.
 export async function commitPageAction(page, operation, deps) {
   if (page.sessionActionDraft) return operation.call(page)
-  if (page.localCommitPending) return false
+  if (page.localCommitPending) { logAction('local_commit_busy', page); return false }
   page.localCommitPending = true
   const started = Date.now()
   logAction('local_commit_begin', page)

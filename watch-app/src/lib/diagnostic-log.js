@@ -5,6 +5,20 @@ import { wireBytes } from './sync-wire.js'
 
 const KEY = 'watch_diagnostic_log_v1'
 const MAX_BYTES = 24000
+// Reserve evidence for user actions without increasing the journal or write budget.
+const ACTION_STAGE = /^(dot_|local_commit_|complete_tap$|page_|interaction_reset$|remote_end$|local_end$)/
+function interaction(e) { return ACTION_STAGE.test(e.stage) }
+function trim(j) {
+  while (j.events.length > 64 || j.bytes > MAX_BYTES) {
+    const actions = j.events.filter(interaction).length
+    const transport = j.events.length - actions
+    const evictAction = actions > 32 && transport <= 32 || transport === 0
+    const i = j.events.findIndex(e => interaction(e) === evictAction)
+    const removed = j.events.splice(i, 1)[0]
+    j.bytes -= j.sizes.splice(i, 1)[0]
+    j.dropped++; if (interaction(removed)) j.droppedInteractions++
+  }
+}
 const fields = ['sid', 'eventId', 'entryInstanceId', 'setId', 'type', 'code', 'detail', 'version', 'status',
   'ex', 'set', 'rev', 'pending', 'rest', 'paused', 'ok', 'duration', 'bytes']
 function journal() {
@@ -15,6 +29,8 @@ function journal() {
     const events = Array.isArray(saved?.events) ? saved.events.slice(-64).map(e => clean(e.stage, e, e.at)) : []
     const sizes = events.map(e => wireBytes(JSON.stringify(e)) + 1)
     r.diagnosticLog = { events, sizes, bytes: sizes.reduce((n, size) => n + size, 2), serial: 0, persisted: 0, timer: null, writing: false, lastWriteAt: null,
+      dropped: Number.isSafeInteger(saved?.dropped) && saved.dropped >= 0 ? saved.dropped : 0,
+      droppedInteractions: Number.isSafeInteger(saved?.droppedInteractions) && saved.droppedInteractions >= 0 ? saved.droppedInteractions : 0,
       failed: false, boot: Date.now().toString(36) + Math.random().toString(36).slice(2, 7) }
   }
   return r.diagnosticLog
@@ -39,14 +55,14 @@ export function recordDiagnostic(stage, data = {}) {
   try {
     const j = journal(), e = { ...clean(stage, data), boot: j.boot }, last = j.events[j.events.length - 1]
     // A burst is one record with a count and its final target, not hundreds of allocations/writes.
-    if (last?.stage === e.stage && last.boot === e.boot && e.at - last.at < 250) {
+    if (last?.stage === e.stage && last.boot === e.boot && last.detail === e.detail && last.status === e.status && e.at - last.at < 250) {
       e.count = (last.count || 1) + 1; e.firstAt = last.firstAt || last.at
       j.bytes -= j.sizes.pop()
       j.events[j.events.length - 1] = e
     } else j.events.push(e)
     const size = wireBytes(JSON.stringify(e)) + 1
     j.sizes.push(size); j.bytes += size
-    while (j.events.length > 64 || j.bytes > MAX_BYTES) { j.events.shift(); j.bytes -= j.sizes.shift() }
+    trim(j)
     j.serial++; schedule(j)
   } catch { /* Logging must never change training or transport decisions. */ }
 }
@@ -59,7 +75,7 @@ export function flushDiagnosticLog() {
     j.timer = null
     j.writing = true
     j.lastWriteAt = Date.now()
-    const serial = j.serial, value = { version: 1, events: j.events.map(e => ({ ...e })) }
+    const serial = j.serial, value = { version: 1, dropped: j.dropped, droppedInteractions: j.droppedInteractions, events: j.events.map(e => ({ ...e })) }
     let settled = false, watchdog
     const done = ok => {
       if (settled) return
@@ -76,7 +92,7 @@ export function flushDiagnosticLog() {
 export function diagnosticLog() {
   try {
     const j = journal()
-    return { version: 1, boot: j.boot, storageFailed: j.failed,
+    return { version: 1, boot: j.boot, storageFailed: j.failed, dropped: j.dropped, droppedInteractions: j.droppedInteractions,
       unflushed: j.serial !== j.persisted, events: j.events.map(e => ({ ...e })) }
   } catch { return { version: 1, storageFailed: true, events: [] } }
 }
@@ -92,6 +108,7 @@ export function diagnosticLogPage(request, watchVersion) {
   const events = snapshot.log.events.slice(offset, offset + 12)
   const reply = { t: 'watch_log', requestId, offset, status: 'ok', watchVersion,
     boot: snapshot.log.boot, storageFailed: snapshot.log.storageFailed, unflushed: snapshot.log.unflushed,
+    dropped: snapshot.log.dropped, droppedInteractions: snapshot.log.droppedInteractions,
     total: snapshot.log.events.length, nextOffset: offset + events.length, events }
   while (events.length > 1 && wireBytes(JSON.stringify(reply)) > 5500) {
     events.pop(); reply.nextOffset = offset + events.length

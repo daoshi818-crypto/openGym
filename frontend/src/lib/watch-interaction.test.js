@@ -117,6 +117,57 @@ describe('actual watch workout page wiring', () => {
     page.touchEnd({ changedTouches: [{ clientX: 100, clientY: 200 }] })
     expect(page.pageIndex).toBe(index ? 0 : 1)
   })
+  it.each([
+    ['visible', false, 'hidden'], ['touchAxis', 'y', 'touch_axis'],
+    ['trailingTapBlockedUntil', Number.MAX_SAFE_INTEGER, 'trailing_tap'],
+    ['autoFocusIgnoreUntil', Number.MAX_SAFE_INTEGER, 'auto_focus'],
+    ['isRest', true, 'rest'], ['paused', true, 'paused'], ['closeMode', 'end', 'close'],
+    ['effortOn', true, 'effort'], ['lastOpen', true, 'last'], ['finishOn', true, 'finish'],
+  ])('records why %s blocks a dot without changing the cursor', async (field, value, detail) => {
+    const { page, s } = workout()
+    page[field] = value; page.logInteraction = vi.fn()
+    expect(await page.pickSetDot(setDotWindow(s).dots[1])).toBe(false)
+    expect(page.logInteraction).toHaveBeenCalledWith('dot_blocked', expect.objectContaining({ detail, status: 'tap', setId: 'r1' }))
+    expect(s.setIdx).toBe(0); expect(page.emitEvent).not.toHaveBeenCalled()
+  })
+  it.each(['persistence_failed', 'storage_failed', 'outbox_full', 'edit_backlog_full'])('records %s without accepting a focus event', async detail => {
+    const { page, ctx, s } = workout()
+    page.logInteraction = vi.fn()
+    ctx.persistenceStatus = () => ({ failed: detail === 'persistence_failed' })
+    ctx.storageStatus = () => ({ failed: detail === 'storage_failed' })
+    ctx.pendingCount = () => detail === 'outbox_full' ? 256 : 0
+    if (detail === 'edit_backlog_full') s.pendingEdits = Array.from({ length: 256 }, () => ({}))
+    expect(await page.commitSetDot(setDotWindow(s).dots[1])).toBe(false)
+    expect(page.logInteraction).toHaveBeenCalledWith('dot_blocked', expect.objectContaining({ detail, status: 'commit' }))
+    expect(s.setIdx).toBe(0); expect(page.emitEvent).not.toHaveBeenCalled()
+  })
+  it('records local commit contention instead of silently losing the dot action', async () => {
+    const { page, s } = workout()
+    page.localCommitPending = true; page.logInteraction = vi.fn()
+    expect(await page.commitSetDot(setDotWindow(s).dots[1])).toBe(false)
+    expect(page.logInteraction).toHaveBeenCalledWith('local_commit_busy', {})
+    expect(s.setIdx).toBe(0); expect(page.emitEvent).not.toHaveBeenCalled()
+  })
+  it('records one queue marker for a rapid batch so following taps can coalesce', async () => {
+    vi.useFakeTimers()
+    try {
+      const { page, s } = workout(), target = setDotWindow(s).dots[1]
+      page.logInteraction = vi.fn()
+      let result
+      for (let i = 0; i < 200; i++) result = page.pickSetDot(target)
+      expect(page.logInteraction.mock.calls.filter(([stage]) => stage === 'dot_queued')).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(120)
+      await result
+      expect(s.setIdx).toBe(1)
+    } finally { vi.useRealTimers() }
+  })
+  it('records a target invalidated between the tap and durable commit', async () => {
+    const { page, s } = workout(), target = setDotWindow(s).dots[1]
+    page.logInteraction = vi.fn(); s.workout.rows[0].splice(1, 1)
+    expect(await page.commitSetDot(target)).toBe(false)
+    expect(page.logInteraction).toHaveBeenCalledWith('dot_blocked', expect.objectContaining({ detail: 'stale_target', status: 'commit' }))
+    expect(page.emitEvent).not.toHaveBeenCalled()
+  })
   it('picks unfinished or completed dots, retaining stable IDs', async () => {
     const { page, s } = workout(), dots = setDotWindow(s).dots
     await page.pickSetDot(dots[2]); expect(s.setIdx).toBe(2)
