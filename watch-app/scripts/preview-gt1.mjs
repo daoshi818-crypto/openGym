@@ -1,5 +1,5 @@
 // Code-derived preview, NOT a BlueOS emulator or device screenshot.
-// Compile watch-square first. Usage: node scripts/preview-gt1.mjs <output directory>
+// Uses current .ux source by default; WATCH_PREVIEW_SOURCE=0 reads compiled templates.
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -9,12 +9,14 @@ import * as effort from '../src/lib/effort-scale.js'
 import * as protocol from '../src/lib/protocol.js'
 import * as summaryView from '../src/lib/summary-view.js'
 import { lastTimeView } from '../src/lib/watch-last-time.js'
+import { sourceTemplate } from './source-template.mjs'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const out = path.resolve(process.argv[2] || path.join(root, 'preview-gt1'))
 const target = process.argv[3] || 'watch-square'
+const fromSource = process.env.WATCH_PREVIEW_SOURCE !== '0'
 const view = target === 'watch-round' ? { width: 466, height: 466, radius: 233 } : { width: 390, height: 450, radius: 80 }
 fs.mkdirSync(out, { recursive: true })
-fs.writeFileSync(path.join(out, 'preview-config.json'), JSON.stringify({ target, ...view }))
+fs.writeFileSync(path.join(out, 'preview-config.json'), JSON.stringify({ target, fromSource, ...view }))
 const clone = x => JSON.parse(JSON.stringify(x))
 function environment() {
   const { ctx, disk, storage } = watchPersistence()
@@ -54,7 +56,7 @@ const scenes = []
 function scene(id, name, p, title, bottom = false) {
   if (name === 'Workout') p.clockLabel = '9:23'
   const state = Object.fromEntries(Object.entries(p).filter(([k,v]) => k !== 'data' && typeof v !== 'function'))
-  const template = JSON.parse(fs.readFileSync(path.join(root, 'build/' + target, name, 'index.template.json'), 'utf8'))
+  const template = fromSource ? sourceTemplate(watchSource(name + '/index.ux')) : JSON.parse(fs.readFileSync(path.join(root, 'build/' + target, name, 'index.template.json'), 'utf8'))
   const css = watchSource(name + '/index.ux').match(/<style>([\s\S]*?)<\/style>/)[1]
   scenes.push({ id, name, state, template, css, title, bottom })
 }
@@ -93,9 +95,16 @@ env=environment();env.disk.set('plan_catalog',{plans:[{...plan,name:'这是一�
 p=workout();p.openFinish();scene('33-finish-bottom','Workout',p,'结束页 · 放弃入口',true)
 p=workout();p.openFinish();p.askAbandon();scene('34-abandon-confirm','Workout',p,'放弃训练 · 独立确认')
 p=workout(s=>{s.workout.rows[0][2].w='99999.999';s.workout.rows[0][2].r='99999'});p.pageIndex=1;p.syncLabel='正在同步训练记录，请保持连接';scene('35-operation-long','Workout',p,'操作页 · 长数值与同步状态')
+p=workout();p.inputNotice='同步中，请稍候再编辑';scene('36-current-notice','Workout',p,'当前组 · 输入提示')
+p=workout();p.diagnosticOn=true;p.diagnosticTitle='同步诊断 1/3';p.diagnosticText='圆点待处理：否\n本地保存：成功\n页面状态：已更新\n'+('同步事件已确认\n'.repeat(12));scene('37-diagnostics','Workout',p,'同步诊断 · 大字')
+p=workout();p.openEffort();p.effortDraftLabel='0';p.effortMeaning='还能再做零次';p.effortNotice='手机已更改本组评分，请确认后重新保存';p.effortHasSaved=true;scene('38-effort-notice','Workout',p,'评分 · 过期提示与清除')
+p=workout(s=>{s.workout.exercises[0].sets=7;s.workout.rows[0]=Array.from({length:7},(_,i)=>({setId:'seven'+i,w:'62.5',r:'8',done:i<2}))});scene('39-seven-dots','Workout',p,'七组 · 大触控分页')
+p=workout(s=>{s.workout.exercises[0].sets=5;s.workout.rows[0]=Array.from({length:5},(_,i)=>({setId:'five'+i,w:'62.5',r:'8',done:i<2}))});scene('40-five-dots','Workout',p,'五组 · 全部切组按钮')
+p=workout(s=>{s.workout.exercises[0].name='这是一个很长的训练动作名称用于检查休息页面';s.restUntil=Date.now()+90000});scene('41-rest-long','Workout',p,'休息 · 长动作名')
+p=workout(s=>{s.workout.exercises[0].name='这是一个很长的训练动作名称用于检查两行';s.workout.rows[0][2].w='99999.999';s.workout.rows[0][2].r='99999'});scene('42-main-long','Workout',p,'训练 · 长名称与极值')
 const runtime = `
 function val(exp,ctx){if(typeof exp!=='string')return exp;if(exp.startsWith('function'))return Function('return ('+exp+')')().call(ctx);return exp.split('.').reduce((a,k)=>a?.[k],ctx)}
-function render(n,ctx){if(n.repeat){let frag=document.createDocumentFragment();for(const item of val(n.repeat.$exp,ctx)||[]){let sub=Object.create(ctx);sub[n.repeat.value]=item;frag.append(render({...n,repeat:null},sub))}return frag}if(n.$shown&&!val(n.$shown,ctx))return document.createDocumentFragment();const el=document.createElement(n.type==='input'?'button':n.type==='text'?'native-text':n.type==='image'?'img':'div');el.className=(n.$class?val(n.$class,ctx).flat(Infinity).filter(Boolean).join(' '):n.class||'');el.dataset.type=n.type;let a=n.attr||{};if(a.id)el.id=a.id;if(n.type==='image'){let src=a.$src?val(a.$src,ctx):a.src;el.src=ICONS[src]||src;el.alt=''}if(a.$disabled)el.disabled=!!val(a.$disabled,ctx);if(n.style)Object.assign(el.style,n.style);if(n.type==='text'||n.type==='input'){let text=a.$value?val(a.$value,ctx):a.value||'';let span=document.createElement('span');span.textContent=text??'';el.append(span)}for(let c of n.children||[])el.append(render(c,ctx));return el}
+function render(n,ctx){if(n.repeat){let frag=document.createDocumentFragment();for(const item of val(n.repeat.$exp,ctx)||[]){let sub=Object.create(ctx);sub[n.repeat.value]=item;frag.append(render({...n,repeat:null},sub))}return frag}if(n.$shown&&!val(n.$shown,ctx))return document.createDocumentFragment();const el=document.createElement(n.type==='input'?'button':n.type==='text'?'native-text':n.type==='image'?'img':'div');el.className=(n.$class?val(n.$class,ctx).flat(Infinity).filter(Boolean).join(' '):n.class||'');el.dataset.type=n.type;if(n.action||n.events?.click||n.events?.$click)el.dataset.action=n.action||n.events.click||n.events.$click;let a=n.attr||{};if(a.id)el.id=a.id;if(n.type==='image'){let src=a.$src?val(a.$src,ctx):a.src;el.src=ICONS[src]||src;el.alt=''}if(a.$disabled)el.disabled=!!val(a.$disabled,ctx);if(n.style)Object.assign(el.style,n.style);if(n.type==='text'||n.type==='input'){let text=a.$value?val(a.$value,ctx):a.value||'';let span=document.createElement('span');span.textContent=text??'';el.append(span)}for(let c of n.children||[])el.append(render(c,ctx));return el}
 document.querySelector('#viewport').append(render(SCENE.template,SCENE.state));
 for(let el of document.querySelectorAll('[data-type="text"]')){const lines=getComputedStyle(el).getPropertyValue('-webkit-line-clamp').trim();if(lines){el.firstChild.style.webkitLineClamp=lines}}
 if(SCENE.bottom)for(let el of document.querySelectorAll('[data-type="list"]'))el.scrollTop=el.scrollHeight;
@@ -109,6 +118,9 @@ for (const s of scenes) {
   fs.writeFileSync(path.join(out,s.id+'.html'),html)
 }
 fs.writeFileSync(path.join(out,'scenes.json'),JSON.stringify(scenes.map(({id,name,title,bottom})=>({id,name,title,bottom})),null,2))
-const cards=scenes.map(s=>'<article><h2>'+s.title+'</h2><iframe src="'+s.id+'.html" width="'+view.width+'" height="'+view.height+'"></iframe><a href="'+s.id+'.html">390 × 450 单屏</a></article>').join('')
-fs.writeFileSync(path.join(out,'index.html'),'<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>GT1 390×450 实现审阅</title><style>body{background:#121417;color:#fff;font:16px Segoe UI,Microsoft YaHei,sans-serif;margin:36px}h1{color:#30d158}main{display:flex;flex-wrap:wrap;gap:28px}article{background:#202329;padding:18px;border-radius:24px}h2{font-size:18px}iframe{border:1px solid #41434a;border-radius:80px;background:#000}a{display:block;color:#30d158;margin-top:12px}</style><h1>GT1 · 390 × 450 重构实现</h1><p>从本轮原生编译模板和实际 .ux CSS 生成，页面数据由真实脚本生成。浏览器语义适配预览，非真机截图，不包含固件字体与原生渲染差异。使用保守的80px圆角测试遮罩，不代表设备实测圆角。</p><main>'+cards+'</main></html>')
+const dimensions = view.width + ' × ' + view.height
+const sourceLabel = fromSource ? '当前 .ux 源码模板' : '现有编译目录中的模板（不会重新构建）'
+const maskLabel = target === 'watch-round' ? '使用圆形安全区测试遮罩。' : '使用保守的80px圆角测试遮罩，不代表设备实测圆角。'
+const cards=scenes.map(s=>'<article><h2>'+s.title+'</h2><iframe src="'+s.id+'.html" width="'+view.width+'" height="'+view.height+'"></iframe><a href="'+s.id+'.html">'+dimensions+' 单屏</a></article>').join('')
+fs.writeFileSync(path.join(out,'index.html'),'<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>'+dimensions+' 源码实现审阅</title><style>body{background:#121417;color:#fff;font:16px Segoe UI,Microsoft YaHei,sans-serif;margin:36px}h1{color:#30d158}main{display:flex;flex-wrap:wrap;gap:28px}article{background:#202329;padding:18px;border-radius:24px}h2{font-size:18px}iframe{border:1px solid #41434a;border-radius:'+view.radius+'px;background:#000}a{display:block;color:#30d158;margin-top:12px}</style><h1>'+dimensions+' · UI 实现预览</h1><p>从'+sourceLabel+'和实际 .ux CSS 生成，页面数据由真实脚本生成。浏览器语义适配预览，非原生编译结果或真机截图，不包含固件字体与原生渲染差异。'+maskLabel+'</p><main>'+cards+'</main></html>')
 console.log('Generated '+scenes.length+' code-derived scenes in '+out)

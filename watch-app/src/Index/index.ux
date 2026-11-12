@@ -127,16 +127,18 @@ export default {
 </script>
 <template>
 <div class="page">
-  <div class="content">
+  <div class="content" if="{{ !conflict }}">
     <div class="topbar"><text class="brand">opengym</text><text class="version">v{{ version }}</text></div>
+    <list class="home-scroll"><list-item type="intro" class="home-section">
     <text class="status">{{ status }}</text>
     <div class="hero" if="{{ canResume }}"><text class="card-name">{{ workoutName }}</text><text class="card-meta">{{ exerciseCount }} 个动作 · 训练进行中</text><div class="start-circle" onclick="onResume"><image class="start-icon" src="/common/icons/play.svg" /></div><text class="start-label" onclick="onResume">继续当前训练</text></div>
     <div class="hero" if="{{ !canResume && selected }}"><text class="card-name">{{ selected.name }}</text><text class="card-meta">{{ exerciseCount }} 个动作</text><div class="start-circle" onclick="onStart"><image class="start-icon" src="/common/icons/play.svg" /></div><text class="start-label" onclick="onStart">{{ startLabel }}</text></div>
-    <list class="plans {{ !hasSummary ? 'plans-alone' : '' }}" if="{{ !canResume && plans.length }}"><list-item class="plan {{ selected && selected.id === p.id ? 'selected' : '' }}" type="plan" for="{{ p in plans }}" tid="id" onclick="choose(p)"><text class="plan-name">{{ p.name }} ›</text><text class="plan-preview">{{ p.preview }}</text></list-item></list>
+    </list-item><list-item class="plan {{ selected && selected.id === p.id ? 'selected' : '' }}" if="{{ !canResume }}" type="plan" for="{{ p in plans }}" tid="id" onclick="choose(p)"><text class="plan-name">{{ p.name }} ›</text><text class="plan-preview">{{ p.preview }}</text></list-item><list-item type="home-links" class="home-section">
     <div class="empty-state" if="{{ !canResume && !plans.length }}"><text class="empty-icon">＋</text><text class="empty-title">{{ needSync ? '尚未同步' : '暂无可用计划' }}</text><text class="empty">{{ needSync ? '请先打开手机应用同步计划' : '在手机上创建训练计划后同步至手表' }}</text></div>
     <div class="links" if="{{ hasSummary }}"><input class="link" type="button" value="最近训练结果 ›" onclick="showSummary" if="{{ hasSummary }}" /></div>
+    </list-item></list>
   </div>
-  <div class="overlay" if="{{ conflict }}"><text class="overlay-title">手机已有活动训练</text><text class="overlay-text">继续手机训练将丢弃本地未保存训练</text><input class="btn" type="button" value="继续手机训练" onclick="acceptConflict" /><input class="link" type="button" value="返回" onclick="keepConflict" /></div>
+  <div class="overlay" if="{{ conflict }}"><list class="modal-scroll"><list-item type="conflict" class="modal-content"><text class="overlay-title">手机已有活动训练</text><text class="overlay-text">继续手机训练将丢弃本地未保存训练</text><input class="btn" type="button" value="继续手机训练" onclick="acceptConflict" /><input class="link" type="button" value="返回" onclick="keepConflict" /></list-item></list></div>
 </div>
 </template>
 
@@ -144,43 +146,45 @@ export default {
 /* Full viewport; Apple-style routine hero, circular start, scrollable alternate plans. */
 .page { width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
 .content { width: 100%; height: 100%; flex-direction: column; align-items: center; }
-.topbar { width: 314px; height: 36px; margin-top: 18px; flex-direction: row; justify-content: space-between; align-items: center; }
-.brand { font-size: 23px; color: #FFFFFF; }
-.version { font-size: 16px; color: #929297; }
-.status { width: 338px; height: 26px; font-size: 17px; color: #FF9F0A; lines: 1; }
-.hero { width: 338px; height: 182px; flex-direction: column; align-items: center; }
-.card-name { width: 338px; height: 48px; line-height: 24px; font-size: 24px; font-weight: bold; color: #FFFFFF; text-align: center; lines: 2; }
-.card-meta { width: 338px; height: 22px; font-size: 17px; color: #929297; text-align: center; lines: 1; }
-.start-circle { width: 88px; height: 88px; border-radius: 44px; background-color: #30D158; align-items: center; justify-content: center; }
+.topbar { width: 314px; height: 44px; margin-top: 18px; flex-direction: row; justify-content: space-between; align-items: center; }
+.brand { font-size: 26px; color: #FFFFFF; }
+.version { font-size: 18px; color: #929297; }
+.status { width: 338px; height: 40px; font-size: 20px; color: #FF9F0A; lines: 2; }
+.hero { width: 338px; height: 244px; flex-direction: column; align-items: center; }
+.card-name { width: 338px; height: 64px; line-height: 32px; font-size: 28px; font-weight: bold; color: #FFFFFF; text-align: center; lines: 2; }
+.card-meta { width: 338px; height: 32px; font-size: 21px; color: #929297; text-align: center; lines: 1; }
+.start-circle { width: 96px; height: 96px; border-radius: 48px; background-color: #30D158; align-items: center; justify-content: center; }
 .start-icon { width: 42px; height: 42px; }
-.start-label { width: 338px; height: 24px; line-height: 24px; font-size: 22px; font-weight: bold; color: #30D158; text-align: center; }
-.plans { width: 358px; flex: 1; min-height: 0px; margin-bottom: 8px; }
-.plans-alone { margin-bottom: 24px; }
-.plan { width: 358px; min-height: 100px; padding: 4px 14px; margin-bottom: 8px; border-radius: 22px; background-color: #1C1C1E; flex-direction: column; }
+.start-label { width: 338px; height: 52px; line-height: 52px; font-size: 25px; font-weight: bold; color: #30D158; text-align: center; }
+.plan { width: 338px; min-height: 128px; padding: 12px; margin-bottom: 12px; border-radius: 22px; background-color: #1C1C1E; flex-direction: column; }
 .selected { background-color: #242725; }
-.plan-name { width: 330px; height: 48px; line-height: 24px; font-size: 22px; color: #FFFFFF; lines: 2; }
-.plan-preview { width: 330px; height: 44px; line-height: 22px; font-size: 17px; color: #929297; lines: 2; }
-.empty-state { width: 338px; flex: 1; flex-direction: column; justify-content: center; align-items: center; }
+.plan-name { width: 314px; height: 64px; line-height: 32px; font-size: 26px; color: #FFFFFF; lines: 2; }
+.plan-preview { width: 314px; height: 56px; line-height: 28px; font-size: 20px; color: #929297; lines: 2; }
+.empty-state { width: 338px; flex-direction: column; justify-content: center; align-items: center; min-height: 244px; }
 .empty-icon { width: 100px; height: 94px; font-size: 80px; color: #30D158; text-align: center; }
 .empty-title { width: 338px; height: 48px; font-size: 27px; color: #FFFFFF; text-align: center; }
-.empty { width: 310px; min-height: 72px; font-size: 22px; color: #929297; text-align: center; lines: 3; }
-.links { width: 314px; height: 44px; margin-bottom: 24px; justify-content: center; }
-.link { width: 314px; height: 44px; background-color: #000000; color: #30D158; font-size: 19px; }
-.overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; justify-content: center; }
+.empty { width: 310px; min-height: 72px; font-size: 24px; color: #929297; text-align: center; lines: 3; }
+.links { width: 338px; height: 64px; margin-bottom: 0px; justify-content: center; }
+.link { width: 338px; height: 60px; background-color: #000000; color: #30D158; font-size: 24px; }
+.overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; justify-content: flex-start; }
 .overlay-title { width: 338px; height: 60px; font-size: 27px; color: #FFFFFF; text-align: center; lines: 2; }
 .overlay-text { width: 338px; height: 86px; font-size: 21px; color: #929297; text-align: center; lines: 3; }
-.btn { width: 338px; height: 60px; border-radius: 30px; background-color: #0A3418; color: #30D158; font-size: 22px; }
-@media screen and (min-width: 450px) {
- .topbar { width: 280px; margin-top: 58px; }
- .status, .hero, .card-name, .card-meta, .start-label, .plans, .plan, .links, .link, .overlay-title, .overlay-text, .btn { width: 280px; }
- .hero { height: 208px; }
- .card-name { height: 48px; font-size: 24px; line-height: 24px; }
- .start-circle { width: 92px; height: 92px; border-radius: 46px; }
- .plan-name, .plan-preview { width: 252px; }
- .links { margin-bottom: 58px; }
- .plans-alone { margin-bottom: 58px; }
- .empty-state { width: 280px; }
- .empty { width: 264px; font-size: 20px; }
-}
+.btn { width: 338px; height: 64px; border-radius: 30px; background-color: #0A3418; color: #30D158; font-size: 25px; }
 
+.home-scroll { width: 338px; flex: 1; min-height: 0px; margin-bottom: 24px; }
+.home-section { width: 338px; flex-direction: column; align-items: center; }
+.modal-scroll { width: 338px; flex: 1; min-height: 0px; margin-top: 48px; margin-bottom: 32px; }
+.modal-content { width: 338px; flex-direction: column; align-items: center; }
+
+@media screen and (min-width: 450px) {
+
+ .topbar { width: 220px; margin-top: 30px; }
+ .home-scroll { width: 300px; margin-bottom: 58px; }
+ .home-section, .status, .hero, .card-name, .card-meta, .start-label, .plan, .links, .link, .empty-state, .empty-title, .overlay-title, .overlay-text, .btn { width: 300px; }
+ .plan-name, .plan-preview { width: 276px; }
+ .empty { width: 280px; }
+ .modal-scroll { width: 300px; margin-top: 58px; margin-bottom: 58px; }
+ .modal-content { width: 300px; }
+
+}
 </style>

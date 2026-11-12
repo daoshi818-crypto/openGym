@@ -5,26 +5,34 @@ BlueOS watch companion for openGym. Display name: `opengym`; package identity:
 
 ## Training
 
-Watch 0.6.17 / phone 1.6.11 rebuild all five routes for the GT1 390x450 viewport.
-The approved V3/V4 Apple-style layouts guide the typography, circular completion,
-rest countdown and left-aligned scrolling summary. Set dots have no numeric labels:
+The November 12 source-only UI update enlarges text and touch targets across all
+five routes. Current-set and rest screens never scroll; other pages use native
+lists. Last-time summaries and their read-only detail entry remain available.
+No version bump or APK/RPK was built for this update. See
+[large UI scope and verification](../docs/dev/WATCH_LARGE_UI_20261112.zh-CN.md).
+
+The earlier Watch 0.6.17 / phone 1.6.11 rebuild established the GT1 390x450 viewport
+and the V3/V4 hierarchy for prescription, countdown and summary. Set dots have no numeric labels:
 white outline=current, white fill=completed, dark fill=unfinished. Exercise navigation
 uses title-tap, with a separate disclosure button to expand each exercise's sets.
-Every route fills the viewport; native lists absorb overflow rather than extending
-the page or pushing the fixed footer off screen. See [GT1 rebuild and acceptance](../docs/dev/WATCH_GT1_UI_REBUILD.zh-CN.md).
+Every route fills the viewport. Current-set and rest contents have fixed height
+budgets; secondary lists absorb overflow and leave fixed actions reachable. See
+[historical GT1 rebuild and acceptance](../docs/dev/WATCH_GT1_UI_REBUILD.zh-CN.md).
 
 - Swipe left to switch between training and operations; swipe right to open the exercise list.
-  Vertical gestures scroll the native lists. Tap the exercise name to open the exercise list and jump to its first unfinished set.
+  Vertical gestures scroll secondary pages only. Tap the exercise name to open the exercise list and jump to its first unfinished set.
 - Tap a set dot to select it, including a completed set for undo.
-  Large sets of dots use bounded windows; selection keeps stable session and row IDs.
+  The source update shows up to five dots at once; larger plans use three-dot
+  windows plus two navigation targets, each 48px. Selection keeps stable session and row IDs.
   As of 0.6.26, repeat nodes retain stable keys, current-set taps do not write, and
   rapid taps coalesce for 120ms before committing only the latest unaccepted target.
   Accepted durable events remain intact; leaving the page cancels uncommitted input.
 - Tap weight/reps once to select the field. Rotate the crown to adjust the selected field only;
   tap the selected field again for the keypad. Rest retains its own 5-second crown adjustment.
   The keypad shares one draft between digit entry, +/- and crown; cancel does not save.
-- Last time appears before completion, when matching history exists. Training and rest details
-  scroll without shrinking the main digits or hiding the fixed primary action.
+- Last time appears before completion, when matching history exists. Tap the small
+  summary to open read-only history details. Current training and rest never scroll;
+  training statistics remain on the operations page.
 - Heart rate stays on the training screen, including rest. Calories are estimates. Healthy sync
   diagnostics do not occupy the main training area; connection failures remain visible.
 - Phone-started workouts open the training page directly, including an active session restored

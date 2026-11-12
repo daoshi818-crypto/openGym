@@ -13,8 +13,8 @@ export function captureRow(state) {
   return ex && row ? { sid: state.sid, entryInstanceId: ex.entryInstanceId, setId: row.setId,
     exIdx: state.exIdx, setIdx: state.setIdx, weightUnit: state.weightUnit || 'kg' } : null
 }
-export function setDotWindow(state, requestedPage) {
-  const rows = state?.workout?.rows[state.exIdx] || [], segmented = rows.length > 7, size = segmented ? 5 : 7
+export function setDotWindow(state, requestedPage, visible = 7) {
+  const rows = state?.workout?.rows[state.exIdx] || [], segmented = rows.length > visible, size = segmented ? Math.max(1, visible - 2) : visible
   const max = Math.max(0, Math.ceil(rows.length / size) - 1)
   const page = Math.max(0, Math.min(max, Number.isInteger(requestedPage) ? requestedPage : Math.floor(state.setIdx / size)))
   const identity = captureRow(state) || {}

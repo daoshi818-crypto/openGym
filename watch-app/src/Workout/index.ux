@@ -121,7 +121,6 @@ const pageDefinition = {
     }
     this.setRestScreenLock(!!s.restUntil)
 
-
     this.startHrCapture()
     this.refresh()
     if (params && params.requestFinish) this.openFinish()
@@ -499,7 +498,9 @@ const pageDefinition = {
     }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
   },
   refreshSetDots(page) {
-    const view = setDotWindow(this.state, page)
+    // Keep all five standard sets visible; larger plans use three-dot windows
+    // plus two 48px navigation targets, including on the round safe width.
+    const view = setDotWindow(this.state, page, 5)
     const dots = this.setDots || []
     if (dots.length !== view.dots.length || view.dots.some((dot, i) => dot.key !== dots[i].key)) this.setDots = view.dots
     else for (let i = 0; i < dots.length; i++) {
@@ -1457,22 +1458,21 @@ export default pageDefinition
       <text class="clock">{{ clockLabel }}</text>
     </div>
     <div class="training-panel compact" if="{{ !isRest }}">
-      <list class="training-scroll"><list-item type="current-group" class="training-content">
+      <div class="training-content">
         <text class="ex" onclick="openExercises">{{ exName }} ›</text>
-        <text class="group {{ rowDone ? 'group-done' : '' }}">{{ groupLabel }}{{ rowDone ? ' · 已完成 · 点撤销恢复' : ' · ' + finishName }}</text>
+        <text class="group {{ rowDone ? 'group-done' : '' }}">{{ inputNotice || (groupLabel + (rowDone ? ' · 已完成 · 可撤回' : '')) }}</text>
         <div class="inputs">
           <div class="field weight-field {{ rowDone ? 'field-done' : selectedField === 'w' ? 'field-selected' : '' }}" onclick="editWeight">
             <text class="fval {{ weightNum.length > 7 ? 'extra-long-value' : weightNum.length > 4 ? 'long-value' : '' }}">{{ weightNum }}</text><text class="funit">{{ weightSuffix }}</text>
           </div>
           <text class="times">×</text>
           <div class="field reps-field {{ rowDone ? 'field-done' : selectedField === 'r' ? 'field-selected' : '' }}" onclick="editReps">
-            <text class="fval {{ repsSuffix === '秒' && repsNum.length > 3 ? 'timed-long-value' : repsNum.length > 3 || repsSuffix === '秒' && repsNum.length > 2 ? 'long-value' : '' }}">{{ repsNum }}</text><text class="funit" if="{{ repsSuffix === '秒' }}">{{ repsSuffix }}</text>
+            <text class="fval {{ repsNum.length > 7 ? 'extra-long-value' : repsNum.length > 4 ? 'long-value' : '' }}">{{ repsNum }}</text><text class="funit">{{ repsSuffix || '次' }}</text>
           </div>
         </div>
-        <text class="input-notice" if="{{ inputNotice }}">{{ inputNotice }}</text>
         <div class="last-row" if="{{ lastOn }}" onclick="openLast"><text class="last-text">{{ lastLine }}</text></div><div class="last-space" if="{{ !lastOn }}"></div>
         <div class="navrow">
-          <div class="complete {{ rowDone || paused ? 'secondary' : '' }}" onclick="onCurrentSetAction"><image class="complete-icon" src="{{ paused ? '/common/icons/pause.svg' : rowDone ? '/common/icons/undo.svg' : '/common/icons/check.svg' }}" /></div>
+          <div class="complete {{ effortEntryOn ? 'with-effort' : '' }} {{ rowDone || paused ? 'secondary' : '' }}" onclick="onCurrentSetAction"><image class="complete-icon" src="{{ paused ? '/common/icons/pause.svg' : rowDone ? '/common/icons/undo.svg' : '/common/icons/check.svg' }}" /><text class="complete-label">{{ paused ? '暂停中' : rowDone ? '撤回本组' : '完成本组' }}</text></div>
           <div class="effort-circle" if="{{ effortEntryOn }}" onclick="openEffort"><text class="effort-caption">{{ effortScaleLabel }}</text><text class="effort-entry-value">{{ effortNumber }}</text></div>
         </div>
         <div class="set-dots">
@@ -1480,24 +1480,24 @@ export default pageDefinition
           <div class="set-hit" for="{{ item in setDots }}" tid="key" onclick="pickSetDot(item)"><div class="set-dot {{ item.current ? 'set-current' : item.done ? 'set-done' : '' }}"></div></div>
           <input class="set-hit segment" if="{{ dotSegmented }}" type="button" value="›" disabled="{{ !dotHasNext }}" onclick="nextDotSegment" />
         </div>
-      </list-item></list>
+      </div>
     </div>
     <div class="training-panel rest-panel" if="{{ isRest }}">
-      <list class="rest-scroll"><list-item type="rest-content" class="scroll-content">
+      <div class="rest-content">
         <text class="rest-ex" onclick="openExercises">{{ restExerciseName }}</text>
         <text class="rest">{{ restLabel }}</text>
         <text class="next">{{ nextTargetLabel }}</text>
-        <text class="next-details {{ nextValuesLabel.length > 26 ? 'extra-long-value' : nextValuesLabel.length > 18 ? 'long-next' : '' }}">{{ nextValuesLabel }}</text>
         <input class="effort-row" type="button" if="{{ effortEntryOn }}" value="{{ effortEntryLabel + '  ' + effortEntryText + '  ›' }}" onclick="openEffort" />
-        <div class="rrow"><input class="rbtn" type="button" value="−15s" onclick="onRestMinus" /><input class="rbtn" type="button" value="+15s" onclick="onRestPlus" /><input class="skip" type="button" value="跳过" onclick="onSkipRest" /></div>
-      </list-item></list>
+      </div>
     </div>
     <div class="primary-footer" if="{{ !isRest }}"><text class="list-link" onclick="openExercises">动作列表</text><text class="end-link" onclick="openFinish">结束 ›</text></div>
+    <div class="rrow" if="{{ isRest }}"><input class="rbtn" type="button" value="−15s" onclick="onRestMinus" /><input class="rbtn" type="button" value="+15s" onclick="onRestPlus" /><input class="skip" type="button" value="跳过" onclick="onSkipRest" /></div>
   </div>
   <div class="screen operation-screen" if="{{ pageIndex === 1 && !closeMode && !effortOn && !lastOpen && !finishOn && !diagnosticOn }}">
     <div class="topbar"><text class="status" onclick="showDiagnostics">{{ syncLabel }} ›</text><text class="clock">{{ clockLabel }}</text></div>
     <list class="operation-scroll"><list-item type="operation-content" class="scroll-content">
       <text class="elapsed-label">已用时</text><text class="elapsed-value">{{ elapsedLabel }}</text>
+      <input class="history-button" type="button" if="{{ lastOn }}" value="上次训练详情 ›" onclick="openLast" />
       <div class="metrics"><text class="hr">{{ hrLabel }}</text><text class="energy">{{ kcalLabel }} 千卡</text></div>
       <text class="op-title" onclick="openExercises">{{ exName }} ›</text><text class="op-group">{{ groupLabel }}</text><div class="op-prescription"><div class="op-metric"><text class="op-label">重量</text><text class="op-detail">{{ weightNum }} {{ weightSuffix }}</text></div><div class="op-metric"><text class="op-label">次数</text><text class="op-detail">{{ repsNum }} {{ repsSuffix }}</text></div></div><text class="op-group">容量 {{ volumeLabel }} {{ weightUnit }}</text>
       <div class="mrow"><input class="m" type="button" value="上一组" onclick="onPrevSet" /><input class="m" type="button" value="下一组" onclick="onNextSet" /></div>
@@ -1508,17 +1508,23 @@ export default pageDefinition
     </list-item></list>
   </div>
   <div class="completion-panel" if="{{ closeMode === 'complete' && !effortOn }}">
+    <list class="modal-scroll"><list-item type="confirmation" class="modal-content">
     <text class="completion-title">全部组已完成</text><text class="completion-progress">{{ setProgressLabel }}</text>
     <input class="completion-btn effort" type="button" if="{{ effortEntryOn }}" value="{{ '登记本组强度 · ' + effortEntryText }}" onclick="openEffort" />
     <input class="completion-btn finish" type="button" value="保存结束" onclick="saveEnd" /><input class="completion-btn continue" type="button" value="继续训练" onclick="cancelClose" />
+    </list-item></list>
   </div>
   <div class="completion-panel confirm-panel" if="{{ closeMode === 'end' }}">
+    <list class="modal-scroll"><list-item type="confirmation" class="modal-content">
     <text class="confirm-title">结束本次训练？</text><text class="confirm-remain">{{ confirmRemain }}</text><text class="confirm-note">保留已记录的 RPE / RIR</text>
     <input class="pill confirm-save" type="button" value="保存并结束" onclick="saveEnd" /><input class="pill confirm-back" type="button" value="继续训练" onclick="cancelClose" />
+    </list-item></list>
   </div>
   <div class="completion-panel confirm-panel" if="{{ closeMode === 'abandon' }}">
+    <list class="modal-scroll"><list-item type="confirmation" class="modal-content">
     <text class="confirm-title">放弃本次训练？</text><text class="confirm-note">本次训练不会保存到历史</text>
     <input class="pill confirm-abandon" type="button" value="确认放弃" onclick="abandonEnd" /><input class="pill confirm-back" type="button" value="继续训练" onclick="cancelClose" />
+    </list-item></list>
   </div>
   <div class="effort-layer finish-layer" if="{{ finishOn && !closeMode && !effortOn }}">
     <div class="topbar"><text class="heart">{{ hrLabel }}</text><text class="clock">{{ clockLabel }}</text></div>
@@ -1550,8 +1556,8 @@ export default pageDefinition
 </template>
 
 <style>
-/* GT1 390×450 · V4 hierarchy + Apple set dots. Full viewport; only inner content has safe padding.
-   One definition per selector; overflowing content scrolls, footer never shrinks the numbers. */
+/* Current set and rest are fixed, non-scrolling screens. Secondary pages scroll.
+   Keep dimensions within the explicit 390×450 / 466×466 safe-area budgets. */
 .page { width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
 .screen { width: 100%; height: 100%; flex-direction: column; align-items: center; }
 .topbar { width: 314px; height: 44px; margin-top: 18px; flex-direction: row; align-items: center; justify-content: space-between; flex-shrink: 0; }
@@ -1559,156 +1565,170 @@ export default pageDefinition
 .heart { flex: 1; min-width: 0px; font-size: 18px; color: #FF453A; lines: 1; }
 .status { flex: 1; min-width: 0px; height: 44px; line-height: 44px; font-size: 16px; color: #FF9F0A; lines: 1; }
 .training-panel { width: 338px; flex: 1; min-height: 0px; }
-.training-scroll { width: 338px; height: 100%; }
-.training-content { width: 338px; flex-direction: column; align-items: flex-start; }
-.ex { width: 338px; height: 54px; line-height: 27px; font-size: 27px; color: #FFFFFF; font-weight: bold; lines: 2; }
-.group { width: 338px; height: 20px; font-size: 18px; color: #929297; lines: 1; }
+.training-content { width: 338px; flex-direction: column; align-items: flex-start; height: 312px; flex-shrink: 0; }
+.ex { width: 338px; height: 52px; line-height: 26px; font-size: 26px; color: #FFFFFF; font-weight: bold; lines: 2; }
+.group { width: 338px; height: 24px; font-size: 19px; color: #929297; lines: 1; }
 .group-done { color: #30D158; }
-.inputs { width: 338px; height: 76px; flex-direction: row; align-items: center; }
-.field { height: 76px; flex-direction: row; align-items: center; border-radius: 16px; background-color: #000000; }
-.weight-field { width: 156px; }
-.reps-field { width: 116px; }
+.inputs { width: 338px; height: 80px; flex-direction: row; align-items: center; justify-content: space-between; }
+.field { height: 80px; flex-direction: column; align-items: center; border-radius: 16px; background-color: #000000; justify-content: center; }
+.weight-field { width: 157px; }
+.reps-field { width: 157px; }
 .field-selected { background-color: #1C1C1E; border: 1px solid #30D158; }
 .field-done { background-color: #161618; }
-.fval { font-size: 60px; font-weight: bold; color: #FFFFFF; lines: 1; flex-shrink: 1; }
+.fval { font-size: 56px; font-weight: bold; color: #FFFFFF; lines: 1; flex-shrink: 0; width: 157px; height: 58px; line-height: 58px; text-align: center; }
 .long-value { font-size: 36px; }
-.extra-long-value { font-size: 22px; }
-.timed-long-value { font-size: 28px; }
-.long-next { font-size: 26px; }
-.funit { flex-shrink: 0; font-size: 18px; color: #929297; margin-left: 6px; }
-.times { width: 24px; font-size: 29px; color: #929297; text-align: center; }
-.input-notice { width: 338px; min-height: 32px; font-size: 17px; color: #FF9F0A; lines: 2; }
-.last-space { width: 338px; height: 32px; }
-.last-row { width: 338px; height: 32px; align-items: center; }
+.extra-long-value { font-size: 27px; }
+.funit { flex-shrink: 0; font-size: 20px; color: #929297; margin-left: 0px; height: 22px; }
+.times { width: 24px; font-size: 26px; color: #929297; text-align: center; }
+.last-space { width: 338px; height: 44px; }
+.last-row { width: 338px; height: 44px; align-items: center; }
 .last-text { width: 338px; font-size: 18px; color: #929297; lines: 1; }
-.navrow { width: 338px; height: 94px; flex-direction: row; align-items: center; justify-content: center; }
-.complete { width: 94px; height: 94px; border-radius: 47px; background-color: #30D158; justify-content: center; align-items: center; }
-.complete-icon { width: 48px; height: 48px; }
+.navrow { width: 338px; height: 64px; flex-direction: row; align-items: center; justify-content: space-between; }
+.complete { width: 338px; height: 64px; border-radius: 32px; background-color: #30D158; justify-content: center; align-items: center; flex-direction: row; }
+.complete-icon { width: 32px; height: 32px; margin-right: 8px; }
 .back-icon { width: 26px; height: 26px; margin-right: 6px; }
 .back-label { color: #30D158; font-size: 20px; }
 .secondary { background-color: #242725; color: #30D158; }
-.effort-circle { width: 108px; height: 80px; margin-left: 34px; border-radius: 24px; background-color: #1C1C1E; flex-direction: column; align-items: center; justify-content: center; }
-.effort-caption { font-size: 17px; color: #929297; }
-.effort-entry-value { font-size: 28px; color: #FFFFFF; }
-.set-dots { width: 338px; min-height: 44px; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: center; }
-.set-hit { width: 44px; height: 44px; align-items: center; justify-content: center; }
-.set-dot { width: 18px; height: 18px; border-radius: 9px; background-color: #333638; }
-.set-current { width: 22px; height: 22px; border-radius: 11px; background-color: #000000; border: 2px solid #FFFFFF; }
+.effort-circle { width: 108px; height: 64px; margin-left: 12px; border-radius: 24px; background-color: #1C1C1E; flex-direction: column; align-items: center; justify-content: center; }
+.effort-caption { font-size: 18px; color: #929297; }
+.effort-entry-value { font-size: 26px; color: #FFFFFF; }
+.set-dots { width: 338px; min-height: 48px; flex-direction: row; flex-wrap: nowrap; align-items: center; justify-content: center; height: 48px; }
+.set-hit { width: 48px; height: 48px; align-items: center; justify-content: center; flex-shrink: 0; }
+.set-dot { width: 24px; height: 24px; border-radius: 12px; background-color: #333638; }
+.set-current { width: 28px; height: 28px; border-radius: 14px; background-color: #000000; border: 2px solid #FFFFFF; }
 .set-done { background-color: #FFFFFF; }
 .segment { background-color: #000000; color: #929297; font-size: 26px; }
-.primary-footer { width: 314px; height: 44px; margin-bottom: 24px; flex-direction: row; align-items: center; justify-content: space-between; flex-shrink: 0; }
-.list-link { width: 170px; height: 44px; line-height: 44px; font-size: 20px; color: #30D158; }
-.end-link { width: 110px; height: 44px; line-height: 44px; font-size: 20px; color: #30D158; text-align: right; }
-.rest-panel { margin-bottom: 24px; }
-.rest-scroll { width: 338px; height: 100%; }
+.primary-footer { width: 314px; height: 52px; margin-bottom: 18px; flex-direction: row; align-items: center; justify-content: space-between; flex-shrink: 0; }
+.list-link { width: 152px; height: 52px; line-height: 52px; font-size: 22px; color: #30D158; text-align: center; background-color: #1C1C1E; border-radius: 26px; }
+.end-link { width: 152px; height: 52px; line-height: 52px; font-size: 22px; color: #30D158; text-align: center; background-color: #1C1C1E; border-radius: 26px; }
+.rest-panel { margin-bottom: 0px; justify-content: center; align-items: center; }
 .scroll-content { width: 338px; flex-direction: column; align-items: center; }
-.rest-ex { width: 338px; height: 28px; line-height: 24px; font-size: 18px; color: #FF9F0A; lines: 1; }
-.rest { width: 338px; height: 126px; line-height: 126px; font-size: 104px; color: #FFFFFF; text-align: center; lines: 1; }
-.next { width: 338px; height: 44px; font-size: 18px; color: #929297; text-align: center; lines: 2; }
-.next-details { width: 338px; height: 44px; font-size: 36px; color: #FFFFFF; text-align: center; lines: 1; }
-.effort-row { width: 338px; height: 56px; border-radius: 18px; background-color: #1C1C1E; color: #FFFFFF; font-size: 19px; }
-.rrow { width: 338px; height: 56px; margin-top: 6px; flex-direction: row; justify-content: space-between; }
-.rbtn { width: 102px; height: 52px; border-radius: 26px; font-size: 20px; background-color: #242725; color: #FFFFFF; }
-.skip { width: 118px; height: 52px; border-radius: 26px; font-size: 20px; background-color: #0A3418; color: #30D158; }
-.rest-total { width: 338px; height: 28px; font-size: 16px; color: #929297; text-align: center; }
-.operation-scroll { width: 338px; flex: 1; margin-bottom: 24px; }
+.rest-ex { width: 338px; height: 56px; line-height: 28px; font-size: 26px; color: #FF9F0A; lines: 2; text-align: center; }
+.rest { width: 338px; height: 112px; line-height: 112px; font-size: 88px; color: #FFFFFF; text-align: center; lines: 1; }
+.next { width: 338px; height: 56px; font-size: 22px; color: #929297; text-align: center; lines: 2; line-height: 28px; }
+.effort-row { width: 338px; height: 56px; border-radius: 18px; background-color: #1C1C1E; color: #FFFFFF; font-size: 22px; }
+.rrow { width: 338px; height: 64px; margin-top: 0px; flex-direction: row; justify-content: space-between; margin-bottom: 18px; flex-shrink: 0; align-items: center; }
+.rbtn { width: 100px; height: 60px; border-radius: 30px; font-size: 23px; background-color: #242725; color: #FFFFFF; }
+.skip { width: 122px; height: 60px; border-radius: 30px; font-size: 25px; background-color: #0A3418; color: #30D158; }
+.operation-scroll { width: 338px; flex: 1; margin-bottom: 24px; min-height: 0px; }
 .elapsed-label { height: 28px; font-size: 19px; color: #929297; }
-.elapsed-value { width: 338px; height: 104px; font-size: 84px; line-height: 104px; color: #FFFFFF; text-align: center; lines: 1; }
-.metrics { width: 338px; height: 52px; flex-direction: row; justify-content: space-between; align-items: center; }
+.elapsed-value { width: 338px; height: 104px; font-size: 72px; line-height: 104px; color: #FFFFFF; text-align: center; lines: 1; }
+.metrics { width: 338px; height: 56px; flex-direction: row; justify-content: space-between; align-items: center; }
 .hr { font-size: 22px; color: #FF453A; }
 .energy { font-size: 22px; color: #FFFFFF; }
-.op-title { width: 338px; min-height: 32px; font-size: 24px; color: #FFFFFF; lines: 2; }
-.op-prescription { width: 338px; min-height: 44px; flex-direction: row; align-items: center; justify-content: space-between; }
-.op-label { width: 40px; flex-shrink: 0; font-size: 18px; color: #929297; }
-.op-metric { width: 164px; min-height: 44px; flex-direction: row; align-items: center; }
-.op-detail { flex: 1; min-width: 0px; font-size: 22px; color: #FFFFFF; }
-.op-group { width: 338px; height: 26px; font-size: 18px; color: #929297; }
-.mrow { width: 338px; height: 58px; flex-direction: row; justify-content: space-between; align-items: center; }
-.m { width: 164px; height: 52px; border-radius: 26px; background-color: #242725; font-size: 20px; color: #FFFFFF; }
+.op-title { width: 338px; min-height: 64px; font-size: 28px; color: #FFFFFF; lines: 2; line-height: 32px; }
+.op-prescription { width: 338px; min-height: 44px; flex-direction: column; align-items: flex-start; justify-content: space-between; }
+.op-label { width: 72px; flex-shrink: 0; font-size: 20px; color: #929297; }
+.op-metric { width: 338px; min-height: 60px; flex-direction: row; align-items: center; }
+.op-detail { flex: 1; min-width: 0px; font-size: 26px; color: #FFFFFF; lines: 2; }
+.op-group { width: 338px; height: 36px; font-size: 20px; color: #929297; }
+.mrow { width: 338px; height: 72px; flex-direction: row; justify-content: space-between; align-items: center; }
+.m { width: 164px; height: 60px; border-radius: 30px; background-color: #242725; font-size: 24px; color: #FFFFFF; }
 .m-end { background-color: #0A3418; color: #30D158; }
-.return-button { width: 338px; height: 48px; background-color: #000000; color: #30D158; font-size: 20px;  align-items: center; justify-content: center; }
-.completion-panel { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; justify-content: center; }
-.completion-title { width: 338px; height: 52px; font-size: 30px; color: #FFFFFF; text-align: center; }
+.return-button { width: 338px; height: 64px; background-color: #000000; color: #30D158; font-size: 20px; align-items: center; justify-content: center; }
+.completion-panel { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; justify-content: flex-start; }
+.completion-title { width: 338px; height: 64px; font-size: 30px; color: #FFFFFF; text-align: center; lines: 2; }
 .completion-progress { width: 338px; height: 44px; font-size: 21px; color: #929297; text-align: center; }
-.completion-btn { width: 338px; height: 56px; margin-top: 12px; border-radius: 28px; font-size: 22px; background-color: #1C1C1E; color: #FFFFFF; }
+.completion-btn { width: 338px; height: 64px; margin-top: 12px; border-radius: 32px; font-size: 24px; background-color: #1C1C1E; color: #FFFFFF; }
 .finish { background-color: #0A3418; color: #30D158; }
 .confirm-title { width: 338px; height: 56px; font-size: 28px; color: #FFFFFF; text-align: center; }
-.confirm-remain { width: 338px; height: 64px; font-size: 21px; color: #FFFFFF; text-align: center; lines: 2; }
-.confirm-note { width: 338px; height: 42px; font-size: 18px; color: #929297; text-align: center; }
-.pill { width: 338px; height: 60px; margin-top: 12px; border-radius: 30px; font-size: 22px; }
+.confirm-remain { width: 338px; height: 72px; font-size: 24px; color: #FFFFFF; text-align: center; lines: 2; }
+.confirm-note { width: 338px; height: 56px; font-size: 21px; color: #929297; text-align: center; lines: 2; }
+.pill { width: 338px; height: 64px; margin-top: 12px; border-radius: 32px; font-size: 24px; }
 .confirm-save { background-color: #0A3418; color: #30D158; }
 .confirm-back { background-color: #242725; color: #FFFFFF; }
 .effort-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
 .finish-scroll { width: 338px; flex: 1; min-height: 0px; margin-bottom: 24px; }
 .finish-content { align-items: center; }
-.abandon-button { width: 338px; height: 48px; flex-shrink: 0; border-radius: 24px; font-size: 20px; background-color: #1C1C1E; color: #FF453A; margin-top: 8px; }
+.abandon-button { width: 338px; height: 60px; flex-shrink: 0; border-radius: 30px; font-size: 24px; background-color: #1C1C1E; color: #FF453A; margin-top: 8px; }
 .confirm-abandon { background-color: #351010; color: #FF453A; }
 .finish-name { width: 338px; height: 48px; font-size: 24px; color: #929297; text-align: center; lines: 2; }
 .flag { width: 132px; height: 132px; border-radius: 66px; background-color: #30D158; align-items: center; justify-content: center; margin-top: 8px; }
 .flag-inner { width: 44px; height: 52px; flex-direction: row; }
 .pole { width: 5px; height: 52px; background-color: #000000; }
 .pennant { width: 34px; height: 29px; background-color: #000000; border-radius: 4px; margin-left: 3px; }
-.finish-title { width: 338px; height: 48px; line-height: 48px; font-size: 30px; color: #30D158; text-align: center; font-weight: bold; }
+.finish-title { width: 338px; height: 56px; line-height: 56px; font-size: 30px; color: #30D158; text-align: center; font-weight: bold; }
 .finish-count { width: 338px; height: 38px; font-size: 20px; color: #929297; text-align: center; }
-.last-effort { width: 338px; height: 52px; border-radius: 26px; background-color: #1C1C1E; color: #FFFFFF; font-size: 20px; }
-.finish-back { width: 338px; height: 48px; line-height: 48px; color: #30D158; text-align: center; font-size: 20px; }
-.last-head { width: 314px; height: 52px; margin-top: 18px; align-items: center; }
-.last-back { width: 314px; height: 44px; line-height: 44px; color: #30D158; font-size: 21px;  align-items: center; justify-content: center; }
+.last-effort { width: 338px; height: 60px; border-radius: 26px; background-color: #1C1C1E; color: #FFFFFF; font-size: 22px; }
+.finish-back { width: 338px; height: 60px; line-height: 60px; color: #30D158; text-align: center; font-size: 24px; }
+.last-head { width: 314px; height: 64px; margin-top: 18px; align-items: center; }
+.last-back { width: 314px; height: 56px; line-height: 44px; color: #30D158; font-size: 21px; align-items: center; justify-content: center; }
 .last-title { width: 338px; min-height: 42px; font-size: 26px; color: #FFFFFF; lines: 2; }
-.last-meta { width: 338px; height: 32px; font-size: 19px; color: #929297; }
-.last-list { width: 338px; flex: 1; }
-.last-item { width: 338px; min-height: 56px; flex-direction: row; align-items: center; }
+.last-meta { width: 338px; height: 40px; font-size: 21px; color: #929297; }
+.last-list { width: 338px; flex: 1; min-height: 0px; }
+.last-item { width: 338px; min-height: 64px; flex-direction: row; align-items: center; }
 .last-no { width: 80px; font-size: 20px; color: #929297; }
-.last-value { width: 258px; font-size: 23px; color: #FFFFFF; lines: 2; }
+.last-value { width: 258px; font-size: 26px; color: #FFFFFF; lines: 2; }
 .last-hint { width: 314px; height: 54px; margin-bottom: 24px; font-size: 16px; color: #929297; lines: 2; }
-.effort-scroll { width: 338px; height: 100%; }
-.effort-head { width: 314px; height: 52px; margin-top: 18px; flex-direction: row; align-items: center; justify-content: space-between; }
-.effort-back { width: 126px; height: 44px; line-height: 44px; font-size: 21px; color: #30D158;  align-items: center; justify-content: center; }
+.effort-scroll { width: 338px; flex: 1; min-height: 0px; margin-top: 18px; margin-bottom: 24px; }
+.effort-head { width: 338px; height: 64px; margin-top: 0px; flex-direction: row; align-items: center; justify-content: space-between; }
+.effort-back { width: 126px; height: 56px; line-height: 44px; font-size: 21px; color: #30D158; align-items: center; justify-content: center; }
 .effort-timer { font-size: 17px; color: #FF9F0A; }
-.effort-target { width: 338px; min-height: 44px; font-size: 20px; color: #FFFFFF; lines: 2; }
-.effort-scale { width: 338px; height: 30px; font-size: 20px; color: #929297; text-align: center; }
-.effort-pick { width: 338px; height: 118px; flex-direction: row; align-items: center; justify-content: space-between; }
-.effort-arrow { width: 56px; height: 56px; border-radius: 28px; font-size: 34px; background-color: #242725; color: #FFFFFF; }
-.effort-value { width: 210px; height: 110px; line-height: 110px; font-size: 88px; color: #30D158; text-align: center; lines: 1; }
-.effort-meaning { width: 338px; height: 40px; font-size: 22px; color: #FFFFFF; text-align: center; }
-.effort-hint { width: 338px; height: 48px; font-size: 18px; color: #929297; text-align: center; lines: 2; }
-.effort-actions { width: 338px; height: 60px; flex-direction: row; justify-content: space-between; }
-.effort-cancel { width: 146px; height: 56px; border-radius: 28px; font-size: 22px; background-color: #242725; color: #FFFFFF; }
-.effort-ok { width: 182px; height: 56px; border-radius: 28px; font-size: 22px; background-color: #0A3418; color: #30D158; }
-.effort-clear { width: 314px; height: 44px; margin-bottom: 24px; line-height: 44px; font-size: 18px; color: #FF9F0A; text-align: center; }
+.effort-target { width: 338px; min-height: 64px; font-size: 24px; color: #FFFFFF; lines: 2; line-height: 32px; }
+.effort-scale { width: 338px; height: 36px; font-size: 24px; color: #929297; text-align: center; }
+.effort-pick { width: 338px; height: 112px; flex-direction: row; align-items: center; justify-content: space-between; }
+.effort-arrow { width: 64px; height: 64px; border-radius: 32px; font-size: 34px; background-color: #242725; color: #FFFFFF; }
+.effort-value { width: 194px; height: 110px; line-height: 110px; font-size: 80px; color: #30D158; text-align: center; lines: 1; }
+.effort-meaning { width: 338px; height: 64px; font-size: 24px; color: #FFFFFF; text-align: center; lines: 2; }
+.effort-hint { width: 338px; height: 64px; font-size: 20px; color: #929297; text-align: center; lines: 2; }
+.effort-actions { width: 338px; height: 72px; flex-direction: row; justify-content: space-between; }
+.effort-cancel { width: 146px; height: 64px; border-radius: 28px; font-size: 24px; background-color: #242725; color: #FFFFFF; }
+.effort-ok { width: 182px; height: 64px; border-radius: 28px; font-size: 24px; background-color: #0A3418; color: #30D158; }
+.effort-clear { width: 314px; height: 56px; margin-bottom: 0px; line-height: 56px; font-size: 22px; color: #FF9F0A; text-align: center; }
 .diagnostic-layer { justify-content: center; }
-.diagnostic-scroll { width: 338px; height: 280px; }
-.diagnostic-text { width: 338px; font-size: 18px; color: #FFFFFF; }
-.diagnostic-buttons { width: 338px; height: 56px; flex-direction: row; justify-content: space-between; }
+.diagnostic-layer .effort-target { width: 314px; margin-top: 24px; }
+.diagnostic-scroll { width: 338px; flex: 1; min-height: 0px; }
+.diagnostic-text { width: 338px; font-size: 22px; color: #FFFFFF; lines: 0; }
+.diagnostic-buttons { width: 338px; height: 72px; flex-direction: row; justify-content: space-between; margin-bottom: 24px; }
+
+.with-effort { width: 218px; }
+.complete-label { color: #000000; font-size: 25px; }
+.secondary .complete-label { color: #30D158; }
+.rest-content { width: 338px; flex-direction: column; align-items: center; }
+.history-button { width: 338px; height: 60px; margin-bottom: 12px; border-radius: 30px; font-size: 23px; background-color: #1C1C1E; color: #FFFFFF; }
+.modal-scroll { width: 338px; flex: 1; min-height: 0px; margin-top: 40px; margin-bottom: 32px; }
+.modal-content { width: 338px; flex-direction: column; align-items: center; padding-bottom: 16px; }
+
 @media screen and (min-width: 450px) {
-  .topbar { width: 280px; margin-top: 58px; }
-  .training-panel, .training-scroll, .rest-scroll, .operation-scroll, .effort-scroll, .scroll-content, .training-content, .primary-footer, .inputs, .last-space, .last-row, .last-text, .navrow, .set-dots, .ex, .group, .next, .next-details, .rest-ex, .rest, .effort-row, .rrow, .rest-total, .elapsed-value, .metrics, .op-title, .op-group, .mrow, .op-prescription, .return-button, .effort-head, .effort-target, .effort-scale, .effort-pick, .effort-meaning, .effort-hint, .effort-actions, .effort-clear { width: 280px; }
-  .primary-footer, .finish-scroll, .operation-scroll { margin-bottom: 58px; }
-  .finish-scroll, .abandon-button { width: 280px; }
-  .op-metric { width: 134px; }
-  .weight-field { width: 160px; }
-  .reps-field { width: 96px; }
-  .fval { font-size: 48px; }
-  .long-value { font-size: 30px; }
-  .extra-long-value { font-size: 22px; }
-  .rest-panel, .last-hint { margin-bottom: 58px; }
-  .timed-long-value { font-size: 22px; }
-  .rbtn { width: 84px; }
-  .skip { width: 104px; }
-  .m { width: 134px; }
-  .effort-value { width: 164px; font-size: 80px; }
-  .effort-cancel { width: 126px; }
-  .effort-ok { width: 144px; }
-  .finish-name { width: 280px; }
-  .finish-title, .finish-count, .last-back, .last-effort, .finish-back, .last-head, .last-title, .last-meta, .last-list, .last-hint, .last-item { width: 280px; }
-  .last-value { width: 200px; }
-  .flag { width: 110px; height: 110px; border-radius: 55px; }
-  .finish-name { height: 36px; }
-  .finish-count { height: 30px; }
-  .finish-title { height: 42px; line-height: 42px; }
-  .finish-back { height: 44px; line-height: 44px; }
-  .last-effort { height: 44px; }
-  .effort-head { margin-top: 58px; }
-  .completion-btn, .completion-title, .completion-progress, .confirm-title, .confirm-remain, .confirm-note, .pill { width: 280px; }
+
+ .topbar { width: 220px; margin-top: 30px; }
+ .training-panel, .training-content, .inputs, .last-space, .last-row, .last-text, .navrow, .set-dots, .ex, .group, .rest-content, .rest-ex, .rest, .next, .effort-row, .rrow { width: 300px; }
+ .training-content { height: 304px; }
+ .group { height: 22px; font-size: 18px; }
+ .inputs, .field { height: 74px; }
+ .weight-field, .reps-field, .fval { width: 138px; }
+ .fval { height: 52px; line-height: 52px; font-size: 52px; }
+ .long-value { font-size: 32px; }
+ .extra-long-value { font-size: 24px; }
+ .complete { width: 300px; }
+ .with-effort { width: 194px; }
+ .complete-label { font-size: 23px; }
+ .effort-circle { width: 96px; margin-left: 10px; }
+ .set-hit { width: 48px; height: 48px; }
+ .set-dots { justify-content: center; }
+ .primary-footer { width: 220px; margin-bottom: 36px; }
+ .list-link, .end-link { width: 104px; font-size: 22px; }
+ .rrow { width: 260px; margin-bottom: 36px; }
+ .rbtn { width: 76px; height: 56px; font-size: 20px; }
+ .skip { width: 92px; height: 56px; font-size: 23px; }
+ .operation-scroll, .finish-scroll, .last-list { width: 300px; margin-bottom: 58px; }
+ .scroll-content, .history-button, .op-title, .op-prescription, .op-metric, .op-group, .mrow, .return-button, .abandon-button, .elapsed-value, .metrics { width: 300px; }
+ .m { width: 144px; }
+ .finish-name, .finish-title, .finish-count, .last-effort, .finish-back, .last-title, .last-meta, .last-item { width: 300px; }
+ .last-head { width: 220px; margin-top: 30px; }
+ .last-back { width: 220px; }
+ .last-value { width: 220px; }
+ .last-hint { width: 280px; margin-bottom: 58px; }
+ .last-list { margin-bottom: 0px; }
+ .effort-scroll, .modal-scroll { width: 300px; margin-top: 58px; margin-bottom: 58px; }
+ .effort-head, .effort-target, .effort-scale, .effort-pick, .effort-meaning, .effort-hint, .effort-actions, .effort-clear, .modal-content { width: 300px; }
+ .effort-value { width: 156px; }
+ .effort-cancel { width: 128px; }
+ .effort-ok { width: 160px; }
+ .completion-btn, .completion-title, .completion-progress, .confirm-title, .confirm-remain, .confirm-note, .pill { width: 300px; }
+ .diagnostic-scroll, .diagnostic-buttons, .diagnostic-text { width: 300px; }
+ .diagnostic-layer .effort-target { width: 300px; margin-top: 58px; }
+ .diagnostic-buttons { margin-bottom: 58px; }
+
 }
 </style>

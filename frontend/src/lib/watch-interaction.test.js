@@ -57,13 +57,13 @@ describe('actual watch workout page wiring', () => {
   it('renders real set targets and pages without moving the cursor', async () => {
     const { page, s } = workout(makeState(12))
     page.refreshSetDots()
-    expect(page.setDots.map(d => d.number)).toEqual([1, 2, 3, 4, 5])
+    expect(page.setDots.map(d => d.number)).toEqual([1, 2, 3])
     expect(page.dotHasNext).toBe(true)
     page.nextDotSegment()
-    expect(page.setDots.map(d => d.number)).toEqual([6, 7, 8, 9, 10])
+    expect(page.setDots.map(d => d.number)).toEqual([4, 5, 6])
     expect(s.setIdx).toBe(0)
     await page.pickSetDot(page.setDots[1])
-    expect(s.setIdx).toBe(6)
+    expect(s.setIdx).toBe(4)
   })
   it('hands 40 pending edits to the app-owned replay once, without per-event session reloads', async () => {
     const { page, ctx, s } = workout()

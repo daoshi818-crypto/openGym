@@ -252,49 +252,53 @@ export default {
 /* Wear OS: tap the exercise name to focus it; separate disclosure expands sets. */
 .page { width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
 .content { width: 100%; height: 100%; flex-direction: column; align-items: center; }
-.title { width: 314px; height: 44px; margin-top: 18px; font-size: 26px; font-weight: bold; color: #FFFFFF; lines: 1; }
-.hint-line { width: 314px; height: 44px; margin-top: 18px; font-size: 18px; color: #FF9F0A; lines: 2; }
-.body { width: 358px; flex: 1; min-height: 0px; }
-.scroll { width: 358px; height: 100%; }
-.exrow { width: 358px; padding: 8px 12px; margin-bottom: 8px; border-radius: 22px; background-color: #1C1C1E; flex-direction: column; }
+.title { width: 314px; height: 52px; margin-top: 18px; font-size: 28px; font-weight: bold; color: #FFFFFF; lines: 1; }
+.hint-line { width: 314px; height: 52px; margin-top: 18px; font-size: 22px; color: #FF9F0A; lines: 2; }
+.body { width: 338px; flex: 1; min-height: 0px; }
+.scroll { width: 338px; height: 100%; }
+.exrow { width: 338px; padding: 12px; margin-bottom: 12px; border-radius: 22px; background-color: #1C1C1E; flex-direction: column; }
 .current { background-color: #242725; }
-.exhead { width: 334px; min-height: 56px; flex-direction: row; align-items: center; }
-.exname { width: 236px; min-height: 48px; font-size: 23px; color: #FFFFFF; lines: 2; }
+.exhead { width: 314px; min-height: 76px; flex-direction: row; align-items: center;  justify-content: space-between;}
+.exname { width: 204px; min-height: 64px; font-size: 26px; color: #FFFFFF; lines: 2;  line-height: 32px;}
 .current-name { color: #30D158; }
-.cnt { width: 54px; font-size: 18px; color: #929297; text-align: right; }
+.cnt { width: 46px; font-size: 20px; color: #929297; text-align: right; }
 .cnt-done { color: #30D158; }
-.expand-hit { width: 44px; height: 48px; border-radius: 22px; font-size: 24px; background-color: #242725; color: #929297; }
-.rows { width: 334px; flex-direction: column; }
-.rrow { width: 334px; min-height: 52px; flex-direction: row; align-items: center; }
-.rno { width: 38px; font-size: 20px; color: #929297; text-align: center; }
-.rtxt { width: 270px; font-size: 22px; color: #FFFFFF; lines: 2; }
+.expand-hit { width: 56px; height: 56px; border-radius: 22px; font-size: 30px; background-color: #242725; color: #929297; }
+.rows { width: 314px; flex-direction: column; }
+.rrow { width: 314px; min-height: 64px; flex-direction: row; align-items: center; }
+.rno { width: 42px; font-size: 22px; color: #929297; text-align: center; }
+.rtxt { width: 242px; font-size: 25px; color: #FFFFFF; lines: 2;  line-height: 30px;}
 .done { color: #929297; }
 .done-no { color: #30D158; }
-.chev { width: 26px; font-size: 24px; color: #929297; }
-.foot { width: 314px; height: 118px; margin-bottom: 24px; flex-direction: column; justify-content: space-between; }
-.endbtn { width: 314px; height: 52px; font-size: 21px; border-radius: 26px; background-color: #242725; color: #FFFFFF; }
+.chev { width: 22px; font-size: 24px; color: #929297; }
+.foot { width: 314px; height: 128px; margin-bottom: 24px; flex-direction: column; justify-content: space-between; }
+.endbtn { width: 314px; height: 60px; font-size: 24px; border-radius: 30px; background-color: #242725; color: #FFFFFF; }
 .save { background-color: #0A3418; color: #30D158; }
-.exit-row { width: 314px; height: 52px; flex-direction: row; justify-content: space-between; }
+.exit-row { width: 314px; height: 60px; flex-direction: row; justify-content: space-between; }
 .compact-action { width: 152px; }
 .abandon { color: #FF453A; }
 .armed { background-color: #FF453A; color: #000000; }
 .end-panel { width: 100%; height: 100%; flex-direction: column; align-items: center; justify-content: center; }
 .end-panel .endbtn { margin-top: 14px; }
-.hint { width: 338px; height: 64px; font-size: 20px; color: #929297; text-align: center; lines: 2; }
-@media screen and (min-width: 450px) {
- .title, .hint-line { width: 280px; margin-top: 58px; }
- .body, .scroll, .exrow, .foot, .exit-row, .hint, .endbtn { width: 280px; }
- .exhead, .rows, .rrow { width: 256px; }
- .exname { width: 164px; font-size: 20px; }
- .cnt { width: 48px; font-size: 16px; }
- .rtxt { width: 192px; font-size: 19px; }
- .foot { margin-bottom: 58px; }
- .compact-action { width: 134px; font-size: 18px; }
- .back-label { font-size: 18px; }
- .end-panel .title { margin-top: 0; }
-}
+.hint { width: 338px; height: 64px; font-size: 22px; color: #929297; text-align: center; lines: 2; }
+
 
 .back { flex-direction: row; justify-content: center; align-items: center; }
 .back-icon { width: 26px; height: 26px; margin-right: 6px; }
-.back-label { font-size: 20px; color: #30D158; }
+.back-label { font-size: 22px; color: #30D158; }
+
+
+@media screen and (min-width: 450px) {
+
+ .title, .hint-line { width: 220px; margin-top: 30px; }
+ .body, .scroll, .exrow, .foot, .exit-row, .hint, .endbtn { width: 300px; }
+ .exhead, .rows, .rrow { width: 276px; }
+ .exname { width: 166px; }
+ .rtxt { width: 204px; }
+ .foot { margin-bottom: 58px; }
+ .compact-action { width: 144px; }
+ .back-label { font-size: 21px; }
+ .end-panel .title { width: 300px; margin-top: 0px; }
+
+}
 </style>

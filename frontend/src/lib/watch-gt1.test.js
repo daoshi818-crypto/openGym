@@ -6,6 +6,8 @@ import { watchSource, stripImports, watchInteractionDeps, watchPersistence, load
 import * as effort from '../../../watch-app/src/lib/effort-scale.js'
 import * as protocol from '../../../watch-app/src/lib/protocol.js'
 import { lastTimeView } from '../../../watch-app/src/lib/watch-last-time.js'
+import { sourceTemplate } from '../../../watch-app/scripts/source-template.mjs'
+import { setDotWindow } from '../../../watch-app/src/lib/workout-interaction.js'
 
 function training(scale) {
   const { ctx } = watchPersistence()
@@ -35,26 +37,40 @@ describe('GT1 complete-screen rebuild contracts', () => {
   it('keeps completed-set guidance inline instead of pushing dots below the viewport', () => {
     const src = watchSource('Workout/index.ux')
     expect(src).not.toContain('class="undo-label"')
-    expect(src).toContain('已完成 · 点撤销恢复')
+    expect(src).toContain('已完成 · 可撤回')
     const h = (s, p='height') => cssSize('Workout',s,p)
     expect(h('topbar')+h('topbar','margin-top')+h('primary-footer')+h('primary-footer','margin-bottom')+
       ['ex','group','inputs','last-row','navrow'].reduce((n,s)=>n+h(s),0)+h('set-dots','min-height')).toBeLessThanOrEqual(450)
   })
-  it('fits the entire precise keyboard and keeps every key at least 44px', () => {
+  it('keeps large keyboard keys in a scroll area and Save/Cancel outside it', () => {
     const h = (s,p='height') => cssSize('Keypad',s,p)
-    expect(h('keyboard-label','margin-top')+h('keyboard-label')+h('keyboard-target')+h('keyboard-value')+
-      4*(h('k')+h('k','margin-bottom'))+h('keyboard-switch')+h('keyboard-actions')+
-      h('keyboard-actions','margin-top')+h('keyboard-content','padding-bottom')).toBeLessThanOrEqual(450)
-    for (const s of ['k','keyboard-action','keyboard-switch']) expect(h(s)).toBeGreaterThanOrEqual(44)
+    for (const s of ['k','cancel','ok','keyboard-switch']) expect(h(s)).toBeGreaterThanOrEqual(56)
+    const root = sourceTemplate(watchSource('Keypad/index.ux'))
+    expect(root.children.map(n => n.class)).toEqual(['editor-scroll', 'actions'])
     expect(watchSource('Keypad/index.ux')).toContain('notice ||')
   })
-  it('reserves a whole two-line plan card above the recent-results footer', () => {
+  it('keeps large home cards and recent results in one native scroll viewport', () => {
     const h = (s,p='height') => cssSize('Index',s,p)
-    const fixed=h('topbar')+h('topbar','margin-top')+h('status')+h('hero')+h('links')+h('links','margin-bottom')+h('plans','margin-bottom')
-    const card=h('plan-name')+h('plan-preview')+2*h('plan','padding')+h('plan','margin-bottom')
-    expect(fixed+card).toBeLessThanOrEqual(450)
+    expect(watchSource('Index/index.ux')).toContain('<list class="home-scroll">')
+    expect(watchSource('Index/index.ux')).not.toContain('<list class="plans')
     expect(h('plan-name')).toBeGreaterThanOrEqual(48)
     expect(h('plan-preview')).toBeGreaterThanOrEqual(44)
+  })
+  it('never mounts a scroll container on current-set or rest training screens', () => {
+    const tree = sourceTemplate(watchSource('Workout/index.ux'))
+    const nodes = n => [n, ...(n.children || []).flatMap(nodes)]
+    const main = tree.children.find(n => n.class === 'screen')
+    expect(nodes(main).some(n => n.type === 'list')).toBe(false)
+    expect(nodes(main).some(n => n.action === 'openLast')).toBe(true)
+    expect(cssSize('Workout','set-hit','width')).toBeGreaterThanOrEqual(48)
+    expect(cssSize('Workout','complete','height')).toBeGreaterThanOrEqual(64)
+  })
+  it('bounds five large dot targets including arrows while keeping row identity', () => {
+    const rows = Array.from({length: 20}, (_,i) => ({setId:'r'+i})), s = {active:true,sid:'s',exIdx:0,setIdx:7,workout:{exercises:[{entryInstanceId:'e'}],rows:[rows]}}
+    const view = setDotWindow(s, undefined, 5)
+    expect(view.segmented).toBe(true); expect(view.dots).toHaveLength(3)
+    expect(view.dots[1]).toMatchObject({setId:'r7',current:true,setIdx:7})
+    expect((view.dots.length+2)*48).toBeLessThanOrEqual(300)
   })
   it.each(['Index','Workout','Keypad','ExerciseList','Summary'])('%s has a full viewport, not the former fixed safe-area shell', name => {
     const src = watchSource(name + '/index.ux'), css = src.match(/<style>([\s\S]*?)<\/style>/)[1]
