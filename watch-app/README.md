@@ -6,8 +6,9 @@ BlueOS watch companion for openGym. Display name: `opengym`; package identity:
 ## Training
 
 The November 12 source-only UI update enlarges text and touch targets across all
-five routes. Current-set and rest screens never scroll; other pages use native
-lists. Last-time summaries and their read-only detail entry remain available.
+five routes. Current-set, rest and weight/reps editor screens never scroll;
+secondary pages use native lists. Complete and undo remain vector-only buttons.
+Last-time summaries and their read-only detail entry remain available.
 No version bump or APK/RPK was built for this update. See
 [large UI scope and verification](../docs/dev/WATCH_LARGE_UI_20261112.zh-CN.md).
 
@@ -30,6 +31,8 @@ budgets; secondary lists absorb overflow and leave fixed actions reachable. See
 - Tap weight/reps once to select the field. Rotate the crown to adjust the selected field only;
   tap the selected field again for the keypad. Rest retains its own 5-second crown adjustment.
   The keypad shares one draft between digit entry, +/- and crown; cancel does not save.
+  Both quick adjustment and the complete twelve-key keyboard fit one screen,
+  with fixed Save/Cancel buttons and no vertical scrolling.
 - Last time appears before completion, when matching history exists. Tap the small
   summary to open read-only history details. Current training and rest never scroll;
   training statistics remain on the operations page.

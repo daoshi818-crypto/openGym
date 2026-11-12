@@ -39,7 +39,8 @@ for (const page of Object.keys(manifest.router.pages)) {
     }
   }
 
-  assert.ok(tree.some(n => n.type === 'list'), page + ' must retain native scrolling')
+  if (page === 'Keypad') assert.ok(!tree.some(n => n.type === 'list'), 'Adjustment and keyboard must never scroll')
+  else assert.ok(tree.some(n => n.type === 'list'), page + ' must retain secondary native scrolling')
   assert.ok(!JSON.stringify(template).match(/mediaOn|demoOn|openDemo|media-image/), 'Removed watch demo returned')
   assert.ok(sheet['@MEDIA']?.some(m => m.condition === 'screen and (min-width: 450px)'), page + ' round fallback missing')
   assert.ok(!/[\p{Extended_Pictographic}\uFE0F✓▶♥↶]/u.test(JSON.stringify(template)), page + ' emoji/icon font dependency')
@@ -80,8 +81,9 @@ for (const page of Object.keys(manifest.router.pages)) {
     assert.ok(px(sheet,'.weight-field','width')+px(sheet,'.times','width')+px(sheet,'.reps-field','width')<=338)
     assert.ok(px(sheet,'.fval','fontSize')>=56, 'Current numbers too small')
     assert.ok(tree.some(n => n.type==='div' && n.events?.click==='onCurrentSetAction' && n.children?.some(c => c.type==='image' && c.attr?.$src?.includes('/common/icons/check.svg'))), 'Complete/undo/pause vector missing')
-    assert.ok(px(sheet,'.complete','height')>=64 && px(sheet,'.complete','width')>=300, 'Large labelled primary action')
-    assert.ok(tree.some(n => n.class === 'complete-label'), 'Complete/undo action needs a readable text label')
+    assert.ok(px(sheet,'.complete','height')>=64 && px(sheet,'.complete','width')>=64, 'Large circular vector action')
+    const primary = tree.find(n => n.events?.click === 'onCurrentSetAction')
+    assert.deepEqual(primary.children.map(n => n.type), ['image'], 'Complete/undo must remain vector-only')
     assert.ok(px(sheet,'.set-hit','width')>=48 && px(sheet,'.set-hit','height')>=48, 'Dot touch target')
     assert.equal(px(sheet,'.set-dot','width'),24, 'Readable normal dot')
     assert.equal(px(sheet,'.set-dot','height'),24, 'Round normal dot')
@@ -118,12 +120,14 @@ for (const page of Object.keys(manifest.router.pages)) {
     assert.ok(tree.some(n => n.type==='div' && n.class==='start-circle' && n.events?.click==='onStart' && n.children?.some(c => c.type==='image' && c.attr?.src==='/common/icons/play.svg')), 'Start must retain drawn icon and original click target')
     assert.ok(tree.some(n => n.type === 'list' && n.class === 'home-scroll'), 'Large home cards must scroll as one surface')
   } else if (page==='Keypad') {
-    flexViewport(sheet,'.editor-scroll')
+    flexViewport(sheet,'.editor-content')
     assert.ok(px(sheet,'.step','width')>=44 && px(sheet,'.step','height')>=44)
     assert.ok(2*px(sheet,'.step','width')+px(sheet,'.show','width')<=px(sheet,'.step-row','width'))
     assert.ok(px(sheet,'.show','fontSize')>=64)
-    assert.ok(px(sheet,'.k','height')>=60 && px(sheet,'.cancel','height')>=64 && px(sheet,'.ok','height')>=64, 'Large keys and fixed Save/Cancel targets')
-    assert.ok(template.children.some(n => n.class === 'actions'), 'Save/Cancel must remain outside the editor scroll')
+    assert.ok(px(sheet,'.k','height')>=44 && px(sheet,'.cancel','height')>=56 && px(sheet,'.ok','height')>=56, 'Large keys and fixed Save/Cancel targets')
+    const keyboardHeight = px(sheet,'.label','marginTop') + ['.label','.keyboard-target','.keyboard-value','.grid','.keyboard-switch','.actions'].reduce((n,s)=>n+px(sheet,s,'height'),0) + px(sheet,'.actions','marginTop') + px(sheet,'.actions','marginBottom')
+    assert.ok(keyboardHeight<=450, 'Every keyboard row must fit one screen')
+    assert.ok(template.children.some(n => n.class === 'actions'), 'Save/Cancel must remain fixed')
     assert.ok(tree.some(n=>n.events?.click==='onKeyOk'), 'Explicit Save missing')
   } else if (page==='Summary') {
     flexViewport(sheet,'.scroll')

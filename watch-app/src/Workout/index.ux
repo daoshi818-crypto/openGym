@@ -1472,7 +1472,7 @@ export default pageDefinition
         </div>
         <div class="last-row" if="{{ lastOn }}" onclick="openLast"><text class="last-text">{{ lastLine }}</text></div><div class="last-space" if="{{ !lastOn }}"></div>
         <div class="navrow">
-          <div class="complete {{ effortEntryOn ? 'with-effort' : '' }} {{ rowDone || paused ? 'secondary' : '' }}" onclick="onCurrentSetAction"><image class="complete-icon" src="{{ paused ? '/common/icons/pause.svg' : rowDone ? '/common/icons/undo.svg' : '/common/icons/check.svg' }}" /><text class="complete-label">{{ paused ? '暂停中' : rowDone ? '撤回本组' : '完成本组' }}</text></div>
+          <div class="complete {{ rowDone || paused ? 'secondary' : '' }}" onclick="onCurrentSetAction"><image class="complete-icon" src="{{ paused ? '/common/icons/pause.svg' : rowDone ? '/common/icons/undo.svg' : '/common/icons/check.svg' }}" /></div>
           <div class="effort-circle" if="{{ effortEntryOn }}" onclick="openEffort"><text class="effort-caption">{{ effortScaleLabel }}</text><text class="effort-entry-value">{{ effortNumber }}</text></div>
         </div>
         <div class="set-dots">
@@ -1583,9 +1583,9 @@ export default pageDefinition
 .last-space { width: 338px; height: 44px; }
 .last-row { width: 338px; height: 44px; align-items: center; }
 .last-text { width: 338px; font-size: 18px; color: #929297; lines: 1; }
-.navrow { width: 338px; height: 64px; flex-direction: row; align-items: center; justify-content: space-between; }
-.complete { width: 338px; height: 64px; border-radius: 32px; background-color: #30D158; justify-content: center; align-items: center; flex-direction: row; }
-.complete-icon { width: 32px; height: 32px; margin-right: 8px; }
+.navrow { width: 338px; height: 64px; flex-direction: row; align-items: center; justify-content: center; }
+.complete { width: 64px; height: 64px; border-radius: 32px; background-color: #30D158; justify-content: center; align-items: center; }
+.complete-icon { width: 40px; height: 40px; }
 .back-icon { width: 26px; height: 26px; margin-right: 6px; }
 .back-label { color: #30D158; font-size: 20px; }
 .secondary { background-color: #242725; color: #30D158; }
@@ -1681,9 +1681,6 @@ export default pageDefinition
 .diagnostic-text { width: 338px; font-size: 22px; color: #FFFFFF; lines: 0; }
 .diagnostic-buttons { width: 338px; height: 72px; flex-direction: row; justify-content: space-between; margin-bottom: 24px; }
 
-.with-effort { width: 218px; }
-.complete-label { color: #000000; font-size: 25px; }
-.secondary .complete-label { color: #30D158; }
 .rest-content { width: 338px; flex-direction: column; align-items: center; }
 .history-button { width: 338px; height: 60px; margin-bottom: 12px; border-radius: 30px; font-size: 23px; background-color: #1C1C1E; color: #FFFFFF; }
 .modal-scroll { width: 338px; flex: 1; min-height: 0px; margin-top: 40px; margin-bottom: 32px; }
@@ -1700,9 +1697,6 @@ export default pageDefinition
  .fval { height: 52px; line-height: 52px; font-size: 52px; }
  .long-value { font-size: 32px; }
  .extra-long-value { font-size: 24px; }
- .complete { width: 300px; }
- .with-effort { width: 194px; }
- .complete-label { font-size: 23px; }
  .effort-circle { width: 96px; margin-left: 10px; }
  .set-hit { width: 48px; height: 48px; }
  .set-dots { justify-content: center; }

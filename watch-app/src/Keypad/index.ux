@@ -130,68 +130,66 @@ export default {
 
 <template>
 <div class="page" id="keypad" touch-focusable="true" onrotation="onRotation">
-  <list class="editor-scroll"><list-item class="editor-content {{ inputMode === 'keypad' ? 'keyboard-content' : '' }}" type="editor">
-    <text class="label" if="{{ inputMode !== 'keypad' }}">编辑{{ label }} · {{ unit }}</text>
-    <text class="label keyboard-label {{ notice ? 'notice-label' : '' }}" if="{{ inputMode === 'keypad' }}">{{ notice || ('编辑' + label + ' · ' + unit + ' · 第 ' + (setIdx + 1) + ' 组') }}</text>
-    <text class="edit-target {{ inputMode === 'keypad' ? 'keyboard-target' : '' }}">{{ targetName }}</text><text class="edit-group" if="{{ inputMode !== 'keypad' }}">第 {{ setIdx + 1 }} 组</text>
+  <div class="editor-content">
+    <text class="label {{ notice ? 'notice-label' : '' }}">{{ notice || ('编辑' + label + ' · ' + unit + ' · 第 ' + (setIdx + 1) + ' 组') }}</text>
+    <text class="edit-target {{ inputMode === 'keypad' ? 'keyboard-target' : '' }}">{{ targetName }}</text>
     <div class="quick" if="{{ inputMode === 'quick' }}"><div class="step-row"><input class="step" type="button" value="−" onclick="minus" /><text class="show {{ show.length > 8 ? 'extra-long-value' : show.length > 5 ? 'long-value' : '' }}">{{ show }}</text><input class="step" type="button" value="+" onclick="plus" /></div><text class="step-hint">{{ unit }} · 每次 ±{{ stepLabel }}</text><input class="switch" type="button" value="键盘精确输入" onclick="useKeyboard" /></div>
     <text class="keyboard-value {{ show.length > 8 ? 'keyboard-long-value' : '' }}" if="{{ inputMode === 'keypad' }}">{{ show }} {{ unit }}</text>
     <div class="grid" if="{{ inputMode === 'keypad' }}">
       <input class="k" type="button" value="1" onclick="onKey1" /><input class="k" type="button" value="2" onclick="onKey2" /><input class="k" type="button" value="3" onclick="onKey3" /><input class="k" type="button" value="4" onclick="onKey4" /><input class="k" type="button" value="5" onclick="onKey5" /><input class="k" type="button" value="6" onclick="onKey6" /><input class="k" type="button" value="7" onclick="onKey7" /><input class="k" type="button" value="8" onclick="onKey8" /><input class="k" type="button" value="9" onclick="onKey9" /><div class="k key-symbol" onclick="decimalOrClear"><text class="decimal" if="{{ field === 'w' }}">.</text><image class="key-icon" if="{{ field !== 'w' }}" src="/common/icons/backspace.svg" /></div><input class="k" type="button" value="0" onclick="onKey0" /><input class="k c" type="button" value="清空" onclick="onKeyC" />
     </div>
-    <input class="switch keyboard-switch" type="button" if="{{ inputMode === 'keypad' }}" value="返回减加" onclick="useQuick" /><text class="notice" if="{{ notice && inputMode !== 'keypad' }}">{{ notice }}</text>
-  </list-item></list>
+    <input class="switch keyboard-switch" type="button" if="{{ inputMode === 'keypad' }}" value="返回减加" onclick="useQuick" />
+  </div>
   <div class="actions"><input class="cancel" type="button" value="取消" onclick="onCancel" /><input class="ok" type="button" value="{{ saving ? '保存中' : '保存' }}" disabled="{{ saving }}" onclick="onKeyOk" /></div>
 </div>
 </template>
 
 <style>
-/* Explicit-save drafts. Large keys scroll; Save/Cancel always stay outside the scroll viewport. */
+/* Quick adjustment and the full keyboard fit one screen; neither mounts a native list.
+   Keyboard budget: 18+24+24+44+216+44+4+56+20=450 square,
+   34+24+24+40+184+44+4+56+56=466 round. */
 .page { width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
-.editor-scroll { width: 338px; flex: 1; min-height: 0px; margin-top: 32px; }
-.editor-content { width: 100%; min-height: 0px; flex-direction: column; align-items: center; padding-bottom: 16px; }
-.label { width: 314px; height: 36px; margin-top: 18px; font-size: 22px; color: #929297; }
-.edit-target { width: 338px; height: 64px; line-height: 32px; font-size: 28px; font-weight: bold; color: #FFFFFF; lines: 2; }
-.edit-group { width: 338px; height: 32px; font-size: 21px; color: #929297; }
-.quick { width: 338px; flex-direction: column; align-items: center; }
+.editor-content { width: 338px; flex: 1; min-height: 0px; flex-direction: column; align-items: center; }
+.label { width: 314px; height: 24px; margin-top: 18px; font-size: 18px; color: #929297; lines: 1; }
+.edit-target { width: 338px; height: 56px; line-height: 28px; font-size: 26px; font-weight: bold; color: #FFFFFF; lines: 2; }
+.quick { width: 338px; flex: 1; min-height: 0px; flex-direction: column; align-items: center; justify-content: center; }
 .step-row { width: 338px; height: 112px; flex-direction: row; justify-content: space-between; align-items: center; }
 .step { width: 64px; height: 64px; border-radius: 32px; font-size: 36px; background-color: #242725; color: #FFFFFF; }
 .show { width: 194px; height: 100px; line-height: 100px; font-size: 64px; color: #30D158; text-align: center; lines: 1; }
 .long-value { font-size: 40px; }
 .extra-long-value { font-size: 28px; }
-.step-hint { width: 338px; height: 36px; font-size: 20px; color: #929297; text-align: center; }
-.switch { width: 338px; height: 60px; border-radius: 30px; font-size: 23px; background-color: #161D18; color: #FFFFFF; }
-.actions { width: 338px; height: 64px; margin-top: 8px; flex-direction: row; justify-content: space-between; margin-bottom: 24px; flex-shrink: 0; }
-.cancel { width: 146px; height: 64px; border-radius: 32px; font-size: 25px; background-color: #242725; color: #FFFFFF; }
-.ok { width: 182px; height: 64px; border-radius: 32px; font-size: 25px; background-color: #0A3418; color: #30D158; }
-.keyboard-content { padding-bottom: 20px; }
-.keyboard-label { height: 36px; margin-top: 18px; font-size: 21px; lines: 2; }
-.keyboard-target { height: 64px; line-height: 32px; font-size: 28px; }
-.keyboard-value { width: 338px; height: 64px; font-size: 48px; color: #30D158; text-align: center; lines: 1; }
+.step-hint { width: 338px; height: 32px; font-size: 20px; color: #929297; text-align: center; }
+.switch { width: 338px; height: 56px; border-radius: 28px; font-size: 23px; background-color: #161D18; color: #FFFFFF; }
+.actions { width: 338px; height: 56px; margin-top: 4px; flex-direction: row; justify-content: space-between; margin-bottom: 20px; flex-shrink: 0; }
+.cancel { width: 146px; height: 56px; border-radius: 28px; font-size: 25px; background-color: #242725; color: #FFFFFF; }
+.ok { width: 182px; height: 56px; border-radius: 28px; font-size: 25px; background-color: #0A3418; color: #30D158; }
+.keyboard-target { height: 24px; line-height: 24px; font-size: 22px; lines: 1; }
+.keyboard-value { width: 338px; height: 44px; line-height: 44px; font-size: 40px; color: #30D158; text-align: center; lines: 1; }
 .keyboard-long-value { font-size: 30px; }
-.keyboard-switch { height: 56px; font-size: 23px; }
+.keyboard-switch { height: 44px; font-size: 21px; }
 .notice-label { color: #FF9F0A; }
-.grid { width: 338px; flex-direction: row; flex-wrap: wrap; justify-content: space-between; }
-.k { width: 106px; height: 60px; margin-bottom: 8px; font-size: 32px; border-radius: 28px; background-color: #1C1C1E; color: #FFFFFF; }
+.grid { width: 338px; height: 216px; flex-direction: row; flex-wrap: wrap; justify-content: space-between; }
+.k { width: 106px; height: 50px; margin-bottom: 4px; font-size: 30px; border-radius: 25px; background-color: #1C1C1E; color: #FFFFFF; }
 .key-symbol { justify-content: center; align-items: center; }
 .key-icon { width: 30px; height: 30px; }
 .decimal { color: #FFFFFF; font-size: 25px; }
 .c { color: #FF453A; }
-.notice { width: 338px; min-height: 44px; color: #FF9F0A; font-size: 22px; lines: 2; }
 
 @media screen and (min-width: 450px) {
 
- .editor-scroll { width: 300px; margin-top: 58px; }
  .editor-content { width: 300px; }
- .label { width: 300px; margin-top: 0px; }
- .edit-target, .edit-group, .quick, .step-row, .step-hint, .switch, .actions, .keyboard-value, .grid, .notice { width: 300px; }
+ .label { width: 220px; margin-top: 34px; font-size: 16px; }
+ .edit-target, .quick, .step-row, .step-hint, .switch, .actions, .keyboard-value, .grid { width: 300px; }
  .show { width: 156px; font-size: 52px; }
  .long-value { font-size: 34px; }
  .extra-long-value { font-size: 24px; }
- .actions { margin-bottom: 58px; }
+ .keyboard-value { height: 40px; line-height: 40px; font-size: 36px; }
+ .keyboard-long-value { font-size: 28px; }
+ .grid { height: 184px; }
+ .actions { margin-bottom: 56px; }
  .cancel { width: 128px; }
  .ok { width: 160px; }
- .k { width: 94px; }
+ .k { width: 94px; height: 44px; margin-bottom: 2px; border-radius: 22px; font-size: 28px; }
 
 }
 </style>

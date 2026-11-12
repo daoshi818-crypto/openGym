@@ -28,12 +28,13 @@ let activeBrowser
         return r.width && r.height && (r.left < -1 || r.right > innerWidth + 1 || r.top < -1 || r.bottom > innerHeight + 1)
       }).map(el => ({ cls: el.className, text: el.textContent }))
       const sideways = [...document.querySelectorAll('[data-type="list"]')].filter(e => e.scrollWidth > e.clientWidth + 1).map(e => e.className)
-      const clippedNumbers = [...document.querySelectorAll('.fval>span,.funit>span,.show>span,.rest>span')].filter(e => e.scrollWidth > e.clientWidth + 1).map(e => ({text:e.textContent,width:e.clientWidth,needed:e.scrollWidth}))
+      const clippedNumbers = [...document.querySelectorAll('.fval>span,.funit>span,.show>span,.keyboard-value>span,.rest>span')].filter(e => e.scrollWidth > e.clientWidth + 1).map(e => ({text:e.textContent,width:e.clientWidth,needed:e.scrollWidth}))
       // Being inside a scroll container must not exempt a single-screen form from checks.
       const main = document.querySelector('.screen:not(.operation-screen)')
-      const mustFit = !!main
+      const editor = document.querySelector('#keypad')
+      const mustFit = !!(main || editor)
       const scrollRequired = mustFit ? lists.filter(e => e.scrollHeight > e.height + 1) : []
-      const trainingLists = main ? [...main.querySelectorAll('[data-type="list"]')].map(e => e.className) : []
+      const trainingLists = (main || editor) ? [...(main || editor).querySelectorAll('[data-type="list"]')].map(e => e.className) : []
       const clippedPlan = false // Home is intentionally one native scrolling list.
       // 80 design-pixel mask is deliberately conservative, not a measured GT1 radius.
       // Measure visible text runs (not transparent layout boxes); obey ancestor/list clips.

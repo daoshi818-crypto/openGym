@@ -42,12 +42,26 @@ describe('GT1 complete-screen rebuild contracts', () => {
     expect(h('topbar')+h('topbar','margin-top')+h('primary-footer')+h('primary-footer','margin-bottom')+
       ['ex','group','inputs','last-row','navrow'].reduce((n,s)=>n+h(s),0)+h('set-dots','min-height')).toBeLessThanOrEqual(450)
   })
-  it('keeps large keyboard keys in a scroll area and Save/Cancel outside it', () => {
+  it('keeps quick adjustment and all twelve keyboard targets on a fixed screen', () => {
     const h = (s,p='height') => cssSize('Keypad',s,p)
-    for (const s of ['k','cancel','ok','keyboard-switch']) expect(h(s)).toBeGreaterThanOrEqual(56)
+    for (const s of ['k','keyboard-switch']) expect(h(s)).toBeGreaterThanOrEqual(44)
+    for (const s of ['cancel','ok']) expect(h(s)).toBeGreaterThanOrEqual(56)
     const root = sourceTemplate(watchSource('Keypad/index.ux'))
-    expect(root.children.map(n => n.class)).toEqual(['editor-scroll', 'actions'])
+    const nodes = n => [n, ...(n.children || []).flatMap(nodes)]
+    expect(root.children.map(n => n.class)).toEqual(['editor-content', 'actions'])
+    expect(nodes(root).some(n => n.type === 'list')).toBe(false)
+    expect(nodes(root).filter(n => (n.class || '').split(' ').includes('k'))).toHaveLength(12)
+    expect(h('label','margin-top') + h('label') + h('keyboard-target') + h('keyboard-value') +
+      h('grid') + h('keyboard-switch') + h('actions','margin-top') + h('actions') + h('actions','margin-bottom')).toBeLessThanOrEqual(450)
     expect(watchSource('Keypad/index.ux')).toContain('notice ||')
+  })
+  it('uses only a bundled vector for complete, undo and pause inside the primary button', () => {
+    const root = sourceTemplate(watchSource('Workout/index.ux'))
+    const nodes = n => [n, ...(n.children || []).flatMap(nodes)]
+    const button = nodes(root).find(n => n.action === 'onCurrentSetAction')
+    expect(button.children.map(n => n.type)).toEqual(['image'])
+    expect(button.children[0].attr.$src).toContain('/common/icons/undo.svg')
+    expect(cssSize('Workout','complete','width')).toBeGreaterThanOrEqual(64)
   })
   it('keeps large home cards and recent results in one native scroll viewport', () => {
     const h = (s,p='height') => cssSize('Index',s,p)
@@ -77,7 +91,8 @@ describe('GT1 complete-screen rebuild contracts', () => {
     const root = css.match(/\.page\s*\{([^}]+)\}/)[1]
     expect(root).toContain('width: 100%'); expect(root).toContain('height: 100%')
     expect(root).not.toMatch(/padding|margin|top:|left:/)
-    expect(src).toContain('<list ')
+    if (name === 'Keypad') expect(src).not.toContain('<list ')
+    else expect(src).toContain('<list ')
     for (const wrapper of ['screen','content']) {
       const rules = css.match(new RegExp('\\.' + wrapper + '\\s*\\{([^}]+)\\}'))
       if (rules) { expect(rules[1]).toContain('width: 100%'); expect(rules[1]).toContain('height: 100%') }
