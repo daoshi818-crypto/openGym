@@ -2,12 +2,12 @@ import { commitPageAction } from '../../../watch-app/src/lib/local-action.js'
 import { describe, expect, it, vi } from 'vitest'
 import { runInNewContext } from 'node:vm'
 import { rotationStep, valueStep } from '../../../watch-app/src/lib/value-step.js'
-import { captureRow, rowTarget, setDotWindow } from '../../../watch-app/src/lib/workout-interaction.js'
+import { captureRow, rowTarget, setDotWindow, createSetDotPicker } from '../../../watch-app/src/lib/workout-interaction.js'
 import { stripImports, watchSource } from './watch-test-harness.js'
 const makeState = (count = 4) => ({ active: true, sid: 's', exIdx: 0, setIdx: 0, weightUnit: 'kg', workout: {
   exercises: [{ entryInstanceId: 'e', name: 'Row' }], rows: [Array.from({ length: count }, (_, i) => ({ setId: 'r' + i, w: '', r: 8, done: false }))] } })
 function workout(s = makeState()) {
-  const ctx = { Date, commitPageAction, commitSessionAction: async (sid, action) => ({ ok: true, output: action(s) }), replayPendingEvents: vi.fn(), rotationStep, valueStep, captureRow, rowTarget, setDotWindow,
+  const ctx = { Date, commitPageAction, commitSessionAction: async (sid, action) => ({ ok: true, output: action(s) }), replayPendingEvents: vi.fn(), rotationStep, valueStep, captureRow, rowTarget, setDotWindow, createSetDotPicker,
     storage: { getSync: () => 0.5 }, loadState: () => s, save: vi.fn(),
     persistenceStatus: () => ({ failed: false }), storageStatus: () => ({ failed: false }), pendingCount: () => 0,
     setRowValue: vi.fn((state, ex, set, field, value) => { state.workout.rows[ex][set][field] = value; state.pendingEdits = [{ eventId: 'original', t: 'weight' }] }),

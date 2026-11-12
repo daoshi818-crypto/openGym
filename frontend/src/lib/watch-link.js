@@ -1,4 +1,5 @@
 import { createCommandStateCache } from './watch-command-state.js'
+import { phoneWatchLog } from './watch-diagnostic-log.js'
 import { persistentSender } from '../../../watch-app/src/lib/persistent-transfer.js'
 // 手表连接（vivo 智能终端 SDK）：设置页的「连接手表」与训练页的自动推计划都走这里。
 //
@@ -36,6 +37,7 @@ let lastSyncReceipt = null
 let lastWatchRx = null
 let lastWatchTransport = null, watchDiagnosticProbe = null
 let watchDiagnosticRequest = null, diagnosticSequence = 0
+let watchLogProbe = null, watchLogRequest = null
 let lastPlanClear = null
 let lastPublishedPlan = null
 let onWatchLifecycle = () => false
@@ -154,7 +156,7 @@ export function holdWatchOutbound() {
     Promise.resolve().then(flushPendingPlan)
   }
 }
-export function setWatchCommitStatus(status) { commitStatus = status; for (const cb of commitListeners) { try { cb(status) } catch { /* isolated subscriber */ } } }
+export function setWatchCommitStatus(status) { phoneWatchLog.record('phone_commit', status); commitStatus = status; for (const cb of commitListeners) { try { cb(status) } catch { /* isolated subscriber */ } } }
 let drainingInbox = false, inboxDrainTimer = null
 const claimedInboxIds = new Set()
 function scheduleInboxDrain(delay = 100) {
@@ -217,6 +219,7 @@ export function onWatchState(cb) {
 }
 
 function setState(s, error = '') {
+  phoneWatchLog.record('connection', { status: s, code: error ? 'connection_error' : '' })
   state = s
   lastError = error
   for (const cb of listeners) {
@@ -273,6 +276,11 @@ function onNativeWatchState(ev) {
 function onNativeWatchEvent(ev) {
   try {
     if (!ev) return
+    if (ev.t === 'watch_log') {
+      if (watchLogProbe?.id === ev.requestId && watchLogProbe.offset === ev.offset) watchLogProbe.finish(ev)
+      return
+    }
+    phoneWatchLog.record('receive', ev)
     if (ev._inboxId && claimedInboxIds.has(ev._inboxId)) return
     if (ev.t === 'device') {
       device = { ...(device || {}), ...ev }
@@ -495,6 +503,62 @@ export async function getWatchDiagnostics() {
   }
 }
 
+/** Explicit paged metadata read, separate from training ACKs and durable queues. */
+export function requestWatchLog() {
+  if (watchLogRequest) return watchLogRequest
+  watchLogRequest = readWatchLog().finally(() => { watchLogRequest = null })
+  return watchLogRequest
+}
+async function readWatchLog() {
+  await bindNative()
+  const p = await watchPlugin()
+  if (!p) return { status: 'unavailable', events: [] }
+  const id = 'log-' + Date.now() + '-' + (++diagnosticSequence), events = []
+  let offset = 0, header = null
+  for (let page = 0; page < 64; page++) {
+    let reply = null
+    for (let attempt = 0; attempt < 2 && !reply; attempt++) {
+      reply = await new Promise(resolve => {
+        let timer
+        const probe = { id, offset, finish(value) {
+          if (watchLogProbe !== probe) return
+          clearTimeout(timer); watchLogProbe = null; resolve(value)
+        } }
+        watchLogProbe = probe
+        timer = setTimeout(() => probe.finish(null), 2500)
+        Promise.resolve().then(() => p.WatchRpc.sendEvent({ json: JSON.stringify({ t: 'watch_log_request', requestId: id, offset }) }))
+          .then(r => { if (!r?.ok) probe.finish(null) }, () => probe.finish(null))
+      })
+    }
+    if (!reply) return { status: events.length ? 'partial' : 'timeout', events, collectedAt: Date.now() }
+    if (reply.status !== 'ok' || !Array.isArray(reply.events) || !Number.isSafeInteger(reply.total) || reply.total < 0 || reply.total > 64 ||
+        !Number.isSafeInteger(reply.nextOffset) || reply.nextOffset !== offset + reply.events.length || reply.nextOffset > reply.total ||
+        reply.events.length > 12 || reply.nextOffset === offset && offset < reply.total ||
+        header && (header.boot !== reply.boot || header.total !== reply.total))
+      return { status: 'invalid_reply', events, collectedAt: Date.now() }
+    header ||= { watchVersion: String(reply.watchVersion || '').slice(0, 40), boot: String(reply.boot || '').slice(0, 32),
+      storageFailed: !!reply.storageFailed, unflushed: !!reply.unflushed, total: reply.total }
+    // Keep only scalar diagnostic fields, even if an incompatible peer sends extra data.
+    for (const e of reply.events) {
+      if (!e || typeof e !== 'object') return { status: 'invalid_reply', events }
+      const clean = {}
+      for (const key of ['at', 'stage', 'boot', 'count', 'firstAt', 'sid', 'eventId', 'entryInstanceId', 'setId', 'type', 'code', 'detail', 'version', 'status', 'ex', 'set', 'rev', 'pending', 'rest', 'paused', 'ok', 'duration', 'bytes']) {
+        const value = e[key]
+        if (typeof value === 'string') clean[key] = value.slice(0, 80)
+        else if (typeof value === 'boolean' || typeof value === 'number' && Number.isFinite(value)) clean[key] = value
+      }
+      events.push(clean)
+    }
+    offset = reply.nextOffset
+    if (offset === reply.total) {
+      const log = { ...header, status: 'received', collectedAt: Date.now(), events }
+      phoneWatchLog.cacheWatch(log)
+      return log
+    }
+  }
+  return { status: 'partial', events, collectedAt: Date.now() }
+}
+
 // ---- 训练页 API：把今天的训练推给手表 ----
 
 /** 训练开始时调用一次；训练中途计划变了（加/删动作）再调一次，手表整包热替换。 */
@@ -617,9 +681,11 @@ async function sendWatchEvent(obj) {
   try {
     if (!obj.t.startsWith('sync') && !['hello_ack', 'ack', 'committed', 'received', 'effort_ack', 'event_rejected', 'watch_start_ack'].includes(obj.t)) await trainingStore?.checkpoint?.()
     const r = await p.WatchRpc.sendEvent({ json: JSON.stringify(obj) })
+    phoneWatchLog.record('send_result', { ...obj, ok: !!r?.ok })
     if (r && !r.ok) lastError = r.data || 'send event failed'
     return !!(r && r.ok)
   } catch (e) {
+    phoneWatchLog.record('send_exception', { t: obj.t, sid: obj.sid, code: 'sdk_exception' })
     lastError = e && e.message ? e.message : 'send event failed'
     return false
   }

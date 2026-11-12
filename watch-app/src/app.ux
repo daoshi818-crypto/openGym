@@ -1,5 +1,7 @@
 <script>
 import { bindRuntime, runtime } from './lib/runtime.js'
+import { recordDiagnostic, flushDiagnosticLog } from './lib/diagnostic-log.js'
+import { WATCH_VERSION } from './lib/version.js'
 export default {
   onCreate() {
     bindRuntime(this.$def || this)
@@ -10,8 +12,13 @@ export default {
       clearInterval: id => clearInterval(id),
     }
     console.log('opengym 启动')
+    try { recordDiagnostic('app_start', { version: WATCH_VERSION }); flushDiagnosticLog() } catch { /* Diagnostics are optional. */ }
   },
-  onDestroy() { (this.$def || this).openGymRuntime?.hrCapture?.stop() },
+  onDestroy() {
+    try { recordDiagnostic('app_destroy'); flushDiagnosticLog() } catch { /* Best effort only. */ }
+    const app = this.$def || this
+    app.openGymRuntime?.hrCapture?.stop()
+  },
 }
 </script>
 

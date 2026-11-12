@@ -6,6 +6,7 @@ import { t } from '../lib/i18n.js'
 import { isOn } from '../lib/modules.js'
 import { confirmSheet } from '../sheets.jsx'
 import { Button, Section, Row } from '../components/ui.jsx'
+import WatchIntegration from '../components/WatchIntegration.jsx'
 
 const EVENTS = ['workout.finished','workout.pr','weighin.logged']
 export default function Integrations() {
@@ -24,7 +25,7 @@ export default function Integrations() {
   return <div className="narrow feature-page"><Button variant="ghost" onClick={() => nav('/settings')}>{t('Back')}</Button><h1>{t('Integrations')}</h1>
     <p className="muted">{t('Connect devices, health apps and your own services without changing your training log.')}</p>
     <Section title={t('On this device')}>
-      {isOn(S,'watch') && <Row title={t('vivo BlueOS watch')} accessory="chevron" onClick={() => nav('/settings/alerts')} />}
+      {isOn(S,'watch') && <WatchIntegration />}
       {isOn(S,'health') && <Row title={t('Health')} accessory="chevron" onClick={() => nav('/settings/data')} />}
       {isOn(S,'coach') && <Row title={t('AI Coach')} accessory="chevron" onClick={() => nav('/coach')} />}
       <Row title={t('Import and export')} accessory="chevron" onClick={() => nav('/settings/data')} />

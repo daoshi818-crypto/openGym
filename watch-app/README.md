@@ -15,8 +15,11 @@ the page or pushing the fixed footer off screen. See [GT1 rebuild and acceptance
 
 - Swipe left to switch between training and operations; swipe right to open the exercise list.
   Vertical gestures scroll the native lists. Tap the exercise name to open the exercise list and jump to its first unfinished set.
-- Tap an unfinished set dot to select that set. Completed sets are not editable through the dots.
+- Tap a set dot to select it, including a completed set for undo.
   Large sets of dots use bounded windows; selection keeps stable session and row IDs.
+  As of 0.6.26, repeat nodes retain stable keys, current-set taps do not write, and
+  rapid taps coalesce for 120ms before committing only the latest unaccepted target.
+  Accepted durable events remain intact; leaving the page cancels uncommitted input.
 - Tap weight/reps once to select the field. Rotate the crown to adjust the selected field only;
   tap the selected field again for the keypad. Rest retains its own 5-second crown adjustment.
   The keypad shares one draft between digit entry, +/- and crown; cancel does not save.

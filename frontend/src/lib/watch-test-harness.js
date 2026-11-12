@@ -6,10 +6,10 @@ import { runInNewContext } from 'node:vm'
 import { persistentReceiver } from '../../../watch-app/src/lib/persistent-transfer.js'
 import { commitPageAction } from '../../../watch-app/src/lib/local-action.js'
 import { rotationStep, valueStep } from '../../../watch-app/src/lib/value-step.js'
-import { captureRow, rowTarget, setDotWindow } from '../../../watch-app/src/lib/workout-interaction.js'
+import { captureRow, rowTarget, setDotWindow, createSetDotPicker } from '../../../watch-app/src/lib/workout-interaction.js'
 
 // Real page imports, not stubs: keep VM tests in sync with the shipped page modules.
-export const watchInteractionDeps = { replayPendingEvents: () => {}, commitPageAction, rotationStep, valueStep, captureRow, rowTarget, setDotWindow }
+export const watchInteractionDeps = { replayPendingEvents: () => {}, commitPageAction, rotationStep, valueStep, captureRow, rowTarget, setDotWindow, createSetDotPicker }
 
 export const watchSource = path => readFileSync(new URL('../../../watch-app/src/' + path, import.meta.url), 'utf8')
 export const stripImports = code => code
@@ -19,6 +19,9 @@ export const stripImports = code => code
   .replace(/^export function /gm, 'function ')
 
 export function loadWatchModule(name, ctx, names) {
+  if (name === 'rpc' && !ctx.recordDiagnostic) loadWatchModule('diagnostic-log', ctx, ['recordDiagnostic', 'flushDiagnosticLog', 'diagnosticLog', 'diagnosticLogPage'])
+  if (name === 'diagnostic-log' && !ctx.appTimeout) loadWatchModule('app-timers', ctx, ['appTimeout', 'cancelAppTimeout', 'appInterval', 'cancelAppInterval'])
+  if (name === 'diagnostic-log' && !ctx.wireBytes) loadWatchModule('sync-wire', ctx, ['wireHash', 'wireBytes', 'acceptWireChunk', 'expandWireDelta'])
   if (['rpc', 'persistence'].includes(name) && !ctx.appTimeout) loadWatchModule('app-timers', ctx, ['appTimeout', 'cancelAppTimeout', 'appInterval', 'cancelAppInterval'])
   if (name === 'rpc') ctx.persistentReceiver = persistentReceiver
   if (name === 'rpc' && !ctx.acceptWireChunk) loadWatchModule('sync-wire', ctx, ['wireHash', 'wireBytes', 'acceptWireChunk', 'expandWireDelta'])

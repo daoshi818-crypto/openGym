@@ -1,11 +1,12 @@
 <script>
 import { commitPageAction } from '../lib/local-action.js'
 import { bindRuntime, runtime } from '../lib/runtime.js'
+import { recordDiagnostic, flushDiagnosticLog } from '../lib/diagnostic-log.js'
 // 主训练页（单屏 + 手势）：重量/次数保持可见，休息态只保留必要操作。
 import router from '@blueos.app.appmanager.router'
 import storage from '@blueos.storage.storage'
 import { rotationStep, valueStep } from '../lib/value-step.js'
-import { captureRow, rowTarget, setDotWindow } from '../lib/workout-interaction.js'
+import { captureRow, rowTarget, setDotWindow, createSetDotPicker } from '../lib/workout-interaction.js'
 import brightness from '@blueos.hardware.display.brightness'
 import {
   loadState, readSessionHr, save, commitSessionAction, stageSessionEvent, replacePlan, applySync, toggleSet, nextUndone, nextUndoneFrom,
@@ -127,6 +128,7 @@ const pageDefinition = {
   },
 
   onShow() {
+    this.logInteraction('page_show')
     this.resetInteraction()
     this.visible = true
     // Keypad/动作列表独立读取并保存会话，返回训练页时重新读取，确保重量立即回显。
@@ -189,12 +191,14 @@ const pageDefinition = {
   openMenu() { this.menuOn = true; this.leaveChoice = false },
   openActions() { if (!this.isRest) this.pageIndex = 1; this.menuOn = false },
   resetInteraction() {
+    this.logInteraction('interaction_reset')
+    this.cancelSetDotPick()
     this.touchCancel()
     this.trailingTapBlockedUntil = 0
     this.autoFocusIgnoreUntil = 0
     this.navPending = false
   },
-  interactionBlocked() { return !!this.touchAxis || Date.now() < (this.trailingTapBlockedUntil || 0) || Date.now() < (this.autoFocusIgnoreUntil || 0) },
+  interactionBlocked(allowSetPick) { return !!this.touchAxis || Date.now() < (this.trailingTapBlockedUntil || 0) || Date.now() < (this.autoFocusIgnoreUntil || 0) || allowSetPick !== true && !!this.setDotPicker?.pending() },
   openExercises(fromGesture) {
     if (this.navPending) return
     if (fromGesture !== true && this.interactionBlocked()) return
@@ -265,6 +269,8 @@ const pageDefinition = {
   },
 
   onHide() {
+    this.logInteraction('page_hide', {}, true)
+    this.cancelSetDotPick()
     this.touchCancel()
     this.trailingTapBlockedUntil = 0
     this.visible = false
@@ -276,6 +282,8 @@ const pageDefinition = {
   },
 
   onDestroy() {
+    this.logInteraction('page_destroy', {}, true)
+    this.cancelSetDotPick()
     this.visible = false
     this.touchCancel()
     if (this.timer) clearInterval(this.timer)
@@ -412,6 +420,7 @@ const pageDefinition = {
   onMenuNext() { this.menuOn = false; this.stepSet(1) },
 
   stepSet(dir) {
+    if (this.setDotPicker?.pending()) return false
     return commitPageAction(this, function() {
     const s = this.state
     if (!s.workout || !s.workout.rows.length) return
@@ -435,6 +444,7 @@ const pageDefinition = {
   },
 
   stepExercise(dir) {
+    if (this.setDotPicker?.pending()) return false
     return commitPageAction(this, function() {
     const s = this.state
     if (!s.workout || !s.workout.exercises.length) return
@@ -495,26 +505,59 @@ const pageDefinition = {
   },
   refreshSetDots(page) {
     const view = setDotWindow(this.state, page)
-    this.dotPage = view.page; this.setDots = view.dots; this.dotSegmented = view.segmented
+    const dots = this.setDots || []
+    if (dots.length !== view.dots.length || view.dots.some((dot, i) => dot.key !== dots[i].key)) this.setDots = view.dots
+    else for (let i = 0; i < dots.length; i++) {
+      if (dots[i].exIdx !== view.dots[i].exIdx) dots[i].exIdx = view.dots[i].exIdx
+      if (dots[i].current !== view.dots[i].current) dots[i].current = view.dots[i].current
+      if (dots[i].done !== view.dots[i].done) dots[i].done = view.dots[i].done
+    }
+    this.dotPage = view.page; this.dotSegmented = view.segmented
     this.dotHasPrev = view.hasPrev; this.dotHasNext = view.hasNext
   },
   prevDotSegment() { if (!this.interactionBlocked() && this.dotHasPrev) this.refreshSetDots(this.dotPage - 1) },
   nextDotSegment() { if (!this.interactionBlocked() && this.dotHasNext) this.refreshSetDots(this.dotPage + 1) },
   pickSetDot(target) {
+    this.logInteraction('dot_tap', { entryInstanceId: target?.entryInstanceId, setId: target?.setId, set: target?.setIdx }, true)
+    if (this.visible === false || this.interactionBlocked(true) || this.isRest || this.paused || this.closeMode || this.effortOn || this.lastOpen || this.finishOn || !target) return false
+    const found = rowTarget(this.state, target)
+    if (!found || !this.setDotPicker?.pending() && found.exIdx === this.state.exIdx && found.setIdx === this.state.setIdx) return false
+    if (!this.setDotPicker) this.setDotPicker = createSetDotPicker(next => this.commitSetDot(next))
+    return this.setDotPicker.request({ sid: target.sid, entryInstanceId: target.entryInstanceId, setId: target.setId,
+      exIdx: target.exIdx, setIdx: target.setIdx, baseCommitRev: this.state.commitRev || 0 })
+  },
+  cancelSetDotPick() { if (this.setDotPicker) this.setDotPicker.cancel() },
+  logInteraction(stage, extra = {}, flush = false) {
+    try {
+      const s = this.state || {}
+      recordDiagnostic(stage, { sid: s.sid, ex: s.exIdx, set: s.setIdx, rev: s.commitRev || 0,
+        pending: !!this.localCommitPending, rest: !!this.isRest, paused: !!this.paused, ...extra })
+      if (flush) flushDiagnosticLog()
+    } catch { /* A diagnostic must never fail an interaction. */ }
+  },
+  commitSetDot(target) {
+    this.logInteraction('dot_commit_begin', { setId: target?.setId, set: target?.setIdx })
+    if (this.visible === false || this.interactionBlocked(true) || this.isRest || this.paused || this.closeMode || this.effortOn || this.lastOpen || this.finishOn) return false
+    const latest = loadState(), found = rowTarget(latest, target)
+    if (!found || latest.sid !== this.state.sid || found.exIdx !== latest.exIdx || latest.pausedAt || latest.restUntil || found.setIdx === latest.setIdx) return false
+    if (persistenceStatus().failed || storageStatus().failed || pendingCount() >= 256 || (latest.pendingEdits || []).length >= 256) {
+      this.inputNotice = '等待同步后再切换'; return false
+    }
     return commitPageAction(this, function() {
-    if (this.interactionBlocked() || this.isRest || this.paused || this.closeMode || this.effortOn || this.lastOpen || this.finishOn) return
+    if (this.interactionBlocked(true) || this.isRest || this.paused || this.closeMode || this.effortOn || this.lastOpen || this.finishOn) return
     const s = loadState(), found = rowTarget(s, target)
-    if (!found || s.sid !== this.state.sid || s.pausedAt || s.restUntil) return
+    if (!found || s.sid !== this.state.sid || found.exIdx !== s.exIdx || s.pausedAt || s.restUntil || found.setIdx === s.setIdx) return
     this.clearFieldSelection(); this.state = s
     this.autoFocusEx = found.exIdx; this.autoFocusSet = found.setIdx; this.autoFocusIgnoreUntil = 0
     s.exIdx = found.exIdx; s.setIdx = found.setIdx; s.focusAt = Date.now(); save(s)
     this.emitEvent({ t: 'focus', sid: s.sid, entryInstanceId: s.workout.exercises[s.exIdx].entryInstanceId,
-      setId: found.row.setId, ex: s.exIdx, set: s.setIdx + 1, at: s.focusAt, source: 'watch' })
+      setId: found.row.setId, ex: s.exIdx, set: s.setIdx + 1, baseCommitRev: target.baseCommitRev, at: s.focusAt, source: 'watch' })
     this.refresh()
     }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
   },
 
   onComplete() {
+    this.logInteraction('complete_tap')
     return commitPageAction(this, function() {
     if (this.isRest || this.paused || this.closeMode || this.interactionBlocked() || Date.now() < (this.completionIgnoreUntil || 0)) return
     const s = this.state
@@ -545,6 +588,7 @@ const pageDefinition = {
   },
 
   onUndo() {
+    if (this.setDotPicker?.pending()) return false
     return commitPageAction(this, function() {
     const s = this.state
     const exIdx = s.exIdx, setIdx = s.setIdx
@@ -684,6 +728,8 @@ const pageDefinition = {
   },
 
   onRemoteEnded() {
+    this.logInteraction('remote_end', {}, true)
+    this.cancelSetDotPick()
     this.cancelRestNudge()
     this.setRestScreenLock(false)
     this.hrDirty = false
@@ -1349,8 +1395,10 @@ const pageDefinition = {
   discardEnd() { return this.onEnd('discarded') },
   abandonEnd() { return this.onEnd('abandoned') },
   async onEnd(reason, notifyPhone = true) {
+    this.logInteraction('local_end', { status: typeof reason === 'string' ? reason : 'manual' }, true)
     if (typeof reason !== 'string') reason = 'manual'
     if (this.localCommitPending || this.closeSaving || !this.state?.active) return
+    this.cancelSetDotPick()
     this.closeSaving = true
     try {
       if ((await this.flushRestNudge()) === false) { this.syncWarning = true; this.syncLabel = '休息调整未保存，请重试'; return }
@@ -1400,7 +1448,7 @@ export default pageDefinition
         </div>
         <div class="set-dots">
           <input class="set-hit segment" if="{{ dotSegmented }}" type="button" value="‹" disabled="{{ !dotHasPrev }}" onclick="prevDotSegment" />
-          <div class="set-hit" for="{{ item in setDots }}" onclick="pickSetDot(item)"><div class="set-dot {{ item.current ? 'set-current' : item.done ? 'set-done' : '' }}"></div></div>
+          <div class="set-hit" for="{{ item in setDots }}" tid="key" onclick="pickSetDot(item)"><div class="set-dot {{ item.current ? 'set-current' : item.done ? 'set-done' : '' }}"></div></div>
           <input class="set-hit segment" if="{{ dotSegmented }}" type="button" value="›" disabled="{{ !dotHasNext }}" onclick="nextDotSegment" />
         </div>
       </list-item></list>

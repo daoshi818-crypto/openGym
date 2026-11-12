@@ -20,6 +20,7 @@ import { loadState, buildSessionSummary, summaryEventOf, closeSession, save, sta
 import { allocateEventIdentity, rememberEventAt } from './event-id.js'
 import { pendingSummaries, pendingCloseEvents, pendingEntry, journalEntry, prepareClose, releaseCandidate, markPhase, markEntry, markDelivered } from './close-journal.js'
 import { WATCH_VERSION } from './version.js'
+import { recordDiagnostic, diagnosticLogPage } from './diagnostic-log.js'
 
 const PHONE_PACKAGE = 'ch.duartesantos.opengym'
 const PHONE_FINGERPRINT = '8bf64970048540fe913005d05becee1ecad819e7171518dabcd15817301a0149'
@@ -30,8 +31,7 @@ const REPLAY_BATCH = 2
 const rpcState = () => runtime().rpc ||= { ...{"connect":null,"handlers":{},"connected":false,"outbox":[],"sending":false,"retryTimer":null,"lastEventAt":0,"initialized":false,"connectionGeneration":0,"sendingTimer":null,"writeBusy":false,"writeDirty":false,"persistFailed":false}, durable: new Set(), lifecycleQueue: null }
 
 
-// Memory-only metadata: diagnostics must not write training storage, enter the durable
-// outbox, change retries, or include workout payloads. A broken console is nonfatal.
+// Metadata only; the independent bounded journal never enters training storage/outbox.
 function trace(stage, msg = {}, error = null, code = null) {
   try {
     const r = rpcState(), head = r.outbox[0]?.msg
@@ -47,6 +47,7 @@ function trace(stage, msg = {}, error = null, code = null) {
     const events = r.trace ||= []
     events.push(entry)
     if (events.length > 40) events.splice(0, events.length - 40)
+    recordDiagnostic(stage, { ...entry, type: entry.type, status: msg.status, rev: msg.commitRev })
     console.info?.('[watch-rpc] ' + JSON.stringify(entry))
   } catch { /* diagnostic failure must not affect delivery */ }
 }
@@ -493,6 +494,8 @@ export function startServer(h) {
     }
     // 能收到有效业务包就是连接已恢复的证据，不依赖遗漏的 onOpen。
     if (!rpcState().connected) resumeConnection()
+    if (msg.t === 'watch_log_request') { sendControl(diagnosticLogPage(msg, WATCH_VERSION)); return }
+    if (!['watch_diagnostics_request', 'watch_log_request'].includes(msg.t)) recordDiagnostic('rpc_receive', { type: msg.t, sid: msg.sid, eventId: msg.eventId, status: msg.status, rev: msg.commitRev })
     if (msg.t === 'hello_ack') { rpcState().peerProtocol = msg.protocolVersion >= 3 ? 3 : 2; rpcState().peerCapabilities = msg.capabilities || {}; replayPendingEvents(); flush(); return }
     if (msg.t === 'watch_diagnostics_request') {
       const snapshot = { t: 'watch_diagnostics', watchVersion: WATCH_VERSION,

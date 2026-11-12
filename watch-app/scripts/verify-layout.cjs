@@ -86,6 +86,7 @@ for (const page of Object.keys(manifest.router.pages)) {
     assert.equal(sheet['.set-dots'].flexWrap,'wrap', 'Long dot pages must wrap safely')
     const dot=tree.find(n=>n.repeat?.$exp==='setDots')
     assert.ok(dot && dot.children.length===1 && dot.children[0].type==='div', 'Set dot must not contain number/checkmark labels')
+    assert.equal(dot.attr?.tid, 'key', 'Set dot repeat must preserve stable native row identity')
     for (const selector of ['.completion-panel','.effort-layer']) viewport(sheet[selector],selector)
     assert.ok(tree.some(n=>n.events?.click==='openExercises' && n.class==='ex'), 'Tap title must open exercise picker')
     assert.ok(tree.some(n=>n.events?.click==='askEnd' && n.class==='flag'), 'Flag must only request confirmation')

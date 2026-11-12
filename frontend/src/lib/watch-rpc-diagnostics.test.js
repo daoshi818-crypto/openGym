@@ -124,6 +124,18 @@ describe('watch RPC transport diagnostics without delivery changes', () => {
     expect(snapshot.events).toContainEqual(expect.objectContaining({ stage: 'connection_error', code: '77' }))
     expect(snapshot.events).toContainEqual(expect.objectContaining({ stage: 'ready_state', status: 0 }))
   })
+  it('exports the independent persisted journal without acknowledging a blocked training event', () => {
+    vi.useFakeTimers()
+    const d = device('fail'); d.emit()
+    d.ctx.recordDiagnostic('dot_tap', { setId: 'row-five' })
+    d.connection.onMessage({ t: 'watch_log_request', requestId: 'journal-probe', offset: 0 })
+    const reply = d.sent.find(m => m.t === 'watch_log')
+    expect(reply).toMatchObject({ requestId: 'journal-probe', offset: 0, status: 'ok' })
+    expect(reply.events).toContainEqual(expect.objectContaining({ stage: 'dot_tap', setId: 'row-five' }))
+    expect(Buffer.byteLength(JSON.stringify(reply))).toBeLessThanOrEqual(5500)
+    expect(d.ctx.pendingCount()).toBe(1)
+    expect(d.controls).toHaveLength(1)
+  })
   it('cannot let a throwing log sink change SDK send or queue behavior', () => {
     const d = device(); d.ctx.console = { info() { throw new Error('console unavailable') } }
     expect(() => d.emit()).not.toThrow()

@@ -34,8 +34,6 @@ import { syncMedia, fetchToStore } from '../lib/media-sync.js'
 import { getMediaStatus, subscribeMediaStatus, pendingRefCount } from '../lib/media-owed.js'
 import { limitsFrom, fmtMB, MB } from '../lib/media-limits.js'
 import { setRestAccent, overlayStatus, requestOverlay, hideOverlay, setOverlayStyle } from '../lib/rest-alert.js'
-import { watchAvailable, watchState, onWatchState, connectWatch, disconnectWatch, openWatchApp, getWatchDeviceInfo, watchDevice, watchLastError, getWatchLogs, getWatchDiagnostics, requestWatchDiagnostics } from '../lib/watch-link.js'
-import { onWatchCommitStatus } from '../lib/watch-link.js'
 import { CUSTOM, accentKey, adjustedIn, applyAccent, cleanHex, inkOn, isGrey } from '../lib/accent.js'
 import { checkForUpdate, downloadAndInstall, fetchChecksum, forgetDownloadedUpdate, RELEASES_PAGE } from '../lib/update.js'
 import { forgetCoach } from '../lib/coach-api.js'
@@ -43,8 +41,6 @@ import { coachAvailable } from '../lib/coach.js'
 import { REST_MAX, REST_PAUSE_MIN, REST_PAUSE_MAX, fmtRest, fmtDuration } from '../lib/duration.js'
 import { starterPlanSheet, confirmSheet, importFromApp, importFromHevy, equipmentProfileSheet, plateInventorySheet, dumbbellInventorySheet, menuSheet } from '../sheets.jsx'
 import Icon from '../components/Icon.jsx'
-import { sendToWatch } from '../lib/watch-link.js'
-import { watchCatalogOf } from '../lib/watch-workout.js'
 import { durationSheet } from '../components/DurationWheel.jsx'
 import { showsConnection, showsLocalLine } from '../components/SyncBanner.jsx'
 import BackupFolderRow, { useBackupFolder, autoBackupSubtitle } from '../components/BackupFolderRow.jsx'
@@ -91,104 +87,6 @@ const standalone = () => {
   try { return !!(window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone === true) } catch { return false }
 }
 
-function WatchPairSheet({ close }) {
-  const [status, setStatus] = useState(() => watchState())
-  const [delivery, setDelivery] = useState({ phase: 'idle', pending: 0 })
-  useEffect(() => onWatchCommitStatus(setDelivery), [])
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [info, setInfo] = useState(() => watchDevice())
-  const [showLogs, setShowLogs] = useState(false)
-  const [logs, setLogs] = useState('')
-  const [diag, setDiag] = useState(null)
-  const [opening, setOpening] = useState(false)
-  const [launchResult, setLaunchResult] = useState('')
-
-  useEffect(() => {
-    const off = onWatchState(setStatus)
-    return () => off?.()
-  }, [])
-
-  useEffect(() => {
-    if (status !== 'ready' && status !== 'connected') return
-    getWatchDeviceInfo().then(d => { if (d) setInfo(d) }).catch(() => {})
-  }, [status])
-
-  const connect = async () => {
-    setError('')
-    setBusy(true)
-    const ok = await connectWatch()
-    if (!ok) setError(watchLastError() || t('Could not connect'))
-    setBusy(false)
-  }
-
-  const openLogs = async () => {
-    setShowLogs(true)
-    try {
-      await requestWatchDiagnostics()
-      const [l, d] = await Promise.all([getWatchLogs(), getWatchDiagnostics()])
-      setLogs([(l && l.logs) || '', d ? `diagnostics=${JSON.stringify(d, null, 2)}` : ''].filter(Boolean).join('\n'))
-      setDiag(d || null)
-    } catch (e) {
-      setLogs(String(e))
-    }
-  }
-
-  const launch = async () => {
-    setError('')
-    setLaunchResult('')
-    setOpening(true)
-    try {
-      const r = await openWatchApp()
-      if (r.ok) setLaunchResult(t('Launch request accepted. Check the watch screen.'))
-      else setError(`${t('Could not open watch app')} (code=${r.code}): ${r.data || ''}`)
-    } finally { setOpening(false) }
-  }
-
-  const connected = status === 'connected'
-  const dev = info && (info.device || info)
-  return <>
-    <h3>{t('Connect watch')}</h3>
-    <p className="muted small">
-      {connected
-        ? t('Connected. Start a workout and it lands on the watch.')
-        : t('Make sure vivo Health is connected to your watch, then open the training app on the watch.')}
-    </p>
-    {dev && connected && <div className="list" style={{ margin: '10px 0 14px' }}>
-      <div className="item">
-        <span className="lrow-m">
-          <span className="lrow-t">{dev.deviceName || dev.name || 'vivo WATCH'}</span>
-          <span className="lrow-s">
-            {dev.battery != null ? `${dev.battery}%` : ''}
-            {dev.totalStorage != null && dev.freeStorage != null ? ` · ${Math.round(dev.freeStorage / 1048576)} / ${Math.round(dev.totalStorage / 1048576)} MB` : ''}
-          </span>
-        </span>
-      </div>
-    </div>}
-    {status === 'connecting' && <p className="muted small">{t('Connecting…')}</p>}
-    {delivery.phase !== 'idle' && <p className={delivery.phase === 'storage_failed' ? 'small danger' : 'muted small'} role="status">
-      {delivery.phase === 'storage_failed' ? '保存失败，手表记录仍保留，释放手机存储后会重试' : delivery.pending ? `手机待保存 ${delivery.pending} 条` : '收到的手表记录已保存'}
-    </p>}
-    <p className="muted small">两端状态不一致时自动以手机为准。</p>
-    {error && <p className="small danger" role="alert">{error}</p>}
-    {launchResult && <p className="small muted" role="status">{launchResult}</p>}
-    {showLogs && <>
-      {diag && <p className="muted small" style={{ marginTop: 8 }}>
-        vivo: {String(diag.vivo)} · health: {String(diag.healthInstalled)} · init: {String(diag.initialized)} · health RPC: {String(diag.healthDeviceVersion)} · bound: {String(diag.boundWatchDeviceCount)} · watch: {String(diag.watchConnected)}
-      </p>}
-      <pre className="small" style={{ maxHeight: 220, overflow: 'auto', whiteSpace: 'pre-wrap', background: 'var(--surface-2)', padding: 8, borderRadius: 8 }}>
-        {logs || t('No logs yet. Press Connect first.')}
-      </pre>
-    </>}
-    <div className="row" style={{ gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-      <Button variant="primary" disabled={busy || opening || status === 'connecting'} onClick={launch}>{opening ? t('Opening watch app…') : t('Open watch app')}</Button>
-      {!connected && <Button variant="ghost" disabled={busy || opening || status === 'connecting'} onClick={connect}>{busy ? t('Connecting…') : t('Connect')}</Button>}
-      {(connected || status === 'ready') && <Button variant="danger" disabled={busy || opening} onClick={async () => { await disconnectWatch(); close() }}>{t('Disconnect')}</Button>}
-      <Button variant="ghost" onClick={openLogs}>{t('Diagnostics')}</Button>
-      <Button variant="ghost" onClick={close}>{t('Cancel')}</Button>
-    </div>
-  </>
-}
 
 export default function Settings({ page = null, find = null, via = null }) {
   const nav = useNavigate()
@@ -264,8 +162,6 @@ export default function Settings({ page = null, find = null, via = null }) {
   const [updateInfo, setUpdateInfo] = useState(null) // { hasUpdate, latestVersion, apkUrl, hashUrl } | null
   const [android, setAndroid] = useState(false)
   const [overlayOK, setOverlayOK] = useState(null) // 悬浮窗倒计时权限：null=不支持/未知，true/false=已授权与否
-  const [watchSt, setWatchSt] = useState('off') // 手表连接：off|connecting|connected|ready|error
-  const [watchWhy, setWatchWhy] = useState(null) // 不可用原因：bluetoothOff|permission|web
   const [checking, setChecking] = useState(false)
   // Where auto-backup writes on this Android phone, for the Auto-backup row's own subtitle.
   const [backupDir] = useBackupFolder(MOBILE && android && !!S.autoBackup)
@@ -280,17 +176,9 @@ export default function Settings({ page = null, find = null, via = null }) {
     isAndroid().then(ok => {
       setAndroid(ok)
       if (ok) overlayStatus().then(setOverlayOK).catch(() => {})
-      if (ok) watchAvailable().then(r => { setWatchWhy(r.reason || null) }).catch(() => {})
       if (ok && page === 'about') checkForUpdate().then(info => { setUpdateInfo(info); if (!info?.hasUpdate) forgetDownloadedUpdate() }).catch(() => {})
     })
   }, [page])
-
-  // 手表连接状态跟随原生事件；离开页面时退订。
-  useEffect(() => {
-    if (!android) return
-    setWatchSt(watchState())
-    return onWatchState(setWatchSt)
-  }, [android])
 
   // A search hit: scroll its row (or button) into view and flash it once. A row that shows only
   // once the page has heard back from the server (web push, the passkey list) is waited for a
@@ -649,26 +537,6 @@ export default function Settings({ page = null, find = null, via = null }) {
               onChange={v => update(s => { s.overlayStyle = v; setOverlayStyle(v) })} />
           </Row>
         )}
-        {/* 连接手表（vivo 智能终端 SDK）：设备发现/连接由运动健康完成。
-            手机开始训练后计划自动推到手表，手表上的完成/调整实时回传。 */}
-        {android && isOn(S, 'watch') && (
-          <Row icon="dumbbell" iconTint="var(--green)" title={t('Connect watch')}
-            subtitle={
-              watchSt === 'connected' ? t('Connected. Start a workout and it lands on the watch.')
-              : watchSt === 'connecting' ? t('Connecting… Make sure vivo Health is connected to the watch.')
-              : watchWhy === 'notVivo' ? t('Watch support needs a vivo phone.')
-              : watchWhy === 'healthMissing' ? t('vivo Health is not installed.')
-              : t('Open the training app on the watch. The plan follows when a workout starts.')
-            }
-            accessory="chevron"
-            onClick={() => useUI.getState().openSheet(close => <WatchPairSheet close={close} />)} />
-        )}
-          {android && <SelectRow icon="watch" title="发送到手表的计划" value={S.watchPlanIds?.[0] || ''}
-            options={[{ value: '', label: '仅今日计划' }, ...S.routines.map(r => ({ value: r.id, label: r.name }))]}
-            onChange={id => {
-            update(s => { s.watchPlanIds = id ? [id] : [] })
-            sendToWatch(watchCatalogOf(useStore.getState().S))
-            }} />}
         {/* 'full'/'mini' is also what the tap-toggle on the workout animation writes; 'off' hides
             workout media entirely (library, detail sheet and picker thumbs are unaffected).
             Legacy/unknown values read as 'full'. */}

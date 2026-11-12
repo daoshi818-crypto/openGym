@@ -1,9 +1,16 @@
+function logAction(stage, page, data = {}) {
+  try {
+    page.logInteraction?.(stage, data)
+  } catch { /* Logging never participates in commit success. */ }
+}
 // Page plumbing only: business functions remain unchanged. A detached view prevents any
 // success UI from escaping before the operation + intention document is on disk.
 export async function commitPageAction(page, operation, deps) {
   if (page.sessionActionDraft) return operation.call(page)
   if (page.localCommitPending) return false
   page.localCommitPending = true
+  const started = Date.now()
+  logAction('local_commit_begin', page)
   const sid = page.state.sid, wasVisible = page.visible
   let draft, refresh = false
   const effects = []
@@ -28,7 +35,8 @@ export async function commitPageAction(page, operation, deps) {
       for (const name of deferred) if (typeof page[name] === 'function') draft[name] = (...args) => effects.push(() => page[name](...args))
       return operation.call(draft)
     })
-    if (!result.ok) { page.inputNotice = '存储失败，未保存，请重试'; page.syncWarning = true; page.syncLabel = '存储失败，请重试'; return false }
+    if (!result.ok) { logAction('local_commit_failed', page, { duration: Date.now() - started }); page.inputNotice = '存储失败，未保存，请重试'; page.syncWarning = true; page.syncLabel = '存储失败，请重试'; return false }
+    logAction('local_commit_saved', page, { duration: Date.now() - started })
     deps.replayPendingEvents()
     if (page.state?.sid !== sid || (wasVisible === true && page.visible === false) || deps.loadState().sid !== sid) return true
     for (const name of Object.keys(draft)) if (name !== 'flushPendingRowEdits' && name !== 'sessionActionDraft' && name !== 'state' && name !== 'refresh' && !deferred.includes(name)) page[name] = draft[name]
@@ -37,6 +45,7 @@ export async function commitPageAction(page, operation, deps) {
     if (refresh) page.refresh()
     return true
   } catch (error) {
+    logAction('local_commit_exception', page, { duration: Date.now() - started, code: error?.code || 'exception' })
     page.inputNotice = '未保存：' + String(error?.message || error).slice(0, 60)
     return false
   } finally { page.localCommitPending = false }

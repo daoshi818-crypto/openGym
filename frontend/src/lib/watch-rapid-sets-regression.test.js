@@ -91,10 +91,146 @@ it('actual Workout 5+2 complete/skip retains every set, focus and intention thro
 it('set dots select a completed row for undo without completing another row', async () => {
   vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const p = page(h)
   await p.onComplete(); await p.onSkipRest(); p.refreshSetDots()
-  expect(await p.pickSetDot(p.setDots[0])).toBe(true)
+  const pick = p.pickSetDot(p.setDots[0]); await vi.advanceTimersByTimeAsync(150)
+  expect(await pick).toBe(true)
   expect(p.state.setIdx).toBe(0); expect(p.state.workout.rows[0][0].done).toBe(true)
   expect(await p.onUndo()).toBe(true); expect(p.state.workout.rows[0][0].done).toBe(false)
   expect(p.state.pendingEdits.filter(e => e.t === 'unset')).toHaveLength(1)
+})
+
+it('keeps native dot array and row identities through refreshes and cursor changes', () => {
+  vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const { ctx: p } = bluePage(h, true)
+  p.refresh()
+  const dots = p.setDots, items = dots.slice()
+  for (let i = 0; i < 100; i++) p.refresh()
+  expect(p.setDots).toBe(dots)
+  p.state.setIdx = 3; p.refresh()
+  expect(p.setDots).toBe(dots)
+  for (let i = 0; i < items.length; i++) expect(p.setDots[i]).toBe(items[i])
+  expect(p.setDots.map(d => d.current)).toEqual([false, false, false, true, false])
+  expect(new Set(p.setDots.map(d => d.key)).size).toBe(5)
+  p.state.exIdx = 1; p.state.setIdx = 0; p.refresh()
+  expect(p.setDots).not.toBe(dots); expect(p.setDots).toHaveLength(2)
+  expect(p.setDots.every(d => !items.some(old => old.key === d.key))).toBe(true)
+})
+
+it('does not persist or enqueue repeated taps on the selected dot', async () => {
+  vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const { ctx: p } = bluePage(h, true)
+  p.refresh(); const before = h.c.loadState(), write = vi.spyOn(h.storage, 'set')
+  for (let i = 0; i < 40; i++) {
+    p.pickSetDot(p.setDots[0]); await vi.advanceTimersByTimeAsync(150)
+  }
+  expect(h.c.loadState()).toEqual(before)
+  expect(write.mock.calls.filter(([item]) => item.key === 'session_state')).toHaveLength(0)
+})
+
+it('coalesces a 200-tap burst into the final stable target before accepting one durable intent', async () => {
+  vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const { ctx: p } = bluePage(h, true)
+  p.refresh(); const dots = p.setDots, write = vi.spyOn(h.storage, 'set')
+  let picked
+  for (let i = 0; i < 200; i++) picked = p.pickSetDot(dots[i % 5])
+  expect(h.c.loadState().setIdx).toBe(0)
+  await vi.advanceTimersByTimeAsync(150); expect(await picked).toBe(true)
+  expect(h.c.loadState().setIdx).toBe(4)
+  expect(h.c.loadState().pendingEdits.filter(e => e.t === 'focus')).toHaveLength(1)
+  expect(write.mock.calls.filter(([item]) => item.key === 'session_state')).toHaveLength(1)
+  expect(p.setDots).toBe(dots)
+})
+
+it('retains the last tap during slow storage with only one write in flight', async () => {
+  vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const { ctx: p } = bluePage(h, true)
+  p.refresh(); const dots = p.setDots, writes = [], original = h.storage.set
+  h.storage.set = item => item.key === 'session_state' ? writes.push(item) : original(item)
+  const first = p.pickSetDot(dots[1]); await vi.advanceTimersByTimeAsync(150)
+  expect(writes).toHaveLength(1)
+  for (let i = 0; i < 100; i++) p.pickSetDot(dots[2 + i % 3])
+  const last = p.pickSetDot(dots[4])
+  await vi.advanceTimersByTimeAsync(150); expect(writes).toHaveLength(1)
+  original(writes.shift()); await vi.advanceTimersByTimeAsync(150)
+  expect(writes).toHaveLength(1)
+  original(writes.shift()); await vi.advanceTimersByTimeAsync(150)
+  expect(await first).toBe(true); expect(await last).toBe(true)
+  expect(h.c.loadState().setIdx).toBe(4)
+  expect(h.c.loadState().pendingEdits.filter(e => e.t === 'focus').map(e => e.set)).toEqual([2, 5])
+})
+
+it.each(['hide', 'destroy', 'new-session'])('cancels uncommitted dot input on %s', async mode => {
+  vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const { ctx: p } = bluePage(h, true)
+  p.refresh(); p.pickSetDot(p.setDots[4])
+  if (mode === 'hide') p.onHide()
+  else if (mode === 'destroy') p.onDestroy()
+  else { h.c.startSession(plan('new')); p.adoptSession(h.c.loadState()) }
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(h.c.loadState().setIdx).toBe(0)
+  expect(h.c.loadState().pendingEdits || []).toHaveLength(0)
+})
+
+it('returning to the current dot cancels an uncommitted move without a durable write', async () => {
+  vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const { ctx: p } = bluePage(h, true)
+  p.refresh(); const write = vi.spyOn(h.storage, 'set')
+  p.pickSetDot(p.setDots[4]); const back = p.pickSetDot(p.setDots[0])
+  await vi.advanceTimersByTimeAsync(150)
+  expect(await back).toBe(false); expect(h.c.loadState().setIdx).toBe(0)
+  expect(write.mock.calls.filter(([item]) => item.key === 'session_state')).toHaveLength(0)
+})
+
+it('resolves a stale dot by stable row identity rather than its old selected index', async () => {
+  vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const { ctx: p } = bluePage(h, true)
+  p.refresh(); const old = p.setDots[0], s = h.c.loadState()
+  s.workout.rows[0].reverse(); s.workout.exercises[0].setIds.reverse()
+  h.c.save(s); p.state = h.c.loadState(); p.refresh()
+  const pick = p.pickSetDot(old); await vi.advanceTimersByTimeAsync(150)
+  expect(await pick).toBe(true); expect(h.c.loadState().setIdx).toBe(4)
+  expect(h.c.loadState().pendingEdits.at(-1).setId).toBe('row0-0')
+})
+
+it('keeps the tapped causal version when a newer phone snapshot arrives before dot commit', async () => {
+  vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const { ctx: p } = bluePage(h, true)
+  p.refresh(); const rev = p.state.commitRev || 0, pick = p.pickSetDot(p.setDots[4]), msg = snapshot(h, 's', rev + 10)
+  expect((await h.c.commitWireSnapshot(msg, transfer(msg))).ok).toBe(true)
+  p.state = h.c.loadState(); p.refresh()
+  await vi.advanceTimersByTimeAsync(150); expect(await pick).toBe(true)
+  expect(h.c.loadState().pendingEdits.at(-1).baseCommitRev).toBe(rev)
+})
+
+it.each(['paused', 'rest', 'deleted'])('rejects queued dot input after the target becomes %s', async change => {
+  vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const { ctx: p } = bluePage(h, true)
+  p.refresh(); const pick = p.pickSetDot(p.setDots[4]), s = h.c.loadState()
+  if (change === 'paused') s.pausedAt = Date.now()
+  else if (change === 'rest') s.restUntil = Date.now() + 10000
+  else { s.workout.rows[0].pop(); s.workout.exercises[0].setIds.pop(); s.workout.exercises[0].sets-- }
+  h.c.save(s); p.state = h.c.loadState(); p.refresh()
+  await vi.advanceTimersByTimeAsync(150); expect(await pick).toBe(false)
+  expect(h.c.loadState().pendingEdits || []).toHaveLength(0)
+})
+
+it('phone focus remains authoritative when it changes while a dot tap is queued', async () => {
+  vi.useFakeTimers(); const a = paired()
+  await a.sync({ ...watchSnapshotOf(a.S, null), t: 'sync', protocolVersion: 3 })
+  try {
+    const rev = a.p.state.commitRev, pick = a.p.pickSetDot(a.p.setDots[4]), before = structuredClone(a.S)
+    a.S.active.watchFocus = { ex: 0, set: 2, at: Date.now() + 1 }
+    stampWatchRevision(before, a.S)
+    await a.sync({ ...watchSnapshotOf(a.S, null), t: 'sync', protocolVersion: 3 })
+    await vi.advanceTimersByTimeAsync(150); await pick
+    for (const ev of a.c.loadState().pendingEdits || []) expect(ev.baseCommitRev).toBe(rev)
+    await a.pump()
+    expect(a.S.active.watchFocus.set).toBe(2)
+    expect(a.p.state.setIdx).toBe(1)
+    expect(a.c.pendingCount()).toBe(0)
+    expect(a.c.synchronizationStatus().conflicts).toBe(0)
+  } finally { a.receive.dispose() }
+})
+
+it('cannot complete the old row while a dot selection is waiting to commit', async () => {
+  vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const { ctx: p } = bluePage(h, true)
+  p.refresh(); const pick = p.pickSetDot(p.setDots[3])
+  expect(await p.onCurrentSetAction()).toBeFalsy()
+  expect(h.c.loadState().workout.rows.flat().some(r => r.done)).toBe(false)
+  await vi.advanceTimersByTimeAsync(150); expect(await pick).toBe(true)
+  expect(await p.onComplete()).toBe(true)
+  expect(h.c.loadState().workout.rows[0][3].done).toBe(true)
+  expect(h.c.loadState().workout.rows[0][0].done).toBe(false)
 })
 
 

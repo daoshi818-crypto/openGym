@@ -433,6 +433,53 @@ describe('explicit watch transport diagnostics', () => {
 })
 
 
+describe('paged persistent watch diagnostic retrieval', () => {
+  const drain = async () => { for (let i = 0; i < 30; i++) await Promise.resolve() }
+  beforeEach(() => {
+    vi.useFakeTimers()
+    native.sendEvent.mockReset().mockResolvedValue({ ok: true })
+  })
+  it('retrieves exact matching pages without invoking workout handlers', async () => {
+    const lifecycle = vi.fn(), sync = vi.fn(), event = vi.fn()
+    link.bindWatchLifecycle(lifecycle); link.bindWatchSync(sync); link.bindWatchEvents(event)
+    const result = link.requestWatchLog()
+    expect(link.requestWatchLog()).toBe(result)
+    await drain()
+    const first = JSON.parse(native.sendEvent.mock.calls.at(-1)[0].json)
+    expect(first).toMatchObject({ t: 'watch_log_request', offset: 0 })
+    native.events.watchEvent({ t: 'watch_log', requestId: 'old', offset: 0, status: 'ok', events: [] })
+    native.events.watchEvent({ t: 'watch_log', requestId: first.requestId, offset: 0, status: 'ok', boot: 'b',
+      watchVersion: 'test', total: 2, nextOffset: 1, events: [{ at: 1, stage: 'dot_tap', setId: 'one', secret: 'private' }] })
+    await drain()
+    const second = JSON.parse(native.sendEvent.mock.calls.at(-1)[0].json)
+    expect(second).toEqual({ ...first, offset: 1 })
+    native.events.watchEvent({ t: 'watch_log', requestId: first.requestId, offset: 1, status: 'ok', boot: 'b',
+      total: 2, nextOffset: 2, events: [{ at: 2, stage: 'app_start' }] })
+    const log = await result
+    expect(log).toMatchObject({ status: 'received', watchVersion: 'test', events: [{ stage: 'dot_tap' }, { stage: 'app_start' }] })
+    expect(JSON.stringify(log)).not.toContain('private')
+    expect(lifecycle).not.toHaveBeenCalled(); expect(sync).not.toHaveBeenCalled(); expect(event).not.toHaveBeenCalled()
+    expect(native.sendPlan).not.toHaveBeenCalled(); expect(native.connect).not.toHaveBeenCalled()
+  })
+  it('retries a dropped page once with the same identity, then reports timeout', async () => {
+    const result = link.requestWatchLog()
+    await drain()
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(await result).toMatchObject({ status: 'timeout', events: [] })
+    expect(native.sendEvent).toHaveBeenCalledTimes(2)
+    expect(native.sendEvent.mock.calls[0]).toEqual(native.sendEvent.mock.calls[1])
+    expect(native.connect).not.toHaveBeenCalled()
+  })
+  it('rejects malformed offsets instead of looping or accepting a changed export', async () => {
+    const result = link.requestWatchLog()
+    await drain()
+    const req = JSON.parse(native.sendEvent.mock.calls.at(-1)[0].json)
+    native.events.watchEvent({ t: 'watch_log', requestId: req.requestId, offset: 0, status: 'ok', total: 10, nextOffset: 0, events: [] })
+    expect(await result).toMatchObject({ status: 'invalid_reply' })
+    expect(native.sendEvent).toHaveBeenCalledOnce()
+  })
+})
+
 describe('independent bilateral snapshot capabilities',()=>{
   it.each([[false,false],[true,false],[false,true],[true,true]])('negotiates selective=%s persistent=%s independently',async(selective,persistent)=>{
     native.isSupported.mockResolvedValue({available:true}); native.sendEvent.mockResolvedValue({ok:true,code:0})
