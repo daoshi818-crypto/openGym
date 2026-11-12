@@ -1,8 +1,22 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { createSetDotPicker } from '../../../watch-app/src/lib/workout-interaction.js'
+import { loadWatchModule, watchSdkTimers } from './watch-test-harness.js'
 
 afterEach(() => vi.useRealTimers())
 const dot = setIdx => ({ sid: 's', entryInstanceId: 'ex', setId: 'row' + setIdx, exIdx: 0, setIdx, baseCommitRev: 1 })
+
+it('finishes the selected dot through the BlueOS callback-ID timer bridge', async () => {
+  vi.useFakeTimers()
+  const timers = watchSdkTimers(), ctx = { Date, ...timers }
+  loadWatchModule('workout-interaction', ctx, ['createSetDotPicker'])
+  const apply = vi.fn(() => true), picker = ctx.createSetDotPicker(apply)
+  const result = picker.request(dot(2))
+  await vi.advanceTimersByTimeAsync(150)
+  expect(apply).toHaveBeenCalledExactlyOnceWith(dot(2))
+  expect(timers.rejected).toEqual([])
+  expect(picker.pending()).toBe(false)
+  expect(await result).toBe(true)
+})
 
 it('bounds a prolonged burst to one timer, one promise and the final primitive target', async () => {
   vi.useFakeTimers()

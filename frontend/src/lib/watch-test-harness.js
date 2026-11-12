@@ -64,6 +64,24 @@ export function watchTimerOwner() {
     destroy: () => { alive = false },
   }
 }
+
+// BlueOS Studio framework.js (COMMITID 7af9d62), Instance.setTimer -> `$`:
+// only the [object Function] case registers a callback ID. AsyncFunction falls
+// through JSON.stringify and cannot be invoked by the native timer bridge.
+// Node timers accept both, so ordinary fake timers cannot expose this failure.
+export function watchSdkTimers() {
+  const rejected = []
+  return {
+    rejected,
+    setTimeout(fn, ms) {
+      const type = Object.prototype.toString.call(fn)
+      const callback = type === '[object Function]' ? fn : null
+      if (!callback) rejected.push(type)
+      return setTimeout(() => { callback?.() }, ms)
+    },
+    clearTimeout: id => clearTimeout(id),
+  }
+}
 export function startWatchApp(shared) {
   const timers = watchTimerOwner(), definition = { openGymRuntime: shared }
   const ctx = { ...timers, console: { log() {} }, runtime: () => shared,

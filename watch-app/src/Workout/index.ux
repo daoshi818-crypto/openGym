@@ -228,12 +228,7 @@ const pageDefinition = {
       // 隐藏的训练页仍会收到 RPC；保留输入页刚保存的编辑和其他页面的更新。
       const latest = loadState()
       if (latest.active && latest.sid === this.state.sid) {
-        if (this.restCrownDirty) {
-          latest.restUntil = this.state.restUntil; latest.restTargetSec = this.state.restTargetSec
-          latest.restVersion = this.state.restVersion; latest.restId = this.state.restId
-          latest.restStartedAt = this.state.restStartedAt
-        }
-        this.state = latest
+        this.state = this.withRestPreview(latest)
       }
       const msg = args[0], s = this.state
       if (msg?.entryInstanceId && ['set','unset','weight','reps','add_set','remove_set','focus','effort'].includes(msg.t)) {
@@ -722,6 +717,20 @@ const pageDefinition = {
     this.refresh()
   },
 
+  withRestPreview(latest) {
+    if (this.restCrownDirty) {
+      const base = this.restCrownBase
+      // A preview belongs to one exact durable round. A phone skip or a changed
+      // round wins; only an unchanged echo may retain unsaved crown input.
+      if (latest.sid === this.state.sid && base && latest.restId === base.restId && latest.restVersion === base.restVersion) {
+        Object.assign(latest, { restUntil: this.state.restUntil, restTargetSec: this.state.restTargetSec,
+          restLeftSec: this.state.restLeftSec, restVersion: this.state.restVersion,
+          restId: this.state.restId, restStartedAt: this.state.restStartedAt })
+      } else this.cancelRestNudge()
+    }
+    return latest
+  },
+
   onSyncUpdate(msg, options) {
     if (!msg || !Array.isArray(msg.exercises) || !msg.exercises.length) {
       return { status: 'rejected', page: 'Workout', reason: 'empty_exercises' }
@@ -731,25 +740,19 @@ const pageDefinition = {
       // Never apply it twice, or let a late old-session notification replace UI.
       const latest = loadState()
       if (!latest.active || !latest.workout || latest.sid !== msg.sid) return { status: 'retained', page: 'Workout' }
-      if (latest.sid === this.state.sid && this.restCrownDirty) {
-        Object.assign(latest, { restUntil: this.state.restUntil, restTargetSec: this.state.restTargetSec,
-          restVersion: this.state.restVersion, restId: this.state.restId, restStartedAt: this.state.restStartedAt })
-      }
-      this.adoptSession(latest)
+      this.adoptSession(this.withRestPreview(latest))
     } else {
-      const localRest = this.restCrownDirty && (!msg.sid || msg.sid === this.state.sid)
-      const localRound = localRest ? { restUntil: this.state.restUntil, restTargetSec: this.state.restTargetSec,
-        restVersion: this.state.restVersion, restId: this.state.restId, restStartedAt: this.state.restStartedAt } : null
-      if (!localRest) this.cancelRestNudge()
-      if (localRound) this.state = loadState()
-      applySync(this.state, msg)
-      if (localRound) Object.assign(this.state, localRound)
+      const latest = this.restCrownDirty ? loadState() : this.state
+      applySync(latest, msg)
+      this.adoptSession(this.withRestPreview(latest))
     }
     this.profile = this.state.profile || this.profile
     if (this.state.pausedAt) this.stopHrCapture()
     else this.startHrCapture()
     this.allFinished = (this.state.workout.rows || []).every(rows => rows.every(r => r.done))
     this.refresh()
+    this.logInteraction('page_sync', { restUntil: this.state.restUntil || 0, restVersion: this.state.restVersion || 0,
+      restId: this.state.restId || '', crownDirty: !!this.restCrownDirty, dotPending: !!this.setDotPicker?.pending() })
     return { status: 'applied', page: 'Workout', exercises: this.state.workout.exercises.length }
   },
 

@@ -9,6 +9,19 @@ function watch(disk = new Map()) {
 }
 afterEach(() => vi.useRealTimers())
 describe('bounded independent watch diagnostic journal', () => {
+  it('does not let phone page-sync traffic consume the reserved tap evidence', () => {
+    vi.useFakeTimers(); const d = watch()
+    d.ctx.recordDiagnostic('dot_queued', { setId: 'second' })
+    for (let i = 0; i < 100; i++) {
+      d.ctx.recordDiagnostic('page_sync', { restUntil: i, restVersion: i, restId: 'r', crownDirty: false, dotPending: false })
+      d.ctx.recordDiagnostic('page_sync_error', { detail: 'refresh failed' })
+    }
+    const log = d.ctx.diagnosticLog()
+    expect(log.events).toContainEqual(expect.objectContaining({ stage: 'dot_queued', setId: 'second' }))
+    expect(log.droppedInteractions).toBe(0)
+    expect(log.events.findLast(e => e.stage === 'page_sync')).toMatchObject({ restUntil: 99, crownDirty: false, dotPending: false })
+  })
+
   it('coalesces 1000 taps into one bounded record and one batched write', async () => {
     vi.useFakeTimers()
     const d = watch(), set = vi.spyOn(d.storage, 'set')

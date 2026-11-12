@@ -594,7 +594,7 @@ export function startServer(h) {
         }
         for (const event of affected) ackEvent(null, event.eventId)
         const state = loadState()
-        if (state.active && state.syncBase && state.syncBase.commitRev >= msg.commitRev) { try { rpcState().handlers.onSync?.(state.syncBase, { persisted: true }) } catch (_) {} }
+        if (state.active && state.syncBase && state.syncBase.commitRev >= msg.commitRev) { try { rpcState().handlers.onSync?.(state.syncBase, { persisted: true }) } catch (error) { trace('page_sync_error', state.syncBase, error) } }
         if (msg.state && state.active && state.sid === msg.sid && state.syncBase?.wireHash === msg.state.wireHash) sendControl({ t: 'sync_ack', sid: msg.sid, wireHash: state.syncBase.wireHash, commitRev: state.syncBase.commitRev, status: 'applied' })
         if (needsSnapshot || (msg.status !== 'applied' && (!state.syncBase || state.syncBase.commitRev < msg.commitRev))) sendControl({ t: 'sync_request', sid: msg.sid, reason: 'phone_authority' })
         rpcState().lastCommitAt = Date.now()
@@ -613,7 +613,7 @@ export function startServer(h) {
             if (result.ok) {
               // Only update the page after the session+applied marker is durable.
               const snapshot = loadState().syncBase
-              if (snapshot) { try { r.handlers.onSync?.(snapshot, { persisted: true }) } catch (_) {} }
+              if (snapshot) { try { r.handlers.onSync?.(snapshot, { persisted: true }) } catch (error) { trace('page_sync_error', snapshot, error) } }
             }
             return result
           })

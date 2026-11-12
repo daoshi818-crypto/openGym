@@ -45,6 +45,13 @@ the page or pushing the fixed footer off screen. See [GT1 rebuild and acceptance
 
 ## Transport and Persistence
 
+Watch 0.6.28 / phone 1.6.25 fix a set-dot queue that never ran on the BlueOS
+timer bridge: native timer callbacks now use an ordinary Function wrapper.
+Unsaved crown rest previews survive unchanged echoes only; a phone rest skip or
+changed round cancels the obsolete preview. Page adoption and callback failures
+have bounded diagnostic records separate from durable transfer receipts. See
+[evidence and verification scope](../docs/dev/RELEASE_1_6_25.zh-CN.md).
+
 Watch 0.6.27 / phone 1.6.24 preserve interaction evidence against reconnect traffic
 within the existing 64-event / 24KB diagnostic journal, report eviction counts, and
 record why set-dot actions are blocked. This improves diagnosis; the reported native

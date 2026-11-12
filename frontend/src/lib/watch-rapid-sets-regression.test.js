@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterEach, expect, it, vi } from 'vitest'
 import { runInNewContext } from 'node:vm'
-import { watchPersistence, loadWatchModule, stripImports, watchSource, watchInteractionDeps } from './watch-test-harness.js'
+import { watchPersistence, loadWatchModule, stripImports, watchSource, watchInteractionDeps, watchSdkTimers } from './watch-test-harness.js'
 import { applyEdit, applyFocus, applyRest, restOf } from '../../../watch-app/src/lib/protocol.js'
 import * as effort from '../../../watch-app/src/lib/effort-scale.js'
 import { lastTimeView } from '../../../watch-app/src/lib/watch-last-time.js'
@@ -233,6 +233,33 @@ it('cannot complete the old row while a dot selection is waiting to commit', asy
   expect(h.c.loadState().workout.rows[0][0].done).toBe(false)
 })
 
+it('SDK timers release the dot gate before completing and skipping the selected row', async () => {
+  vi.useFakeTimers(); const h = boot(); h.c.startSession(plan())
+  const timers = watchSdkTimers(), dotContext = { Date, ...timers }
+  loadWatchModule('workout-interaction', dotContext, ['createSetDotPicker'])
+  h.c.createSetDotPicker = dotContext.createSetDotPicker
+  const { ctx: p } = bluePage(h, true)
+  p.refresh()
+  await p.onComplete()
+  p.touchStart({ touches: [{ clientX: 100, clientY: 100 }] }); p.touchCancel()
+  await p.onSkipRest()
+  await vi.advanceTimersByTimeAsync(1100)
+  const pick = p.pickSetDot(p.setDots[3])
+  expect(p.interactionBlocked()).toBe(true)
+  await vi.advanceTimersByTimeAsync(150)
+  expect(p.interactionBlocked()).toBe(false)
+  expect(await pick).toBe(true)
+  expect(timers.rejected).toEqual([])
+  expect(p.state.setIdx).toBe(3)
+  p.touchStart({ touches: [{ clientX: 100, clientY: 100 }] }); p.touchCancel()
+  await p.onCurrentSetAction()
+  expect(h.c.loadState().workout.rows[0][3].done).toBe(true)
+  p.touchStart({ touches: [{ clientX: 100, clientY: 100 }] }); p.touchCancel()
+  expect(await p.onSkipRest()).toBe(true)
+  expect(p.state.restUntil).toBe(0)
+  expect(p.localCommitPending).toBe(false)
+})
+
 
 it('BlueOS bound-method Proxy page never leaks draft flags or changes UI before storage succeeds', async () => {
   vi.useFakeTimers(); const h = boot(); h.c.startSession(plan())
@@ -320,6 +347,92 @@ it('legacy pending without sid replays only in its original session and remains 
 })
 
 // Exercise phone revisions + exact receipts, not just old watch snapshots.
+it('unlocks undo and later sets after a dot tap, phone completion of set two, and watch rest skip', async () => {
+  vi.useFakeTimers(); const a = paired()
+  try {
+    const timers = watchSdkTimers(), ctx = { Date, ...timers }
+    loadWatchModule('workout-interaction', ctx, ['createSetDotPicker'])
+    a.c.createSetDotPicker = ctx.createSetDotPicker
+    a.S.active.entries[0].sets[0].done = true
+    a.S.active.watchFocus = { ex: 0, set: 1, at: Date.now() }
+    await a.sync({ ...watchSnapshotOf(a.S, null), t: 'sync', protocolVersion: 3 })
+    const pick = a.p.pickSetDot(a.p.setDots[1])
+    await vi.advanceTimersByTimeAsync(150)
+    await pick
+    const before = structuredClone(a.S), now = Date.now()
+    a.S.active.entries[0].sets[1].done = true
+    a.S.active.entries[0].sets[1].at = now
+    a.S.active.watchFocus = { ex: 0, set: 2, at: now }
+    a.S.active.restVersion = now
+    stampWatchRevision(before, a.S)
+    const timer = { restId: 'phone-set-two', startedAt: now, endsAt: now + 60000, total: 60, seq: now }
+    await a.sync({ ...watchSnapshotOf(a.S, timer), t: 'sync', protocolVersion: 3 })
+    expect(a.p.isRest).toBe(true)
+    a.p.touchStart({ touches: [{ clientX: 100, clientY: 100 }] }); a.p.touchCancel()
+    expect(await a.p.onSkipRest()).toBe(true)
+    expect([a.p.state.setIdx, a.p.rowDone, a.p.isRest]).toEqual([1, true, false])
+    a.p.touchStart({ touches: [{ clientX: 100, clientY: 100 }] }); a.p.touchCancel()
+    expect(a.p.interactionBlocked()).toBe(false)
+    expect(await a.p.onCurrentSetAction()).toBe(true)
+    expect(a.c.loadState().workout.rows[0][1].done).toBe(false)
+    a.p.touchStart({ touches: [{ clientX: 100, clientY: 100 }] }); a.p.touchCancel()
+    const third = a.p.pickSetDot(a.p.setDots[2])
+    await vi.advanceTimersByTimeAsync(150); expect(await third).toBe(true)
+    a.p.touchStart({ touches: [{ clientX: 100, clientY: 100 }] }); a.p.touchCancel()
+    expect(await a.p.onCurrentSetAction()).toBe(true)
+    expect(a.c.loadState().workout.rows[0][2].done).toBe(true)
+  } finally { a.receive.dispose() }
+})
+
+it.each(['none', 'skip', 'new-round', 'same-round'])('phone rest updates reconcile the actual page with preview=%s', async mode => {
+  vi.useFakeTimers(); const a = paired()
+  try {
+    await a.sync({ ...watchSnapshotOf(a.S, null), t: 'sync', protocolVersion: 3 })
+    const before = structuredClone(a.S), now = Date.now()
+    a.S.active.entries[0].sets[0].done = true
+    a.S.active.entries[0].sets[0].at = now
+    a.S.active.restVersion = now
+    stampWatchRevision(before, a.S)
+    const timer = { restId: 'phone-rest', startedAt: now, endsAt: now + 60000, total: 60, seq: now }
+    const start = canonicalWire({ ...watchSnapshotOf(a.S, timer), t: 'sync', protocolVersion: 3 })
+    expect((await a.c.commitWireSnapshot(start, transfer(start))).ok).toBe(true)
+    a.shared.rpc.handlers.onSync(start, { persisted: true })
+    expect(a.p.isRest).toBe(true)
+    if (mode !== 'none') a.p.queueRestNudge(5)
+    const previous = structuredClone(a.S)
+    a.S.active.restVersion = mode === 'same-round' ? now : now + 1
+    stampWatchRevision(previous, a.S)
+    const nextTimer = mode === 'same-round' ? timer : mode === 'new-round' ? { ...timer, restId: 'next-rest', total: 30, endsAt: now + 30000, seq: now + 1 } : null
+    const stop = canonicalWire({ ...watchSnapshotOf(a.S, nextTimer), t: 'sync', protocolVersion: 3 })
+    expect((await a.c.commitWireSnapshot(stop, transfer(stop, 'p:phone-stop'))).ok).toBe(true)
+    a.shared.rpc.handlers.onSync(stop, { persisted: true })
+    const expected = mode === 'same-round' ? now + 65000 : nextTimer?.endsAt || 0
+    expect(a.c.loadState().restUntil).toBe(nextTimer?.endsAt || 0)
+    expect(a.p.state.restUntil).toBe(expected)
+    expect(a.p.isRest).toBe(!!expected)
+    expect(!!a.p.restCrownDirty).toBe(mode === 'same-round')
+    expect(a.c.diagnosticLog().events.findLast(e => e.stage === 'page_sync')).toMatchObject({ restUntil: expected, crownDirty: mode === 'same-round' })
+    await vi.advanceTimersByTimeAsync(400)
+    expect(a.c.loadState().pendingEdits.filter(e => e.t === 'rest')).toHaveLength(mode === 'same-round' ? 1 : 0)
+    expect(a.p.isRest).toBe(!!expected)
+  } finally { a.receive.dispose() }
+})
+
+it('records a page callback failure separately from a durable phone receipt', async () => {
+  vi.useFakeTimers(); const a = paired(true, true)
+  try {
+    await a.sync({ ...watchSnapshotOf(a.S, null), t: 'sync', protocolVersion: 3 })
+    a.shared.rpc.handlers.onSync = () => { throw new Error('page refresh failed') }
+    expect(await a.p.onComplete()).toBe(true)
+    await a.pump(false)
+    expect(a.c.pendingCount()).toBe(0)
+    expect(a.c.loadState().workout.rows[0][0].done).toBe(true)
+    expect(a.c.diagnosticLog().events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ stage: 'page_sync_error', detail: 'page refresh failed' }),
+    ]))
+  } finally { a.receive.dispose() }
+})
+
 function paired(bootstrapPlan = true, compact = false) {
   const commandStates = createCommandStateCache()
   const h = boot(true), workout = plan()

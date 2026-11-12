@@ -36,7 +36,9 @@ export function createSetDotPicker(apply, delay = 120) {
   }
   function arm() {
     if (timer != null) clearTimeout(timer)
-    timer = setTimeout(flush, Math.max(0, dueAt - Date.now()))
+    // BlueOS registers only ordinary Function callbacks; AsyncFunction has no
+    // native callback ID. Keep the bridge callback synchronous and await inside.
+    timer = setTimeout(() => { flush() }, Math.max(0, dueAt - Date.now()))
   }
   async function flush() {
     timer = null
