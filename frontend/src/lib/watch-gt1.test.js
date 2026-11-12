@@ -86,6 +86,15 @@ describe('GT1 complete-screen rebuild contracts', () => {
     expect(h('plan-name')).toBeGreaterThanOrEqual(48)
     expect(h('plan-preview')).toBeGreaterThanOrEqual(44)
   })
+  it('filters home plans through the repeat expression without combining native for and if', () => {
+    const root = sourceTemplate(watchSource('Index/index.ux'))
+    const nodes = n => [n, ...(n.children || []).flatMap(nodes)]
+    const plan = nodes(root).find(n => n.repeat?.value === 'p')
+    expect(plan.$shown).toBeUndefined()
+    const value = ctx => runInNewContext('('+plan.repeat.$exp+')', {}).call(ctx)
+    expect(value({canResume:true,plans:[{id:'a'}]})).toEqual([])
+    expect(value({canResume:false,plans:[{id:'a'}]})).toEqual([{id:'a'}])
+  })
   it('never mounts a scroll container on current-set or rest training screens', () => {
     const tree = sourceTemplate(watchSource('Workout/index.ux'))
     const nodes = n => [n, ...(n.children || []).flatMap(nodes)]

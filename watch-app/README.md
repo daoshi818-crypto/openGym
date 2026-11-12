@@ -5,11 +5,12 @@ BlueOS watch companion for openGym. Display name: `opengym`; package identity:
 
 ## Training
 
-The November 12 source-only UI update enlarges text and touch targets across all
+Watch 0.6.29 / phone 1.6.26 package the November 12 UI update, enlarging text and touch targets across all
 five routes. Current-set, rest and weight/reps editor screens never scroll;
 secondary pages use native lists. Complete and undo remain vector-only buttons.
 Last-time summaries and their read-only detail entry remain available.
-No version bump or APK/RPK was built for this update. See
+Both native watch targets pass compiler-output layout checks. See
+[release scope](../docs/dev/RELEASE_1_6_26.zh-CN.md) and
 [large UI scope and verification](../docs/dev/WATCH_LARGE_UI_20261112.zh-CN.md).
 
 The earlier Watch 0.6.17 / phone 1.6.11 rebuild established the GT1 390x450 viewport
