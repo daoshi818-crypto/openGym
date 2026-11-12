@@ -1565,20 +1565,20 @@ export default pageDefinition
 .heart { flex: 1; min-width: 0px; font-size: 18px; color: #FF453A; lines: 1; }
 .status { flex: 1; min-width: 0px; height: 44px; line-height: 44px; font-size: 16px; color: #FF9F0A; lines: 1; }
 .training-panel { width: 338px; flex: 1; min-height: 0px; }
-.training-content { width: 338px; flex-direction: column; align-items: flex-start; height: 312px; flex-shrink: 0; }
+.training-content { width: 338px; flex-direction: column; align-items: flex-start; height: 328px; flex-shrink: 0; }
 .ex { width: 338px; height: 52px; line-height: 26px; font-size: 26px; color: #FFFFFF; font-weight: bold; lines: 2; }
 .group { width: 338px; height: 24px; font-size: 19px; color: #929297; lines: 1; }
 .group-done { color: #30D158; }
-.inputs { width: 338px; height: 80px; flex-direction: row; align-items: center; justify-content: space-between; }
-.field { height: 80px; flex-direction: column; align-items: center; border-radius: 16px; background-color: #000000; justify-content: center; }
+.inputs { width: 338px; height: 96px; flex-direction: row; align-items: center; justify-content: space-between; }
+.field { height: 96px; flex-direction: column; align-items: center; border-radius: 16px; background-color: #000000; justify-content: center; }
 .weight-field { width: 157px; }
 .reps-field { width: 157px; }
 .field-selected { background-color: #1C1C1E; border: 1px solid #30D158; }
 .field-done { background-color: #161618; }
-.fval { font-size: 56px; font-weight: bold; color: #FFFFFF; lines: 1; flex-shrink: 0; width: 157px; height: 58px; line-height: 58px; text-align: center; }
+.fval { font-size: 56px; font-weight: bold; color: #FFFFFF; lines: 1; flex-shrink: 0; width: 100%; height: 66px; line-height: 66px; text-align: center; }
 .long-value { font-size: 36px; }
 .extra-long-value { font-size: 27px; }
-.funit { flex-shrink: 0; font-size: 20px; color: #929297; margin-left: 0px; height: 22px; }
+.funit { flex-shrink: 0; width: 100%; height: 28px; line-height: 28px; font-size: 20px; color: #929297; text-align: center; lines: 1; }
 .times { width: 24px; font-size: 26px; color: #929297; text-align: center; }
 .last-space { width: 338px; height: 44px; }
 .last-row { width: 338px; height: 44px; align-items: center; }
@@ -1598,9 +1598,9 @@ export default pageDefinition
 .set-current { width: 28px; height: 28px; border-radius: 14px; background-color: #000000; border: 2px solid #FFFFFF; }
 .set-done { background-color: #FFFFFF; }
 .segment { background-color: #000000; color: #929297; font-size: 26px; }
-.primary-footer { width: 314px; height: 52px; margin-bottom: 18px; flex-direction: row; align-items: center; justify-content: space-between; flex-shrink: 0; }
-.list-link { width: 152px; height: 52px; line-height: 52px; font-size: 22px; color: #30D158; text-align: center; background-color: #1C1C1E; border-radius: 26px; }
-.end-link { width: 152px; height: 52px; line-height: 52px; font-size: 22px; color: #30D158; text-align: center; background-color: #1C1C1E; border-radius: 26px; }
+.primary-footer { width: 314px; height: 44px; margin-bottom: 16px; flex-direction: row; align-items: center; justify-content: space-between; flex-shrink: 0; }
+.list-link { width: 152px; height: 44px; line-height: 44px; font-size: 22px; color: #30D158; text-align: center; background-color: #1C1C1E; border-radius: 22px; }
+.end-link { width: 152px; height: 44px; line-height: 44px; font-size: 22px; color: #30D158; text-align: center; background-color: #1C1C1E; border-radius: 22px; }
 .rest-panel { margin-bottom: 0px; justify-content: center; align-items: center; }
 .scroll-content { width: 338px; flex-direction: column; align-items: center; }
 .rest-ex { width: 338px; height: 56px; line-height: 28px; font-size: 26px; color: #FF9F0A; lines: 2; text-align: center; }
@@ -1690,17 +1690,17 @@ export default pageDefinition
 
  .topbar { width: 220px; margin-top: 30px; }
  .training-panel, .training-content, .inputs, .last-space, .last-row, .last-text, .navrow, .set-dots, .ex, .group, .rest-content, .rest-ex, .rest, .next, .effort-row, .rrow { width: 300px; }
- .training-content { height: 304px; }
+ .training-content { height: 322px; }
  .group { height: 22px; font-size: 18px; }
- .inputs, .field { height: 74px; }
- .weight-field, .reps-field, .fval { width: 138px; }
- .fval { height: 52px; line-height: 52px; font-size: 52px; }
+ .inputs, .field { height: 92px; }
+ .weight-field, .reps-field { width: 138px; }
+ .fval { height: 62px; line-height: 62px; font-size: 52px; }
  .long-value { font-size: 32px; }
  .extra-long-value { font-size: 24px; }
  .effort-circle { width: 96px; margin-left: 10px; }
  .set-hit { width: 48px; height: 48px; }
  .set-dots { justify-content: center; }
- .primary-footer { width: 220px; margin-bottom: 36px; }
+ .primary-footer { width: 220px; margin-bottom: 26px; }
  .list-link, .end-link { width: 104px; font-size: 22px; }
  .rrow { width: 260px; margin-bottom: 36px; }
  .rbtn { width: 76px; height: 56px; font-size: 20px; }

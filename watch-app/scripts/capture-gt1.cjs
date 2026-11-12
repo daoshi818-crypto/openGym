@@ -29,6 +29,28 @@ let activeBrowser
       }).map(el => ({ cls: el.className, text: el.textContent }))
       const sideways = [...document.querySelectorAll('[data-type="list"]')].filter(e => e.scrollWidth > e.clientWidth + 1).map(e => e.className)
       const clippedNumbers = [...document.querySelectorAll('.fval>span,.funit>span,.show>span,.keyboard-value>span,.rest>span')].filter(e => e.scrollWidth > e.clientWidth + 1).map(e => ({text:e.textContent,width:e.clientWidth,needed:e.scrollWidth}))
+      // A horizontal-only check misses unit descenders and tight number line boxes.
+      // Locate the rendered baseline, then compare actual font ink with each clip.
+      const inkContext = document.createElement('canvas').getContext('2d')
+      const clippedValueGlyphs = [...document.querySelectorAll('.fval>span,.funit>span')].flatMap(span => {
+        const css = getComputedStyle(span), text = span.textContent
+        inkContext.font = css.fontWeight + ' ' + css.fontSize + ' ' + css.fontFamily
+        const metrics = inkContext.measureText(text), marker = document.createElement('i')
+        marker.style.cssText = 'display:inline-block;width:0;height:0;padding:0;margin:0;vertical-align:baseline;'
+        span.append(marker)
+        const baseline = marker.getBoundingClientRect().top
+        marker.remove()
+        const inkTop = baseline-metrics.actualBoundingBoxAscent, inkBottom = baseline+metrics.actualBoundingBoxDescent
+        let top=0, bottom=innerHeight
+        for (let el=span; el; el=el.parentElement) {
+          const style=getComputedStyle(el), box=el.getBoundingClientRect()
+          if (style.overflowY!=='visible' || el.classList.contains('field')) {
+            top=Math.max(top,box.top+parseFloat(style.borderTopWidth || 0))
+            bottom=Math.min(bottom,box.bottom-parseFloat(style.borderBottomWidth || 0))
+          }
+        }
+        return inkTop<top-0.25 || inkBottom>bottom+0.25 ? [{cls:span.parentElement.className,text,inkTop,inkBottom,clipTop:top,clipBottom:bottom}] : []
+      })
       // Being inside a scroll container must not exempt a single-screen form from checks.
       const main = document.querySelector('.screen:not(.operation-screen)')
       const editor = document.querySelector('#keypad')
@@ -83,17 +105,17 @@ let activeBrowser
         inspectOverlaps(fraction)
       }
       const cornerClippedAtEnd = corners()
-      return { root: { width: root.width, height: root.height }, lists, vectorImages, brokenVectors, outside, sideways, clippedNumbers, scrollRequired, trainingLists, overlappingControls, overlappingText, clippedPlan, cornerClipped, cornerClippedAtEnd }
+      return { root: { width: root.width, height: root.height }, lists, vectorImages, brokenVectors, outside, sideways, clippedNumbers, clippedValueGlyphs, scrollRequired, trainingLists, overlappingControls, overlappingText, clippedPlan, cornerClipped, cornerClippedAtEnd }
 
     })
     assert.deepEqual(result.root, { width: view.width, height: view.height }, scene.id + ' root viewport')
     report.push({ ...scene, ...result })
-    if (result.brokenVectors.length || result.outside.length || result.sideways.length || result.clippedNumbers.length || result.scrollRequired.length || result.trainingLists.length || result.overlappingControls.length || result.overlappingText.length || result.clippedPlan || result.cornerClipped.length || result.cornerClippedAtEnd.length) console.error(scene.id, JSON.stringify(result))
+    if (result.brokenVectors.length || result.outside.length || result.sideways.length || result.clippedNumbers.length || result.clippedValueGlyphs.length || result.scrollRequired.length || result.trainingLists.length || result.overlappingControls.length || result.overlappingText.length || result.clippedPlan || result.cornerClipped.length || result.cornerClippedAtEnd.length) console.error(scene.id, JSON.stringify(result))
   }
   fs.writeFileSync(path.join(dir, 'layout-report.json'), JSON.stringify({ previewOnly: true, conservativeCornerRadius: view.radius, viewport: view, errors, scenes: report }, null, 2))
   await browser.close()
   assert.deepEqual(errors, [], 'Browser rendering errors')
-  const failures = report.filter(s => s.brokenVectors.length || s.outside.length || s.sideways.length || s.clippedNumbers.length || s.scrollRequired.length || s.trainingLists.length || s.overlappingControls.length || s.overlappingText.length || s.clippedPlan || s.cornerClipped.length || s.cornerClippedAtEnd.length)
+  const failures = report.filter(s => s.brokenVectors.length || s.outside.length || s.sideways.length || s.clippedNumbers.length || s.clippedValueGlyphs.length || s.scrollRequired.length || s.trainingLists.length || s.overlappingControls.length || s.overlappingText.length || s.clippedPlan || s.cornerClipped.length || s.cornerClippedAtEnd.length)
   assert.deepEqual(failures.map(s => s.id), [], 'Layout exceeds safe bounds, controls overlap, or main training/rest scrolls; see layout-report.json')
   console.log('Captured ' + scenes.length + ' scenes; see layout-report.json for bounds checks')
 })().catch(async e => { await activeBrowser?.close(); console.error(e); process.exitCode = 1 })

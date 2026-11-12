@@ -55,6 +55,22 @@ describe('GT1 complete-screen rebuild contracts', () => {
       h('grid') + h('keyboard-switch') + h('actions','margin-top') + h('actions') + h('actions','margin-bottom')).toBeLessThanOrEqual(450)
     expect(watchSource('Keypad/index.ux')).toContain('notice ||')
   })
+  it('reserves number ascender headroom and full unit lines inside bordered fields', () => {
+    const css = watchSource('Workout/index.ux').match(/<style>([\s\S]*?)<\/style>/)[1]
+    const round = css.split('@media')[1]
+    const override = (selector, field, fallback) => {
+      const rules = [...round.matchAll(/([^{}]+)\{([^{}]+)\}/g)].filter(m => m[1].split(',').map(s=>s.trim()).includes('.'+selector))
+      const last = rules.flatMap(m => [...m[2].matchAll(new RegExp('(?:^|[;\\s])'+field+':\\s*([\\d.]+)px','g'))]).at(-1)
+      return last ? Number(last[1]) : fallback
+    }
+    for (const isRound of [false,true]) {
+      const h = (s,p='height') => isRound ? override(s,p,cssSize('Workout',s,p)) : cssSize('Workout',s,p)
+      expect(h('fval')).toBeGreaterThanOrEqual(h('fval','font-size')+8)
+      expect(h('funit')).toBeGreaterThanOrEqual(1.35*h('funit','font-size'))
+      expect(h('funit','line-height')).toBe(h('funit'))
+      expect(h('fval')+h('funit')+2).toBeLessThanOrEqual(h('field'))
+    }
+  })
   it('uses only a bundled vector for complete, undo and pause inside the primary button', () => {
     const root = sourceTemplate(watchSource('Workout/index.ux'))
     const nodes = n => [n, ...(n.children || []).flatMap(nodes)]

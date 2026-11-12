@@ -60,6 +60,11 @@ for (const page of Object.keys(manifest.router.pages)) {
       assert.equal(styles['.status'].flex, 1, name + ': status must share header width')
       assert.ok(px(styles,'.clock','width') < px(styles,'.topbar','width'), name + ': clock leaves status room')
       assert.ok(px(styles,'.abandon-button','height') >= 44, name + ': abandon touch target')
+      assert.ok(px(styles,'.fval','height') >= px(styles,'.fval','fontSize')+8, name + ': number ascender headroom')
+      assert.ok(px(styles,'.funit','height') >= 1.35*px(styles,'.funit','fontSize'), name + ': complete unit descender')
+      assert.equal(px(styles,'.funit','lineHeight'),px(styles,'.funit','height'), name + ': explicit unit line box')
+      assert.ok(px(styles,'.fval','height')+px(styles,'.funit','height')+2<=px(styles,'.field','height'), name + ': selected border must not crop values')
+      assert.ok(px(styles,'.list-link','height')>=44 && px(styles,'.end-link','height')>=44, name + ': footer touch targets')
     }
     flexViewport(sheet, '.training-panel'); flexViewport(sheet, '.operation-scroll'); flexViewport(sheet, '.last-list')
     flexViewport(sheet, '.effort-scroll')
