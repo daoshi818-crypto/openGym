@@ -19,6 +19,10 @@ export const stripImports = code => code
   .replace(/^export function /gm, 'function ')
 
 export function loadWatchModule(name, ctx, names) {
+  if (['rpc', 'session'].includes(name) && !ctx.compactStartEvent) {
+    if (!ctx.wireBytes) loadWatchModule('sync-wire', ctx, ['wireHash', 'wireBytes', 'acceptWireChunk', 'expandWireDelta'])
+    loadWatchModule('event-wire', ctx, ['compactStartEvent', 'createEventWire', 'nextEventFrame', 'EVENT_FRAME_BYTES'])
+  }
   if (name === 'rpc' && !ctx.recordDiagnostic) loadWatchModule('diagnostic-log', ctx, ['recordDiagnostic', 'flushDiagnosticLog', 'diagnosticLog', 'diagnosticLogPage'])
   if (name === 'diagnostic-log' && !ctx.appTimeout) loadWatchModule('app-timers', ctx, ['appTimeout', 'cancelAppTimeout', 'appInterval', 'cancelAppInterval'])
   if (name === 'diagnostic-log' && !ctx.wireBytes) loadWatchModule('sync-wire', ctx, ['wireHash', 'wireBytes', 'acceptWireChunk', 'expandWireDelta'])

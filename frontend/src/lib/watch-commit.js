@@ -120,9 +120,10 @@ export function createDurableWatchLifecycle(deps) {
           status('saving')
           await deps.checkpoint()
           if (disposed) return
-          // Complete only the exact native entry whose decision is now on disk. Failure to
-          // delete it is harmless: the next drain replays the durable decision.
-          for (const id of item.inboxIds) { try { await deps.completeInbox?.(id) } catch { /* retry on drain */ } }
+          // The exact decision is already on disk. Inbox deletion is garbage collection:
+          // a slow/lost native callback must not hold navigation, ACKs or later commands.
+          // A retained entry safely replays the same durable decision on the next drain.
+          for (const id of item.inboxIds) Promise.resolve().then(() => deps.completeInbox?.(id)).catch(() => {})
           // Cancel an automatic page plan echo only after durable publication.
           // This cache callback cannot invalidate or block the persisted decision.
           for (const reply of item.replies) if (reply.msg?.t === 'committed' && reply.msg.state) {

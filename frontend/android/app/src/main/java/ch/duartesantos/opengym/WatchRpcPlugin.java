@@ -65,6 +65,7 @@ public class WatchRpcPlugin extends Plugin {
     private volatile int lastLaunchCode = -1;
     private final List<String> logs = new ArrayList<>();
     private WatchInbox inbox;
+    private final WatchEventChunks eventChunks = new WatchEventChunks();
     private String inboxError = "";
     // App process owned, not React mounted. Handler posts also avoid recursive SDK callbacks.
     private final android.os.Handler sendHandler = new android.os.Handler(android.os.Looper.getMainLooper());
@@ -221,6 +222,20 @@ public class WatchRpcPlugin extends Plugin {
         if (json == null || json.isEmpty()) { log("RX business empty"); return; }
         try {
             JSObject data = JSObject.fromJSONObject(new JSONObject(json));
+            if ("watch_event_chunk".equals(data.optString("t"))) {
+                String eventId = data.optString("eventId"), sid = data.optString("sid");
+                String assembled;
+                try {
+                    assembled = eventChunks.accept(eventId, sid, data.optString("hash"), data.optInt("offset", -1),
+                            data.optInt("total", -1), data.optString("data"), android.os.SystemClock.elapsedRealtime());
+                    if (assembled == null) return;
+                    JSObject complete = JSObject.fromJSONObject(new JSONObject(assembled));
+                    if (!eventId.equals(complete.optString("eventId")) || !sid.equals(complete.optString("sid")) ||
+                            !java.util.Arrays.asList("watch_start", "session_close", "pause", "rest", "effort", "weight", "reps", "set", "unset", "add_set", "remove_set", "focus", "end", "summary").contains(complete.optString("t")))
+                        throw new IOException("invalid assembled event");
+                    json = assembled; data = complete;
+                } catch (Exception e) { log("RX event fragment rejected"); return; }
+            }
             lastRxType = data.optString("t", "unknown");
             log("RX business " + messageSummary(json));
             String type = data.optString("t", "");

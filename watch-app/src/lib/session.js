@@ -1,4 +1,5 @@
 import { wireHash, expandWireDelta } from './sync-wire.js'
+import { compactStartEvent } from './event-wire.js'
 import { dependenciesFor } from './event-dependencies.js'
 import { runtime } from './runtime.js'
 import { readStored, writeStored, writeStoredAtomic } from './persistence.js'
@@ -216,7 +217,7 @@ export async function commitSessionStart(workout, profile) {
       runtime().buildingSession = true
       const started = startSession(workout, profile)
       Object.assign(candidate, started, { pendingStart: true, planId: workout.id })
-      stageSessionEvent(candidate, { t: 'watch_start', sid: candidate.sid, startedAt: candidate.startedAt, planId: workout.id, plan: workout })
+      stageSessionEvent(candidate, compactStartEvent({ t: 'watch_start', sid: candidate.sid, startedAt: candidate.startedAt, planId: workout.id, plan: workout }))
       return candidate
     } finally { runtime().buildingSession = false; runtime().sessionDraft = null }
   })

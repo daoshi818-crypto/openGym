@@ -1,4 +1,5 @@
 import { persistentReceiver } from './persistent-transfer.js'
+import { compactStartEvent, createEventWire, nextEventFrame, EVENT_FRAME_BYTES } from './event-wire.js'
 import { selectReadyEvent } from './event-dependencies.js'
 import { appTimeout, cancelAppTimeout, appInterval, cancelAppInterval } from './app-timers.js'
 import { runtime } from './runtime.js'
@@ -32,11 +33,13 @@ const rpcState = () => runtime().rpc ||= { ...{"connect":null,"handlers":{},"con
 
 
 // Metadata only; the independent bounded journal never enters training storage/outbox.
-function trace(stage, msg = {}, error = null, code = null) {
+function trace(stage, msg = {}, error = null, code = null, meta = {}) {
   try {
     const r = rpcState(), head = r.outbox[0]?.msg
     const text = value => value == null ? '' : String(value).slice(0, 80)
-    const entry = { at: Date.now(), stage, type: text(msg.t), sid: text(msg.sid),
+    const entry = { at: Date.now(), stage, type: text(msg.t),
+      ...(error != null || code != null ? { code: text(code ?? error?.code) } : {}),
+      ...(meta.bytes != null ? { bytes: meta.bytes } : {}), sid: text(msg.sid),
       eventId: text(msg.eventId), pending: r.outbox.length }
     if (head) entry.headEventId = text(head.eventId)
     if (error != null) {
@@ -109,6 +112,7 @@ function persist() {
     settled = true
     try { if (timer != null) cancelAppTimeout(timer) } catch { /* 无定时器 */ }
     r.writeBusy = false
+    if (runtime().destroyed) return
     if (ok) {
       r.persistFailed = false
       markDurable(value)
@@ -178,7 +182,7 @@ function sendHello() {
   sendControl({
     t: 'hello',
     watchVersion: WATCH_VERSION, protocolVersion: 3, stableIds: true,
-    capabilities: { durableCommit: true, snapshotChunks: true, deltas: true, dependencyEvents: true, selectiveChunkAck: true, persistentTransfers: true, commandReceipts: true },
+    capabilities: { durableCommit: true, snapshotChunks: true, deltas: true, dependencyEvents: true, selectiveChunkAck: true, persistentTransfers: true, commandReceipts: true, watchEventChunks: true },
     receipts: true,
     sid: s.sid || '',
     rev: s.rev || 0,
@@ -260,6 +264,7 @@ export function replayPendingEvents() {
 }
 
 function flush() {
+  if (runtime().destroyed || rpcState().stopped) return
   initialize()
   const decisions = readStored('event_decisions') || {}
   for (const event of pendingCloseEvents()) if (!decisions[event.eventId] && !rpcState().outbox.some(e => e.msg.eventId === event.eventId)) enqueue(event)
@@ -290,8 +295,8 @@ function flush() {
   rpcState().sending = token
   if (!control) rpcState().nextSendAt = Date.now() + SEND_GAP_MS
   const release = () => { if (rpcState().sending !== token || token.generation !== rpcState().connectionGeneration) return false; cancelAppTimeout(rpcState().sendingTimer); rpcState().sending = false; return true }
-  trace('send_attempt', next.msg)
   const backoff = () => {
+    if (!control) r.eventWire = null // Retry the entire event; partial SDK sends are never receipts.
     next.sent = true; next.lastSendFailed = true; next.attempts = (next.attempts || 0) + 1
     next.nextAttemptAt = Date.now() + Math.min(60000, 2000 * Math.pow(2, Math.min(5, next.attempts - 1)))
     if (!control) persist()
@@ -300,12 +305,37 @@ function flush() {
   try {
     // Transport proof describes the base actually applied NOW. It must not
     // rewrite the frozen event's causal baseCommitRev or durable identity.
-    const state = !control && r.peerCapabilities?.commandReceipts ? loadState() : null
-    const base = state?.active && state.sid === next.msg.sid ? state.syncBase : null
-    const data = base?.wireHash ? { ...next.msg, appliedHash: base.wireHash, appliedRev: base.commitRev } : next.msg
+    let data = compactStartEvent(next.msg)
+    let frame = null
+    if (!control && r.peerCapabilities?.watchEventChunks && wireBytes(JSON.stringify(data)) > EVENT_FRAME_BYTES) {
+      if (!r.eventWire || r.eventWire.eventId !== next.msg.eventId || r.eventWire.generation !== r.connectionGeneration)
+        // Optional applied-state transport proof may change during a retry. The
+        // fragmented body must remain the SAME frozen event across all attempts.
+        r.eventWire = { ...createEventWire(next.msg), generation: r.connectionGeneration }
+      frame = nextEventFrame(r.eventWire)
+      data = frame.data
+    } else if (!control && r.peerCapabilities?.commandReceipts) {
+      const state = loadState()
+      const base = state.active && state.sid === next.msg.sid ? state.syncBase : null
+      if (base?.wireHash) data = { ...data, appliedHash: base.wireHash, appliedRev: base.commitRev }
+    }
+    const bytes = wireBytes(JSON.stringify(data))
+    trace('send_attempt', next.msg, null, null, { bytes })
     rpcState().connect.send({ data,
-      success: () => { if (!release()) return; trace('send_success', next.msg); if (control) { r.controls = r.controls.filter(e => e !== control); scheduleFlush(); return }; const item = rpcState().outbox.find(e => e.msg.eventId === token.eventId); if (item) { item.lastSendFailed = false; item.sent = true; item.sentAt = Date.now(); item.attempts = (item.attempts || 0) + 1; item.nextAttemptAt = Date.now() + Math.min(60000, 4000 * Math.pow(2, Math.min(4, item.attempts - 1))) + Math.floor(Math.random() * 1000) }; scheduleFlush() },
-      fail: (error, code) => { if (!release()) return; trace('send_fail', next.msg, error, code); backoff(); scheduleFlush() }
+      success: () => {
+        if (!release()) return
+        trace('send_success', next.msg, null, null, { bytes })
+        if (control) { r.controls = r.controls.filter(e => e !== control); scheduleFlush(); return }
+        if (frame && r.eventWire) {
+          r.eventWire.offset = frame.end
+          if (frame.end < r.eventWire.text.length) { scheduleFlush(); return }
+          r.eventWire = null
+        }
+        const item = rpcState().outbox.find(e => e.msg.eventId === token.eventId)
+        if (item) { item.lastSendFailed = false; item.sent = true; item.sentAt = Date.now(); item.attempts = (item.attempts || 0) + 1; item.nextAttemptAt = Date.now() + Math.min(60000, 4000 * Math.pow(2, Math.min(4, item.attempts - 1))) + Math.floor(Math.random() * 1000) }
+        scheduleFlush()
+      },
+      fail: (error, code) => { if (!release()) return; trace('send_fail', next.msg, error, code, { bytes }); backoff(); scheduleFlush() }
     })
   } catch (error) { if (release()) { trace('send_exception', next.msg, error); backoff(); scheduleFlush() } }
 }
@@ -372,7 +402,7 @@ function summaryForEvent(eventId) {
 // 关闭/结束两类消息串行消费：乱序或重复到达时只会得到同一条冻结汇总，也不会并发建两份日志。
 function serial(task) {
   const prev = rpcState().lifecycleQueue || Promise.resolve()
-  const next = prev.then(() => { try { return task() } catch (e) { return null } }).catch(() => null)
+  const next = prev.then(() => { if (runtime().destroyed || rpcState().stopped) return null; try { return task() } catch (e) { return null } }).catch(() => null)
   rpcState().lifecycleQueue = next
   return next
 }
@@ -438,6 +468,9 @@ async function handleEnded(msg) {
 }
 
 export function startServer(h) {
+  if (runtime().destroyed) return
+  rpcState().stopped = false
+  rpcState().stop = stopServer
   if (h) rpcState().handlers = h
   if (!rpcState().retryTimer) rpcState().retryTimer = appInterval(flush, 4000)
   if (!rpcState().connect) {
@@ -456,8 +489,10 @@ export function startServer(h) {
   // on every onShow even when the connection was already active.
   if (rpcState().boundConnection === rpcState().connect) return
   rpcState().boundConnection = rpcState().connect
+  const connection = rpcState().connect, owner = rpcState(), callbacks = {}
+  const binding = {}; owner.callbackBinding = binding
   // 页面模块共享 application runtime；当前页面只接管 UI 回调。
-  rpcState().connect.onOpen = () => {
+  callbacks.onOpen = () => {
     rpcState().connected = true
     rpcState().peerCapabilities = {}
     trace('connection_open')
@@ -470,20 +505,20 @@ export function startServer(h) {
     if (rpcState().handlers.onState) rpcState().handlers.onState(true)
     flush()
   }
-  rpcState().connect.onClose = () => {
+  callbacks.onClose = () => {
     trace('connection_close')
     rpcState().connected = false
     rpcState().connectionGeneration++; rpcState().sending = false; cancelAppTimeout(rpcState().sendingTimer)
     if (rpcState().handlers.onState) rpcState().handlers.onState(false)
   }
-  rpcState().connect.onError = (err) => {
+  callbacks.onError = (err) => {
     trace('connection_error', {}, err)
     rpcState().connected = false
     rpcState().connectionGeneration++; rpcState().sending = false; cancelAppTimeout(rpcState().sendingTimer)
     if (rpcState().handlers.onState) rpcState().handlers.onState(false)
     if (rpcState().handlers.onError) rpcState().handlers.onError(err || {})
   }
-  rpcState().connect.onMessage = (data) => {
+  callbacks.onMessage = (data) => {
     const decoded = parseMessage(data)
     let msg = decoded.message
     if (!msg) {
@@ -720,17 +755,27 @@ export function startServer(h) {
     if (msg.t === 'file' && rpcState().handlers.onFile) { rpcState().handlers.onFile(msg); return }
     sendControl({ t: 'watch_rx', watchVersion: WATCH_VERSION, status: 'unhandled_type', messageType: msg.t })
   }
-  // 不同固件文档里大小写不一致，两种都挂上。
-  rpcState().connect.onopen = rpcState().connect.onOpen
-  rpcState().connect.onclose = rpcState().connect.onClose
-  rpcState().connect.onerror = rpcState().connect.onError
-  rpcState().connect.onmessage = rpcState().connect.onMessage
+  // Native callback registrations may retain a destroyed App. They must never
+  // reopen delivery or invoke Page subscribers after stop/relaunch.
+  for (const key of ['onOpen', 'onClose', 'onError', 'onMessage']) {
+    const handler = callbacks[key]
+    const guarded = (...args) => {
+      if (runtime().destroyed || owner.stopped || owner.callbackBinding !== binding || owner.connect !== connection) return
+      return handler(...args)
+    }
+    connection[key] = guarded
+    connection[key.toLowerCase()] = guarded
+  }
 
   if (rpcState().connected) sendHello()
   else probeConnection()
 }
 
 export function stopServer() {
+  const r = rpcState()
+  r.stopped = true
+  r.callbackBinding = null
+  r.handlers = {}
   if (rpcState().retryTimer) cancelAppInterval(rpcState().retryTimer)
   rpcState().retryTimer = null
   cancelAppTimeout(rpcState().flushTimer); rpcState().flushTimer = null
@@ -741,6 +786,8 @@ export function stopServer() {
   rpcState().boundConnection = null
   rpcState().connected = false
   rpcState().connectionGeneration++; rpcState().sending = false; cancelAppTimeout(rpcState().sendingTimer)
+  r.outbox = []; r.durable = new Set(); r.initialized = false
+  r.trace = []; r.transfers = {}; r.persistentReceiver = null; r.eventWire = null
 }
 
 /** 事件类：进 outbox，保证闪退/断线不丢。返回是否已在队列里（不代表手机已保存）。 */

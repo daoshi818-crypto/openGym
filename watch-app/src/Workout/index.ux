@@ -390,7 +390,7 @@ const pageDefinition = {
   leaveTraining() {
     this.leaveChoice = false
     this.stopHrCapture()
-    save(this.state)
+    save(this.dotPreview ? loadState() : this.state)
     router.push({ uri: '/Index' })
   },
 
@@ -548,7 +548,7 @@ const pageDefinition = {
     return false
   },
   pickSetDot(target) {
-    this.logInteraction('dot_tap', { entryInstanceId: target?.entryInstanceId, setId: target?.setId, set: target?.setIdx }, true)
+    this.logInteraction('dot_tap', { entryInstanceId: target?.entryInstanceId, setId: target?.setId, set: target?.setIdx })
     const reason = this.setDotBlockReason()
     if (reason || !target) return this.logDotBlocked(target, reason || 'missing_target', 'tap')
     const found = rowTarget(this.state, target)
@@ -556,10 +556,47 @@ const pageDefinition = {
     if (!this.setDotPicker?.pending() && found.exIdx === this.state.exIdx && found.setIdx === this.state.setIdx) return this.logDotBlocked(target, 'current_set', 'tap')
     if (!this.setDotPicker) this.setDotPicker = createSetDotPicker(next => this.commitSetDot(next))
     if (!this.setDotPicker.pending()) this.logInteraction('dot_queued', { setId: target.setId, set: target.setIdx })
-    return this.setDotPicker.request({ sid: target.sid, entryInstanceId: target.entryInstanceId, setId: target.setId,
+    // Browsing a group is immediate; only the persisted focus intention waits for
+    // coalescing/storage. Never put this view-only cursor into the shared cache.
+    this.dotPreview = { sid: this.state.sid, entryInstanceId: target.entryInstanceId, setId: target.setId,
+      exIdx: found.exIdx, setIdx: found.setIdx }
+    this.autoFocusSid = this.state.sid
+    this.autoFocusEx = found.exIdx; this.autoFocusSet = found.setIdx; this.autoFocusIgnoreUntil = 0
+    this.clearFieldSelection()
+    this.state = this.withDotPreview(this.state)
+    this.refresh()
+    const batch = this.setDotPicker.request({ sid: target.sid, entryInstanceId: target.entryInstanceId, setId: target.setId,
       exIdx: target.exIdx, setIdx: target.setIdx, baseCommitRev: this.state.commitRev || 0 })
+    if (this.dotBatch !== batch) {
+      this.dotBatch = batch
+      batch.then(() => {
+        if (this.dotBatch !== batch) return
+        this.dotBatch = null; this.dotPreview = null
+        const latest = loadState()
+        if (this.visible !== false && latest.active && latest.sid === this.state.sid) {
+          this.state = latest
+          this.autoFocusSid = latest.sid
+          this.autoFocusEx = latest.exIdx; this.autoFocusSet = latest.setIdx; this.autoFocusIgnoreUntil = 0
+          this.refresh()
+        }
+      })
+    }
+    return batch
   },
-  cancelSetDotPick() { if (this.setDotPicker) this.setDotPicker.cancel() },
+  withDotPreview(state) {
+    const target = this.dotPreview
+    if (!target) return state
+    const found = rowTarget(state, target)
+    if (!found || state.sid !== target.sid || found.exIdx !== state.exIdx || state.pausedAt || state.restUntil || state.closeIntent) {
+      this.cancelSetDotPick()
+      return state
+    }
+    return { ...state, exIdx: found.exIdx, setIdx: found.setIdx }
+  },
+  cancelSetDotPick() {
+    if (this.setDotPicker) this.setDotPicker.cancel()
+    this.dotBatch = null; this.dotPreview = null; this.dotActionWaiting = null
+  },
   logInteraction(stage, extra = {}, flush = false) {
     try {
       const s = this.state || {}
@@ -592,11 +629,13 @@ const pageDefinition = {
     }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
   },
 
-  onComplete() {
+  onComplete(expectedTarget) {
     this.logInteraction('complete_tap')
     return commitPageAction(this, function() {
     if (this.isRest || this.paused || this.closeMode || this.interactionBlocked() || Date.now() < (this.completionIgnoreUntil || 0)) return
     const s = this.state
+    const expected = expectedTarget && rowTarget(s, expectedTarget)
+    if (expectedTarget && (!expected || expected.exIdx !== s.exIdx || expected.setIdx !== s.setIdx || expected.row.done)) return
     const exIdx = s.exIdx, setIdx = s.setIdx
     const current = s.workout.rows[exIdx] && s.workout.rows[exIdx][setIdx]
     if (!current || current.done) return
@@ -623,10 +662,12 @@ const pageDefinition = {
     }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
   },
 
-  onUndo() {
+  onUndo(expectedTarget) {
     if (this.setDotPicker?.pending()) return false
     return commitPageAction(this, function() {
     const s = this.state
+    const expected = expectedTarget && rowTarget(s, expectedTarget)
+    if (expectedTarget && (!expected || expected.exIdx !== s.exIdx || expected.setIdx !== s.setIdx || !expected.row.done)) return
     const exIdx = s.exIdx, setIdx = s.setIdx
     const row = s.workout.rows[exIdx] && s.workout.rows[exIdx][setIdx]
     if (!row || !row.done) return
@@ -640,9 +681,26 @@ const pageDefinition = {
   },
 
   onCurrentSetAction() {
+    if (this.setDotPicker?.pending()) {
+      if (this.dotActionWaiting) return this.dotActionWaiting
+      const target = this.dotPreview
+      const undo = this.rowDone
+      const waiting = this.setDotPicker.settled().then(ok => {
+        if (this.dotActionWaiting !== waiting) return false
+        this.dotActionWaiting = null
+        const current = captureRow(this.state)
+        if (!ok || this.visible === false || !target || !current || current.sid !== target.sid ||
+            current.entryInstanceId !== target.entryInstanceId || current.setId !== target.setId) return false
+        if (this.closeMode || this.paused || this.interactionBlocked() || Date.now() < (this.completionIgnoreUntil || 0)) return false
+        return undo ? this.onUndo(target) : this.onComplete(target)
+      })
+      this.dotActionWaiting = waiting
+      return waiting
+    }
     if (this.closeMode || this.paused || this.interactionBlocked() || Date.now() < (this.completionIgnoreUntil || 0)) return
-    if (this.rowDone) return this.onUndo()
-    else return this.onComplete()
+    const target = captureRow(this.state)
+    if (this.rowDone) return this.onUndo(target)
+    else return this.onComplete(target)
   },
 
   onRemoteSet(msg) {
@@ -757,7 +815,7 @@ const pageDefinition = {
       if (!latest.active || !latest.workout || latest.sid !== msg.sid) return { status: 'retained', page: 'Workout' }
       this.adoptSession(this.withRestPreview(latest))
     } else {
-      const latest = this.restCrownDirty ? loadState() : this.state
+      const latest = loadState()
       applySync(latest, msg)
       this.adoptSession(this.withRestPreview(latest))
     }
@@ -1161,10 +1219,15 @@ const pageDefinition = {
   },
 
   refresh() {
+    this.state = this.withDotPreview(this.state)
     this.weightUnit = this.state?.weightUnit || 'kg'
     const s = this.state
     if (!s || !s.workout) return
     this.reconcileRestClock()
+    if (this.dotPreview) {
+      this.autoFocusSid = s.sid
+      this.autoFocusEx = s.exIdx; this.autoFocusSet = s.setIdx; this.autoFocusIgnoreUntil = 0
+    }
     this.updateAutoFocusLock(s)
     this.setRestScreenLock(this.visible !== false && !!s.restUntil)
     this.rowDone = this.isDoneRowCur()
@@ -1294,8 +1357,10 @@ const pageDefinition = {
     if (this.effortOn) return
     if (!this.allFinished) {
       if (this.state.completionAcknowledged) {
+        const saved = this.dotPreview ? loadState() : this.state
+        saved.completionAcknowledged = false
         this.state.completionAcknowledged = false
-        save(this.state)
+        save(saved)
       }
       if (this.closeMode === 'complete') this.closeMode = ''
       return

@@ -1,4 +1,39 @@
-# Sync protocol: watch 0.6.22 / phone 1.6.19
+# Sync protocol: watch 0.6.31 / phone 1.6.28
+
+## Watch event envelope and App teardown
+
+New `watch_start` events contain the phone plan id/name/unit/entries, preserving all
+entry/set identities and progression metadata. Duplicate watch presentation fields
+(exercises/history, rows, preview and profile) stay in the local workout/catalog.
+An old queued start is projected for transport without changing its durable source,
+eventId, causal base or dependencies.
+
+`watchEventChunks` is explicitly negotiated in hello/hello_ack. Large business events
+then use `watch_event_chunk` frames within an application budget of 3000 UTF-8 bytes
+including the JSON envelope. This budget is NOT a measured/documented firmware limit.
+The body is the frozen event (no changing applied-state proof), with UTF-16 offset/total
+and the existing FNV-1a UTF-16 checksum. Frames share the single physical send gate and
+yield between sends. Full messages are limited to 128 KiB; no payload is truncated.
+
+Android assembles at most two transient transfers with a three-minute TTL, validating
+duplicates, nonoverlapping ranges, size, checksum and sid/eventId/type. Only complete
+events enter the existing durable Inbox. A partial transfer is not acknowledged as
+business. On a lost fragment, connection generation change or phone process death,
+the watch retains and resends the whole original event. Losing partial phone memory
+therefore needs no new recovery decision or fragment-level persistent journal. A
+complete Inbox write/checkpoint failure retains watch ownership until exact commit.
+Upgrade both phone and watch for this extension; old peers keep inline compatibility.
+
+App destruction stops RPC, detaches UI handlers, cancels owned timers and resolves
+unconfirmed storage jobs as failed. Late SDK callbacks cannot restart delivery or
+start the next storage write. Confirmed training/Outbox files remain recoverable on
+the next launch. This addresses reproduced lifecycle cleanup gaps; it does not prove
+the native jsloop assertion in the November 13 device logs is fully resolved.
+
+Dot selection alone previews the cursor immediately. Its durable focus event still
+uses the atomic session transaction. Later previews survive older completions;
+failure/hide cancels the preview, and queued completion/undo revalidates stable row
+identity and intended done state inside the actual transaction.
 
 ## Durable local actions and exact commit boundary
 

@@ -297,7 +297,7 @@ function onNativeWatchEvent(ev) {
       watchReceiptsSupported = ev.receipts === true
       persistentEnabled = ev.protocolVersion >= 3 && ev.capabilities?.durableCommit === true && ev.capabilities?.snapshotChunks === true && ev.capabilities?.selectiveChunkAck === true && ev.capabilities?.persistentTransfers === true
       commandReceiptsEnabled = ev.protocolVersion >= 3 && ev.capabilities?.commandReceipts === true && ev.capabilities?.durableCommit === true
-      sendWatchEvent({ t: 'hello_ack', protocolVersion: 3, capabilities: { durableCommit: true, snapshotChunks: true, commandReceipts: commandReceiptsEnabled, dependencyEvents: ev.capabilities?.dependencyEvents === true, selectiveChunkAck: ev.capabilities?.selectiveChunkAck === true, persistentTransfers: ev.capabilities?.persistentTransfers === true } })
+      sendWatchEvent({ t: 'hello_ack', protocolVersion: 3, capabilities: { durableCommit: true, snapshotChunks: true, watchEventChunks: true, commandReceipts: commandReceiptsEnabled, dependencyEvents: ev.capabilities?.dependencyEvents === true, selectiveChunkAck: ev.capabilities?.selectiveChunkAck === true, persistentTransfers: ev.capabilities?.persistentTransfers === true } })
       if (persistentEnabled) snapshotSender.resume().then(() => kickPersistent()).catch(error => { lastError = error.message; kickPersistent(6000) })
       else clearTimeout(persistentPumpTimer)
       syncProtocol = ev.protocolVersion >= 3 && ev.capabilities?.durableCommit && ev.capabilities?.snapshotChunks ? 3 : 2

@@ -5,11 +5,26 @@ import { WATCH_VERSION } from './lib/version.js'
 export default {
   onCreate() {
     bindRuntime(this.$def || this)
+    const r = runtime(), timeouts = new Set(), intervals = new Set()
+    r.destroyed = false
     runtime().timers = {
-      setTimeout: (fn, ms) => setTimeout(fn, ms),
-      clearTimeout: id => clearTimeout(id),
-      setInterval: (fn, ms) => setInterval(fn, ms),
-      clearInterval: id => clearInterval(id),
+      setTimeout: (fn, ms) => {
+        if (r.destroyed) return null
+        const id = setTimeout(() => { timeouts.delete(id); if (!r.destroyed) fn() }, ms)
+        timeouts.add(id); return id
+      },
+      clearTimeout: id => { timeouts.delete(id); clearTimeout(id) },
+      setInterval: (fn, ms) => {
+        if (r.destroyed) return null
+        const id = setInterval(() => { if (!r.destroyed) fn() }, ms)
+        intervals.add(id); return id
+      },
+      clearInterval: id => { intervals.delete(id); clearInterval(id) },
+      dispose: () => {
+        for (const id of timeouts) clearTimeout(id)
+        for (const id of intervals) clearInterval(id)
+        timeouts.clear(); intervals.clear()
+      },
     }
     console.log('opengym 启动')
     try { recordDiagnostic('app_start', { version: WATCH_VERSION }); flushDiagnosticLog() } catch { /* Diagnostics are optional. */ }
@@ -17,7 +32,18 @@ export default {
   onDestroy() {
     try { recordDiagnostic('app_destroy'); flushDiagnosticLog() } catch { /* Best effort only. */ }
     const app = this.$def || this
-    app.openGymRuntime?.hrCapture?.stop()
+    const r = app.openGymRuntime
+    if (!r) return
+    try { r.rpc?.stop?.() } catch { /* The SDK may already be closed. */ }
+    try { r.hrCapture?.stop() } catch { /* Continue releasing other owners. */ }
+    r.destroyed = true
+    try { r.persistence?.dispose?.() } catch { /* Pending callers must not restart work. */ }
+    r.timers?.dispose?.()
+    // Native callbacks can outlive onDestroy. Keep the lifetime guard, release
+    // large caches and Page subscribers; confirmed training remains on disk.
+    delete r.diagnosticLog
+    delete r.persistence
+    delete r.hrCapture
   },
 }
 </script>

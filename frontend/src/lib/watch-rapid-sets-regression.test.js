@@ -154,6 +154,60 @@ it('retains the last tap during slow storage with only one write in flight', asy
   expect(h.c.loadState().pendingEdits.filter(e => e.t === 'focus').map(e => e.set)).toEqual([2, 5])
 })
 
+it('renders the tapped group immediately while session storage takes two seconds', async () => {
+  vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const { ctx: p } = bluePage(h, true)
+  const s = h.c.loadState(); s.workout.rows[0][2].w = '77.5'; h.c.save(s)
+  p.state = h.c.loadState(); p.refresh()
+  const writes = [], original = h.storage.set
+  h.storage.set = item => item.key === 'session_state' ? writes.push(item) : original(item)
+  const picked = p.pickSetDot(p.setDots[2])
+  expect(p.state.setIdx).toBe(2)
+  expect(p.weightNum).toBe('77.5')
+  expect(p.setDots.map(d => d.current)).toEqual([false, false, true, false, false])
+  expect(h.c.loadState().setIdx).toBe(0)
+  await vi.advanceTimersByTimeAsync(2000)
+  expect(writes).toHaveLength(1); expect(p.state.setIdx).toBe(2)
+  original(writes.shift()); expect(await picked).toBe(true)
+  expect(h.c.loadState().setIdx).toBe(2)
+})
+
+it('keeps a newer dot visible when an older dot finishes writing', async () => {
+  vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const { ctx: p } = bluePage(h, true)
+  p.refresh(); const dots = p.setDots, writes = [], original = h.storage.set
+  h.storage.set = item => item.key === 'session_state' ? writes.push(item) : original(item)
+  const picked = p.pickSetDot(dots[1]); await vi.advanceTimersByTimeAsync(150)
+  p.pickSetDot(dots[4]); expect(p.state.setIdx).toBe(4)
+  original(writes.shift()); await vi.advanceTimersByTimeAsync(150)
+  expect(p.state.setIdx).toBe(4)
+  original(writes.shift()); expect(await picked).toBe(true)
+  expect(h.c.loadState().setIdx).toBe(4)
+})
+
+it('returns the preview to the saved group on storage failure without sending a focus', async () => {
+  vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const { ctx: p } = bluePage(h, true)
+  p.refresh(); const writes = [], original = h.storage.set
+  h.storage.set = item => item.key === 'session_state' ? writes.push(item) : original(item)
+  const picked = p.pickSetDot(p.setDots[2]); expect(p.state.setIdx).toBe(2)
+  await vi.advanceTimersByTimeAsync(150); writes.shift().fail()
+  expect(await picked).toBe(false); expect(p.state.setIdx).toBe(0)
+  expect(p.inputNotice).toContain('存储失败')
+  expect(h.c.loadState().pendingEdits || []).toHaveLength(0)
+})
+
+it.each(['leave', 'completion-reset'])('keeps the preview out of shared saves during %s', mode => {
+  vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const { ctx: p } = bluePage(h, true)
+  if (mode === 'completion-reset') {
+    const s = h.c.loadState(); s.completionAcknowledged = true; h.c.save(s); p.state = h.c.loadState()
+    // Arm this refresh side effect only after preview selection.
+    p.effortOn = true
+  }
+  p.refresh(); p.pickSetDot(p.setDots[2])
+  if (mode === 'leave') p.leaveTraining()
+  else { p.effortOn = false; p.refresh() }
+  expect(h.c.loadState().setIdx).toBe(0)
+  expect(p.state.setIdx).toBe(2)
+})
+
 it.each(['hide', 'destroy', 'new-session'])('cancels uncommitted dot input on %s', async mode => {
   vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const { ctx: p } = bluePage(h, true)
   p.refresh(); p.pickSetDot(p.setDots[4])
@@ -222,15 +276,64 @@ it('phone focus remains authoritative when it changes while a dot tap is queued'
   } finally { a.receive.dispose() }
 })
 
-it('cannot complete the old row while a dot selection is waiting to commit', async () => {
+it('queues one completion for the displayed row while a dot selection is waiting to commit', async () => {
   vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const { ctx: p } = bluePage(h, true)
   p.refresh(); const pick = p.pickSetDot(p.setDots[3])
-  expect(await p.onCurrentSetAction()).toBeFalsy()
+  const completion = p.onCurrentSetAction()
+  expect(p.onCurrentSetAction()).toBe(completion)
   expect(h.c.loadState().workout.rows.flat().some(r => r.done)).toBe(false)
   await vi.advanceTimersByTimeAsync(150); expect(await pick).toBe(true)
-  expect(await p.onComplete()).toBe(true)
+  expect(await completion).toBe(true)
   expect(h.c.loadState().workout.rows[0][3].done).toBe(true)
   expect(h.c.loadState().workout.rows[0][0].done).toBe(false)
+})
+
+it.each(['another-dot', 'hide', 'failed-write', 'phone-rest'])('does not complete a different or cancelled preview after %s', async mode => {
+  vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const { ctx: p } = bluePage(h, true)
+  p.refresh(); const dots = p.setDots, writes = [], original = h.storage.set
+  h.storage.set = item => item.key === 'session_state' ? writes.push(item) : original(item)
+  const pick = p.pickSetDot(dots[3]), completion = p.onCurrentSetAction()
+  if (mode === 'another-dot') p.pickSetDot(dots[4])
+  else if (mode === 'hide') p.onHide()
+  else if (mode === 'phone-rest') {
+    const s = h.c.loadState(); s.restUntil = Date.now() + 30000
+    h.storage.set = original; h.c.save(s); p.state = h.c.loadState(); p.refresh()
+  }
+  await vi.advanceTimersByTimeAsync(150)
+  if (mode === 'failed-write') writes.shift().fail()
+  else while (writes.length) { original(writes.shift()); await vi.advanceTimersByTimeAsync(150) }
+  await pick; expect(await completion).toBe(false)
+  expect(h.c.loadState().workout.rows.flat().some(r => r.done)).toBe(false)
+})
+
+it('keeps a queued completion from becoming undo when the phone completes that row first', async () => {
+  vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const { ctx: p } = bluePage(h, true)
+  p.refresh(); const pick = p.pickSetDot(p.setDots[3]), completion = p.onCurrentSetAction()
+  const s = h.c.loadState(); s.workout.rows[0][3].done = true; s.workout.rows[0][3].at = Date.now()
+  h.c.save(s); p.state = h.c.loadState(); p.refresh()
+  await vi.advanceTimersByTimeAsync(150); await pick; await completion
+  expect(h.c.loadState().workout.rows[0][3].done).toBe(true)
+  expect(h.c.loadState().pendingEdits.some(e => e.t === 'unset' || e.t === 'set')).toBe(false)
+})
+
+it('rechecks the completion identity inside the transaction after a deleting snapshot', async () => {
+  vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const { ctx: p } = bluePage(h, true)
+  p.refresh(); p.bindRpc()
+  const writes = [], original = h.storage.set
+  h.storage.set = item => item.key === 'session_state' ? writes.push(item) : original(item)
+  const pick = p.pickSetDot(p.setDots[3]), completion = p.onCurrentSetAction()
+  await vi.advanceTimersByTimeAsync(150); expect(writes).toHaveLength(1)
+  const raw = snapshot(h, 's', 10)
+  raw.exercises[0].sets = 3; raw.exercises[0].setIds = raw.exercises[0].setIds.slice(0, 3)
+  raw.rows[0] = raw.rows[0].slice(0, 3); raw.setIdx = 1
+  const msg = canonicalWire(raw), syncing = h.c.commitWireSnapshot(msg, transfer(msg))
+  original(writes.shift()); await vi.advanceTimersByTimeAsync(0)
+  expect(writes).toHaveLength(1); expect(p.state.setIdx).toBe(3)
+  original(writes.shift()); await vi.advanceTimersByTimeAsync(0)
+  while (writes.length) { original(writes.shift()); await vi.advanceTimersByTimeAsync(0) }
+  await syncing; await pick; await completion
+  expect(h.c.loadState().workout.rows.flat().some(r => r.done)).toBe(false)
+  expect(h.c.loadState().pendingEdits.some(e => e.t === 'set' || e.t === 'unset')).toBe(false)
 })
 
 it('SDK timers release the dot gate before completing and skipping the selected row', async () => {

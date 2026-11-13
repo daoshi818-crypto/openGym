@@ -13,7 +13,21 @@ import { runtime } from './runtime.js'
 // writeStoredConfirmed() 提供“该版本或更晚版本已写盘成功”的确认语义，
 // 与 writeStored 共用同一条每 key 串行链（不另起第二条写链）。
 const clone = v => JSON.parse(JSON.stringify(v))
-const data = () => runtime().persistence ||= { values: {}, queues: {}, errors: {}, revisions: {} }
+const data = () => {
+  if (runtime().destroyed) throw new Error('app_destroyed')
+  return runtime().persistence ||= { values: {}, queues: {}, errors: {}, revisions: {}, dispose: disposeStorage }
+}
+function disposeStorage() {
+  const state = runtime().persistence
+  if (!state) return
+  for (const q of Object.values(state.queues)) {
+    q.cancelInFlight?.()
+    for (const job of q.transactions || []) job.resolve({ ok: false, error: 'app_destroyed' })
+    q.transactions = []
+    settle(q, false)
+  }
+  state.values = {}; state.queues = {}
+}
 const WRITE_TIMEOUT_MS = 5000
 const later = (fn, ms) => { try { return appTimeout(fn, ms) } catch { return null } }
 const cancel = t => { try { if (t != null) cancelAppTimeout(t) } catch { /* 无定时器 */ } }
@@ -121,7 +135,9 @@ function atomicDrain(key, state, q) {
   let finished = false, timer = null
   const done = ok => {
     if (finished) return
+    if (runtime().destroyed) ok = false
     finished = true; cancel(timer); q.busy = false; q.atomic = null
+    q.cancelInFlight = null
     if (ok) {
       let published = value
       for (const overlay of overlays) {
@@ -152,12 +168,14 @@ function atomicDrain(key, state, q) {
     job.resolve({ ok, value: ok ? clone(value) : null })
     drain(key, state, q)
   }
+  q.cancelInFlight = () => done(false)
   try {
     timer = later(() => done(false), WRITE_TIMEOUT_MS)
     storage.set({ key, value, success: () => done(true), fail: () => done(false) })
   } catch { done(false) }
 }
 function drain(key, state, q) {
+  if (runtime().destroyed) return
   if (q.busy) return
   if (!q.dirty) { if (q.transactions?.length) atomicDrain(key, state, q); return }
   q.busy = true; q.dirty = false
@@ -166,7 +184,9 @@ function drain(key, state, q) {
   let settled = false, timer = null
   const done = ok => {
     if (settled) return
+    if (runtime().destroyed) ok = false
     settled = true
+    q.cancelInFlight = null
     cancel(timer)
     q.busy = false
     if (ok) {
@@ -180,6 +200,7 @@ function drain(key, state, q) {
       settle(q, false)
     }
   }
+  q.cancelInFlight = () => done(false)
   try {
     timer = later(() => done(false), WRITE_TIMEOUT_MS)
     storage.set({ key, value, success: () => done(true), fail: () => done(false) })

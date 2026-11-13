@@ -65,6 +65,7 @@ export function createSetDotPicker(apply, delay = 120) {
       return batch
     },
     pending() { return running || !!target },
+    settled() { return batch || Promise.resolve(true) },
     cancel() {
       generation++; target = null
       if (timer != null) clearTimeout(timer)
