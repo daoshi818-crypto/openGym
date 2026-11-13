@@ -1714,7 +1714,7 @@ export default pageDefinition
 .effort-ok { width: 182px; height: 64px; border-radius: 28px; font-size: 24px; background-color: #0A3418; color: #30D158; }
 .effort-clear { width: 314px; height: 56px; margin-bottom: 0px; line-height: 56px; font-size: 22px; color: #FF9F0A; text-align: center; }
 .diagnostic-layer { justify-content: center; }
-.diagnostic-title { width: 314px; margin-top: 24px; }
+.diagnostic-title { width: 314px; min-height: 64px; font-size: 24px; color: #FFFFFF; lines: 2; line-height: 32px; margin-top: 24px; }
 .diagnostic-scroll { width: 338px; flex: 1; min-height: 0px; }
 .diagnostic-text { width: 338px; font-size: 22px; color: #FFFFFF; lines: 0; }
 .diagnostic-buttons { width: 338px; height: 72px; flex-direction: row; justify-content: space-between; margin-bottom: 24px; }
