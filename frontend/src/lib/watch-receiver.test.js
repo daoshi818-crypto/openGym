@@ -744,7 +744,7 @@ describe('watch business message boundary', () => {
     workout.touchStart({ touches: [{ clientX: 100, clientY: 180 }] })
     workout.touchMove({ touches: [{ clientX: 130, clientY: 185 }] })
     workout.touchEnd({ changedTouches: [{ clientX: 180, clientY: 300 }] })
-    expect(router.push).toHaveBeenCalledWith({ uri: '/ExerciseList' })
+    expect(router.push).toHaveBeenCalledWith({ uri: '/ExerciseList', params: { detailEx: '0' } })
     expect(workout.pageIndex).toBe(0)
   })
 

@@ -5,12 +5,17 @@ BlueOS watch companion for openGym. Display name: `opengym`; package identity:
 
 ## Training
 
-Watch 0.6.29 / phone 1.6.26 package the November 12 UI update, enlarging text and touch targets across all
-five routes. Current-set, rest and weight/reps editor screens never scroll;
-secondary pages use native lists. Complete and undo remain vector-only buttons.
-Last-time summaries and their read-only detail entry remain available.
-Both native watch targets pass compiler-output layout checks. See
-[release scope](../docs/dev/RELEASE_1_6_26.zh-CN.md) and
+Watch 0.6.30 / phone 1.6.27 retain vector-only complete/undo controls and capsule
+navigation, with the actual remaining-set count beside the exercise title.
+Tap a title to expand its full name in the native exercise list; rest shows the
+next exercise and set number on separate lines. Current-set, rest and both editor
+modes stay on one screen. Last-time summaries remain read-only.
+Countdown, HR, calories and sync status use separate update budgets with unchanged
+values left alone. Every valid HR sample is accumulated; disk writes are batched
+at ten seconds or a ten-bpm change, with pause/close boundaries preserving samples.
+Square packages use a 390px design width; round packages use 466px, and device
+media styles are resolved by the native compiler. See
+[release scope](../docs/dev/RELEASE_1_6_27.zh-CN.md) and
 [large UI scope and verification](../docs/dev/WATCH_LARGE_UI_20261112.zh-CN.md).
 
 The earlier Watch 0.6.17 / phone 1.6.11 rebuild established the GT1 390x450 viewport
@@ -22,7 +27,8 @@ budgets; secondary lists absorb overflow and leave fixed actions reachable. See
 [historical GT1 rebuild and acceptance](../docs/dev/WATCH_GT1_UI_REBUILD.zh-CN.md).
 
 - Swipe left to switch between training and operations; swipe right to open the exercise list.
-  Vertical gestures scroll secondary pages only. Tap the exercise name to open the exercise list and jump to its first unfinished set.
+  Vertical gestures scroll secondary pages only. Tap the exercise name to open its expanded details;
+  selecting an exercise in the list jumps to its first unfinished set.
 - Tap a set dot to select it, including a completed set for undo.
   The source update shows up to five dots at once; larger plans use three-dot
   windows plus two navigation targets, each 48px. Selection keeps stable session and row IDs.

@@ -28,7 +28,7 @@ let activeBrowser
         return r.width && r.height && (r.left < -1 || r.right > innerWidth + 1 || r.top < -1 || r.bottom > innerHeight + 1)
       }).map(el => ({ cls: el.className, text: el.textContent }))
       const sideways = [...document.querySelectorAll('[data-type="list"]')].filter(e => e.scrollWidth > e.clientWidth + 1).map(e => e.className)
-      const clippedNumbers = [...document.querySelectorAll('.fval>span,.funit>span,.show>span,.keyboard-value>span,.rest>span')].filter(e => e.scrollWidth > e.clientWidth + 1).map(e => ({text:e.textContent,width:e.clientWidth,needed:e.scrollWidth}))
+      const clippedNumbers = [...document.querySelectorAll('.fval>span,.funit>span,.show>span,.keyboard-value>span,.rest>span,.full-name>span,.remaining>span')].filter(e => e.scrollWidth > e.clientWidth + 1).map(e => ({text:e.textContent,width:e.clientWidth,needed:e.scrollWidth}))
       // A horizontal-only check misses unit descenders and tight number line boxes.
       // Locate the rendered baseline, then compare actual font ink with each clip.
       const inkContext = document.createElement('canvas').getContext('2d')

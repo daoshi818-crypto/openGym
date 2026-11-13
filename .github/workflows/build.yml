@@ -77,7 +77,7 @@ jobs:
             if [ "$WATCH_TARGET" = watch-square ]; then WATCH_RPK="watch-app/releases/opengym-watch-${WATCH_VERSION}.rpk"; else WATCH_RPK="watch-app/releases/opengym-watch-round-${WATCH_VERSION}.rpk"; fi
             test -f "$WATCH_RPK"
             test "$(sha256sum "$WATCH_RPK" | cut -d' ' -f1)" = "$(tr -d '\r\n' < "$WATCH_RPK.sha256")"
-            WATCH_RPK="$WATCH_RPK" WATCH_TARGET="$WATCH_TARGET" node -e 'const cp=require("node:child_process");const source=require("./watch-app/src/manifest.json");const packed=JSON.parse(cp.execFileSync("unzip",["-p",process.env.WATCH_RPK,"manifest.json"],{encoding:"utf8"}));for(const key of ["package","name","versionName","versionCode"])if(source[key]!==packed[key])throw Error("Watch manifest mismatch: "+key);if(!packed.deviceTypeList.includes(process.env.WATCH_TARGET))throw Error("Watch target mismatch: "+process.env.WATCH_TARGET)'
+            WATCH_RPK="$WATCH_RPK" WATCH_TARGET="$WATCH_TARGET" node -e 'const cp=require("node:child_process");const source=require("./watch-app/src/manifest.json");const packed=JSON.parse(cp.execFileSync("unzip",["-p",process.env.WATCH_RPK,"manifest.json"],{encoding:"utf8"}));for(const key of ["package","name","versionName","versionCode"])if(source[key]!==packed[key])throw Error("Watch manifest mismatch: "+key);if(packed.deviceTypeList.length!==1||!packed.deviceTypeList.includes(process.env.WATCH_TARGET))throw Error("Watch target mismatch: "+process.env.WATCH_TARGET);const designWidth=process.env.WATCH_TARGET==="watch-round"?466:390;if(packed.config.designWidth!==designWidth)throw Error("Watch design width mismatch")'
           done
           echo "WATCH_VERSION=$WATCH_VERSION" >> "$GITHUB_ENV"
 
@@ -86,7 +86,7 @@ jobs:
         with:
           tag_name: v${{ env.APP_VERSION }}
           name: openGym custom v${{ env.APP_VERSION }}
-          body_path: docs/dev/RELEASE_1_6_26.zh-CN.md
+          body_path: docs/dev/RELEASE_1_6_27.zh-CN.md
           files: |
             openGym.apk
             openGym.apk.sha256

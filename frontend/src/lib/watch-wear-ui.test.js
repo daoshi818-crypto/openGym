@@ -144,7 +144,7 @@ describe('ExerciseList 动作总览（官方 OverviewScreen 映射）', () => {
   })
 })
 
-// ---- Workout: 休息百分比（圆形表盘用等价表达代替动态圆弧） -----------------
+// ---- Workout: 只刷新实际展示的倒计时 -------------------------------------
 describe('Workout 休息页（官方 RestScreen 映射）', () => {
   const session = () => {
     const { disk, ctx } = watchPersistence()
@@ -171,24 +171,21 @@ describe('Workout 休息页（官方 RestScreen 映射）', () => {
     return { sessions, workout, sendEvent }
   }
 
-  it('休息中显示剩余百分比与本次累计休息时长', async () => {
+  it('休息中按实际截止时间显示倒计时，不计算未展示的百分比', async () => {
     const { workout } = setup()
     await workout.onCurrentSetAction()
     vi.advanceTimersByTime(1000)
     workout.tickClock()
-    // 90 秒的休息，刚过 1 秒：剩余约 99%。
-    expect(workout.restPctLabel).toMatch(/^剩余 \d{1,3}% · 1:30$/)
-    const pct = Number(workout.restPctLabel.match(/\d{1,3}/)[0])
-    expect(pct).toBeGreaterThan(90)
-    expect(pct).toBeLessThanOrEqual(100)
+    expect(workout.restLabel).toBe('1:29')
+    expect(workout.restPctLabel).toBeUndefined()
   })
 
-  it('休息结束后不再显示百分比', async () => {
+  it('休息结束后倒计时归零', async () => {
     const { workout } = setup()
     await workout.onCurrentSetAction()
     workout.state.restUntil = 0
     workout.tickClock()
-    expect(workout.restPctLabel).not.toContain('%')
+    expect(workout.restLabel).toBe('0:00')
   })
 
   it('休息页的评分入口仍然指向刚完成的那一组（不是下一组）', async () => {

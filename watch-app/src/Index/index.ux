@@ -176,7 +176,7 @@ export default {
 .modal-scroll { width: 338px; flex: 1; min-height: 0px; margin-top: 48px; margin-bottom: 32px; }
 .modal-content { width: 338px; flex-direction: column; align-items: center; }
 
-@media screen and (min-width: 450px) {
+@media screen and (device: watch-round) {
 
  .topbar { width: 220px; margin-top: 30px; }
  .home-scroll { width: 300px; margin-bottom: 58px; }

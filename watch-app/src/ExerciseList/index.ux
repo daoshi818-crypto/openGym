@@ -8,11 +8,13 @@ import { sendEvent } from '../lib/rpc.js'
 export default {
   data: { list: [], expanded: -1, endOn: false, hint: '', trainName: '', abandonArmed: false },
 
-  onInit() {
+  onInit(params) {
     if (this.$app && this.$app.$def) bindRuntime(this.$app.$def)
     const s = loadState()
     if (!s.active || !s.workout) { router.back(); return }
     this.state = s
+    const detailEx = params && params.detailEx != null ? Number(params.detailEx) : -1
+    this.expanded = Number.isInteger(detailEx) && detailEx >= 0 && detailEx < s.workout.exercises.length ? detailEx : -1
     this.gesture = null
     this.trailingTapBlockedUntil = 0
     this.navPending = false
@@ -40,6 +42,9 @@ export default {
       const rows = s.workout.rows[i] || []
       return {
         name: ex.name,
+        // Native text can keep an uninterrupted Latin identifier on one line.
+        // Add invisible line-break opportunities without changing the exercise name.
+        readableName: String(ex.name || '').replace(/([A-Za-z0-9]{12})(?=[A-Za-z0-9])/g, '$1\u200b'),
         idx: i, sid: s.sid, entryInstanceId: ex.entryInstanceId,
         // 官方 Overview 的右侧“已完成/总数”与当前动作高亮：只影响展示，不改完成语义。
         doneCount: rows.filter(r => r.done).length,
@@ -51,7 +56,12 @@ export default {
       }
     })
   },
-  onReady() { this.focusPanel() },
+  onReady() {
+    this.focusPanel()
+    if (this.expanded >= 0) {
+      try { this.$element('exercises').scrollTo({ index: this.expanded, behavior: 'instant' }) } catch (e) {}
+    }
+  },
   focusPanel() { try { this.$element('page').requestFocus(true) } catch (e) {} },
 
   // ---- 手势归属：一次触摸 = 一个手势 ----------------------------------------
@@ -219,6 +229,7 @@ export default {
             <input class="expand-hit" type="button" value="{{ expanded === item.idx ? '⌃' : '⌄' }}" onclick="toggleEx(item.idx)" />
           </div>
           <div class="rows" if="{{ expanded === item.idx }}">
+            <text class="full-name">{{ item.readableName }}</text>
             <div class="rrow" for="{{ r in item.rows }}" onclick="pickRow(r)">
               <text class="rno {{ r.done ? 'done-no' : '' }}">{{ r.done ? '完' : r.no }}</text>
               <text class="rtxt {{ r.done ? 'done' : '' }}">{{ r.txt }}</text>
@@ -238,11 +249,11 @@ export default {
     </div>
   </div>
   <div class="end-panel" id="end-panel" touch-focusable="true" if="{{ endOn }}">
-    <text class="title">结束本次训练</text>
+    <text class="title end-title">结束本次训练</text>
     <text class="hint">保存训练记录，或放弃本次训练</text>
-    <input class="endbtn save" type="button" value="保存结束" onclick="saveWorkout" />
-    <input class="endbtn abandon {{ abandonArmed ? 'armed' : '' }}" type="button" value="放弃训练" onclick="abandonWorkout" />
-    <div class="endbtn back" onclick="backToExercises"><image class="back-icon" src="/common/icons/back.svg" /><text class="back-label">返回动作</text></div>
+    <input class="endbtn end-spaced save" type="button" value="保存结束" onclick="saveWorkout" />
+    <input class="endbtn end-spaced abandon {{ abandonArmed ? 'armed' : '' }}" type="button" value="放弃训练" onclick="abandonWorkout" />
+    <div class="endbtn end-spaced back" onclick="backToExercises"><image class="back-icon" src="/common/icons/back.svg" /><text class="back-label">返回动作</text></div>
   </div>
 </div>
 </template>
@@ -265,6 +276,7 @@ export default {
 .cnt-done { color: #30D158; }
 .expand-hit { width: 56px; height: 56px; border-radius: 22px; font-size: 30px; background-color: #242725; color: #929297; }
 .rows { width: 314px; flex-direction: column; }
+.full-name { width: 314px; min-height: 64px; font-size: 24px; line-height: 32px; color: #FFFFFF; lines: 0; }
 .rrow { width: 314px; min-height: 64px; flex-direction: row; align-items: center; }
 .rno { width: 42px; font-size: 22px; color: #929297; text-align: center; }
 .rtxt { width: 242px; font-size: 25px; color: #FFFFFF; lines: 2;  line-height: 30px;}
@@ -279,7 +291,7 @@ export default {
 .abandon { color: #FF453A; }
 .armed { background-color: #FF453A; color: #000000; }
 .end-panel { width: 100%; height: 100%; flex-direction: column; align-items: center; justify-content: center; }
-.end-panel .endbtn { margin-top: 14px; }
+.end-spaced { margin-top: 14px; }
 .hint { width: 338px; height: 64px; font-size: 22px; color: #929297; text-align: center; lines: 2; }
 
 
@@ -288,17 +300,17 @@ export default {
 .back-label { font-size: 22px; color: #30D158; }
 
 
-@media screen and (min-width: 450px) {
+@media screen and (device: watch-round) {
 
  .title, .hint-line { width: 220px; margin-top: 30px; }
  .body, .scroll, .exrow, .foot, .exit-row, .hint, .endbtn { width: 300px; }
- .exhead, .rows, .rrow { width: 276px; }
+ .exhead, .rows, .rrow, .full-name { width: 276px; }
  .exname { width: 166px; }
  .rtxt { width: 204px; }
  .foot { margin-bottom: 58px; }
  .compact-action { width: 144px; }
  .back-label { font-size: 21px; }
- .end-panel .title { width: 300px; margin-top: 0px; }
+ .end-title { width: 300px; margin-top: 0px; }
 
 }
 </style>

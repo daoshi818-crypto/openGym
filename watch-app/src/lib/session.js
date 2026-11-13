@@ -2,8 +2,8 @@ import { wireHash, expandWireDelta } from './sync-wire.js'
 import { dependenciesFor } from './event-dependencies.js'
 import { runtime } from './runtime.js'
 import { readStored, writeStored, writeStoredAtomic } from './persistence.js'
-// 会话状态机 + 持久化。防闪退的关键：每一个动作（完成一组、休息开始、心率累计）
-// 都立刻写入本地存储；应用启动时读回状态继续，而不是从头开始。
+// 会话状态机 + 持久化。训练动作立即写盘；HR 每个采样进入 App runtime，
+// 按阈值及暂停/结束边界合并写盘。应用启动时读回已持久化的状态。
 //
 // v2 重构（2026-10）：组数据按"每动作每小组"独立存，不再是隐式的 exIdx/setIdx 游标。
 //   workout.exercises[i] = { name, sets, reps, restSec, weight }   计划（手机推来的）
@@ -21,6 +21,23 @@ import { allocateEventIdentity } from './event-id.js'
 const K_STATE = 'session_state'
 
 const now = () => Date.now()
+const hrFields = ['sid', 'startedAt', 'segmentStartedAt', 'hr', 'active', 'pausedAt', 'closeIntent']
+function sameHrSession(a, b) {
+  return !!a?.sid && a.sid === b?.sid && (a.segmentStartedAt || a.startedAt) === (b.segmentStartedAt || b.startedAt)
+}
+// Counts, unlike wall-clock timestamps, distinguish samples in the same millisecond.
+function newerHr(a, b) { return (b?.count || 0) > (a?.count || 0) ? b : a }
+function latestHr(state) {
+  const stored = readStored(K_STATE, hrFields), buffered = runtime().sessionHr
+  let hr = state.hr || { sum: 0, count: 0, max: 0 }
+  if (sameHrSession(state, stored)) hr = newerHr(hr, stored.hr)
+  if (sameHrSession(state, buffered)) hr = newerHr(hr, buffered.hr)
+  return { ...hr } // Never expose the mutable runtime aggregate to a Page.
+}
+function reconcileHrCapture(state) {
+  const capture = runtime().hrCapture
+  if (capture && (!state?.active || state.pausedAt || state.closeIntent || !sameHrSession(state, capture))) capture.stop()
+}
 function queueExpired(msg) {
   const r = runtime()
   r.expiredQueued ||= new Set()
@@ -50,8 +67,8 @@ export function blankState() {
 // 冻成可恢复候选写进关闭日志（独立 key），再清空 session_state；否则重启/重开手表时
 // 唯一一份热量就没了。原始状态在日志确认之前不做删除。
 export function readSessionHr(sid) {
-  const current = readStored(K_STATE, ['sid', 'hr'])
-  return current?.sid === sid ? (current.hr || null) : null
+  const current = readStored(K_STATE, hrFields)
+  return current?.sid === sid ? latestHr(current) : null
 }
 
 export function loadState() {
@@ -60,6 +77,7 @@ export function loadState() {
     const s = readStored(K_STATE)
     if (s?.expiredClose) queueExpired(s.expiredClose)
     if (s && typeof s === 'object' && s.workout) {
+      s.hr = latestHr(s)
       if (s.active && now() - (s.segmentStartedAt || s.startedAt) >= 21600000) {
         expireSession(s)
         return blankState()
@@ -122,15 +140,13 @@ function initReps(ex) { return ex.reps == null ? '' : ex.reps }
 
 // 每次改动立即落盘。storage.set 是异步的，失败回调必须给（文档要求）。
 function persist(state) {
+  state.hr = latestHr(state)
   if (runtime().sessionDraft === state) return
+  reconcileHrCapture(state)
   writeStored(K_STATE, state)
 }
 
 export function save(state) {
-  if (runtime().sessionDraft === state) { state.rev = (state.rev || 0) + 1; return }
-  const latest = readStored(K_STATE)
-  if (latest?.sid === state.sid && latest.segmentStartedAt === state.segmentStartedAt && (latest.hr?.sampleAt || 0) > (state.hr?.sampleAt || 0)) state.hr = latest.hr
-  if (state.pausedAt || !state.active) runtime().hrCapture?.stop()
   state.rev = (state.rev || 0) + 1
   persist(state)
 }
@@ -142,12 +158,17 @@ export async function commitSessionAction(sid, action) {
   const result = await writeStoredAtomic(K_STATE, latest => {
     if (runtime().closingSid === sid || latest?.closeIntent || !latest?.active || latest.sid !== sid) throw new Error('session_changed')
     const candidate = JSON.parse(JSON.stringify(latest))
+    candidate.hr = latestHr(candidate)
     runtime().sessionDraft = candidate
     try { output = action(candidate) }
     finally { runtime().sessionDraft = null }
     candidate.rev = (candidate.rev || 0) + 1
     return candidate
   })
+  if (result.ok) {
+    result.value.hr = latestHr(result.value)
+    reconcileHrCapture(readStored(K_STATE, hrFields))
+  }
   return { ...result, output }
 }
 
@@ -232,6 +253,7 @@ export async function commitWireSnapshot(message, meta) {
     latest.appliedTransfers = [...(latest.appliedTransfers || []), { id: meta.transferId, hash: meta.hash, status }].slice(-8)
     return latest
   })
+  if (result.ok) reconcileHrCapture(readStored(K_STATE, hrFields))
   return { ...result, status }
 }
 
@@ -273,6 +295,7 @@ export function applySync(state, snapshot, options) {
   if (!snapshot || !Array.isArray(snapshot.exercises)) return state
   if (snapshot.sid && state.sid && snapshot.sid !== state.sid) return state
   if (snapshot.protocolVersion >= 3 ? snapshot.commitRev < (state.commitRev || 0) : snapshot.rev && snapshot.rev < (state.snapshotRev || 0)) return state
+  const previousSegment = state.segmentStartedAt || state.startedAt
   if (snapshot.protocolVersion >= 3) {
     state.commitRev = snapshot.commitRev || 0
     state.syncBase = JSON.parse(JSON.stringify(snapshot))
@@ -297,6 +320,7 @@ export function applySync(state, snapshot, options) {
   state.active = true
   state.segmentStartedAt = snapshot.segmentStartedAt || state.segmentStartedAt || state.startedAt
   if (snapshot.startedAt) state.startedAt = snapshot.startedAt
+  if (state.segmentStartedAt !== previousSegment) state.hr = { sum: 0, count: 0, max: 0 }
   state.workout = {
     name: snapshot.workout || snapshot.name || (state.workout && state.workout.name) || '',
     exercises: snapshot.exercises,
@@ -468,9 +492,10 @@ export function addRestTime(state, sec) {
   state.restTotalSec = (state.restTotalSec || 0) + Math.round(sec)
 }
 
-// 心率累计（增量保存，崩溃最多丢几秒的心率）
+// Every valid sample enters the App aggregate, independently of Page/disk lifetime.
 export function addHr(state, bpm) {
-  if (!bpm || bpm < 30 || bpm > 220) return
+  if (!Number.isFinite(bpm) || bpm < 30 || bpm > 220) return
+  state.hr = latestHr(state)
   const sampleAt = now()
   state.hr.sampledDurationMs = (state.hr.sampledDurationMs || 0) + (state.hr.sampleAt ? Math.max(0, Math.min(15000, sampleAt - state.hr.sampleAt)) : 0)
   state.hr.sampleAt = sampleAt
@@ -478,15 +503,31 @@ export function addHr(state, bpm) {
   state.hr.sum += bpm
   state.hr.count += 1
   if (bpm > state.hr.max) state.hr.max = bpm
+  runtime().sessionHr = { sid: state.sid, segmentStartedAt: state.segmentStartedAt || state.startedAt, hr: { ...state.hr } }
 }
 
-export function flushHr(state) { save(state) }
+// Queue only an HR intention, never an old Page's rows/pending events. The transform
+// runs after preceding atomic actions and merges against their published document.
+// Keep the aggregate on failure so a subsequent sample/save/stop can retry it.
+export function flushHr(state = runtime().sessionHr) {
+  if (!state?.sid) return Promise.resolve({ ok: true })
+  const target = { sid: state.sid, segmentStartedAt: state.segmentStartedAt || state.startedAt, hr: latestHr(state) }
+  const stored = readStored(K_STATE, hrFields)
+  if (!sameHrSession(target, stored) || target.hr.count <= (stored.hr?.count || 0)) return Promise.resolve({ ok: true })
+  return writeStoredAtomic(K_STATE, latest => {
+    if (!sameHrSession(target, latest) || latest.closeIntent) return latest
+    latest.hr = { ...newerHr(latestHr(latest), target.hr) }
+    latest.rev = (latest.rev || 0) + 1
+    return latest
+  })
+}
 
 // 热量估算：有心率走 Keytel；没有心率用 MET 5.0（力量训练）兜底。
 export function calories(state, profile, minutes) {
   const w = (profile && (profile.bodyWeightKg || profile.weight)) || 70
   if (!minutes) return 0
-  const hr = state.hr.count ? Math.round(state.hr.sum / state.hr.count) : 0
+  const aggregate = latestHr(state)
+  const hr = aggregate.count ? Math.round(aggregate.sum / aggregate.count) : 0
   if (!hr) return Math.max(0, Math.round(5.0 * w * (minutes / 60)))
   const a = (profile && profile.age) || 30
   const male = !profile || profile.sex !== 'female'
@@ -500,6 +541,7 @@ export function calories(state, profile, minutes) {
 // 关闭流程（RPC 的 session_close/ended、训练页主动结束、动作列表保存）都从这里取同一份
 // 数据，避免“有的入口结了算、有的入口结了算还顺手清空”。
 export function buildSessionSummary(state, profile, endedAt = now()) {
+  state = { ...state, hr: latestHr(state) }
   const end = Math.min(now(), Math.max(state.segmentStartedAt || state.startedAt, Number(endedAt) || now()))
   const minutes = Math.max(0, ((state.pausedAt || end) - (state.segmentStartedAt || state.startedAt) - (state.pausedMs || 0)) / 60000)
   const flat = []
@@ -575,6 +617,7 @@ export async function commitLocalClose(sid, disposition, closedAt = now()) {
     const frozen = await writeStoredAtomic(K_STATE, latest => {
       if (!latest?.active || latest.sid !== sid) throw new Error('session_changed')
       if (latest.closeIntent) return latest
+      latest.hr = latestHr(latest)
       const session = buildSessionSummary(latest, latest.profile, closedAt)
       const closeEvent = stageSessionEvent(latest, { t: 'session_close', sid, disposition, closedAt, at: closedAt,
         ...(disposition === 'saved' ? { workout: latest.workout, startedAt: latest.startedAt, weightUnit: latest.weightUnit || 'kg',
@@ -587,6 +630,7 @@ export async function commitLocalClose(sid, disposition, closedAt = now()) {
       return latest
     })
     if (!frozen.ok) return frozen
+    reconcileHrCapture(readStored(K_STATE, hrFields))
     return finishLocalClose(frozen.value.closeIntent)
   } finally { runtime().closingSid = null }
 }

@@ -175,7 +175,7 @@ export default {
 .decimal { color: #FFFFFF; font-size: 25px; }
 .c { color: #FF453A; }
 
-@media screen and (min-width: 450px) {
+@media screen and (device: watch-round) {
 
  .editor-content { width: 300px; }
  .label { width: 220px; margin-top: 34px; font-size: 16px; }

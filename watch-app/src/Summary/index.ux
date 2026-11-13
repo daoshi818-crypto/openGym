@@ -143,7 +143,7 @@ export default {
 .done { width: 338px; height: 64px; border-radius: 32px; background-color: #0A3418; margin-bottom: 18px; justify-content: center; align-items: center; }
 .back-icon { width: 26px; height: 26px; margin-right: 6px; }
 .back-label { font-size: 25px; color: #30D158; }
-@media screen and (min-width: 450px) {
+@media screen and (device: watch-round) {
 
  .top { width: 220px; margin-top: 30px; }
  .scroll { width: 300px; margin-bottom: 58px; }

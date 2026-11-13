@@ -24,7 +24,7 @@ import { lastTimeView } from '../lib/watch-last-time.js'
 
 const pageDefinition = {
   data: {
-    exName: '', syncWarning: false,
+    exName: '', remainingLabel: '', syncWarning: false,
     selectedField: null, setDots: [], dotSegmented: false, dotHasPrev: false, dotHasNext: false, inputNotice: '',
     groupLabel: '',
     setProgressLabel: '',
@@ -33,12 +33,10 @@ const pageDefinition = {
     weightVal: '—',
     repsVal: '—',
     restLabel: '0:00',
-    restPctLabel: '',
-    restTotalLabel: '0:00',
     restProgLabel: '',
     restExerciseName: '',
     nextLabel: '',
-    nextDetails: '', nextTargetLabel: '', nextValuesLabel: '', effortNumber: '—',
+    nextDetails: '', nextTargetLabel: '', nextSetLabel: '', nextValuesLabel: '', effortNumber: '—',
     hrLabel: '心率 --', weightUnit: 'kg',
     syncLabel: '',
     diagnosticOn: false, diagnosticPage: 0, diagnosticTitle: '', diagnosticText: '',
@@ -101,6 +99,10 @@ const pageDefinition = {
     this.hrDirty = false
     this.hrActive = false
     this.clockPeriod = 0
+    this.hrUpdatedAt = null
+    this.caloriesUpdatedAt = null
+    this.syncSecond = null
+    this.nextExIdx = -1
     this.resetInteraction()
     this.restCrownTimer = null
     this.restCrownDirty = false
@@ -202,7 +204,18 @@ const pageDefinition = {
     if (this.navPending) return
     if (fromGesture !== true && this.interactionBlocked()) return
     this.navPending = true
-    this.clearFieldSelection(); router.push({ uri: '/ExerciseList' })
+    this.clearFieldSelection(); router.push({ uri: '/ExerciseList', params: { detailEx: String(this.state.exIdx) } })
+  },
+  openRestExercise() {
+    if (this.navPending || this.interactionBlocked()) return
+    const completed = this.lastCompletedFromState(this.state)
+    this.navPending = true
+    router.push({ uri: '/ExerciseList', params: { detailEx: String(completed ? completed.exIdx : this.state.exIdx) } })
+  },
+  openNextExercise() {
+    if (this.navPending || this.interactionBlocked() || this.nextExIdx < 0) return
+    this.navPending = true
+    router.push({ uri: '/ExerciseList', params: { detailEx: String(this.nextExIdx) } })
   },
 
   adoptSession(latest) {
@@ -281,6 +294,7 @@ const pageDefinition = {
     this.visible = false
     this.touchCancel()
     if (this.timer) clearInterval(this.timer)
+    this.timer = null
     const pending = this.flushRestNudge()
     this.setRestScreenLock(false)
     return pending
@@ -871,7 +885,6 @@ const pageDefinition = {
       s.restUntil = target
     }
     this.restLabel = this.mmss(Math.max(0, Math.ceil((s.restUntil - now) / 1000)))
-    this.restTotalLabel = this.mmss(s.restTargetSec)
   },
 
   onRestMinus() { this.nudgeRest(-15) },
@@ -1164,6 +1177,8 @@ const pageDefinition = {
     const cursorKey = s.sid + ':' + (ex && ex.entryInstanceId || s.exIdx) + ':' + (row && row.setId || s.setIdx)
     this.refreshSetDots(cursorKey === this.dotCursorKey ? this.dotPage : undefined); this.dotCursorKey = cursorKey
     this.exName = ex ? ex.name : ''
+    const exerciseRows = s.workout.rows[s.exIdx] || []
+    this.remainingLabel = '余 ' + exerciseRows.filter(r => !r.done).length + ' 组'
     this.groupLabel = ex ? '第 ' + (s.setIdx + 1) + ' / ' + (ex.sets || 1) + ' 组' : ''
     this.weightVal = row && row.w !== '' && row.w != null ? row.w + ' ' + (s.weightUnit || 'kg') : '—'
     this.repsVal = row && row.r !== '' && row.r != null ? row.r + (this.isTimed(ex) ? ' 秒' : ' 次') : '—'
@@ -1179,6 +1194,7 @@ const pageDefinition = {
 
     // 完成后游标已前进；休息提示优先展示当前待做组，避免跳过一组。
     const next = row && !row.done ? { exIdx: s.exIdx, setIdx: s.setIdx } : nextUndone(s)
+    this.nextExIdx = next ? next.exIdx : -1
     const totalSets = s.workout.rows.reduce((n, r) => n + r.length, 0)
     const doneSets = s.workout.rows.reduce((n, r) => n + r.filter(x => x.done).length, 0)
     this.checkCompletion(totalSets, doneSets)
@@ -1206,11 +1222,12 @@ const pageDefinition = {
       const w = nr && nr.w !== '' && nr.w != null ? nr.w + (s.weightUnit || 'kg') : ''
       const timed = ne && String(ne.reps || '').indexOf('秒') >= 0
       const r = nr && nr.r !== '' && nr.r != null ? nr.r + (timed ? '秒' : '次') : ''
-      this.nextTargetLabel = '下一组 · ' + ne.name + ' · 第 ' + (next.setIdx + 1) + ' 组'
+      this.nextTargetLabel = '下一组 · ' + ne.name
+      this.nextSetLabel = '第 ' + (next.setIdx + 1) + ' / ' + (s.workout.rows[next.exIdx] || []).length + ' 组'
       this.nextValuesLabel = w && r ? w + ' × ' + r : (w || r || '待填写')
       this.nextLabel = next.exIdx !== (completed ? completed.exIdx : s.exIdx) ? '下一动作 · ' + ne.name : '下一组'
       this.nextDetails = '第 ' + (next.setIdx + 1) + ' / ' + (s.workout.rows[next.exIdx] || []).length + ' 组 · ' + (w && r ? w + ' × ' + r : (w || r || '待填写'))
-    } else { this.nextLabel = '本次训练已完成'; this.nextDetails = this.restProgLabel; this.nextTargetLabel = this.nextLabel; this.nextValuesLabel = this.nextDetails }
+    } else { this.nextLabel = '本次训练已完成'; this.nextDetails = this.restProgLabel; this.nextTargetLabel = this.nextLabel; this.nextSetLabel = this.restProgLabel; this.nextValuesLabel = this.nextDetails }
 
     // 展示目标跟随当前页面，编辑目标只在打开时固定，绝不把上一组评分带入下一组。
     this.effortScale = s.effortScale === 'rpe' || s.effortScale === 'rir' ? s.effortScale : 'none'
@@ -1267,7 +1284,7 @@ const pageDefinition = {
       + (lastDoneKind && lastDoneValue != null ? formatEffort(lastDoneValue) : '未填写')
 
     this.syncClockTimer()
-    this.tickClock()
+    this.tickClock(true)
   },
   isTimed(ex) { return ex && String(ex.reps || '').indexOf('秒') >= 0 },
 
@@ -1306,7 +1323,8 @@ const pageDefinition = {
     this.timer = setInterval(() => this.tickClock(), period)
   },
 
-  tickClock() {
+  tickClock(force) {
+    if (this.visible === false) return
     // 评分层先判目标是否还有效：会话被结束/组被撤销时 this.state 可能已经变成 blank。
     if (this.effortOn) {
       if (!this.effortTargetValid()) { this.effortOn = false; this.effortNotice = '目标组已变化，已停止编辑' }
@@ -1332,23 +1350,38 @@ const pageDefinition = {
     }
     const restLabel = this.mmss(left)
     if (this.restLabel !== restLabel) this.restLabel = restLabel
-    if (this.metricSecond === Math.floor(Date.now() / 1000)) return
-    this.metricSecond = Math.floor(Date.now() / 1000)
-    this.restTotalLabel = this.mmss(Math.round(s.restTargetSec || 0))
-    // 休息进度用百分比表达（圆形表盘放不下动态圆弧，用这个等价表达 + 深色圆角容器）：
-    // 剩余 / 目标时长；目标为 0 时只显示累计值。
-    const totalSec = Math.round(s.restTargetSec || 0)
-    this.restPctLabel = totalSec > 0
-      ? '剩余 ' + Math.max(0, Math.min(100, Math.round(left / totalSec * 100))) + '% · ' + this.restTotalLabel
-      : this.restTotalLabel
-    const hr = readSessionHr(s.sid)
-    if (hr) s.hr = hr
-    this.hrLabel = s.hr?.last && Date.now() - (s.hr.sampleAt || 0) < 15000 && !s.pausedAt ? '心率 ' + s.hr.last : '心率 --'
-    this.kcalLabel = String((s.baseCalories || 0) + calories(s, s.profile, Math.max(0, ((s.pausedAt || Date.now()) - (s.segmentStartedAt || s.startedAt) - (s.pausedMs || 0)) / 60000)))
-    const n = pendingCount()
-    const sync = synchronizationStatus()
-    this.syncWarning = persistenceStatus().failed || storageStatus().failed || sync.phonePending > 0 || n > 0 || !isConnected()
-    this.syncLabel = persistenceStatus().failed || storageStatus().failed ? '存储失败，请保留应用' : sync.phonePending > 0 ? '手机待处理 ' + sync.phonePending + ' 条' : n > 0 ? '待上传 ' + n + ' 条' : isConnected() ? (sync.lastCommitAt ? '已同步' : '已连接') : '离线记录'
+    this.tickMetrics(force === true)
+    this.tickSyncStatus(force === true)
+  },
+
+  tickMetrics(force) {
+    const s = this.state, at = Date.now()
+    // Keep all session samples; only the displayed HR has a two-second budget.
+    // Explicit state changes refresh immediately, independently of idle timers.
+    if (force || this.hrUpdatedAt == null || at - this.hrUpdatedAt >= 2000) {
+      this.hrUpdatedAt = at
+      const hr = readSessionHr(s.sid)
+      if (hr) s.hr = hr
+      const hrLabel = s.hr?.last && at - (s.hr.sampleAt || 0) < 15000 && !s.pausedAt ? '心率 ' + s.hr.last : '心率 --'
+      if (this.hrLabel !== hrLabel) this.hrLabel = hrLabel
+    }
+    if (force || this.caloriesUpdatedAt == null || at - this.caloriesUpdatedAt >= 5000) {
+      this.caloriesUpdatedAt = at
+      const kcalLabel = String((s.baseCalories || 0) + calories(s, s.profile, Math.max(0, ((s.pausedAt || at) - (s.segmentStartedAt || s.startedAt) - (s.pausedMs || 0)) / 60000)))
+      if (this.kcalLabel !== kcalLabel) this.kcalLabel = kcalLabel
+    }
+  },
+
+  tickSyncStatus(force) {
+    const second = Math.floor(Date.now() / 1000)
+    if (!force && this.syncSecond === second) return
+    this.syncSecond = second
+    const failed = persistenceStatus().failed || storageStatus().failed
+    const n = pendingCount(), sync = synchronizationStatus(), connected = isConnected()
+    const syncWarning = !!(failed || sync.phonePending > 0 || n > 0 || !connected)
+    const syncLabel = failed ? '存储失败，请保留应用' : sync.phonePending > 0 ? '手机待处理 ' + sync.phonePending + ' 条' : n > 0 ? '待上传 ' + n + ' 条' : connected ? (sync.lastCommitAt ? '已同步' : '已连接') : '离线记录'
+    if (this.syncWarning !== syncWarning) this.syncWarning = syncWarning
+    if (this.syncLabel !== syncLabel) this.syncLabel = syncLabel
   },
 
   showDiagnostics() {
@@ -1459,7 +1492,7 @@ export default pageDefinition
     </div>
     <div class="training-panel compact" if="{{ !isRest }}">
       <div class="training-content">
-        <text class="ex" onclick="openExercises">{{ exName }} ›</text>
+        <div class="ex" onclick="openExercises"><text class="ex-name">{{ exName }} ›</text><text class="remaining {{ remainingLabel.length > 7 ? 'remaining-wide' : '' }}">{{ remainingLabel }}</text></div>
         <text class="group {{ rowDone ? 'group-done' : '' }}">{{ inputNotice || (groupLabel + (rowDone ? ' · 已完成 · 可撤回' : '')) }}</text>
         <div class="inputs">
           <div class="field weight-field {{ rowDone ? 'field-done' : selectedField === 'w' ? 'field-selected' : '' }}" onclick="editWeight">
@@ -1484,9 +1517,9 @@ export default pageDefinition
     </div>
     <div class="training-panel rest-panel" if="{{ isRest }}">
       <div class="rest-content">
-        <text class="rest-ex" onclick="openExercises">{{ restExerciseName }}</text>
+        <text class="rest-ex" onclick="openRestExercise">{{ restExerciseName }}</text>
         <text class="rest">{{ restLabel }}</text>
-        <text class="next">{{ nextTargetLabel }}</text>
+        <div class="next" onclick="openNextExercise"><text class="next-name">{{ nextTargetLabel }}</text><text class="next-set">{{ nextSetLabel }}</text></div>
         <input class="effort-row" type="button" if="{{ effortEntryOn }}" value="{{ effortEntryLabel + '  ' + effortEntryText + '  ›' }}" onclick="openEffort" />
       </div>
     </div>
@@ -1541,7 +1574,7 @@ export default pageDefinition
     <list class="last-list" id="history" touch-focusable="true"><list-item class="last-item" type="historyRow" for="{{ r in lastRows }}" tid="key"><text class="last-no">{{ r.no }}</text><text class="last-value">{{ r.label }}</text></list-item></list>
     <text class="last-hint">仅显示实际完成的工作组 · 不影响本次记录</text>
   </div>
-  <div class="effort-layer diagnostic-layer" if="{{ diagnosticOn }}"><text class="effort-target">{{ diagnosticTitle }}</text><list class="diagnostic-scroll"><list-item type="diagnostic"><text class="diagnostic-text">{{ diagnosticText }}</text></list-item></list><div class="diagnostic-buttons"><input class="m" type="button" value="返回" onclick="closeDiagnostics" /><input class="m" type="button" value="下一页" onclick="nextDiagnostic" /></div></div>
+  <div class="effort-layer diagnostic-layer" if="{{ diagnosticOn }}"><text class="diagnostic-title">{{ diagnosticTitle }}</text><list class="diagnostic-scroll"><list-item type="diagnostic"><text class="diagnostic-text">{{ diagnosticText }}</text></list-item></list><div class="diagnostic-buttons"><input class="m" type="button" value="返回" onclick="closeDiagnostics" /><input class="m" type="button" value="下一页" onclick="nextDiagnostic" /></div></div>
   <div class="effort-layer" if="{{ effortOn && !diagnosticOn }}">
     <list class="effort-scroll"><list-item type="effort-content" class="scroll-content">
       <div class="effort-head"><div class="effort-back" onclick="closeEffort"><image class="back-icon" src="/common/icons/back.svg" /><text class="back-label">返回</text></div><text class="effort-timer">{{ effortRestLabel }}</text></div>
@@ -1566,7 +1599,10 @@ export default pageDefinition
 .status { flex: 1; min-width: 0px; height: 44px; line-height: 44px; font-size: 16px; color: #FF9F0A; lines: 1; }
 .training-panel { width: 338px; flex: 1; min-height: 0px; }
 .training-content { width: 338px; flex-direction: column; align-items: flex-start; height: 328px; flex-shrink: 0; }
-.ex { width: 338px; height: 52px; line-height: 26px; font-size: 26px; color: #FFFFFF; font-weight: bold; lines: 2; }
+.ex { width: 338px; height: 52px; flex-direction: row; align-items: center; }
+.ex-name { width: 246px; height: 52px; line-height: 26px; font-size: 26px; color: #FFFFFF; font-weight: bold; lines: 2; text-overflow: ellipsis; }
+.remaining { width: 84px; height: 52px; margin-left: 8px; font-size: 18px; color: #929297; text-align: right; lines: 1; flex-shrink: 0; }
+.remaining-wide { font-size: 14px; }
 .group { width: 338px; height: 24px; font-size: 19px; color: #929297; lines: 1; }
 .group-done { color: #30D158; }
 .inputs { width: 338px; height: 96px; flex-direction: row; align-items: center; justify-content: space-between; }
@@ -1605,7 +1641,9 @@ export default pageDefinition
 .scroll-content { width: 338px; flex-direction: column; align-items: center; }
 .rest-ex { width: 338px; height: 56px; line-height: 28px; font-size: 26px; color: #FF9F0A; lines: 2; text-align: center; }
 .rest { width: 338px; height: 112px; line-height: 112px; font-size: 88px; color: #FFFFFF; text-align: center; lines: 1; }
-.next { width: 338px; height: 56px; font-size: 22px; color: #929297; text-align: center; lines: 2; line-height: 28px; }
+.next { width: 338px; height: 56px; flex-direction: column; align-items: center; }
+.next-name { width: 338px; height: 28px; font-size: 22px; color: #929297; text-align: center; lines: 1; line-height: 28px; text-overflow: ellipsis; }
+.next-set { width: 338px; height: 28px; font-size: 19px; color: #929297; text-align: center; lines: 1; line-height: 28px; }
 .effort-row { width: 338px; height: 56px; border-radius: 18px; background-color: #1C1C1E; color: #FFFFFF; font-size: 22px; }
 .rrow { width: 338px; height: 64px; margin-top: 0px; flex-direction: row; justify-content: space-between; margin-bottom: 18px; flex-shrink: 0; align-items: center; }
 .rbtn { width: 100px; height: 60px; border-radius: 30px; font-size: 23px; background-color: #242725; color: #FFFFFF; }
@@ -1676,7 +1714,7 @@ export default pageDefinition
 .effort-ok { width: 182px; height: 64px; border-radius: 28px; font-size: 24px; background-color: #0A3418; color: #30D158; }
 .effort-clear { width: 314px; height: 56px; margin-bottom: 0px; line-height: 56px; font-size: 22px; color: #FF9F0A; text-align: center; }
 .diagnostic-layer { justify-content: center; }
-.diagnostic-layer .effort-target { width: 314px; margin-top: 24px; }
+.diagnostic-title { width: 314px; margin-top: 24px; }
 .diagnostic-scroll { width: 338px; flex: 1; min-height: 0px; }
 .diagnostic-text { width: 338px; font-size: 22px; color: #FFFFFF; lines: 0; }
 .diagnostic-buttons { width: 338px; height: 72px; flex-direction: row; justify-content: space-between; margin-bottom: 24px; }
@@ -1686,11 +1724,13 @@ export default pageDefinition
 .modal-scroll { width: 338px; flex: 1; min-height: 0px; margin-top: 40px; margin-bottom: 32px; }
 .modal-content { width: 338px; flex-direction: column; align-items: center; padding-bottom: 16px; }
 
-@media screen and (min-width: 450px) {
+@media screen and (device: watch-round) {
 
  .topbar { width: 220px; margin-top: 30px; }
  .training-panel, .training-content, .inputs, .last-space, .last-row, .last-text, .navrow, .set-dots, .ex, .group, .rest-content, .rest-ex, .rest, .next, .effort-row, .rrow { width: 300px; }
  .training-content { height: 322px; }
+ .ex-name { width: 208px; }
+ .next-name, .next-set { width: 300px; }
  .group { height: 22px; font-size: 18px; }
  .inputs, .field { height: 92px; }
  .weight-field, .reps-field { width: 138px; }
@@ -1721,7 +1761,7 @@ export default pageDefinition
  .effort-ok { width: 160px; }
  .completion-btn, .completion-title, .completion-progress, .confirm-title, .confirm-remain, .confirm-note, .pill { width: 300px; }
  .diagnostic-scroll, .diagnostic-buttons, .diagnostic-text { width: 300px; }
- .diagnostic-layer .effort-target { width: 300px; margin-top: 58px; }
+ .diagnostic-title { width: 300px; margin-top: 58px; }
  .diagnostic-buttons { margin-bottom: 58px; }
 
 }

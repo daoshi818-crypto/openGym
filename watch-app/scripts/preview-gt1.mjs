@@ -108,6 +108,18 @@ p.saving=true;scene('45-keyboard-saving','Keypad',p,'重量键盘 · 保存中�
 p=workout();p.selectedField='w';scene('46-selected-weight','Workout',p,'重量选中边框 · 字形完整')
 p=workout(s=>{s.weightUnit='lb';s.workout.rows[0][2].w='80.5';s.workout.rows[0][2].r='18'});p.selectedField='r';scene('47-selected-reps','Workout',p,'次数选中边框 · lb 与大数字')
 p=workout(s=>{s.workout.exercises[0].reps='60秒';s.workout.rows[0][2].r='60'});p.selectedField='r';scene('48-selected-timed','Workout',p,'时长选中边框 · 秒单位')
+const longNames = [
+  '上斜哑铃交替卧推（慢速离心三秒并在最低点停顿，双手保持中立握距）',
+  'Single Arm Incline Dumbbell Bench Press with Three Second Eccentric Pause',
+  'SingleArmInclineDumbbellBenchPressWithThreeSecondEccentricPause',
+]
+for (let i=0;i<longNames.length;i++) {
+  scene('49-long-name-'+i,'Workout',workout(s=>{s.workout.exercises[0].name=longNames[i]}),'长动作名 · '+i)
+  env=environment();env.ctx.startSession({...clone(plan),exercises:[{...clone(plan.exercises[0]),name:longNames[i]}]})
+  p=page('ExerciseList',env);p.onInit({detailEx:'0'});scene('50-full-name-'+i,'ExerciseList',p,'完整动作名 · '+i)
+}
+p=workout(s=>{s.workout.exercises[0].name=longNames[0];s.restUntil=Date.now()+90000});scene('51-long-rest','Workout',p,'长动作名休息 · 组号独立')
+p=workout();p.inputNotice='请先同步或恢复存储后再编辑';scene('52-input-warning','Workout',p,'错误提示 · 保留全宽')
 const runtime = `
 function val(exp,ctx){if(typeof exp!=='string')return exp;if(exp.startsWith('function'))return Function('return ('+exp+')')().call(ctx);return exp.split('.').reduce((a,k)=>a?.[k],ctx)}
 function render(n,ctx){if(n.repeat){let frag=document.createDocumentFragment();for(const item of val(n.repeat.$exp,ctx)||[]){let sub=Object.create(ctx);sub[n.repeat.value]=item;frag.append(render({...n,repeat:null},sub))}return frag}if(n.$shown&&!val(n.$shown,ctx))return document.createDocumentFragment();const el=document.createElement(n.type==='input'?'button':n.type==='text'?'native-text':n.type==='image'?'img':'div');el.className=(n.$class?val(n.$class,ctx).flat(Infinity).filter(Boolean).join(' '):n.class||'');el.dataset.type=n.type;if(n.action||n.events?.click||n.events?.$click)el.dataset.action=n.action||n.events.click||n.events.$click;let a=n.attr||{};if(a.id)el.id=a.id;if(n.type==='image'){let src=a.$src?val(a.$src,ctx):a.src;el.src=ICONS[src]||src;el.alt=''}if(a.$disabled)el.disabled=!!val(a.$disabled,ctx);if(n.style)Object.assign(el.style,n.style);if(n.type==='text'||n.type==='input'){let text=a.$value?val(a.$value,ctx):a.value||'';let span=document.createElement('span');span.textContent=text??'';el.append(span)}for(let c of n.children||[])el.append(render(c,ctx));return el}
@@ -120,6 +132,7 @@ const base=`html,body{margin:0;width:100%;height:100%;background:#000;font-famil
 // Native-only `lines` is translated to CSS line clamp; remaining CSS is the shipped .ux stylesheet.
 for (const s of scenes) {
   const css=s.css.replace(/\blines:\s*(\d+);/g,'-webkit-line-clamp: $1;')
+    .replace(/screen and \(device: watch-round\)/g, target === 'watch-round' ? 'screen and (min-width: 0px)' : 'screen and (min-width: 99999px)')
   const html='<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>'+s.title+' · code preview NOT device</title><style>'+base+'\n'+css+'</style><body><div id="viewport"></div><script>const ICONS='+JSON.stringify(icons)+';const SCENE='+JSON.stringify(s).replaceAll('</','<\\/')+';'+runtime+'</script></body></html>'
   fs.writeFileSync(path.join(out,s.id+'.html'),html)
 }

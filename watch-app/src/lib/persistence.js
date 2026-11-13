@@ -108,6 +108,10 @@ function rebase(before, after, onto) {
   }
   return after == null ? after : clone(after)
 }
+function sameSessionSegment(a, b) {
+  return (a?.sid || '') === (b?.sid || '') &&
+    (a?.segmentStartedAt || a?.startedAt || 0) === (b?.segmentStartedAt || b?.startedAt || 0)
+}
 function atomicDrain(key, state, q) {
   const job = q.transactions.shift(), overlays = []
   let value
@@ -120,7 +124,28 @@ function atomicDrain(key, state, q) {
     finished = true; cancel(timer); q.busy = false; q.atomic = null
     if (ok) {
       let published = value
-      for (const overlay of overlays) published = rebase(overlay.before, overlay.value, published)
+      for (const overlay of overlays) {
+        const onto = published
+        // Missing pendingEdits is the same empty baseline as []; initializing it
+        // must not delete intentions from a concurrently committed first action.
+        const before = key === 'session_state' && overlay.before && overlay.before.pendingEdits == null && Array.isArray(overlay.value?.pendingEdits)
+          ? { ...overlay.before, pendingEdits: [] } : overlay.before
+        // Different sessions (including clear) replace the old document. A new
+        // segment of the SAME training must retain in-flight row/event commits.
+        published = key === 'session_state' && (overlay.before?.sid || '') !== (overlay.value?.sid || '')
+          ? clone(overlay.value) : rebase(before, overlay.value, published)
+        if (key === 'session_state' && published && typeof published === 'object') {
+          // HR is one aggregate owned by the FINAL session/segment, even when a
+          // reset to zero looks unchanged against the pre-transaction cache.
+          // Keep row/event rebasing above; never splice individual HR fields.
+          let hr = null
+          for (const source of [onto, overlay.value]) {
+            if (published.sid && sameSessionSegment(source, published) &&
+                source.hr && (!hr || (source.hr.count || 0) > (hr.count || 0))) hr = source.hr
+          }
+          published.hr = clone(hr || { sum: 0, count: 0, max: 0 })
+        }
+      }
       state.values[key] = published
       delete state.errors[key]
     } else state.errors[key] = 'write_failed'

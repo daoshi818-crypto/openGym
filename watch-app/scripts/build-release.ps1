@@ -6,10 +6,18 @@ if (!$Compiler) {
 }
 if (!(Test-Path -LiteralPath $Compiler)) { throw 'Set BLUEOS_PACK to BlueOS Studio blueos-pack/bin/index.js.' }
 Push-Location $project
+$manifestPath = Join-Path $project 'src/manifest.json'
+$originalManifest = [IO.File]::ReadAllBytes($manifestPath)
 try {
     $manifest = Get-Content 'src/manifest.json' -Raw | ConvertFrom-Json
     $targets = @('watch-square', 'watch-round')
     foreach ($targetDevice in $targets) {
+        # Both layouts use their own design-pixel canvas. A 390px designWidth on
+        # the 466px round layout would scale every px again and crop the footer.
+        $targetManifest = [Text.Encoding]::UTF8.GetString($originalManifest) | ConvertFrom-Json
+        $targetManifest.config.designWidth = if ($targetDevice -eq 'watch-round') { 466 } else { 390 }
+        $targetManifest.deviceTypeList = @($targetDevice)
+        [IO.File]::WriteAllText($manifestPath, ($targetManifest | ConvertTo-Json -Depth 30), [Text.UTF8Encoding]::new($false))
         # cmd merges blueos-pack warnings into stdout; PowerShell otherwise promotes
         # native stderr warnings to terminating NativeCommandError under Stop mode.
         $buildOutput = & cmd.exe /d /c "node `"$Compiler`" release --device-type $targetDevice --force 2>&1"
@@ -29,7 +37,9 @@ try {
             $reader = [IO.StreamReader]::new($zip.GetEntry('manifest.json').Open())
             try { $packed = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
             if ($packed.versionName -ne $manifest.versionName -or $packed.versionCode -ne $manifest.versionCode -or $packed.name -ne $manifest.name) { throw 'Packaged manifest does not match source.' }
-            if ($packed.deviceTypeList -notcontains $targetDevice) { throw "Package must target $targetDevice." }
+            if ($packed.deviceTypeList.Count -ne 1 -or $packed.deviceTypeList -notcontains $targetDevice) { throw "Package must target only $targetDevice." }
+            $expectedWidth = if ($targetDevice -eq 'watch-round') { 466 } else { 390 }
+            if ($packed.config.designWidth -ne $expectedWidth) { throw "Package designWidth must be $expectedWidth for $targetDevice." }
         } finally { $zip.Dispose() }
         $suffix = if ($targetDevice -eq 'watch-square') { '' } else { '-round' }
         $target = Join-Path $release "opengym-watch$suffix-$($manifest.versionName).rpk"
@@ -39,4 +49,7 @@ try {
         Write-Output "Release: $target"
         Write-Output "SHA256: $digest"
     }
-} finally { Pop-Location }
+} finally {
+    [IO.File]::WriteAllBytes($manifestPath, $originalManifest)
+    Pop-Location
+}

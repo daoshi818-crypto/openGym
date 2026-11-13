@@ -36,3 +36,39 @@ it('an atomic storage watchdog fails explicitly and a late callback cannot publi
   writes[1].success(); expect((await b).ok).toBe(true)
   writes[0].success(); expect(h.ctx.readStored('x')).toEqual({ n: 3 })
 })
+
+it.each(['sid', 'clear'])('replaces an old atomic session candidate at an explicit %s boundary', async boundary => {
+  vi.useFakeTimers()
+  const before = { sid: 'old', startedAt: 1000, active: true, hr: { sum: 0, count: 0, max: 0 },
+    rows: [{ w: 20, done: false }], pendingEdits: [], focusAt: 0, restUntil: 0 }
+  const h = watchPersistence(new Map([['session_state', before]])), writes = []
+  h.storage.set = item => writes.push(item)
+  const action = h.ctx.writeStoredAtomic('session_state', old => ({ ...old,
+    hr: { sum: 180, count: 1, max: 180, sampleAt: 1100, last: 180 },
+    rows: [{ w: 75, done: true }], pendingEdits: [{ eventId: 'old-action' }], focusAt: 1200, restUntil: 5000 }))
+  const next = { ...before, ...(boundary === 'sid' ? { sid: 'new', startedAt: 2000 } : { sid: '', startedAt: 0, active: false }) }
+  h.ctx.writeStored('session_state', next)
+  writes[0].success(); expect((await action).ok).toBe(true)
+  expect(h.ctx.readStored('session_state')).toEqual(next)
+  // Check the very next SDK payload, before its callback: no bad-disk repair window.
+  expect(writes[1].value).toEqual(next)
+  writes[1].success()
+})
+
+it.each([1, 2])('merges same-session HR as one aggregate while preserving row/event rebasing (overlay count %s)', async count => {
+  vi.useFakeTimers()
+  const before = { sid: 's', startedAt: 1000, hr: { sum: 0, count: 0, max: 0, sampledDurationMs: 0 },
+    rows: [{ w: 20, r: 10 }], pendingEdits: [] }
+  const h = watchPersistence(new Map([['session_state', before]])), writes = []
+  h.storage.set = item => writes.push(item)
+  const candidateHr = { sum: 180, count: 1, max: 180, sampledDurationMs: 9000, sampleAt: 10000, last: 180 }
+  const overlayHr = { sum: count * 80, count, max: 80, sampledDurationMs: 0, sampleAt: 10001, last: 80 }
+  const action = h.ctx.writeStoredAtomic('session_state', old => ({ ...old, hr: candidateHr,
+    rows: [{ w: 75, r: 10 }], pendingEdits: [{ eventId: 'committed-row' }] }))
+  h.ctx.writeStored('session_state', { ...before, hr: overlayHr, rows: [{ w: 20, r: 12 }] })
+  writes[0].success(); expect((await action).ok).toBe(true)
+  expect(writes[1].value).toMatchObject({ hr: count === 1 ? candidateHr : overlayHr,
+    rows: [{ w: 75, r: 12 }], pendingEdits: [{ eventId: 'committed-row' }] })
+  expect(h.ctx.readStored('session_state').hr).toEqual(count === 1 ? candidateHr : overlayHr)
+  writes[1].success()
+})

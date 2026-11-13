@@ -135,7 +135,7 @@ describe('GT1 complete-screen rebuild contracts', () => {
     s.setIdx = 1; s.restUntil = Date.now() + 90000; ctx.save(s); p.state = s; p.refresh()
     expect(p.effortEntryText).toBe('RIR 0'); expect(p.effortNumber).toBe('0')
     expect(p.effortTarget.setId).toBe(s.workout.rows[0][0].setId)
-    expect(p.nextTargetLabel).toContain('第 2 组')
+    expect(p.nextSetLabel).toBe('第 2 / 4 组')
   })
   it('return from operations does not switch or complete a set', () => {
     const { p, s } = training('none'), before = JSON.stringify(s.workout.rows)

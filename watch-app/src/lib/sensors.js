@@ -2,32 +2,64 @@
 import health from '@blueos.health.health'
 import vibrator from '@blueos.hardware.vibrator.vibrator'
 import { runtime } from './runtime.js'
-import { loadState, addHr, save } from './session.js'
+import { loadState, addHr, flushHr } from './session.js'
+import { appTimeout, cancelAppTimeout } from './app-timers.js'
+
+function captureActive(state, capture) {
+  return state.active && !state.pausedAt && !state.closeIntent && state.sid === capture.sid &&
+    (state.segmentStartedAt || state.startedAt) === capture.segmentStartedAt
+}
+function persistCaptureHr(capture, state) {
+  cancelAppTimeout(capture.timer)
+  capture.timer = null
+  capture.persistedAt = Date.now(); capture.persistedBpm = state.hr.last
+  return flushHr(state).then(result => { if (!result.ok) capture.persistedAt = null })
+}
 
 // The subscription belongs to the training session, across page bundles and navigation.
 export function startSessionHr() {
   const shared = runtime()
+  if (shared.closingSid) return
   const state = loadState()
-  if (!state.active || state.pausedAt) { stopSessionHr(); return }
-  if (shared.hrCapture?.sid === state.sid) return
+  if (!state.active || state.pausedAt || state.closeIntent) { stopSessionHr(); return }
+  const segmentStartedAt = state.segmentStartedAt || state.startedAt
+  if (shared.hrCapture?.sid === state.sid && shared.hrCapture.segmentStartedAt === segmentStartedAt) return
   stopSessionHr()
-  const capture = { sid: state.sid, stop: stopSessionHr }
+  const capture = { sid: state.sid, segmentStartedAt, stop: stopSessionHr, persistedAt: null, persistedBpm: null, timer: null }
   shared.hrCapture = capture
   startHr(bpm => {
     if (shared.hrCapture !== capture) return
+    // A failed close must leave the subscription usable; a successful freeze stops it.
+    if (shared.closingSid === capture.sid) return
     const latest = loadState()
-    if (!latest.active || latest.pausedAt || latest.sid !== capture.sid) { stopSessionHr(); return }
+    if (!captureActive(latest, capture)) { stopSessionHr(); return }
     if (!Number.isFinite(bpm) || bpm < 30 || bpm > 220) return
     addHr(latest, bpm)
-    save(latest)
+    const at = Date.now()
+    if (capture.persistedAt == null || at - capture.persistedAt >= 10000 || Math.abs(bpm - capture.persistedBpm) >= 10) {
+      persistCaptureHr(capture, latest)
+    } else if (capture.timer == null) {
+      // App-owned deadline also flushes the tail if the sensor stops reporting.
+      capture.timer = appTimeout(() => {
+        capture.timer = null
+        if (shared.hrCapture !== capture) return
+        const current = loadState()
+        if (!captureActive(current, capture)) { stopSessionHr(); return }
+        persistCaptureHr(capture, current)
+      }, 10000 - (at - capture.persistedAt))
+    }
   }, () => { if (shared.hrCapture === capture) stopSessionHr() })
 }
 
 export function stopSessionHr() {
   const shared = runtime()
-  if (!shared.hrCapture) return
+  const capture = shared.hrCapture
+  if (!capture) return
+  // Detach first: flushing must never re-enter stop through session persistence.
   shared.hrCapture = null
+  cancelAppTimeout(capture.timer)
   stopHr()
+  return flushHr(capture)
 }
 
 export function startHr(onSample, onError = () => {}) {

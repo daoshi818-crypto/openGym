@@ -6,8 +6,10 @@ const target = process.argv[2] || process.env.WATCH_DEVICE_TYPE || 'watch-square
 const build = process.env.BLUEOS_BUILD_ROOT ? path.resolve(process.env.BLUEOS_BUILD_ROOT, target) : path.resolve(__dirname, '../build', target)
 const read = name => JSON.parse(fs.readFileSync(path.join(build, name), 'utf8'))
 const manifest = read('manifest.json')
-assert.ok(manifest.deviceTypeList.includes(target), target + ' target is missing')
-assert.equal(manifest.config.designWidth, 390)
+const round = target === 'watch-round'
+const viewportHeight = round ? 466 : 450
+assert.deepEqual(manifest.deviceTypeList, [target], 'Each package must target its own screen shape')
+assert.equal(manifest.config.designWidth, target === 'watch-round' ? 466 : 390, 'Use the same design width as the layout canvas')
 assert.ok(!manifest.features.some(f => f.name === 'blueos.storage.file'), 'Removed demo file capability returned')
 function nodes(n) { return [n, ...(n.children || []).flatMap(nodes)] }
 function sheetOf(page) { return Object.values(read(page + '/index.css.json'))[0] }
@@ -42,7 +44,7 @@ for (const page of Object.keys(manifest.router.pages)) {
   if (page === 'Keypad') assert.ok(!tree.some(n => n.type === 'list'), 'Adjustment and keyboard must never scroll')
   else assert.ok(tree.some(n => n.type === 'list'), page + ' must retain secondary native scrolling')
   assert.ok(!JSON.stringify(template).match(/mediaOn|demoOn|openDemo|media-image/), 'Removed watch demo returned')
-  assert.ok(sheet['@MEDIA']?.some(m => m.condition === 'screen and (min-width: 450px)'), page + ' round fallback missing')
+  assert.ok(!sheet['@MEDIA']?.some(m => m.condition?.includes('device:')), page + ' device media must be resolved by the target compiler')
   assert.ok(!/[\p{Extended_Pictographic}\uFE0F✓▶♥↶]/u.test(JSON.stringify(template)), page + ' emoji/icon font dependency')
   const headerSelector = { Index: '.topbar', Workout: '.topbar', Keypad: '.label', ExerciseList: '.title', Summary: '.top' }[page]
   assert.ok(px(sheet,headerSelector,'marginTop')>=18, page + ' top corner inset')
@@ -51,10 +53,8 @@ for (const page of Object.keys(manifest.router.pages)) {
     flexViewport(sheet, '.finish-scroll')
     assert.equal(tree.filter(n => n.events?.click === 'askAbandon').length, 2, 'Visible abandon entry in operations and finish')
     assert.ok(tree.some(n => n.type === 'list' && n.class === 'finish-scroll'), 'Finish must scroll natively')
-    const roundWorkout = sheet['@MEDIA'].find(m => m.condition === 'screen and (min-width: 450px)')
-    const roundStyles = { ...sheet }
-    for (const [selector, style] of Object.entries(roundWorkout)) if (selector.startsWith('.')) roundStyles[selector] = { ...sheet[selector], ...style }
-    for (const [name, styles] of [['square', sheet], ['round', roundStyles]]) {
+    assert.equal(px(sheet,'.training-content','width'), round ? 300 : 338, 'Compiler must apply the correct screen-shape layout')
+    for (const [name, styles] of [[target, sheet]]) {
       assert.equal(styles['.op-prescription'].flexDirection, 'column', name + ': long operation values need separate rows')
       assert.ok(px(styles,'.op-metric','width') <= px(styles,'.op-prescription','width'), name + ': operation metrics overlap')
       assert.equal(styles['.status'].flex, 1, name + ': status must share header width')
@@ -75,16 +75,19 @@ for (const page of Object.keys(manifest.router.pages)) {
     const header=px(sheet,'.topbar','height')+px(sheet,'.topbar','marginTop')
     const footer=px(sheet,'.primary-footer','height')+px(sheet,'.primary-footer','marginBottom')
     const current=['.ex','.group','.inputs','.last-row','.navrow'].reduce((n,s)=>n+px(sheet,s,'height'),0)+px(sheet,'.set-dots','minHeight')
-    assert.ok(header+current+footer<=450, 'Standard current set must show all dots and footer at 390x450')
+    assert.ok(header+current+footer<=viewportHeight, 'Current set must show all dots and footer within the target design canvas')
     assert.ok(!tree.some(n=>n.class==='undo-label'), 'Completed-set hint must not add a scrolling row')
     const rest=['.rest-ex','.rest','.next','.effort-row','.rrow'].reduce((n,s)=>n+px(sheet,s,'height'),0)
-    assert.ok(header+rest+px(sheet,'.rrow','marginBottom')<=450, 'Rest controls must fit without scrolling in standard state')
+    assert.ok(header+rest+px(sheet,'.rrow','marginBottom')<=viewportHeight, 'Rest controls must fit without scrolling in standard state')
     assert.ok(px(sheet,'.rest','fontSize')>=88 && px(sheet,'.rest','height')>=px(sheet,'.rest','lineHeight'), 'Readable uncut countdown')
     assert.ok(px(sheet,'.rest','lineHeight')>=1.2*px(sheet,'.rest','fontSize'), 'Countdown font line box')
-    assert.ok(px(sheet,'.ex','height')>=2*px(sheet,'.ex','lineHeight'), 'Two-line exercise title')
+    assert.ok(px(sheet,'.ex-name','height')>=2*px(sheet,'.ex-name','lineHeight'), 'Two-line exercise title')
+    for (const [name, styles] of [[target, sheet]]) {
+      assert.ok(px(styles,'.ex-name','width') + px(styles,'.remaining','width') + px(styles,'.remaining','marginLeft') <= px(styles,'.ex','width'), name + ': title must reserve remaining-count width')
+    }
     assert.equal(sheet['.inputs'].flexDirection,'row', 'V4 horizontal prescription')
-    assert.ok(px(sheet,'.weight-field','width')+px(sheet,'.times','width')+px(sheet,'.reps-field','width')<=338)
-    assert.ok(px(sheet,'.fval','fontSize')>=56, 'Current numbers too small')
+    assert.ok(px(sheet,'.weight-field','width')+px(sheet,'.times','width')+px(sheet,'.reps-field','width')<=px(sheet,'.inputs','width'))
+    assert.ok(px(sheet,'.fval','fontSize')>=(round ? 52 : 56), 'Current numbers too small')
     assert.ok(tree.some(n => n.type==='div' && n.events?.click==='onCurrentSetAction' && n.children?.some(c => c.type==='image' && c.attr?.$src?.includes('/common/icons/check.svg'))), 'Complete/undo/pause vector missing')
     assert.ok(px(sheet,'.complete','height')>=64 && px(sheet,'.complete','width')>=64, 'Large circular vector action')
     const primary = tree.find(n => n.events?.click === 'onCurrentSetAction')
@@ -105,14 +108,11 @@ for (const page of Object.keys(manifest.router.pages)) {
   } else if (page==='ExerciseList') {
     flexViewport(sheet,'.body'); assert.equal(sheet['.scroll'].height,'100%')
     assert.equal(px(sheet,'.body','minHeight'),0)
-    assert.ok(px(sheet,'.title','height')+px(sheet,'.title','marginTop')+px(sheet,'.foot','height')+px(sheet,'.foot','marginBottom')<450)
+    assert.ok(px(sheet,'.title','height')+px(sheet,'.title','marginTop')+px(sheet,'.foot','height')+px(sheet,'.foot','marginBottom')<viewportHeight)
     assert.ok(px(sheet,'.exname','width')+px(sheet,'.cnt','width')+px(sheet,'.expand-hit','width')<=px(sheet,'.exhead','width'))
     assert.ok(tree.some(n=>n.events?.$click?.includes('pickExercise(this.item')), 'Tap action name handler missing')
     assert.equal(sheet['.back'].flexDirection, 'row', 'Return icon and label must share a row')
-    const round = sheet['@MEDIA'].find(m => m.condition === 'screen and (min-width: 450px)')
-    const roundSheet = { ...sheet }
-    for (const [selector, style] of Object.entries(round)) if (selector.startsWith('.')) roundSheet[selector] = { ...sheet[selector], ...style }
-    for (const [name, styles] of [['GT1', sheet], ['round', roundSheet]]) {
+    for (const [name, styles] of [[target, sheet]]) {
       assert.ok(2 * px(styles,'.compact-action','width') <= px(styles,'.exit-row','width'), name + ': footer buttons overlap')
       assert.ok(px(styles,'.back-icon','width') + px(styles,'.back-icon','marginRight') + 4 * px(styles,'.back-label','fontSize') <= px(styles,'.compact-action','width'), name + ': return label clips')
       assert.ok(2 * px(styles,'.endbtn','height') <= px(styles,'.foot','height'), name + ': footer rows overlap')
@@ -128,10 +128,10 @@ for (const page of Object.keys(manifest.router.pages)) {
     flexViewport(sheet,'.editor-content')
     assert.ok(px(sheet,'.step','width')>=44 && px(sheet,'.step','height')>=44)
     assert.ok(2*px(sheet,'.step','width')+px(sheet,'.show','width')<=px(sheet,'.step-row','width'))
-    assert.ok(px(sheet,'.show','fontSize')>=64)
+    assert.ok(px(sheet,'.show','fontSize')>=(round ? 52 : 64), 'Readable adjustment value within each design canvas')
     assert.ok(px(sheet,'.k','height')>=44 && px(sheet,'.cancel','height')>=56 && px(sheet,'.ok','height')>=56, 'Large keys and fixed Save/Cancel targets')
     const keyboardHeight = px(sheet,'.label','marginTop') + ['.label','.keyboard-target','.keyboard-value','.grid','.keyboard-switch','.actions'].reduce((n,s)=>n+px(sheet,s,'height'),0) + px(sheet,'.actions','marginTop') + px(sheet,'.actions','marginBottom')
-    assert.ok(keyboardHeight<=450, 'Every keyboard row must fit one screen')
+    assert.ok(keyboardHeight<=viewportHeight, 'Every keyboard row must fit one screen')
     assert.ok(template.children.some(n => n.class === 'actions'), 'Save/Cancel must remain fixed')
     assert.ok(tree.some(n=>n.events?.click==='onKeyOk'), 'Explicit Save missing')
   } else if (page==='Summary') {
