@@ -68,3 +68,22 @@ it('does not revive an earlier binding when the SDK reuses the same connection o
   expect(onState).toHaveBeenCalledWith(true)
   h.app.onDestroy.call({ $def: h.definition })
 })
+
+it('does not reopen native storage through late diagnostics or page event replay', () => {
+  const h = appHarness()
+  loadWatchModule('diagnostic-log', h.ctx, ['recordDiagnostic', 'flushDiagnosticLog', 'diagnosticLog', 'diagnosticLogPage'])
+  Object.assign(h.ctx, { interconnect: { instance: () => ({ getReadyState: ({ success }) => success({ status: 0 }), close() {} }) },
+    loadState: () => ({ active: false }), pendingSummaries: () => [], pendingEntry: () => null, journalEntry: () => null, rememberEventAt() {} })
+  loadWatchModule('rpc', h.ctx, ['startServer', 'sendEvent', 'replayPendingEvents', 'pendingCount'])
+  h.ctx.startServer({})
+  h.app.onDestroy.call({ $def: h.definition })
+  const reads = vi.spyOn(h.storage, 'getSync'), writes = vi.spyOn(h.storage, 'set')
+  h.ctx.recordDiagnostic('page_destroy')
+  h.ctx.flushDiagnosticLog()
+  expect(h.ctx.sendEvent({ t: 'focus', eventId: 'late', sid: 's' })).toBe(false)
+  h.ctx.replayPendingEvents()
+  expect(h.ctx.pendingCount()).toBe(0)
+  vi.advanceTimersByTime(30000)
+  expect(reads).not.toHaveBeenCalled()
+  expect(writes).not.toHaveBeenCalled()
+})

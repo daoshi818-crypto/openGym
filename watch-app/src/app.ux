@@ -13,13 +13,13 @@ export default {
         const id = setTimeout(() => { timeouts.delete(id); if (!r.destroyed) fn() }, ms)
         timeouts.add(id); return id
       },
-      clearTimeout: id => { timeouts.delete(id); clearTimeout(id) },
+      clearTimeout: id => { if (r.destroyed) return; timeouts.delete(id); clearTimeout(id) },
       setInterval: (fn, ms) => {
         if (r.destroyed) return null
         const id = setInterval(() => { if (!r.destroyed) fn() }, ms)
         intervals.add(id); return id
       },
-      clearInterval: id => { intervals.delete(id); clearInterval(id) },
+      clearInterval: id => { if (r.destroyed) return; intervals.delete(id); clearInterval(id) },
       dispose: () => {
         for (const id of timeouts) clearTimeout(id)
         for (const id of intervals) clearInterval(id)

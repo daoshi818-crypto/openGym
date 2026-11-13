@@ -101,7 +101,7 @@ function expireSession(s) {
   const id = allocateEventIdentity(s.sid)
   const entry = summaryEventOf(summary, id, s, true)
   const done = ok => {
-    if (!ok) return                       // 日志没落盘：保留原始会话，下次启动/重试继续
+    if (!ok || runtime().destroyed) return // 日志没落盘：保留原始会话，下次启动/重试继续
     closeSession(s.sid, { expiredClose: msg })
     storage.set({ key: 'last_notice', value: '训练超过6小时，已保存记录待补传', fail() {} })
   }

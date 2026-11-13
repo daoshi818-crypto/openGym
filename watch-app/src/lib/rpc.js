@@ -68,6 +68,7 @@ export function transportDiagnostics(limit = 40) {
 }
 
 function initialize() {
+  if (runtime().destroyed) return
   if (rpcState().initialized) return
   rpcState().outbox = loadOutbox()
   // 已冻结的最终汇总可能只存在日志里（关闭时 outbox 还没写成功）：先并进来。
@@ -88,7 +89,7 @@ function markDurable(batch = rpcState().outbox) {
 }
 
 function enqueue(msg, { persistOutbox = true } = {}) {
-  if (!msg || !msg.eventId) return false
+  if (!msg || !msg.eventId || runtime().destroyed) return false
   if (rpcState().outbox.some(e => e.msg.eventId === msg.eventId)) return true
   const entry = { at: msg.at || Date.now(), msg, sent: false }
   if (rpcState().outbox.length >= 4096 || wireBytes(JSON.stringify([...rpcState().outbox, entry])) > 2 * 1024 * 1024) {
@@ -101,6 +102,7 @@ function enqueue(msg, { persistOutbox = true } = {}) {
 }
 
 function persist() {
+  if (runtime().destroyed) return
   const r = rpcState()
   r.writeDirty = true
   if (r.writeBusy) return
@@ -241,6 +243,7 @@ function scheduleFlush(delay = SEND_GAP_MS) {
 // Keypad edits are already durable in session_state. Recover only edits not yet in the
 // outbox, two per UI turn. Re-read between batches so receipts/closed sessions win.
 export function replayPendingEvents() {
+  if (runtime().destroyed || rpcState().stopped) return
   const r = rpcState()
   if (runtime().sessionDraft) return
   initialize()
@@ -792,7 +795,7 @@ export function stopServer() {
 
 /** 事件类：进 outbox，保证闪退/断线不丢。返回是否已在队列里（不代表手机已保存）。 */
 export function sendEvent(obj) {
-  if (!obj) return false
+  if (!obj || runtime().destroyed) return false
   if (runtime().sessionDraft) { stageSessionEvent(runtime().sessionDraft, obj); return true }
   initialize()
   // A page replay must not re-clone/rewrite the full session or restart delivery.

@@ -24,6 +24,7 @@ const fields = ['sid', 'eventId', 'entryInstanceId', 'setId', 'type', 'code', 'd
   'restUntil', 'restVersion', 'restId', 'crownDirty', 'dotPending']
 function journal() {
   const r = runtime()
+  if (r.destroyed) throw new Error('app_destroyed')
   if (!r.diagnosticLog) {
     let saved
     try { saved = storage.getSync({ key: KEY }) } catch { /* Optional diagnostics only. */ }
@@ -80,6 +81,7 @@ export function flushDiagnosticLog() {
     let settled = false, watchdog
     const done = ok => {
       if (settled) return
+      if (runtime().destroyed) { settled = true; return }
       settled = true; cancelAppTimeout(watchdog); j.writing = false
       if (!ok) { j.failed = true; return }
       j.persisted = serial
