@@ -536,7 +536,7 @@ it('records a page callback failure separately from a durable phone receipt', as
   } finally { a.receive.dispose() }
 })
 
-function paired(bootstrapPlan = true, compact = false) {
+function paired(bootstrapPlan = true, compact = false, frontier = false) {
   const commandStates = createCommandStateCache()
   const h = boot(true), workout = plan()
   const S = { unit: 'kg', workouts: [], active: { start: Date.now(), watchSid: 's', name: '5+2',
@@ -556,7 +556,7 @@ function paired(bootstrapPlan = true, compact = false) {
   if (bootstrapPlan) h.c.startSession(workout)
   const { ctx: p } = bluePage(h, true)
   p.bindRpc()
-  h.connection.onMessage({ t: 'hello_ack', protocolVersion: 3, capabilities: { dependencyEvents: true, commandReceipts: compact } })
+  h.connection.onMessage({ t: 'hello_ack', protocolVersion: 3, capabilities: { dependencyEvents: true, commandReceipts: compact, causalFrontier: frontier } })
   async function sync(value) {
     const msg = canonicalWire(value)
     commandStates.remember(msg)
@@ -579,8 +579,8 @@ function paired(bootstrapPlan = true, compact = false) {
   }
   return { ...h, p, S, deps, receive, sync, pump, snapshots, commandStates, replies }
 }
-it('phone receipts and snapshots preserve rapid watch-only 5+2 completion across the fifth set', async () => {
-  vi.useFakeTimers(); const a = paired()
+it.each([false, true])('phone receipts/snapshots preserve 5+2 completion with causalFrontier=%s', async frontier => {
+  vi.useFakeTimers(); const a = paired(true, false, frontier)
   await a.sync({ ...watchSnapshotOf(a.S, null), t: 'sync', protocolVersion: 3 })
   try {
     for (let i = 0; i < 7; i++) {
@@ -617,8 +617,8 @@ it('real Workout restores phone authority when a persisted snapshot overtakes a 
   } finally { a.receive.dispose() }
 })
 
-it('drains a full rapid 5+2 backlog without rolling focus back at the exercise boundary', async () => {
-  vi.useFakeTimers(); const a = paired()
+it.each([false, true])('drains full 5+2 backlog without focus rollback with causalFrontier=%s', async frontier => {
+  vi.useFakeTimers(); const a = paired(true, false, frontier)
   await a.sync({ ...watchSnapshotOf(a.S, null), t: 'sync', protocolVersion: 3 })
   try {
     for (let i = 0; i < 7; i++) {

@@ -3,6 +3,11 @@ function logAction(stage, page, data = {}) {
     page.logInteraction?.(stage, data)
   } catch { /* Logging never participates in commit success. */ }
 }
+const stateOf = page => typeof page.stateOf === 'function' ? page.stateOf() : page.state
+function adoptState(page, state) {
+  if (typeof page.stateOf === 'function') page.stateOf(state)
+  else page.state = state
+}
 // Page plumbing only: business functions remain unchanged. A detached view prevents any
 // success UI from escaping before the operation + intention document is on disk.
 export async function commitPageAction(page, operation, deps) {
@@ -11,12 +16,12 @@ export async function commitPageAction(page, operation, deps) {
   page.localCommitPending = true
   const started = Date.now()
   logAction('local_commit_begin', page)
-  const sid = page.state.sid, wasVisible = page.visible
+  const sid = stateOf(page).sid, wasVisible = page.visible
   let draft, refresh = false
   const effects = []
   const deferred = ['setRestScreenLock', 'syncClockTimer', 'focusCrown', 'stopHrCapture', 'startHrCapture', 'cancelRestNudge']
   try {
-    const result = await deps.commitSessionAction(page.state.sid, state => {
+    const result = await deps.commitSessionAction(sid, state => {
       // BlueOS Page is a Proxy with receiver-ignoring setters and bound methods.
       // Never inherit from it: assignments would mutate the live Page, and helper
       // calls would bypass this draft. Own writes stay private; raw helpers use it.
@@ -38,9 +43,10 @@ export async function commitPageAction(page, operation, deps) {
     if (!result.ok) { logAction('local_commit_failed', page, { duration: Date.now() - started }); page.inputNotice = '存储失败，未保存，请重试'; page.syncWarning = true; page.syncLabel = '存储失败，请重试'; return false }
     logAction('local_commit_saved', page, { duration: Date.now() - started })
     deps.replayPendingEvents()
-    if (page.state?.sid !== sid || (wasVisible === true && page.visible === false) || deps.loadState().sid !== sid) return true
+    const latest = deps.loadState()
+    if (stateOf(page)?.sid !== sid || (wasVisible === true && page.visible === false) || latest.sid !== sid) return true
     for (const name of Object.keys(draft)) if (name !== 'flushPendingRowEdits' && name !== 'sessionActionDraft' && name !== 'state' && name !== 'refresh' && !deferred.includes(name)) page[name] = draft[name]
-    page.state = deps.loadState()
+    adoptState(page, latest)
     for (const effect of effects) effect()
     if (refresh) page.refresh()
     return true

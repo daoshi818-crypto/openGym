@@ -77,7 +77,7 @@ jobs:
         with:
           tag_name: v${{ env.APP_VERSION }}
           name: openGym custom v${{ env.APP_VERSION }}
-          body_path: docs/dev/RELEASE_1_6_29.zh-CN.md
+          body_path: docs/dev/RELEASE_1_6_30.zh-CN.md
           files: |
             openGym.apk
             openGym.apk.sha256

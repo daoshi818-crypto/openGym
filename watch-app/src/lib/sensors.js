@@ -20,7 +20,7 @@ function persistCaptureHr(capture, state) {
 export function startSessionHr() {
   const shared = runtime()
   if (shared.closingSid) return
-  const state = loadState()
+  const state = loadState('hr')
   if (!state.active || state.pausedAt || state.closeIntent) { stopSessionHr(); return }
   const segmentStartedAt = state.segmentStartedAt || state.startedAt
   if (shared.hrCapture?.sid === state.sid && shared.hrCapture.segmentStartedAt === segmentStartedAt) return
@@ -31,7 +31,7 @@ export function startSessionHr() {
     if (shared.hrCapture !== capture) return
     // A failed close must leave the subscription usable; a successful freeze stops it.
     if (shared.closingSid === capture.sid) return
-    const latest = loadState()
+    const latest = loadState('hr')
     if (!captureActive(latest, capture)) { stopSessionHr(); return }
     if (!Number.isFinite(bpm) || bpm < 30 || bpm > 220) return
     addHr(latest, bpm)
@@ -43,7 +43,7 @@ export function startSessionHr() {
       capture.timer = appTimeout(() => {
         capture.timer = null
         if (shared.hrCapture !== capture) return
-        const current = loadState()
+        const current = loadState('hr')
         if (!captureActive(current, capture)) { stopSessionHr(); return }
         persistCaptureHr(capture, current)
       }, 10000 - (at - capture.persistedAt))

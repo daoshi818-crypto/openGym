@@ -25,6 +25,18 @@ import { lastTimeView } from '../lib/watch-last-time.js'
 import { zoneView, muscleView } from '../lib/official-metrics.js'
 
 const pageDefinition = {
+  // Native reactiveMap retains proxies until Page destruction. Business documents
+  // must stay in staticData; only the small display projection belongs in data.
+  staticData: { sessionModel: { current: null, touchPoints: { start: { x: 0, y: 0 }, last: { x: 0, y: 0 } } } },
+  stateOf(value) {
+    // Detached transaction drafts (and legacy page callers) own their state.
+    if (this.sessionActionDraft || !this.sessionModel) {
+      if (arguments.length) this.state = value
+      return this.state
+    }
+    if (arguments.length) this.sessionModel.current = value
+    return this.sessionModel.current
+  },
   data: {
     exName: '', remainingLabel: '', syncWarning: false,
     selectedField: null, setDots: [], dotSegmented: false, dotHasPrev: false, dotHasNext: false, inputNotice: '',
@@ -53,7 +65,6 @@ const pageDefinition = {
     doneTotal: '0/0', nextOfficial: '', hrNumber: '--', hrAverage: '--', hrMaximum: '--', hrMinimum: '--',
     zoneRows: [], hasAge: false, muscleRows: [], muscleMore: 0, muscleEmpty: '还没有组',
     restPercent: '100%', restWarn: false, holdingFinish: false, finishProgress: '0%',
-    mediaNotice: '',
     closeMode: '',
     paused: false,
     pauseLabel: '暂停训练',
@@ -96,7 +107,7 @@ const pageDefinition = {
     if (this.$app && this.$app.$def) bindRuntime(this.$app.$def)
     const s = loadState()
     if (!s.active || !s.workout) { router.push({ uri: '/Index' }); return }
-    this.state = s
+    this.stateOf(s)
     this.profile = s.profile || null
     this.restSeq = 0
     this.remoteRestSeq = 0
@@ -147,7 +158,7 @@ const pageDefinition = {
       this.autoFocusEx = latest.exIdx; this.autoFocusSet = latest.setIdx; this.autoFocusIgnoreUntil = 0
       this.profile = latest.profile || null
     }
-    if (this.state) this.bindRpc()
+    if (this.stateOf()) this.bindRpc()
     // 熄屏时系统可能暂停 JS 定时器，回到页面先按绝对截止时间校准。
     this.reconcileRestClock()
     // 与输入页通过持久化状态交接，使用当前连接的可靠事件队列发送。
@@ -158,31 +169,41 @@ const pageDefinition = {
     const finish = runtime().finishRequest
     if (finish) {
       delete runtime().finishRequest
-      if (finish.sid === this.state.sid) this.openFinish()
+      if (finish.sid === this.stateOf().sid) this.openFinish()
     }
   },
 
   onReady() {
     this.displayReady = true
-    this.setRestScreenLock(this.visible !== false && !!(this.state && this.state.restUntil))
+    this.setRestScreenLock(this.visible !== false && !!(this.stateOf() && this.stateOf().restUntil))
     this.focusCrown()
   },
   focusCrown() {
     try { this.$element('training').requestFocus(true) } catch (e) {}
+    // The destination list can take the default focus when its native tree mounts.
+    // Reclaim once after this render; never keep a polling focus timer alive.
+    if (this.crownFocusTimer != null) clearTimeout(this.crownFocusTimer)
+    this.crownFocusTimer = setTimeout(() => {
+      this.crownFocusTimer = null
+      if (this.visible === false || this.lastOpen || this.diagnosticOn) return
+      try { this.$element('training').requestFocus(true) } catch (e) {}
+    }, 0)
   },
   onRotation(ev) {
+    ev = ev?.detail && typeof ev.detail === 'object' ? ev.detail : ev
     if (!ev || this.visible === false || ev.state === 3) return
+    this.logInteraction('crown_input', { detail: this.selectedField || (this.isRest ? 'rest' : 'page'), type: String(this.pageIndex) })
     if (this.pageIndex === 2 && !this.effortOn && !this.closeMode && !this.diagnosticOn) {
       const direction = rotationStep(ev); if (direction) this.stepMetrics(direction); return
     }
     if (this.diagnosticOn) return
     if (ev && this.effortOn && ev.state !== 3) {
-      const d = Number(ev.delta) || (ev.direction === true ? 1 : ev.direction === false ? -1 : 0)
+      const d = rotationStep(ev)
       if (d) this.effortMove(d > 0 ? 1 : -1)
       return
     }
     if (!ev || this.visible === false || ev.state === 3 || this.menuOn || this.closeMode || this.pageIndex !== 1 || this.paused || this.lastOpen || this.finishOn) return
-    const delta = Number(ev.delta) || (ev.direction === true ? 1 : ev.direction === false ? -1 : 0)
+    const delta = rotationStep(ev)
     if (!delta) return
     if (this.isRest || this.restCrownDirty) this.queueRestNudge(delta > 0 ? 5 : -5)
     else return this.adjustSelectedField(rotationStep(ev))
@@ -215,13 +236,13 @@ const pageDefinition = {
     if (this.navPending) return
     if (fromGesture !== true && this.interactionBlocked()) return
     this.navPending = true
-    this.clearFieldSelection(); router.push({ uri: '/ExerciseList', params: { detailEx: String(this.state.exIdx) } })
+    this.clearFieldSelection(); router.push({ uri: '/ExerciseList', params: { detailEx: String(this.stateOf().exIdx) } })
   },
   openRestExercise() {
     if (this.navPending || this.interactionBlocked()) return
-    const completed = this.lastCompletedFromState(this.state)
+    const completed = this.lastCompletedFromState(this.stateOf())
     this.navPending = true
-    router.push({ uri: '/ExerciseList', params: { detailEx: String(completed ? completed.exIdx : this.state.exIdx) } })
+    router.push({ uri: '/ExerciseList', params: { detailEx: String(completed ? completed.exIdx : this.stateOf().exIdx) } })
   },
   openNextExercise() {
     if (this.navPending || this.interactionBlocked() || this.nextExIdx < 0) return
@@ -230,7 +251,7 @@ const pageDefinition = {
   },
 
   adoptSession(latest) {
-    if (this.state && this.state.sid !== latest.sid) {
+    if (this.stateOf() && this.stateOf().sid !== latest.sid) {
       this.cancelRestNudge()
       this.resetInteraction()
       this.closeMode = ''; this.effortOn = false; this.menuOn = false
@@ -242,7 +263,7 @@ const pageDefinition = {
       this.restSeq = 0; this.remoteRestSeq = 0; this.restCrownBase = null
       this.autoFocusEx = latest.exIdx; this.autoFocusSet = latest.setIdx
     }
-    this.state = latest
+    this.stateOf(latest)
     this.profile = latest.profile || null
   },
 
@@ -256,10 +277,10 @@ const pageDefinition = {
       }
       // Legacy commands still need their business mutation while hidden.
       const latest = loadState()
-      if (latest.active && latest.sid === this.state.sid) {
-        this.state = this.withRestPreview(latest)
+      if (latest.active && latest.sid === this.stateOf().sid) {
+        this.stateOf(this.withRestPreview(latest))
       }
-      const msg = args[0], s = this.state
+      const msg = args[0], s = this.stateOf()
       if (msg?.entryInstanceId && ['set','unset','weight','reps','add_set','remove_set','focus','effort'].includes(msg.t)) {
         const ex = s.workout.exercises.findIndex(e => e.entryInstanceId === msg.entryInstanceId)
         if (ex < 0) return
@@ -293,6 +314,8 @@ const pageDefinition = {
   },
 
   onHide() {
+    if (this.crownFocusTimer != null) clearTimeout(this.crownFocusTimer)
+    this.crownFocusTimer = null
     this.cancelFinishHold()
     this.logInteraction('page_hide', {}, true)
     this.cancelSetDotPick()
@@ -307,6 +330,8 @@ const pageDefinition = {
   },
 
   onDestroy() {
+    if (this.crownFocusTimer != null) clearTimeout(this.crownFocusTimer)
+    this.crownFocusTimer = null
     this.cancelFinishHold()
     this.logInteraction('page_destroy', {}, true)
     this.cancelSetDotPick()
@@ -316,6 +341,7 @@ const pageDefinition = {
     this.timer = null
     const pending = this.flushRestNudge()
     this.setRestScreenLock(false)
+    if (this.sessionModel) this.sessionModel.current = null
     return pending
   },
 
@@ -339,8 +365,10 @@ const pageDefinition = {
   touchStart(e) {
     const t = e.touches && e.touches[0]
     if (t) { this.autoFocusIgnoreUntil = 0; this.trailingTapBlockedUntil = 0 }
-    this.touch = t ? { x: t.clientX, y: t.clientY } : null
-    this.touchLast = this.touch
+    const points = this.sessionModel?.touchPoints || this.touchPoints || (this.touchPoints = { start: { x: 0, y: 0 }, last: { x: 0, y: 0 } })
+    if (t) { points.start.x = t.clientX; points.start.y = t.clientY; points.last.x = t.clientX; points.last.y = t.clientY }
+    this.touch = t ? points.start : null
+    this.touchLast = t ? points.last : null
     this.touchAxis = null
     this.effortSwipe = 0
   },
@@ -349,7 +377,7 @@ const pageDefinition = {
     if (!this.touch) return
     const t = e.touches && e.touches[0]
     if (t) {
-      this.touchLast = { x: t.clientX, y: t.clientY }
+      this.touchLast.x = t.clientX; this.touchLast.y = t.clientY
       if (this.holdingFinish && Math.max(Math.abs(t.clientX - this.touch.x), Math.abs(t.clientY - this.touch.y)) >= 24) this.cancelFinishHold()
       if (!this.touchAxis) {
         const dx = Math.abs(t.clientX - this.touch.x), dy = Math.abs(t.clientY - this.touch.y)
@@ -387,7 +415,7 @@ const pageDefinition = {
     const axis = axisAtRelease || (Math.abs(dx) > Math.abs(dy) ? 'x' : 'y')
     if (axis === 'x') {
       this.cancelFinishHold()
-      this.pageIndex = Math.max(0, Math.min(3, this.pageIndex + (dx < 0 ? 1 : -1)))
+      this.pageIndex = Math.max(0, Math.min(2, this.pageIndex + (dx < 0 ? 1 : -1)))
       this.focusCrown()
     } else if (this.pageIndex === 2) this.stepMetrics(dy < 0 ? 1 : -1)
     // Vertical gestures belong to the visible native list; horizontal swipes navigate pages.
@@ -396,19 +424,18 @@ const pageDefinition = {
   touchCancel() { this.touch = null; this.touchLast = null; this.touchAxis = null },
 
   closeMenu() { this.menuOn = false },
-
   continueTraining() { this.leaveChoice = false },
 
   leaveTraining() {
     this.leaveChoice = false
     this.stopHrCapture()
-    save(this.dotPreview ? loadState() : this.state)
+    save(this.dotPreview ? loadState() : this.stateOf())
     router.push({ uri: '/Index' })
   },
 
   onMenuAddSet() {
     return commitPageAction(this, function() {
-    const s = this.state
+    const s = this.stateOf()
     this.weightUnit = s.weightUnit || 'kg'
     const ex = s.exIdx
     addSet(s, ex)
@@ -423,7 +450,7 @@ const pageDefinition = {
 
   onMenuRemoveSet() {
     return commitPageAction(this, function() {
-    const s = this.state
+    const s = this.stateOf()
     const ex = s.exIdx
     const rows = s.workout.rows[ex]
     if (!rows || rows.length <= 1 || rows[rows.length - 1].done) { this.menuOn = false; return }
@@ -442,7 +469,7 @@ const pageDefinition = {
   stepSet(dir) {
     if (this.setDotPicker?.pending()) return false
     return commitPageAction(this, function() {
-    const s = this.state
+    const s = this.stateOf()
     if (!s.workout || !s.workout.rows.length) return
     let nx = s.exIdx
     let ni = s.setIdx + dir
@@ -466,7 +493,7 @@ const pageDefinition = {
   stepExercise(dir) {
     if (this.setDotPicker?.pending()) return false
     return commitPageAction(this, function() {
-    const s = this.state
+    const s = this.stateOf()
     if (!s.workout || !s.workout.exercises.length) return
     const nx = Math.max(0, Math.min(s.exIdx + dir, s.workout.exercises.length - 1))
     if (nx === s.exIdx) return
@@ -490,23 +517,26 @@ const pageDefinition = {
     // Reuse the original durable identities. RPC owns deduplication and ACK removal.
     replayPendingEvents()
     const latest = loadState()
-    if (latest.sid === this.state.sid) this.state.pendingEdits = latest.pendingEdits || []
+    if (latest.sid === this.stateOf().sid) this.stateOf().pendingEdits = latest.pendingEdits || []
   },
   selectField(field) {
     if (this.interactionBlocked() || this.isRest || this.paused || this.closeMode || this.effortOn || this.lastOpen || this.finishOn) return
-    const s = loadState(), target = captureRow(this.state), found = rowTarget(s, target)
+    const s = loadState(), target = captureRow(this.stateOf()), found = rowTarget(s, target)
     if (!found || found.row.done || s.pausedAt || s.restUntil) { this.clearFieldSelection(); return }
     if (target.weightUnit !== (s.weightUnit || 'kg')) { this.clearFieldSelection(); return }
-    this.state = s
+    this.stateOf(s)
     if (this.selectedField === field && this.fieldTarget && this.fieldTarget.setId === target.setId) {
       router.push({ uri: '/Keypad', params: { ...target, field, inputMode: 'keypad' } }); return
     }
     this.selectedField = field; this.fieldTarget = target; this.inputNotice = ''
+    this.logInteraction('field_selected', { detail: field })
     this.focusCrown()
   },
   editWeight() { this.selectField('w') },
   editReps() { this.selectField('r') },
   adjustSelectedField(direction) {
+    // A stray crown callback must not clone and persist an unchanged session.
+    if (!direction || !this.selectedField || !this.fieldTarget || this.interactionBlocked()) return
     return commitPageAction(this, function() {
     if (!direction || !this.selectedField || !this.fieldTarget || this.interactionBlocked()) return
     const s = loadState(), found = rowTarget(s, this.fieldTarget)
@@ -518,7 +548,7 @@ const pageDefinition = {
       this.inputNotice = '请先同步或恢复存储后再编辑'; return
     }
     const value = valueStep(found.row[this.selectedField], this.selectedField, direction, storage.getSync({ key: 'weight_step' }))
-    this.state = s
+    this.stateOf(s)
     setRowValue(s, found.exIdx, found.setIdx, this.selectedField, value, true)
     this.flushPendingRowEdits(); this.refresh()
     }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
@@ -526,7 +556,7 @@ const pageDefinition = {
   refreshSetDots(page) {
     // Keep all five standard sets visible; larger plans use three-dot windows
     // plus two 48px navigation targets, including on the round safe width.
-    const view = setDotWindow(this.state, page, 5)
+    const view = setDotWindow(this.stateOf(), page, 5)
     const dots = this.setDots || []
     if (dots.length !== view.dots.length || view.dots.some((dot, i) => dot.key !== dots[i].key)) this.setDots = view.dots
     else for (let i = 0; i < dots.length; i++) {
@@ -563,30 +593,30 @@ const pageDefinition = {
     this.logInteraction('dot_tap', { entryInstanceId: target?.entryInstanceId, setId: target?.setId, set: target?.setIdx })
     const reason = this.setDotBlockReason()
     if (reason || !target) return this.logDotBlocked(target, reason || 'missing_target', 'tap')
-    const found = rowTarget(this.state, target)
+    const found = rowTarget(this.stateOf(), target)
     if (!found) return this.logDotBlocked(target, 'stale_target', 'tap')
-    if (!this.setDotPicker?.pending() && found.exIdx === this.state.exIdx && found.setIdx === this.state.setIdx) return this.logDotBlocked(target, 'current_set', 'tap')
+    if (!this.setDotPicker?.pending() && found.exIdx === this.stateOf().exIdx && found.setIdx === this.stateOf().setIdx) return this.logDotBlocked(target, 'current_set', 'tap')
     if (!this.setDotPicker) this.setDotPicker = createSetDotPicker(next => this.commitSetDot(next))
     if (!this.setDotPicker.pending()) this.logInteraction('dot_queued', { setId: target.setId, set: target.setIdx })
     // Browsing a group is immediate; only the persisted focus intention waits for
     // coalescing/storage. Never put this view-only cursor into the shared cache.
-    this.dotPreview = { sid: this.state.sid, entryInstanceId: target.entryInstanceId, setId: target.setId,
+    this.dotPreview = { sid: this.stateOf().sid, entryInstanceId: target.entryInstanceId, setId: target.setId,
       exIdx: found.exIdx, setIdx: found.setIdx }
-    this.autoFocusSid = this.state.sid
+    this.autoFocusSid = this.stateOf().sid
     this.autoFocusEx = found.exIdx; this.autoFocusSet = found.setIdx; this.autoFocusIgnoreUntil = 0
     this.clearFieldSelection()
-    this.state = this.withDotPreview(this.state)
+    this.stateOf(this.withDotPreview(this.stateOf()))
     this.refresh()
     const batch = this.setDotPicker.request({ sid: target.sid, entryInstanceId: target.entryInstanceId, setId: target.setId,
-      exIdx: target.exIdx, setIdx: target.setIdx, baseCommitRev: this.state.commitRev || 0 })
+      exIdx: target.exIdx, setIdx: target.setIdx, baseCommitRev: this.stateOf().commitRev || 0 })
     if (this.dotBatch !== batch) {
       this.dotBatch = batch
       batch.then(() => {
         if (this.dotBatch !== batch) return
         this.dotBatch = null; this.dotPreview = null
         const latest = loadState()
-        if (this.visible !== false && latest.active && latest.sid === this.state.sid) {
-          this.state = latest
+        if (this.visible !== false && latest.active && latest.sid === this.stateOf().sid) {
+          this.stateOf(latest)
           this.autoFocusSid = latest.sid
           this.autoFocusEx = latest.exIdx; this.autoFocusSet = latest.setIdx; this.autoFocusIgnoreUntil = 0
           this.refresh()
@@ -611,7 +641,7 @@ const pageDefinition = {
   },
   logInteraction(stage, extra = {}, flush = false) {
     try {
-      const s = this.state || {}
+      const s = this.stateOf() || {}
       recordDiagnostic(stage, { sid: s.sid, ex: s.exIdx, set: s.setIdx, rev: s.commitRev || 0,
         pending: !!this.localCommitPending, rest: !!this.isRest, paused: !!this.paused, ...extra })
       if (flush) flushDiagnosticLog()
@@ -623,16 +653,16 @@ const pageDefinition = {
     if (reason) return this.logDotBlocked(target, reason, 'commit')
     const latest = loadState(), found = rowTarget(latest, target)
     if (!found) return this.logDotBlocked(target, 'stale_target', 'commit')
-    if (latest.sid !== this.state.sid || found.exIdx !== latest.exIdx || latest.pausedAt || latest.restUntil || found.setIdx === latest.setIdx)
-      return this.logDotBlocked(target, latest.sid !== this.state.sid ? 'session_changed' : found.exIdx !== latest.exIdx ? 'exercise_changed' : latest.pausedAt ? 'paused_state' : latest.restUntil ? 'rest_state' : 'current_set', 'commit')
+    if (latest.sid !== this.stateOf().sid || found.exIdx !== latest.exIdx || latest.pausedAt || latest.restUntil || found.setIdx === latest.setIdx)
+      return this.logDotBlocked(target, latest.sid !== this.stateOf().sid ? 'session_changed' : found.exIdx !== latest.exIdx ? 'exercise_changed' : latest.pausedAt ? 'paused_state' : latest.restUntil ? 'rest_state' : 'current_set', 'commit')
     const pressure = persistenceStatus().failed ? 'persistence_failed' : storageStatus().failed ? 'storage_failed' : pendingCount() >= 256 ? 'outbox_full' : (latest.pendingEdits || []).length >= 256 ? 'edit_backlog_full' : ''
     if (pressure) { this.inputNotice = '等待同步后再切换'; return this.logDotBlocked(target, pressure, 'commit') }
     return commitPageAction(this, function() {
     if (this.interactionBlocked(true) || this.isRest || this.paused || this.closeMode || this.effortOn || this.lastOpen || this.finishOn) return this.logDotBlocked(target, this.setDotBlockReason() || 'interaction', 'draft')
     const s = loadState(), found = rowTarget(s, target)
-    if (!found || s.sid !== this.state.sid || found.exIdx !== s.exIdx || s.pausedAt || s.restUntil || found.setIdx === s.setIdx) return this.logDotBlocked(target, !found ? 'stale_target' : s.sid !== this.state.sid ? 'session_changed' : found.exIdx !== s.exIdx ? 'exercise_changed' : s.pausedAt ? 'paused_state' : s.restUntil ? 'rest_state' : 'current_set', 'draft')
+    if (!found || s.sid !== this.stateOf().sid || found.exIdx !== s.exIdx || s.pausedAt || s.restUntil || found.setIdx === s.setIdx) return this.logDotBlocked(target, !found ? 'stale_target' : s.sid !== this.stateOf().sid ? 'session_changed' : found.exIdx !== s.exIdx ? 'exercise_changed' : s.pausedAt ? 'paused_state' : s.restUntil ? 'rest_state' : 'current_set', 'draft')
     this.logInteraction('dot_focus_staged', { setId: target.setId, set: target.setIdx })
-    this.clearFieldSelection(); this.state = s
+    this.clearFieldSelection(); this.stateOf(s)
     this.autoFocusEx = found.exIdx; this.autoFocusSet = found.setIdx; this.autoFocusIgnoreUntil = 0
     s.exIdx = found.exIdx; s.setIdx = found.setIdx; s.focusAt = Date.now(); save(s)
     this.emitEvent({ t: 'focus', sid: s.sid, entryInstanceId: s.workout.exercises[s.exIdx].entryInstanceId,
@@ -645,7 +675,7 @@ const pageDefinition = {
     this.logInteraction('complete_tap')
     return commitPageAction(this, function() {
     if (this.isRest || this.paused || this.closeMode || this.interactionBlocked() || Date.now() < (this.completionIgnoreUntil || 0)) return
-    const s = this.state
+    const s = this.stateOf()
     const expected = expectedTarget && rowTarget(s, expectedTarget)
     if (expectedTarget && (!expected || expected.exIdx !== s.exIdx || expected.setIdx !== s.setIdx || expected.row.done)) return
     const exIdx = s.exIdx, setIdx = s.setIdx
@@ -677,7 +707,7 @@ const pageDefinition = {
   onUndo(expectedTarget) {
     if (this.setDotPicker?.pending()) return false
     return commitPageAction(this, function() {
-    const s = this.state
+    const s = this.stateOf()
     const expected = expectedTarget && rowTarget(s, expectedTarget)
     if (expectedTarget && (!expected || expected.exIdx !== s.exIdx || expected.setIdx !== s.setIdx || !expected.row.done)) return
     const exIdx = s.exIdx, setIdx = s.setIdx
@@ -701,7 +731,7 @@ const pageDefinition = {
       const waiting = this.setDotPicker.settled().then(ok => {
         if (this.dotActionWaiting !== waiting) return false
         this.dotActionWaiting = null
-        const current = captureRow(this.state)
+        const current = captureRow(this.stateOf())
         if (!ok || this.visible === false || !target || !current || current.sid !== target.sid ||
             current.entryInstanceId !== target.entryInstanceId || current.setId !== target.setId) return false
         if (this.closeMode || this.paused || this.interactionBlocked() || Date.now() < (this.completionIgnoreUntil || 0)) return false
@@ -711,13 +741,13 @@ const pageDefinition = {
       return waiting
     }
     if (this.closeMode || this.paused || this.interactionBlocked() || Date.now() < (this.completionIgnoreUntil || 0)) return
-    const target = captureRow(this.state)
+    const target = captureRow(this.stateOf())
     if (this.rowDone) return this.onUndo(target)
     else return this.onComplete(target)
   },
 
   onRemoteSet(msg) {
-    const s = this.state
+    const s = this.stateOf()
     if (!msg || msg.sid !== s.sid) return
     const row = s.workout.rows[msg.ex] && s.workout.rows[msg.ex][msg.set - 1]
     if (!row || row.done) return
@@ -737,7 +767,7 @@ const pageDefinition = {
   },
 
   onRemoteUnset(msg) {
-    const s = this.state
+    const s = this.stateOf()
     if (!msg || msg.sid !== s.sid) return
     const row = s.workout.rows[msg.ex] && s.workout.rows[msg.ex][msg.set - 1]
     if (!row || !row.done) return
@@ -751,7 +781,7 @@ const pageDefinition = {
   },
 
   onRemoteValue(msg, field) {
-    const s = this.state
+    const s = this.stateOf()
     if (!msg || msg.sid !== s.sid) return
     const value = field === 'w' ? msg.weight : msg.reps
     const type = field === 'w' ? 'weight' : 'reps'
@@ -765,7 +795,7 @@ const pageDefinition = {
   },
 
   onRemoteAddSet(msg) {
-    const s = this.state
+    const s = this.stateOf()
     if (!msg || msg.sid !== s.sid) return
     const ex = Number(msg.ex)
     const rows = s.workout.rows[ex]
@@ -781,7 +811,7 @@ const pageDefinition = {
   },
 
   onRemoteRemoveSet(msg) {
-    const s = this.state
+    const s = this.stateOf()
     if (!msg || msg.sid !== s.sid) return
     const ex = Number(msg.ex)
     const rows = s.workout.rows[ex]
@@ -797,7 +827,7 @@ const pageDefinition = {
   },
 
   onRemoteFocus(msg) {
-    const s = this.state
+    const s = this.stateOf()
     if (!applyFocus(s, msg)) return
     save(s)
     this.refresh()
@@ -808,10 +838,10 @@ const pageDefinition = {
       const base = this.restCrownBase
       // A preview belongs to one exact durable round. A phone skip or a changed
       // round wins; only an unchanged echo may retain unsaved crown input.
-      if (latest.sid === this.state.sid && base && latest.restId === base.restId && latest.restVersion === base.restVersion) {
-        Object.assign(latest, { restUntil: this.state.restUntil, restTargetSec: this.state.restTargetSec,
-          restLeftSec: this.state.restLeftSec, restVersion: this.state.restVersion,
-          restId: this.state.restId, restStartedAt: this.state.restStartedAt })
+      if (latest.sid === this.stateOf().sid && base && latest.restId === base.restId && latest.restVersion === base.restVersion) {
+        Object.assign(latest, { restUntil: this.stateOf().restUntil, restTargetSec: this.stateOf().restTargetSec,
+          restLeftSec: this.stateOf().restLeftSec, restVersion: this.stateOf().restVersion,
+          restId: this.stateOf().restId, restStartedAt: this.stateOf().restStartedAt })
       } else this.cancelRestNudge()
     }
     return latest
@@ -833,14 +863,14 @@ const pageDefinition = {
       applySync(latest, msg)
       this.adoptSession(this.withRestPreview(latest))
     }
-    this.profile = this.state.profile || this.profile
-    if (this.state.pausedAt) this.stopHrCapture()
+    this.profile = this.stateOf().profile || this.profile
+    if (this.stateOf().pausedAt) this.stopHrCapture()
     else this.startHrCapture()
-    this.allFinished = (this.state.workout.rows || []).every(rows => rows.every(r => r.done))
+    this.allFinished = (this.stateOf().workout.rows || []).every(rows => rows.every(r => r.done))
     this.refresh()
-    this.logInteraction('page_sync', { restUntil: this.state.restUntil || 0, restVersion: this.state.restVersion || 0,
-      restId: this.state.restId || '', crownDirty: !!this.restCrownDirty, dotPending: !!this.setDotPicker?.pending() })
-    return { status: 'applied', page: 'Workout', exercises: this.state.workout.exercises.length }
+    this.logInteraction('page_sync', { restUntil: this.stateOf().restUntil || 0, restVersion: this.stateOf().restVersion || 0,
+      restId: this.stateOf().restId || '', crownDirty: !!this.restCrownDirty, dotPending: !!this.setDotPicker?.pending() })
+    return { status: 'applied', page: 'Workout', exercises: this.stateOf().workout.exercises.length }
   },
 
   onRemoteEnded() {
@@ -849,7 +879,7 @@ const pageDefinition = {
     this.cancelRestNudge()
     this.setRestScreenLock(false)
     this.hrDirty = false
-    this.state = loadState()
+    this.stateOf(loadState())
     this.stopHrCapture()
     if (this.timer) clearInterval(this.timer)
     if (this.hrFlush) clearInterval(this.hrFlush)
@@ -860,7 +890,7 @@ const pageDefinition = {
     return commitPageAction(this, function() {
     if (Date.now() < (this.autoFocusIgnoreUntil || 0)) return
     this.cancelRestNudge()
-    const s = this.state
+    const s = this.stateOf()
     if (s.restUntil && this.restStartAt) addRestTime(s, (Date.now() - this.restStartAt) / 1000)
     s.restUntil = 0
     this.restStartAt = 0
@@ -879,7 +909,7 @@ const pageDefinition = {
   },
 
   queueRestNudge(deltaSec) {
-    if (!this.state || !this.state.restUntil || !deltaSec) return
+    if (!this.stateOf() || !this.stateOf().restUntil || !deltaSec) return
     this.applyRestNudge(deltaSec)
     if (this.restCrownTimer) clearTimeout(this.restCrownTimer)
     // 旋转回调只改截止时间和数字，停转后才写存储/发 RPC，避免堵塞手表线程。
@@ -901,9 +931,9 @@ const pageDefinition = {
       return this.restCrownDirty ? this.flushRestNudge() : true
     }
     if (!this.restCrownDirty) return true
-    const sid = this.state.sid, generation = this.restInputGeneration
-    const base = this.restCrownBase, round = { restUntil: this.state.restUntil, restTargetSec: this.state.restTargetSec,
-      restLeftSec: this.state.restLeftSec, restVersion: this.state.restVersion, restId: this.state.restId }
+    const sid = this.stateOf().sid, generation = this.restInputGeneration
+    const base = this.restCrownBase, round = { restUntil: this.stateOf().restUntil, restTargetSec: this.stateOf().restTargetSec,
+      restLeftSec: this.stateOf().restLeftSec, restVersion: this.stateOf().restVersion, restId: this.stateOf().restId }
     if (this.restCrownTimer) clearTimeout(this.restCrownTimer)
     this.restCrownTimer = null
     const operation = commitSessionAction(sid, state => {
@@ -919,10 +949,10 @@ const pageDefinition = {
       // Isolated page adapters also use the same frozen intention (sendEvent deduplicates).
       const event = result.value.pendingEdits?.[result.value.pendingEdits.length - 1]
       if (event) sendEvent(event)
-      if (this.state.sid !== sid || !loadState().active) return true
+      if (this.stateOf().sid !== sid || !loadState().active) return true
       if (this.restInputGeneration === generation) {
         this.restCrownDirty = false; this.restCrownBase = null
-        this.state = loadState()
+        this.stateOf(loadState())
         if (this.visible) this.refresh()
       } else {
         // New input is a preview on top of this exact persisted round, not a rollback.
@@ -937,7 +967,7 @@ const pageDefinition = {
   },
 
   applyRestNudge(deltaSec) {
-    const s = this.state
+    const s = this.stateOf()
     if (!s || !s.active || !s.restUntil || !Number.isFinite(deltaSec)) return
     if (!this.restCrownDirty) this.restCrownBase = { restId: s.restId, restVersion: s.restVersion }
     this.restInputGeneration = (this.restInputGeneration || 0) + 1
@@ -963,7 +993,7 @@ const pageDefinition = {
   onRestPlus() { this.nudgeRest(15) },
 
   reconcileRestClock() {
-    const s = this.state
+    const s = this.stateOf()
     if (!s || !s.restUntil || s.restUntil > Date.now()) return
     if (this.restStartAt) addRestTime(s, (s.restUntil - this.restStartAt) / 1000)
     this.cancelRestNudge()
@@ -975,7 +1005,7 @@ const pageDefinition = {
   },
 
   onPlanUpdate(msg) {
-    const s = this.state
+    const s = this.stateOf()
     if (msg && msg.sid && s.sid && msg.sid !== s.sid) {
       return { status: 'rejected', page: 'Workout', reason: 'session_mismatch', activeSid: s.sid }
     }
@@ -991,7 +1021,7 @@ const pageDefinition = {
   },
 
   onRemoteRest(msg) {
-    const s = this.state
+    const s = this.stateOf()
     if (!msg || msg.sid !== s.sid) return
     if (this.restCrownDirty) return
     if (!applyRest(s, msg)) return
@@ -1000,7 +1030,7 @@ const pageDefinition = {
   },
 
   isDoneRowCur() {
-    const s = this.state
+    const s = this.stateOf()
     const row = s.workout.rows[s.exIdx] && s.workout.rows[s.exIdx][s.setIdx]
     this.rowDone = !!(row && row.done)
     return !!(row && row.done)
@@ -1014,7 +1044,7 @@ const pageDefinition = {
   // 打开时冻结视图和目标动作的稳定身份：训练在下面继续跑，浏览历史不改游标、不发事件。
   openLast() {
     if (!this.lastOn) return
-    const s = this.state
+    const s = this.stateOf()
     const ex = s.workout && s.workout.exercises[s.exIdx]
     const view = this.lastViewOf(ex, s.weightUnit)
     if (!view) return
@@ -1057,7 +1087,7 @@ const pageDefinition = {
   },
   // 末组补录：目标是最近一次真正完成的那一组（稳定 setId），不是游标的前一个索引。
   openLastEffort() {
-    const s = this.state
+    const s = this.stateOf()
     if (!s || !s.active) return
     const target = this.lastCompletedFromState(s)
     if (!target) return
@@ -1099,7 +1129,7 @@ const pageDefinition = {
     // 训练页登记当前组，休息页登记刚完成组；打开后固定目标，计时结束不换组。
     if (!this.effortTargetValid()) { this.effortNotice = ''; return }
     const found = this.effortTargetRow()
-    const scale = this.state.effortScale === 'rpe' || this.state.effortScale === 'rir' ? this.state.effortScale : 'none'
+    const scale = this.stateOf().effortScale === 'rpe' || this.stateOf().effortScale === 'rir' ? this.stateOf().effortScale : 'none'
     if (scale === 'none') return
     this.effortScale = scale
     this.effortScaleLabel = effortScaleOf(scale).label
@@ -1156,14 +1186,14 @@ const pageDefinition = {
     this.effortMeaning = m ? m.text : ''
   },
   refreshEffortRest() {
-    const s = this.state
+    const s = this.stateOf()
     const left = s && s.restUntil ? Math.max(0, Math.ceil((s.restUntil - Date.now()) / 1000)) : 0
     this.effortRestLabel = left > 0 ? '休息 ' + this.mmss(left)
       : this.effortTargetWasDone ? '休息已结束' : '训练中'
   },
   confirmEffort() {
     if (!this.effortOn) return
-    if (this.state.effortScale !== this.effortScaleAtOpen) {
+    if (this.stateOf().effortScale !== this.effortScaleAtOpen) {
       // 手表中途换了量表：旧草稿按新量表保存会是错的，要求重新打开。
       this.effortNotice = '手机已切换量表，请重新打开'
       return
@@ -1188,7 +1218,7 @@ const pageDefinition = {
     latest.effortSeq = at
     setEffort(latest, found.exIdx, found.set, this.effortScale, value, at)
     save(latest)
-    this.state = loadState()
+    this.stateOf(loadState())
     this.emitEvent({ t: 'effort', sid: latest.sid, ex: found.exIdx, set: found.set + 1,
       scale: this.effortScale, value: value == null ? null : value, clear: value == null,
       effortVersion: at, baseEffortVersion: this.effortBaseVersion, at })
@@ -1200,7 +1230,7 @@ const pageDefinition = {
     }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
   },
   onRemoteEffort(msg) {
-    const s = this.state
+    const s = this.stateOf()
     if (!msg || msg.sid !== s.sid) return
     const ex = Number(msg.ex)
     const set = Number(msg.set) - 1
@@ -1228,9 +1258,9 @@ const pageDefinition = {
   },
 
   refresh() {
-    this.state = this.withDotPreview(this.state)
-    this.weightUnit = this.state?.weightUnit || 'kg'
-    const s = this.state
+    this.stateOf(this.withDotPreview(this.stateOf()))
+    this.weightUnit = this.stateOf()?.weightUnit || 'kg'
+    const s = this.stateOf()
     if (!s || !s.workout) return
     this.reconcileRestClock()
     if (this.dotPreview) {
@@ -1324,7 +1354,7 @@ const pageDefinition = {
     this.effortEntryOn = this.effortScale !== 'none' && !!target
     if (this.effortOn) {
       if (!this.effortTargetValid()) { this.effortNotice = '目标组已变化，已停止编辑' ; this.effortOn = false }
-      else if (this.state.effortScale !== this.effortScaleAtOpen) this.effortStale = true
+      else if (this.stateOf().effortScale !== this.effortScaleAtOpen) this.effortStale = true
       this.refreshEffortRest()
     }
 
@@ -1359,28 +1389,40 @@ const pageDefinition = {
     this.tickClock(true)
   },
   // These map existing business state to the official views; they do not mutate it.
+  displayRows(name, rows) {
+    const current = this[name]
+    if (!Array.isArray(current) || current.length !== rows.length || rows.some((row, i) => row.key !== current[i].key)) {
+      this[name] = rows
+      return
+    }
+    // Reuse proxy identities. Replacing five zone objects every two seconds
+    // otherwise grows the native Page's strong reactiveMap for an entire workout.
+    rows.forEach((row, i) => {
+      for (const key of Object.keys(row)) if (current[i][key] !== row[key]) current[i][key] = row[key]
+    })
+  },
   updateOfficialViews() {
-    const s = this.state
+    const s = this.stateOf()
     let done = 0, total = 0
-    this.overviewRows = s.workout.exercises.map((ex, i) => {
+    this.displayRows('overviewRows', s.workout.exercises.map((ex, i) => {
       const rows = s.workout.rows[i] || [], n = rows.filter(r => r.done).length
       done += n; total += rows.length
       return { key: ex.entryInstanceId || String(i), index: i, name: ex.name, count: n + '/' + rows.length,
         current: i === s.exIdx, finished: rows.length > 0 && n === rows.length }
-    })
+    }))
     this.doneTotal = done + '/' + total
     const current = s.workout.rows[s.exIdx]?.[s.setIdx]
     const next = current && !current.done ? { exIdx: s.exIdx, setIdx: s.setIdx } : nextUndone(s)
     this.nextOfficial = next ? s.workout.exercises[next.exIdx].name + '，第 ' + (next.setIdx + 1) + ' 组' : '所有组已完成'
     // Effort.chips / Og.effortColor: the exact four shortcuts from upstream.
-    this.effortChips = (this.effortScale === 'rpe' ? [10, 9, 8, 7] : [0, 1, 2, 3]).map((value, i) => ({
-      key: String(value), value, label: this.effortScale === 'rpe' && value === 7 ? '≤7' : this.effortScale === 'rir' && value === 3 ? '3+' : String(value), cls: ['band-0','band-2','band-3','band-4'][i] }))
-    this.metricEfforts = s.workout.exercises.map((ex, i) => {
+    this.displayRows('effortChips', (this.effortScale === 'rpe' ? [10, 9, 8, 7] : [0, 1, 2, 3]).map((value, i) => ({
+      key: String(value), value, label: this.effortScale === 'rpe' && value === 7 ? '≤7' : this.effortScale === 'rir' && value === 3 ? '3+' : String(value), cls: ['band-0','band-2','band-3','band-4'][i] })))
+    this.displayRows('metricEfforts', s.workout.exercises.map((ex, i) => {
       const values = (s.workout.rows[i] || []).filter(r => r.done).map(r => effortValueOf(r, this.effortScale)).filter(v => v != null)
       return { key: ex.entryInstanceId || String(i), name: ex.name, value: values.length ? (values.reduce((a,b) => a+b, 0) / values.length).toFixed(1) : null }
-    }).filter(r => r.value != null).slice(-4)
+    }).filter(r => r.value != null).slice(-4))
     const muscles = muscleView(s.workout)
-    this.muscleRows = muscles.rows; this.muscleMore = muscles.more
+    this.displayRows('muscleRows', muscles.rows); this.muscleMore = muscles.more
     this.muscleEmpty = done > 0 ? '该动作暂无肌群数据' : '还没有组'
   },
   stepMetrics(d) {
@@ -1399,7 +1441,7 @@ const pageDefinition = {
     // durable entry identity inside the transaction, never use the old row index.
     const id = item.key
     return commitPageAction(this, function() {
-      const s = this.state, index = s.workout.exercises.findIndex(ex => (ex.entryInstanceId || '') === id)
+      const s = this.stateOf(), index = s.workout.exercises.findIndex(ex => (ex.entryInstanceId || '') === id)
       if (index < 0) throw new Error('该动作已被删除')
       const rows = s.workout.rows[index] || [], set = Math.max(0, rows.findIndex(r => !r.done))
       if (!rows[set]) return
@@ -1434,16 +1476,16 @@ const pageDefinition = {
     // 登记强度时不要被“全部完成”面板盖住；关闭后 refresh() 会重新判定一次。
     if (this.effortOn) return
     if (!this.allFinished) {
-      if (this.state.completionAcknowledged) {
-        const saved = this.dotPreview ? loadState() : this.state
+      if (this.stateOf().completionAcknowledged) {
+        const saved = this.dotPreview ? loadState() : this.stateOf()
         saved.completionAcknowledged = false
-        this.state.completionAcknowledged = false
+        this.stateOf().completionAcknowledged = false
         save(saved)
       }
       if (this.closeMode === 'complete') this.closeMode = ''
       return
     }
-    if (this.visible === false || !this.state.active || this.state.completionAcknowledged || this.closeMode) return
+    if (this.visible === false || !this.stateOf().active || this.stateOf().completionAcknowledged || this.closeMode) return
     this.menuOn = false
     this.closeMode = 'complete'
     this.completionIgnoreUntil = Date.now() + 400
@@ -1459,7 +1501,7 @@ const pageDefinition = {
     if (this.visible === false) return
     // The UI displays whole seconds; 500ms keeps expiry responsive without rendering the
     // complete watch page four times a second during every rest interval.
-    const period = this.state && this.state.restUntil ? 500 : 1000
+    const period = this.stateOf() && this.stateOf().restUntil ? 500 : 1000
     if (this.timer && this.clockPeriod === period) return
     if (this.timer) clearInterval(this.timer)
     this.clockPeriod = period
@@ -1468,12 +1510,12 @@ const pageDefinition = {
 
   tickClock(force) {
     if (this.visible === false) return
-    // 评分层先判目标是否还有效：会话被结束/组被撤销时 this.state 可能已经变成 blank。
+    // 评分层先判目标是否还有效：会话被结束/组被撤销时 this.stateOf() 可能已经变成 blank。
     if (this.effortOn) {
       if (!this.effortTargetValid()) { this.effortOn = false; this.effortNotice = '目标组已变化，已停止编辑' }
       else this.refreshEffortRest()
     }
-    const s = this.state
+    const s = this.stateOf()
     if (!s || !s.workout) return
     const currentTime = new Date()
     const clockLabel = String(currentTime.getHours()).padStart(2, '0') + ':' + String(currentTime.getMinutes()).padStart(2, '0')
@@ -1502,7 +1544,7 @@ const pageDefinition = {
   },
 
   tickMetrics(force) {
-    const s = this.state, at = Date.now()
+    const s = this.stateOf(), at = Date.now()
     // Keep all session samples; only the displayed HR has a two-second budget.
     // Explicit state changes refresh immediately, independently of idle timers.
     if (force || this.hrUpdatedAt == null || at - this.hrUpdatedAt >= 2000) {
@@ -1517,7 +1559,7 @@ const pageDefinition = {
       this.hrMaximum = s.hr?.max ? String(s.hr.max) : '--'
       this.hrMinimum = s.hr?.min ? String(s.hr.min) : '--'
       const zones = zoneView(s.hr, s.profile?.birthYear)
-      this.hasAge = zones.max != null; this.zoneRows = zones.rows
+      this.hasAge = zones.max != null; this.displayRows('zoneRows', zones.rows)
     }
     if (force || this.caloriesUpdatedAt == null || at - this.caloriesUpdatedAt >= 5000) {
       this.caloriesUpdatedAt = at
@@ -1568,17 +1610,17 @@ const pageDefinition = {
   emitEvent(ev) {
     sendEvent(ev)
     const latest = loadState()
-    if (latest.sid === this.state.sid) this.state.pendingEdits = latest.pendingEdits || []
+    if (latest.sid === this.stateOf().sid) this.stateOf().pendingEdits = latest.pendingEdits || []
   },
-  onPause() { return this.setPaused(!this.state.pausedAt, Date.now(), true) },
+  onPause() { return this.setPaused(!this.stateOf().pausedAt, Date.now(), true) },
   onRemotePause(msg) {
-    if (msg.sid !== this.state.sid || msg.seq <= (this.state.pauseVersion || 0)) return
+    if (msg.sid !== this.stateOf().sid || msg.seq <= (this.stateOf().pauseVersion || 0)) return
     this.setPaused(!!msg.paused, msg.at || Date.now(), false)
   },
   async setPaused(paused, at, notify) {
     if ((await this.flushRestNudge()) === false) return false
     return commitPageAction(this, function() {
-    const s = this.state
+    const s = this.stateOf()
     if (paused && !s.pausedAt) {
       s.restLeftSec = restOf(s).leftSec; s.restUntil = 0; s.pausedAt = at
       this.stopHrCapture()
@@ -1599,8 +1641,8 @@ const pageDefinition = {
     if (this.closeMode === 'complete') {
       if (Date.now() < this.completionIgnoreUntil) return
       // 继续训练后不因时钟、同步或页面恢复反复弹窗；出现未完成组才重新提示。
-      this.state.completionAcknowledged = true
-      save(this.state)
+      this.stateOf().completionAcknowledged = true
+      save(this.stateOf())
     }
     this.closeMode = ''
     this.focusCrown()
@@ -1614,17 +1656,17 @@ const pageDefinition = {
   async onEnd(reason, notifyPhone = true) {
     this.logInteraction('local_end', { status: typeof reason === 'string' ? reason : 'manual' }, true)
     if (typeof reason !== 'string') reason = 'manual'
-    if (this.localCommitPending || this.closeSaving || !this.state?.active) return
+    if (this.localCommitPending || this.closeSaving || !this.stateOf()?.active) return
     this.cancelSetDotPick()
     this.closeSaving = true
     try {
       if ((await this.flushRestNudge()) === false) { this.syncWarning = true; this.syncLabel = '休息调整未保存，请重试'; return }
-      const result = await commitLocalClose(this.state.sid, reason)
+      const result = await commitLocalClose(this.stateOf().sid, reason)
       if (!result.ok) { this.syncWarning = true; this.syncLabel = '存储失败，未结束，请重试'; return }
       this.cancelRestNudge(); this.setRestScreenLock(false); this.stopHrCapture()
       for (const event of [...(result.entry.pendingEvents || []), result.entry.closeEvent]) sendEvent(event)
       if (result.entry.delivery === 'pending') sendEvent(result.entry.summaryEvent)
-      this.state = loadState()
+      this.stateOf(loadState())
       if (this.timer) clearInterval(this.timer)
       if (this.hrFlush) clearInterval(this.hrFlush)
       router.replace({ uri: reason === 'saved' ? '/Summary' : '/Index' })
@@ -1637,19 +1679,19 @@ export default pageDefinition
 </script>
 <template>
 <div class="page" id="training" touch-focusable="true" onrotation="onRotation" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
-  <div class="topbar" if="{{ !effortOn && !lastOpen && !diagnosticOn }}"><text class="top-lead" if="{{ !syncWarning }}">{{ hrLabel }}</text><text class="sync-pill" if="{{ syncWarning }}" onclick="showDiagnostics">{{ syncLabel }}</text><text class="clock">{{ clockLabel }}</text></div>
+  <div class="topbar" if="{{ !effortOn && !lastOpen && !diagnosticOn }}"><text class="top-lead" if="{{ !syncWarning }}">{{ hrLabel }}</text><text class="sync-pill" if="{{ syncWarning }}">{{ syncLabel }}</text><text class="clock">{{ clockLabel }}</text></div>
   <div class="pager" if="{{ !closeMode && !effortOn && !lastOpen && !diagnosticOn }}">
-    <div class="screen overview-screen" if="{{ pageIndex === 0 }}">
+    <div class="screen overview-screen" show="{{ pageIndex === 0 }}">
       <list class="overview-scroll"><list-item type="overview-title" class="overview-head"><text class="overview-name">{{ finishName }}</text><text class="quiet">{{ doneTotal }} 组</text></list-item>
         <list-item type="exercise" class="overview-row {{ item.current ? 'overview-current' : '' }}" for="{{ item in overviewRows }}" tid="key" onclick="jumpOverview(item)"><div class="exercise-mark"><image class="mark-icon" src="/common/icons/wear-play-accent.svg" if="{{ item.current }}" /><image class="mark-icon" src="/common/icons/wear-check.svg" if="{{ !item.current && item.finished }}" /></div><div class="overview-copy"><text class="overview-ex {{ item.finished ? 'muted' : '' }}">{{ item.name }}</text><text class="overview-count">{{ item.count }}</text></div></list-item>
-        <list-item type="overview-actions" class="overview-actions"><text class="quiet sync-line" onclick="showDiagnostics">{{ syncLabel }}</text><div class="hold-finish" ontouchstart="startFinishHold" ontouchend="cancelFinishHold" ontouchcancel="cancelFinishHold"><image class="button-icon" src="/common/icons/wear-flag.svg" /><text class="button-word">按住以结束</text><div class="hold-fill" style="width: {{ finishProgress }};"><div class="hold-ink-label"><image class="button-icon" src="/common/icons/wear-flag-ink.svg" /><text class="button-word ink">按住以结束</text></div></div></div><input class="row-button danger" type="button" value="放弃训练" onclick="askAbandon" /><input class="row-button" type="button" if="{{ lastEffortOn }}" value="{{ lastEffortText }}" onclick="openLastEffort" /><input class="row-button" type="button" value="动作详情" onclick="openExercises" /><div class="extension-row"><input class="extension-button" type="button" value="加组" onclick="onMenuAddSet" /><input class="extension-button" type="button" value="减组" onclick="onMenuRemoveSet" /></div><input class="row-button" type="button" value="{{ pauseLabel }}" onclick="onPause" /></list-item>
+        <list-item type="overview-actions" class="overview-actions"><text class="quiet sync-line">{{ syncLabel }}</text><div class="hold-finish" ontouchstart="startFinishHold" ontouchend="cancelFinishHold" ontouchcancel="cancelFinishHold"><image class="button-icon" src="/common/icons/wear-flag.svg" /><text class="button-word">按住以结束</text><div class="hold-fill" style="width: {{ finishProgress }};"><div class="hold-ink-label"><image class="button-icon" src="/common/icons/wear-flag-ink.svg" /><text class="button-word ink">按住以结束</text></div></div></div><input class="row-button danger" type="button" value="放弃训练" onclick="askAbandon" /></list-item>
       </list>
     </div>
-    <div class="screen live-screen" if="{{ pageIndex === 1 }}">
+    <div class="screen live-screen" show="{{ pageIndex === 1 }}">
       <div class="training-content" if="{{ !isRest }}">
         <div class="set-lines"><text class="ex-name" onclick="openExercises">{{ exName }}</text><text class="place">{{ inputNotice || (groupLabel + (rowDone ? ' · 完成' : '')) }}</text>
         <div class="inputs"><div class="field {{ selectedField === 'w' ? 'field-selected' : '' }}" onclick="editWeight"><text class="field-label">重量</text><div class="field-number"><text class="fval {{ weightNum.length > 4 ? 'long-value' : '' }}">{{ weightNum }}</text><text class="funit">{{ weightSuffix }}</text></div></div><div class="field {{ selectedField === 'r' ? 'field-selected' : '' }}" onclick="editReps"><text class="field-label">{{ repsSuffix === '秒' ? '保持' : '次数' }}</text><div class="field-number"><text class="fval {{ repsNum.length > 4 ? 'long-value' : '' }}">{{ repsNum }}</text><text class="funit" if="{{ repsSuffix === '秒' }}">s</text></div></div></div>
-        <text class="last-text" if="{{ lastOn }}" onclick="openLast">{{ lastLine }}</text><text class="quiet" if="{{ effortEntryOn && rowDone }}" onclick="openEffort">{{ effortEntryText }}</text></div>
+        <text class="last-text" if="{{ lastOn }}">{{ lastLine }}</text><text class="quiet" if="{{ effortEntryOn && rowDone }}" onclick="openEffort">{{ effortEntryText }}</text></div>
         <div class="navrow"><div class="arrow-button" onclick="onPrevSet"><image class="arrow-icon" src="/common/icons/wear-left.svg" /></div><div class="primary-button" onclick="onCurrentSetAction"><image class="button-icon" src="{{ rowDone ? '/common/icons/wear-undo-ink.svg' : '/common/icons/wear-check-ink.svg' }}" /><text class="primary-word">{{ paused ? '继续训练' : rowDone ? '撤回' : '完成' }}</text></div><div class="arrow-button" onclick="onNextSet"><image class="arrow-icon" src="/common/icons/wear-right.svg" /></div></div>
       </div>
       <div class="rest-content" if="{{ isRest }}"><div class="countdown-row"><div class="arrow-button" onclick="openRestExercise"><image class="arrow-icon" src="/common/icons/wear-left.svg" /></div><text class="rest {{ restWarn ? 'rest-warning' : '' }}">{{ restLabel }}</text><div class="arrow-spacer"></div></div><div class="time-track"><div class="time-fill" style="width: {{ restPercent }};"></div></div>
@@ -1658,16 +1700,15 @@ export default pageDefinition
         <div class="up-next" onclick="openNextExercise"><div class="up-next-head"><text class="next-label">下一个</text><text class="quiet">{{ elapsedLabel }}</text></div><text class="next-name">{{ nextOfficial }}</text><text class="next-values">{{ nextValuesLabel }}</text></div>
       </div>
     </div>
-    <div class="screen metrics-screen" if="{{ pageIndex === 2 }}"><div class="metrics-main" if="{{ metricKind === 'numbers' }}"><text class="metric-time">{{ elapsedLabel }}</text><div class="metric-line"><text class="metric-number red">{{ hrNumber }}</text><image class="metric-heart" src="/common/icons/wear-heart-red.svg" /></div><div class="metric-line"><text class="metric-number">{{ kcalLabel }}</text><text class="metric-unit">KCAL</text></div><div class="metric-line" if="{{ volumeLabel !== '0' }}"><text class="metric-number">{{ volumeLabel }}</text><text class="metric-unit">{{ weightUnit }}</text></div><div class="metric-line"><text class="metric-number">{{ doneTotal }}</text><text class="metric-unit">组数</text></div></div>
+    <div class="screen metrics-screen" show="{{ pageIndex === 2 }}"><div class="metrics-main" if="{{ metricKind === 'numbers' }}"><text class="metric-time">{{ elapsedLabel }}</text><div class="metric-line"><text class="metric-number red">{{ hrNumber }}</text><image class="metric-heart" src="/common/icons/wear-heart-red.svg" /></div><div class="metric-line"><text class="metric-number">{{ kcalLabel }}</text><text class="metric-unit">KCAL</text></div><div class="metric-line" if="{{ volumeLabel !== '0' }}"><text class="metric-number">{{ volumeLabel }}</text><text class="metric-unit">{{ weightUnit }}</text></div><div class="metric-line"><text class="metric-number">{{ doneTotal }}</text><text class="metric-unit">组数</text></div></div>
       <div class="metrics-main" if="{{ metricKind === 'pulse' }}"><div class="metric-line"><text class="metric-number red">{{ hrAverage }}</text><image class="metric-heart" src="/common/icons/wear-heart-red.svg" /><text class="metric-unit red">平均</text></div><div class="metric-line"><text class="metric-number">{{ hrMaximum }}</text><text class="metric-unit">最高</text><text class="pulse-min">{{ hrMinimum }}</text><text class="metric-unit">最低</text></div></div>
       <div class="metric-efforts" if="{{ metricKind === 'effort' }}"><text class="quiet" if="{{ !metricEfforts.length }}">尚未评定强度</text><div class="metric-effort-row" for="{{ item in metricEfforts }}" tid="key"><text class="effort-ex">{{ item.name }}</text><text class="effort-average">{{ item.value }}</text></div></div>
       <div class="zone-page" if="{{ metricKind === 'zones' }}"><div class="zone-track {{ item.cls }} {{ item.current ? 'zone-current' : '' }} {{ item.dim ? 'zone-dim' : '' }} {{ !hasAge ? 'zone-no-age' : '' }}" style="border-color: {{ item.border }};" for="{{ item in zoneRows }}" tid="key"><div class="zone-fill" style="width: {{ item.fill }}; background-color: {{ item.color }};"></div><div class="zone-copy" if="{{ hasAge }}"><text class="zone-name">{{ item.zone }}</text><text class="zone-band">{{ item.band }}</text><text class="zone-time">{{ item.time }}</text></div></div><div class="no-age" if="{{ !hasAge }}"><text class="no-age-title">未设置年龄</text><text class="quiet">在手机应用中添加出生年份</text></div></div>
       <div class="muscles-page" if="{{ metricKind === 'muscles' }}"><div class="muscle-track"></div><div class="muscle-segment" for="{{ item in muscleRows }}" tid="key" style="top: {{ item.top }}; height: {{ item.height }}; background-color: {{ item.color }};"></div><div class="muscle-list" if="{{ muscleRows.length }}"><div class="muscle-row" for="{{ item in muscleRows }}" tid="key"><div class="muscle-dot" style="background-color: {{ item.color }};"></div><text class="muscle-number">{{ item.value }}</text><text class="muscle-name">{{ item.name }}</text></div><text class="quiet more-muscles" if="{{ muscleMore > 0 }}">另有 {{ muscleMore }} 项</text></div><text class="quiet muscle-empty" if="{{ !muscleRows.length }}">{{ muscleEmpty }}</text></div>
       <div class="vertical-dots"><div class="pager-dot {{ metricKind === item.key ? 'pager-current' : '' }}" for="{{ item in metricPages }}" tid="key"></div></div>
     </div>
-    <div class="screen media-screen" if="{{ pageIndex === 3 }}"><list class="media-scroll"><list-item type="media" class="media-content"><text class="media-title">正在播放</text><text class="quiet media-hint">音乐在手机上？去“媒体控制”。</text><div class="media-buttons"><div class="media-edge disabled"><image class="media-icon" src="/common/icons/wear-prev.svg" /></div><div class="media-primary disabled"><image class="media-play-icon" src="/common/icons/wear-play-pause-ink.svg" /></div><div class="media-edge disabled"><image class="media-icon" src="/common/icons/wear-next.svg" /></div></div><div class="volume-buttons"><div class="edge-button disabled"><image class="media-icon" src="/common/icons/wear-minus.svg" /></div><div class="edge-button disabled"><image class="media-icon" src="/common/icons/wear-plus.svg" /></div></div><text class="quiet media-hint">媒体控制暂不可用</text></list-item></list></div>
   </div>
-  <div class="page-dots" if="{{ !closeMode && !effortOn && !lastOpen && !diagnosticOn }}"><div class="pager-dot {{ pageIndex === 0 ? 'pager-current' : '' }}"></div><div class="pager-dot {{ pageIndex === 1 ? 'pager-current' : '' }}"></div><div class="pager-dot {{ pageIndex === 2 ? 'pager-current' : '' }}"></div><div class="pager-dot {{ pageIndex === 3 ? 'pager-current' : '' }}"></div></div>
+  <div class="page-dots" if="{{ !closeMode && !effortOn && !lastOpen && !diagnosticOn }}"><div class="pager-dot {{ pageIndex === 0 ? 'pager-current' : '' }}"></div><div class="pager-dot {{ pageIndex === 1 ? 'pager-current' : '' }}"></div><div class="pager-dot {{ pageIndex === 2 ? 'pager-current' : '' }}"></div></div>
   <div class="overlay" if="{{ closeMode && !effortOn }}"><list class="modal-scroll"><list-item type="confirm" class="modal-content"><div class="done-mark" if="{{ closeMode === 'complete' }}"><image class="done-icon" src="/common/icons/wear-check-ink.svg" /></div><text class="confirm-title">{{ closeMode === 'complete' ? '所有组已完成' : closeMode === 'abandon' ? '放弃训练？' : '结束训练？' }}</text><text class="quiet confirm-note">{{ confirmRemain }}</text><input class="row-button" type="button" if="{{ closeMode === 'complete' && effortEntryOn }}" value="{{ effortEntryText }}" onclick="openEffort" /><input class="row-button danger" type="button" if="{{ closeMode === 'abandon' }}" value="放弃训练" onclick="abandonEnd" /><input class="primary-input" type="button" if="{{ closeMode === 'end' }}" value="结束并保存" onclick="saveEnd" /><div class="hold-finish" if="{{ closeMode === 'complete' }}" ontouchstart="startFinishHold" ontouchend="cancelFinishHold" ontouchcancel="cancelFinishHold"><image class="button-icon" src="/common/icons/wear-flag.svg" /><text class="button-word">按住以结束</text><div class="hold-fill" style="width: {{ finishProgress }};"><div class="hold-ink-label"><image class="button-icon" src="/common/icons/wear-flag-ink.svg" /><text class="button-word ink">按住以结束</text></div></div></div><input class="row-button" type="button" value="继续训练" onclick="cancelClose" /></list-item></list></div>
   <div class="overlay" if="{{ lastOpen && !closeMode }}"><list class="modal-scroll" id="history" touch-focusable="true"><list-item type="last-title" class="modal-content"><text class="confirm-title">{{ lastTitle }}</text><text class="quiet">{{ lastMeta }}</text></list-item><list-item type="last-row" class="history-row" for="{{ r in lastRows }}" tid="key"><text class="history-no">{{ r.no }}</text><text class="history-value">{{ r.label }}</text></list-item><list-item type="last-back" class="modal-content"><input class="row-button" type="button" value="继续训练" onclick="closeLast" /></list-item></list></div>
   <div class="overlay" if="{{ effortOn && !diagnosticOn }}"><list class="modal-scroll"><list-item type="effort" class="modal-content"><text class="quiet">{{ effortRestLabel }}</text><text class="confirm-title">这组有多吃力？</text><text class="quiet">{{ effortTargetLabel }}</text><text class="quiet">{{ effortScaleLabel }}</text><div class="effort-pick"><input class="edge-button" type="button" value="−" onclick="effortMinus" /><text class="effort-value">{{ effortDraftLabel }}</text><input class="edge-button" type="button" value="+" onclick="effortPlus" /></div><text class="quiet effort-description">{{ effortNotice || effortMeaning || effortHint }}</text><input class="primary-input" type="button" value="保存" onclick="confirmEffort" /><input class="row-button" type="button" value="取消" onclick="closeEffort" /><input class="row-button danger" type="button" if="{{ effortHasSaved }}" value="清除评分" onclick="clearEffort" /></list-item></list></div>
@@ -1695,7 +1736,7 @@ export default pageDefinition
 .exercise-mark { width: 48px; height: 48px; border-radius: 11px; background-color: #2C2C2E; align-items: center; justify-content: center; margin-right: 13px; }
 .mark-icon { width: 19px; height: 19px; }
 .overview-copy { flex: 1; min-width: 0px; flex-direction: column; }
-.overview-ex { font-size: 21px; font-weight: bold; color: #FFFFFF; lines: 2; }
+.overview-ex { font-size: 21px; font-weight: bold; color: #FFFFFF; lines: 2;  text-overflow: ellipsis; }
 .overview-count { font-size: 19px; color: #8D8D93; }
 .muted { color: #8D8D93; }
 .overview-actions { width: 352px; flex-direction: column; align-items: center; }
@@ -1712,8 +1753,8 @@ export default pageDefinition
 .extension-button { width: 173px; height: 77px; border-radius: 22px; background-color: #1C1C1E; color: #FFFFFF; font-size: 24px; }
 .training-content { width: 364px; height: 100%; padding-top: 42px; padding-bottom: 10px; flex-direction: column; align-items: center; }
 .set-lines { width: 364px; flex: 1; min-height: 0px; flex-direction: column; align-items: center; }
-.ex-name { width: 352px; min-height: 58px; line-height: 29px; font-size: 24px; font-weight: bold; color: #FFFFFF; text-align: center; lines: 2; }
-.place { width: 352px; min-height: 28px; line-height: 24px; font-size: 19px; color: #8D8D93; text-align: center; lines: 2; margin-top: 3px; margin-bottom: 3px; }
+.ex-name { width: 352px; min-height: 58px; line-height: 29px; font-size: 24px; font-weight: bold; color: #FFFFFF; text-align: center; lines: 2;  text-overflow: ellipsis; }
+.place { width: 352px; min-height: 28px; line-height: 24px; font-size: 19px; color: #8D8D93; text-align: center; lines: 2; margin-top: 3px; margin-bottom: 3px;  text-overflow: ellipsis; }
 .inputs { width: 364px; height: 140px; flex-direction: row; justify-content: space-between; }
 .field { width: 178px; height: 140px; border-radius: 19px; background-color: #1A2508; border-width: 3px; border-color: #1A2508; flex-direction: column; align-items: center; justify-content: center; padding: 5px 6px; }
 .field-selected { border-color: #A3E635; }
@@ -1722,11 +1763,11 @@ export default pageDefinition
 .fval { height: 84px; line-height: 80px; font-size: 64px; color: #A3E635; font-weight: bold; max-width: 160px; lines: 1; }
 .long-value { font-size: 26px; }
 .funit { color: #83B82A; font-size: 22px; margin-left: 4px; height: 38px; margin-top: 25px; }
-.last-text { width: 352px; min-height: 28px; color: #8D8D93; font-size: 19px; text-align: center; lines: 1; margin-top: 3px; }
-.navrow { width: 364px; height: 77px; flex-direction: row; justify-content: space-between; align-items: center; margin-top: 6px; }
+.last-text { width: 352px; min-height: 28px; color: #8D8D93; font-size: 19px; text-align: center; lines: 1; margin-top: 3px;  text-overflow: ellipsis; }
+.navrow { width: 336px; height: 77px; flex-direction: row; justify-content: space-between; align-items: center; margin-top: 6px; }
 .arrow-button { width: 51px; height: 77px; border-radius: 16px; background-color: #1C1C1E; justify-content: center; align-items: center; }
 .arrow-icon { width: 26px; height: 26px; }
-.primary-button { width: 249px; height: 77px; border-radius: 39px; background-color: #A3E635; align-items: center; justify-content: center; }
+.primary-button { width: 222px; height: 77px; border-radius: 39px; background-color: #A3E635; align-items: center; justify-content: center; }
 .primary-word { font-size: 24px; font-weight: bold; color: #0C0E12; lines: 1; }
 .rest-content { width: 370px; height: 100%; padding-top: 36px; padding-bottom: 10px; flex-direction: column; align-items: center; }
 .countdown-row { width: 370px; flex: 1; min-height: 77px; flex-direction: row; align-items: center; }
@@ -1750,8 +1791,8 @@ export default pageDefinition
 .up-next { width: 370px; min-height: 76px; flex-direction: column; align-items: center; }
 .up-next-head { width: 370px; height: 26px; flex-direction: row; justify-content: space-between; align-items: center; }
 .next-label { color: #A3E635; font-size: 19px; font-weight: bold; }
-.next-name { width: 352px; min-height: 25px; font-size: 19px; color: #8D8D93; text-align: center; lines: 2; }
-.next-values { width: 352px; height: 28px; color: #FFFFFF; font-size: 21px; font-weight: bold; text-align: center; lines: 1; }
+.next-name { width: 352px; min-height: 25px; font-size: 19px; color: #8D8D93; text-align: center; lines: 2;  text-overflow: ellipsis; }
+.next-values { width: 352px; height: 28px; color: #FFFFFF; font-size: 21px; font-weight: bold; text-align: center; lines: 1;  text-overflow: ellipsis; }
 .metrics-main { width: 358px; height: 100%; padding-top: 48px; flex-direction: column; }
 .metric-time { width: 358px; height: 112px; font-size: 102px; color: #FFD60A; font-weight: bold; lines: 1; }
 .metric-line { width: 358px; height: 62px; flex-direction: row; align-items: center; }
@@ -1792,17 +1833,6 @@ export default pageDefinition
 .muscle-track { position: absolute; left: 16px; top: 96px; width: 11px; height: 260px; background-color: #2C2C2E; border-radius: 6px; }
 .muscle-empty { position: absolute; left: 54px; top: 109px; font-size: 24px; font-weight: bold; }
 .vertical-dots { position: absolute; top: 185px; right: 5px; width: 12px; height: 54px; flex-direction: column; align-items: center; justify-content: space-between; }
-.media-scroll { width: 332px; height: 100%; padding-top: 48px; padding-bottom: 54px; }
-.media-content { width: 332px; flex-direction: column; align-items: center; }
-.media-title { font-size: 22px; font-weight: bold; color: #FFFFFF; margin-bottom: 13px; }
-.media-hint { width: 332px; margin-bottom: 13px; lines: 3; }
-.media-buttons { width: 300px; height: 90px; flex-direction: row; align-items: center; justify-content: space-between; margin-bottom: 13px; }
-.media-edge { width: 77px; height: 77px; border-radius: 39px; background-color: #2C2C2E; align-items: center; justify-content: center; }
-.media-primary { width: 90px; height: 90px; border-radius: 45px; background-color: #A3E635; align-items: center; justify-content: center; }
-.media-icon { width: 28px; height: 28px; }
-.media-play-icon { width: 38px; height: 38px; }
-.volume-buttons { width: 150px; height: 64px; flex-direction: row; justify-content: space-between; margin-bottom: 13px; }
-.disabled { opacity: 0.35; }
 .overlay { position: absolute; top: 0px; left: 0px; width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
 .modal-scroll { width: 320px; flex: 1; min-height: 0px; margin-top: 40px; margin-bottom: 32px; padding-top: 8px; padding-bottom: 32px; }
 .modal-content { width: 320px; flex-direction: column; align-items: center; }

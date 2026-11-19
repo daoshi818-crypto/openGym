@@ -23,7 +23,6 @@ export default {
     const p = params && typeof params === 'object' ? params : {}
     const s = loadState()
     if (!s.active || !s.workout) { router.back(); return }
-    this.state = s
     this.editSid = s.sid; this.editUnit = s.weightUnit || 'kg'
     const target = rowTarget(s, { ...p, exIdx: Number(p.exIdx != null ? p.exIdx : this.exIdx || 0), setIdx: Number(p.setIdx != null ? p.setIdx : this.setIdx || 0) })
     if (!target || target.row.done || s.pausedAt || s.restUntil) { router.back(); return }

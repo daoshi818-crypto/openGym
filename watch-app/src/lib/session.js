@@ -72,7 +72,14 @@ export function readSessionHr(sid) {
   return current?.sid === sid ? latestHr(current) : null
 }
 
-export function loadState() {
+export function loadState(projection) {
+  // Sensor callbacks need identity/lifecycle/HR only, never rows or the outbox.
+  if (projection === 'hr') {
+    const s = readStored(K_STATE, hrFields)
+    if (!s) return blankState()
+    s.hr = latestHr(s)
+    return s
+  }
   if (runtime().sessionDraft) return runtime().sessionDraft
   try {
     const s = readStored(K_STATE)
@@ -185,7 +192,9 @@ export function stageSessionEvent(state, event) {
     source: 'watch', protocolVersion: 3, dependencyEvents: true }
   msg.entryInstanceId ||= ex?.entryInstanceId; msg.setId ||= row?.setId
   if (msg.t === 'add_set') msg.newSetIds = (state.workout.rows[msg.ex] || []).map(r => r.setId)
-  msg.dependsOn = dependenciesFor(msg, pending.filter(e => !e.sid || e.sid === state.sid))
+  const frontier = runtime().rpc?.peerCapabilities?.causalFrontier === true
+  if (frontier) msg.causalFrontier = true
+  msg.dependsOn = dependenciesFor(msg, pending.filter(e => !e.sid || e.sid === state.sid), frontier)
   pending.push(JSON.parse(JSON.stringify(msg)))
   return pending[pending.length - 1]
 }

@@ -12,7 +12,7 @@ $originalManifest = [IO.File]::ReadAllBytes($manifestPath)
 try {
     $manifest = Get-Content 'src/manifest.json' -Raw | ConvertFrom-Json
     $targets = $Targets
-    if ($targets | Where-Object { $_ -ne 'watch-square' }) { throw '0.6.32 official Wear UI is validated for watch-square only; keep the previous round release.' }
+    if ($targets | Where-Object { $_ -ne 'watch-square' }) { throw '0.6.33 official Wear UI is validated for watch-square only; keep the previous round release.' }
     foreach ($targetDevice in $targets) {
         # Both layouts use their own design-pixel canvas. A 390px designWidth on
         # the 466px round layout would scale every px again and crop the footer.

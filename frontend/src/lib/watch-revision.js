@@ -23,7 +23,7 @@ export function stampWatchRevision(prev, next, actor = 'phone', eventId = null) 
   for (const key of changes) a.syncFields[key] = { rev: a.syncRev, actor, ...(eventId ? { eventId } : {}) }
 }
 
-export function watchConflict(S, ev) {
+export function watchConflict(S, ev, ancestor = id => ev.dependsOn?.includes(id)) {
   const a = S.active
   if (!(ev.protocolVersion >= 3) || !Number.isFinite(ev.baseCommitRev) || !a || String(a.watchSid || a.start) !== ev.sid) return null
   if (ev.sessionEpoch && ev.sessionEpoch !== ev.sid) return { field: 'session', reason: 'stale_epoch', watch: ev }
@@ -38,11 +38,11 @@ export function watchConflict(S, ev) {
   const actor = ev.installationId || 'watch'
   for (const field of globals) {
     const version = a.syncFields?.[field]
-    if (version && version.rev > ev.baseCommitRev && (version.actor !== actor || (ev.dependencyEvents === true && (!version.eventId || !ev.dependsOn?.includes(version.eventId))))) return { field, version, watch: ev }
+    if (version && version.rev > ev.baseCommitRev && (version.actor !== actor || (ev.dependencyEvents === true && (!version.eventId || !ancestor(version.eventId))))) return { field, version, watch: ev }
   }
   for (const field of fields) {
     const version = a.syncFields?.[watchFieldKey(entry, field === 'structure' ? null : row, field)]
-    if (version && version.rev > ev.baseCommitRev && (version.actor !== actor || (ev.dependencyEvents === true && (!version.eventId || !ev.dependsOn?.includes(version.eventId))))) return { field, version, phone: row ? JSON.parse(JSON.stringify(row)) : null, watch: ev }
+    if (version && version.rev > ev.baseCommitRev && (version.actor !== actor || (ev.dependencyEvents === true && (!version.eventId || !ancestor(version.eventId))))) return { field, version, phone: row ? JSON.parse(JSON.stringify(row)) : null, watch: ev }
   }
   return null
 }

@@ -6,13 +6,25 @@ import { loadState, save, commitSessionAction, stageSessionEvent, endSession, cl
 import { sendEvent } from '../lib/rpc.js'
 
 export default {
+  // Native reactiveMap retains proxies until Page destruction. Business documents
+  // must stay in staticData; only the small display projection belongs in data.
+  staticData: { sessionModel: { current: null } },
+  stateOf(value) {
+    // Detached transaction drafts (and legacy page callers) own their state.
+    if (this.sessionActionDraft || !this.sessionModel) {
+      if (arguments.length) this.state = value
+      return this.state
+    }
+    if (arguments.length) this.sessionModel.current = value
+    return this.sessionModel.current
+  },
   data: { list: [], expanded: -1, endOn: false, hint: '', trainName: '', abandonArmed: false },
 
   onInit(params) {
     if (this.$app && this.$app.$def) bindRuntime(this.$app.$def)
     const s = loadState()
     if (!s.active || !s.workout) { router.back(); return }
-    this.state = s
+    this.stateOf(s)
     const detailEx = params && params.detailEx != null ? Number(params.detailEx) : -1
     this.expanded = Number.isInteger(detailEx) && detailEx >= 0 && detailEx < s.workout.exercises.length ? detailEx : -1
     this.gesture = null
@@ -29,14 +41,14 @@ export default {
     if (this.navPending) { this.navPending = false; router.replace({ uri: '/Workout' }); return }
     const s = loadState()
     if (!s.active || !s.workout) { router.replace({ uri: '/Index' }); return }
-    this.state = s
+    this.stateOf(s)
     this.rebuild()
   },
 
   onHide() { this.navPending = false; this.gesture = null; this.abandonArmed = false },
 
   rebuild() {
-    const s = this.state
+    const s = this.stateOf()
     this.trainName = s.workout.name || '训练动作'
     this.list = s.workout.exercises.map((ex, i) => {
       const rows = s.workout.rows[i] || []
@@ -126,7 +138,7 @@ export default {
   },
 
   rowTxt(row, ex) {
-    const w = row.w === '' || row.w == null ? '' : row.w + (this.state.weightUnit || 'kg') + '*'
+    const w = row.w === '' || row.w == null ? '' : row.w + (this.stateOf().weightUnit || 'kg') + '*'
     const timed = ex && String(ex.reps || '').indexOf('秒') >= 0
     const r = row.r === '' || row.r == null ? '—' : row.r + (timed ? '秒' : '')
     return (w + r) || '—'
@@ -208,7 +220,7 @@ export default {
   saveWorkout() {
     if (this.interactionBlocked() || this.navPending) return
     this.navPending = true
-    runtime().finishRequest = { sid: this.state.sid }
+    runtime().finishRequest = { sid: this.stateOf().sid }
     router.back()
   },
 

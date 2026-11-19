@@ -1,6 +1,6 @@
 import { createWatchLifecycle } from './watch-session.js'
 import { watchSnapshotOf } from './watch-workout.js'
-import { dependencyDecision } from '../../../watch-app/src/lib/event-dependencies.js'
+import { dependencyDecision, causalAncestor } from '../../../watch-app/src/lib/event-dependencies.js'
 import { watchConflict } from './watch-revision.js'
 import { watchSidOf } from './session-resume.js'
 import { wireBytes } from '../../../watch-app/src/lib/sync-wire.js'
@@ -47,10 +47,14 @@ export function createDurableWatchLifecycle(deps) {
                 // Old versions stored only replies; sid is part of the persisted exact key.
                 let sid
                 try { sid = JSON.parse(key)[0] } catch { /* malformed records cannot prove a parent */ }
-                return decisionOf({ ...record, sid })
+                const decision = decisionOf({ ...record, sid })
+                return decision ? { ...decision, parents: record.parents } : null
               })
-              const dependency = dependencyDecision(ev, id => decisions.find(d => d?.eventId === id))
-              const conflict = dependency.status === 'ready' ? watchConflict(deps.getState(), ev) : null
+              const byId = new Map(decisions.filter(Boolean).map(d => [d.eventId, d]))
+              const lookup = id => byId.get(id)
+              const dependency = dependencyDecision(ev, lookup)
+              const conflict = dependency.status === 'ready' ? watchConflict(deps.getState(), ev,
+                ev.causalFrontier === true ? id => causalAncestor(ev, id, lookup) : undefined) : null
               if (dependency.status !== 'ready') {
                 replies.push({ kind: 'send', msg: { t: 'event_rejected', eventId: ev.eventId, reason: dependency.reason, parent: dependency.parent } })
               } else if (conflict) {
@@ -105,7 +109,7 @@ export function createDurableWatchLifecycle(deps) {
                 // Hello must always reconcile fresh state, rather than replaying an old answer.
                 if (ev.t !== 'hello') {
                   s.watchCommits ||= {}
-                  s.watchCommits[key] = { replies, decision: replies.find(r => r.msg?.t === 'committed')?.msg || (ev.eventId ? { eventId: ev.eventId, sid: ev.sid, status: replies.some(r => r.kind === 'ack') ? 'applied' : replies.some(r => r.msg?.status === 'conflict') ? 'conflict' : 'rejected' } : null), rev: s.watchCommitRev }
+                  s.watchCommits[key] = { replies, ...(ev.dependencyEvents === true && Array.isArray(ev.dependsOn) ? { parents: [...ev.dependsOn] } : {}), decision: replies.find(r => r.msg?.t === 'committed')?.msg || (ev.eventId ? { eventId: ev.eventId, sid: ev.sid, status: replies.some(r => r.kind === 'ack') ? 'applied' : replies.some(r => r.msg?.status === 'conflict') ? 'conflict' : 'rejected' } : null), rev: s.watchCommitRev }
                   const keys = Object.keys(s.watchCommits)
                   for (const old of keys.slice(0, Math.max(0, keys.length - 4000))) delete s.watchCommits[old]
                 }

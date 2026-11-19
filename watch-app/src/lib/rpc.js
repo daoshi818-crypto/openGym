@@ -184,7 +184,7 @@ function sendHello() {
   sendControl({
     t: 'hello',
     watchVersion: WATCH_VERSION, protocolVersion: 3, stableIds: true,
-    capabilities: { durableCommit: true, snapshotChunks: true, deltas: true, dependencyEvents: true, selectiveChunkAck: true, persistentTransfers: true, commandReceipts: true, watchEventChunks: true },
+    capabilities: { causalFrontier: true, durableCommit: true, snapshotChunks: true, deltas: true, dependencyEvents: true, selectiveChunkAck: true, persistentTransfers: true, commandReceipts: true, watchEventChunks: true },
     receipts: true,
     sid: s.sid || '',
     rev: s.rev || 0,
@@ -607,6 +607,12 @@ export function startServer(h) {
         let needsSnapshot = false
         const saved = await writeStoredAtomic('session_state', s => {
           if (!s) return {}
+          if (s.sid !== msg.sid) {
+            // Retire an old session's exact receipt without rebuilding the active
+            // session's projection or comparing unrelated commit revisions.
+            s.pendingEdits = (s.pendingEdits || []).filter(e => !ids.has(e.eventId))
+            return s
+          }
           if (msg.status === 'applied') {
             if (item.msg.t === 'watch_start' && s.sid === msg.sid) s.pendingStart = false
             for (const edit of s.pendingEdits || []) if (edit.eventId === msg.eventId) edit.committedRev = msg.commitRev }
@@ -632,9 +638,9 @@ export function startServer(h) {
         }
         for (const event of affected) ackEvent(null, event.eventId)
         const state = loadState()
-        if (state.active && state.syncBase && state.syncBase.commitRev >= msg.commitRev) { try { rpcState().handlers.onSync?.(state.syncBase, { persisted: true }) } catch (error) { trace('page_sync_error', state.syncBase, error) } }
+        if (state.active && state.sid === msg.sid && state.syncBase && state.syncBase.commitRev >= msg.commitRev) { try { rpcState().handlers.onSync?.(state.syncBase, { persisted: true }) } catch (error) { trace('page_sync_error', state.syncBase, error) } }
         if (msg.state && state.active && state.sid === msg.sid && state.syncBase?.wireHash === msg.state.wireHash) sendControl({ t: 'sync_ack', sid: msg.sid, wireHash: state.syncBase.wireHash, commitRev: state.syncBase.commitRev, status: 'applied' })
-        if (needsSnapshot || (msg.status !== 'applied' && (!state.syncBase || state.syncBase.commitRev < msg.commitRev))) sendControl({ t: 'sync_request', sid: msg.sid, reason: 'phone_authority' })
+        if (needsSnapshot || (state.sid === msg.sid && msg.status !== 'applied' && (!state.syncBase || state.syncBase.commitRev < msg.commitRev))) sendControl({ t: 'sync_request', sid: msg.sid, reason: 'phone_authority' })
         rpcState().lastCommitAt = Date.now()
       })
       return

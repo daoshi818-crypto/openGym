@@ -6,7 +6,7 @@ import { wireBytes } from './sync-wire.js'
 const KEY = 'watch_diagnostic_log_v1'
 const MAX_BYTES = 24000
 // Reserve evidence for user actions without increasing the journal or write budget.
-const ACTION_STAGE = /^(dot_|local_commit_|complete_tap$|page_(show|hide|destroy)$|interaction_reset$|remote_end$|local_end$)/
+const ACTION_STAGE = /^(dot_|local_commit_|crown_input$|field_selected$|complete_tap$|page_(show|hide|destroy)$|interaction_reset$|remote_end$|local_end$)/
 function interaction(e) { return ACTION_STAGE.test(e.stage) }
 function trim(j) {
   while (j.events.length > 64 || j.bytes > MAX_BYTES) {

@@ -1,5 +1,6 @@
 // One callback = one logical step; raw firmware delta is not an angle contract.
 export function rotationStep(ev) {
+  ev = ev?.detail && typeof ev.detail === 'object' ? ev.detail : ev
   if (!ev || ev.state === 3) return 0
   const delta = Number(ev.delta)
   if (Number.isFinite(delta) && delta !== 0) return delta > 0 ? 1 : -1

@@ -92,12 +92,12 @@ describe('v1.4.5 official square Wear UI contracts', () => {
     s.setIdx=1; s.restUntil=Date.now()+90000; ctx.save(s); p.state=s; p.refresh()
     expect(p.effortNumber).toBe('0'); expect(p.effortTarget.setId).toBe(s.workout.rows[0][0].setId)
   })
-  it('navigates Overview / Set / Metrics / Media without mutating the workout', () => {
+  it('navigates Overview / Set / Metrics with music removed without mutating the workout', () => {
     const {p,s}=training('none'), before=JSON.stringify(s.workout)
     const swipe = dx => { p.touchStart({touches:[{clientX:180,clientY:180}]}); p.touchEnd({changedTouches:[{clientX:180+dx,clientY:180}]}) }
     expect(p.pageIndex).toBe(1); swipe(100); expect(p.pageIndex).toBe(0)
-    swipe(-100); swipe(-100); expect(p.pageIndex).toBe(2); swipe(-100); expect(p.pageIndex).toBe(3)
-    swipe(-100); expect(p.pageIndex).toBe(3); expect(JSON.stringify(s.workout)).toBe(before)
+    swipe(-100); swipe(-100); expect(p.pageIndex).toBe(2); swipe(-100); expect(p.pageIndex).toBe(2)
+    swipe(-100); expect(p.pageIndex).toBe(2); expect(JSON.stringify(s.workout)).toBe(before)
     p.showCurrent(); expect(p.pageIndex).toBe(1)
   })
   it('conditionally exposes Pulse/Zones and returns to numbers when HR becomes available', () => {
@@ -124,12 +124,12 @@ describe('v1.4.5 official square Wear UI contracts', () => {
     p.onCurrentSetAction(); expect(p.onPause).toHaveBeenCalledOnce()
     expect(p.onComplete).not.toHaveBeenCalled(); expect(p.onUndo).not.toHaveBeenCalled()
   })
-  it('shows the true next set number across exercise boundaries and keeps last-effort reachable', () => {
+  it('shows the true next set number across exercise boundaries without extra Overview actions', () => {
     const {p,s}=training('rpe'); s.workout.rows[0].forEach(r=>{r.done=true;r.at=Date.now()})
     s.setIdx=3; s.workout.exercises.push({entryInstanceId:'b',name:'划船'})
     s.workout.rows.push([{setId:'b1',done:false}]); p.state=s; p.updateOfficialViews()
     expect(p.nextOfficial).toBe('划船，第 1 组')
-    expect(nodes(tree('Workout')).some(n=>n.action==='openLastEffort')).toBe(true)
+    expect(nodes(tree('Workout')).some(n=>n.action==='openLastEffort')).toBe(false)
   })
   it('holds Finish for one second, cancels early release, and clears the timer on hide', () => {
     vi.useFakeTimers(); const {p,ctx}=training('none')
@@ -153,10 +153,11 @@ describe('v1.4.5 official square Wear UI contracts', () => {
     for(const name of names) expect(watchSource('common/icons/'+name)).not.toMatch(/<(script|text|image|foreignObject)\b|href=|url\(/i)
     for(const page of ['Index','Workout','Keypad','ExerciseList','Summary']) expect(watchSource(page+'/index.ux')).not.toMatch(/[\p{Extended_Pictographic}\uFE0F✓▶♥↶]/u)
   })
-  it('retains explicit abandon confirmation and full detail/precise effort extensions', () => {
+  it('retains discard confirmation and effort while removing non-upstream Overview actions', () => {
     const src=watchSource('Workout/index.ux')
-    for(const action of ['askAbandon','abandonEnd','openExercises','openLast','openEffort','confirmEffort','clearEffort']) expect(src).toContain('onclick="'+action+'"')
+    for(const action of ['askAbandon','abandonEnd','openExercises','openEffort','confirmEffort','clearEffort']) expect(src).toContain('onclick="'+action+'"')
     expect(src).toContain("closeMode === 'abandon'")
+    for (const action of ['openLastEffort','onMenuAddSet','onMenuRemoveSet','onPause','openLast']) expect(src).not.toContain('onclick="'+action+'"')
     expect(src).not.toContain('class="flag"')
   })
 })

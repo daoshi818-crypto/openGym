@@ -15,8 +15,42 @@ export function eventsOverlap(a, b) {
   if (x.barrier || y.barrier) return true
   return x.writes.some(k => y.writes.includes(k) || y.reads.includes(k)) || y.writes.some(k => x.reads.includes(k))
 }
-export function dependenciesFor(event, pending) {
-  return [...new Set(pending.filter(e => e.eventId !== event.eventId && eventsOverlap(e, event)).map(e => e.eventId))]
+export function dependenciesFor(event, pending, frontier = false) {
+  if (!frontier) return [...new Set(pending.filter(e => e.eventId !== event.eventId && eventsOverlap(e, event)).map(e => e.eventId))]
+  // Keep the causal frontier, not every ancestor. A parent is only redundant
+  // when another selected parent explicitly depends on it (transitively).
+  // Offline focus/rest bursts otherwise store n*(n-1)/2 long event IDs.
+  const byId = new Map(pending.map(e => [e.eventId, e]))
+  const covered = new Set(), parents = []
+  for (let i = pending.length - 1; i >= 0; i--) {
+    const parent = pending[i]
+    if (!parent.eventId || parent.eventId === event.eventId || covered.has(parent.eventId) || !eventsOverlap(parent, event)) continue
+    parents.push(parent.eventId)
+    const stack = [parent.eventId]
+    while (stack.length) {
+      const id = stack.pop()
+      if (covered.has(id)) continue
+      covered.add(id)
+      const ancestor = byId.get(id)
+      if (ancestor?.dependencyEvents === true && Array.isArray(ancestor.dependsOn)) stack.push(...ancestor.dependsOn)
+    }
+  }
+  return parents.reverse()
+}
+// Only durable decisions from this session prove ancestry. Missing/evicted
+// records fail closed; sequence numbers, transport receipts and actors do not.
+export function causalAncestor(event, target, lookup) {
+  const stack = [...(event.dependsOn || [])], seen = new Set()
+  while (stack.length && seen.size <= 4000) {
+    const id = stack.pop()
+    if (seen.has(id)) continue
+    seen.add(id)
+    const parent = lookup(id)
+    if (!parent || parent.sid !== event.sid || !(parent.status === 'applied' || parent.status === 'conflict' && parent.resolution === 'phone')) continue
+    if (id === target) return true
+    if (Array.isArray(parent.parents)) stack.push(...parent.parents)
+  }
+  return false
 }
 export function dependencyDecision(event, lookup) {
   if (event.dependencyEvents !== true) return { status: 'ready' }

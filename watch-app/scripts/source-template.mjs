@@ -24,6 +24,7 @@ export function sourceTemplate(source) {
     if (a.class?.includes('{{')) n.$class = 'function(){return [' + binding(a.class) + '.call(this)]}'
     else if (a.class) n.class = a.class
     if (a.if) n.$shown = binding(a.if)
+    if (a.show) n.attr.$show = binding(a.show)
     if (a.for) {
       const m = a.for.match(/^\s*{{\s*(\w+)\s+in\s+([\s\S]+?)\s*}}\s*$/)
       if (!m) throw new Error('Unsupported repeat: ' + a.for)

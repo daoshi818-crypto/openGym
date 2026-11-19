@@ -1,7 +1,7 @@
 // Check actual BlueOS compiler output. Browser previews are a separate verification.
 const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path')
 const target = process.argv[2] || 'watch-square'
-assert.equal(target,'watch-square','0.6.32 official UI is validated for square only')
+assert.equal(target,'watch-square','0.6.33 official UI is validated for square only')
 const build = process.env.BLUEOS_BUILD_ROOT ? path.resolve(process.env.BLUEOS_BUILD_ROOT,target) : path.resolve(__dirname,'../build',target)
 const read = name => JSON.parse(fs.readFileSync(path.join(build,name),'utf8'))
 const manifest=read('manifest.json'), nodes=n=>[n,...(n.children||[]).flatMap(nodes)]
@@ -25,8 +25,18 @@ for(const page of Object.keys(manifest.router.pages)) {
   if(page==='Workout') {
     const live=has('screen live-screen');assert.ok(live && !nodes(live).some(n=>n.type==='list'),'Set/rest never scroll')
     assert.equal(has('overview-scroll').type,'list')
-    for(const name of ['screen overview-screen','screen live-screen','screen metrics-screen','screen media-screen'])assert.ok(has(name))
-    assert.equal(has('page-dots').children.length,4);assert.equal(has('navrow').children.length,3)
+    for(const name of ['screen overview-screen','screen live-screen','screen metrics-screen']) {
+      const screen = has(name)
+      assert.ok(screen?.attr?.$show, 'Pager must reuse bounded native trees via show')
+      assert.ok(!screen.$shown, 'Pager must not destroy a native subtree on every swipe')
+    }
+    assert.equal(sheet['.last-text'].textOverflow, 'ellipsis', 'BlueOS default clip cuts history text mid-glyph')
+    assert.ok(px('.navrow','width') <= 336, 'Inset footer arrows from physical square corners')
+    for (const action of ['onMenuAddSet','onMenuRemoveSet','onPause','openLastEffort','showDiagnostics','openLast']) {
+      assert.ok(!tree.some(n => n.events?.click === action), 'Remove non-upstream product entry: ' + action)
+    }
+    assert.ok(!has('screen media-screen'), 'Music page removed at user request')
+    assert.equal(has('page-dots').children.length,3);assert.equal(has('navrow').children.length,3)
     for(const [sel,color] of [['.primary-button','#A3E635'],['.field','#1A2508']])assert.equal(sheet[sel].backgroundColor,color)
     assert.equal(sheet['.rest'].color,'#A3E635');assert.equal(sheet['.metric-time'].color,'#FFD60A')
     assert.equal(px('.primary-button','height'),77);assert.equal(px('.primary-button','borderRadius'),39)
