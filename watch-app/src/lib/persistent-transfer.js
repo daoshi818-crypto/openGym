@@ -31,23 +31,34 @@ export function makeTransfer(snapshot, generation, now = Date.now()) {
 }
 export function persistentReceiver(store, apply, now = () => Date.now()) {
   const serial = serialOwner(), key = 'sync_rx_v1'
+  // Only receipt metadata is cached, never snapshot payloads. Disk remains authoritative
+  // on restart/reconnect; successful chunk writes advance this bounded bitmap in O(1).
+  const progress = new Map()
   const chunkKey = (slot, i) => 'sync_rx_' + slot + '_' + i
   const index = async () => (await store.read(key)) || { jobs: [] }
-  async function received(job) {
-    const indexes = []
-    let bytes = 0
+  const sound = (saved, job, i) => saved?.id === job.meta.transferId && saved.index === i && typeof saved.data === 'string' && saved.data.length > 0 && saved.data.length <= 1000 && wireHash(saved.data) === saved.hash
+  async function received(job, rescan = false) {
+    const id = job.meta.transferId
+    if (!rescan && progress.has(id)) return progress.get(id)
+    const entry = { sizes: [], count: 0, bytes: 0 }
     for (let i = 0; i < job.meta.count; i++) {
       const saved = await store.read(chunkKey(job.slot, i))
-      if (saved?.id === job.meta.transferId && saved.index === i && typeof saved.data === 'string' && saved.data.length <= 1000 && wireHash(saved.data) === saved.hash) { indexes.push(i); bytes += wireBytes(saved.data) }
+      if (sound(saved, job, i)) { entry.sizes[i] = wireBytes(saved.data); entry.count++; entry.bytes += entry.sizes[i] }
     }
-    if (bytes > job.meta.bytes) throw new Error('transfer_size')
-    return indexes
+    if (entry.bytes > job.meta.bytes) throw new Error('transfer_size')
+    progress.set(id, entry)
+    return entry
   }
+  const indexesOf = entry => entry.sizes.reduce((out, size, i) => { if (size > 0) out.push(i); return out }, [])
   async function finish(state, job) {
-    const indexes = await received(job)
-    if (indexes.length !== job.meta.count) return null
+    const entry = await received(job)
+    if (entry.count !== job.meta.count) return null
     let text = ''
-    for (let i = 0; i < job.meta.count; i++) text += (await store.read(chunkKey(job.slot, i))).data
+    for (let i = 0; i < job.meta.count; i++) {
+      const saved = await store.read(chunkKey(job.slot, i))
+      if (!sound(saved, job, i)) throw new Error('transfer_checksum')
+      text += saved.data
+    }
     if (wireBytes(text) !== job.meta.bytes || wireHash(text) !== job.meta.hash) throw new Error('transfer_checksum')
     const message = JSON.parse(text)
     if (!['sync', 'sync_delta'].includes(message.t) || message.sid !== job.meta.sid || message.commitRev !== job.meta.revision) throw new Error('transfer_snapshot')
@@ -63,11 +74,13 @@ export function persistentReceiver(store, apply, now = () => Date.now()) {
     receive: msg => serial(async () => {
       const state = await index()
       state.jobs = state.jobs.filter(j => now() - j.at <= TRANSFER_TTL)
+      for (const id of progress.keys()) if (!state.jobs.some(j => j.meta.transferId === id)) progress.delete(id)
       let job = state.jobs.find(j => j.meta.transferId === msg.transferId)
       try {
         if (msg.t === 'sync_cancel') {
           if (job && !matches(job.meta, msg)) throw new Error('transfer_mismatch')
           state.jobs = state.jobs.filter(j => j !== job); await put(store, key, state)
+          progress.delete(msg.transferId)
           return [receipt('sync_cancel_ack', msg)]
         }
         if (msg.t === 'sync_begin') {
@@ -79,6 +92,7 @@ export function persistentReceiver(store, apply, now = () => Date.now()) {
               const retired = state.jobs.find(j => j.applied)
               if (!retired) throw new Error('transfer_capacity')
               state.jobs = state.jobs.filter(j => j !== retired)
+              progress.delete(retired.meta.transferId)
             }
             const slot = [0, 1].find(s => !state.jobs.some(j => j.slot === s))
             job = { slot, meta: copy(msg), at: now(), applied: false }
@@ -87,25 +101,36 @@ export function persistentReceiver(store, apply, now = () => Date.now()) {
             await put(store, key, state)
           }
           if (job.applied) return [receipt('sync_applied', job.meta, { status: job.status || 'applied' })]
+          const entry = await received(job, true)
           const complete = await finish(state, job)
-          return complete ? [complete] : [receipt('sync_begin_ack', job.meta, { received: await received(job) })]
+          return complete ? [complete] : [receipt('sync_begin_ack', job.meta, { received: indexesOf(entry) })]
         }
         if (!job) return [receipt('unknown_transfer', msg)]
         if (!matches(job.meta, msg)) throw new Error('transfer_mismatch')
         if (job.applied) return [receipt('sync_applied', job.meta, { status: job.status || 'applied' })]
         if (msg.t === 'sync_resume') {
+          const entry = await received(job, true)
           const complete = await finish(state, job)
-          return complete ? [complete] : [receipt('sync_resume', job.meta, { received: await received(job) })]
+          return complete ? [complete] : [receipt('sync_resume', job.meta, { received: indexesOf(entry) })]
         }
         if (msg.t !== 'sync_chunk' || !Number.isInteger(msg.index) || msg.index < 0 || msg.index >= job.meta.count || typeof msg.data !== 'string' || !msg.data.length || msg.data.length > 1000) throw new Error('invalid_chunk')
+        const entry = await received(job)
         const ck = chunkKey(job.slot, msg.index), old = await store.read(ck)
-        if (old?.id === job.meta.transferId && old.data !== msg.data) throw new Error('chunk_mismatch')
+        if (sound(old, job, msg.index) && old.data !== msg.data) throw new Error('chunk_mismatch')
         // ACK only after actual chunk persistence; no rewrite of session_state per chunk.
-        if (!old || old.id !== job.meta.transferId || old.index !== msg.index || old.hash !== wireHash(msg.data))
+        if (!sound(old, job, msg.index))
           await put(store, ck, { id: job.meta.transferId, index: msg.index, data: msg.data, hash: wireHash(msg.data) })
+        const size = wireBytes(msg.data), previous = entry.sizes[msg.index] || 0
+        entry.bytes += size - previous
+        if (!previous) entry.count++
+        entry.sizes[msg.index] = size
+        if (entry.bytes > job.meta.bytes) throw new Error('transfer_size')
         const complete = await finish(state, job)
         return [receipt('sync_chunk_ack', job.meta, { index: msg.index }), ...(complete ? [complete] : [])]
-      } catch (error) { return [receipt('sync_error', msg, { reason: String(error.message).slice(0, 80) })] }
+      } catch (error) {
+        progress.delete(msg.transferId)
+        return [receipt('sync_error', msg, { reason: String(error.message).slice(0, 80) })]
+      }
     }),
   }
 }

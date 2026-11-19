@@ -7,6 +7,32 @@ function disk() {
   return { map, fail: value => { fail = value }, read: async key => structuredClone(map.get(key)), write: async (key, value) => { if (fail) return false; map.set(key, structuredClone(value)); return true } }
 }
 const snapshot = (rev = 1, data = 'x'.repeat(19500)) => ({ t: 'sync', protocolVersion: 3, sid: 's', commitRev: rev, data })
+
+it.each([5, 17, 65])('receives %i chunks with linear durable reads and no payload cache', async count => {
+  const store = disk(), original = store.read; let reads = 0, applies = 0
+  store.read = async key => { reads++; return original(key) }
+  const job = makeTransfer(snapshot(1, 'x'.repeat((count - 1) * 1000)), 1)
+  expect(job.chunks).toHaveLength(count)
+  const rx = persistentReceiver(store, async () => { applies++; return { ok: true } })
+  await rx.receive({ t: 'sync_begin', ...job.meta })
+  for (let index = 0; index < count; index++) {
+    const replies = await rx.receive({ t: 'sync_chunk', ...job.meta, index, data: job.chunks[index] })
+    expect(replies[0].t).toBe('sync_chunk_ack')
+  }
+  expect(applies).toBe(1)
+  expect(reads).toBe(4 * count + 1) // index/message + initial disk scan + chunk reads + final verification
+})
+
+it('rebuilds receipts from disk on resume and repairs a corrupt chunk before apply', async () => {
+  const store = disk(), job = makeTransfer(snapshot(1, 'x'.repeat(2500)), 1); let applies = 0
+  const rx = persistentReceiver(store, async () => { applies++; return { ok: true } })
+  await rx.receive({ t: 'sync_begin', ...job.meta })
+  await rx.receive({ t: 'sync_chunk', ...job.meta, index: 0, data: job.chunks[0] })
+  store.map.get('sync_rx_0_0').data = 'corrupt'
+  expect((await rx.receive({ t: 'sync_resume', ...job.meta }))[0].received).toEqual([])
+  for (let index = 0; index < job.chunks.length; index++) await rx.receive({ t: 'sync_chunk', ...job.meta, index, data: job.chunks[index] })
+  expect(applies).toBe(1)
+})
 describe('persistent selective transfer, real disk adapter failure windows', () => {
   it('persists 20 chunks, loses one ACK, restarts both endpoints and only repeats the unconfirmed chunk', async () => {
     const txDisk = disk(), rxDisk = disk(), applied = []; let time = 1000

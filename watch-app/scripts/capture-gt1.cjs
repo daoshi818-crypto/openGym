@@ -52,7 +52,7 @@ let activeBrowser
         return inkTop<top-0.25 || inkBottom>bottom+0.25 ? [{cls:span.parentElement.className,text,inkTop,inkBottom,clipTop:top,clipBottom:bottom}] : []
       })
       // Being inside a scroll container must not exempt a single-screen form from checks.
-      const main = document.querySelector('.screen:not(.operation-screen)')
+      const main = document.querySelector('.live-screen')
       const editor = document.querySelector('#keypad')
       const mustFit = !!(main || editor)
       const scrollRequired = mustFit ? lists.filter(e => e.scrollHeight > e.height + 1) : []

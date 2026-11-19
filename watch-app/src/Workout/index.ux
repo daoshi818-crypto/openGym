@@ -2,7 +2,8 @@
 import { commitPageAction } from '../lib/local-action.js'
 import { bindRuntime, runtime } from '../lib/runtime.js'
 import { recordDiagnostic, flushDiagnosticLog } from '../lib/diagnostic-log.js'
-// 主训练页（单屏 + 手势）：重量/次数保持可见，休息态只保留必要操作。
+// Source: openGym v1.4.5 Screens.kt / Components.kt / Theme.kt, square branch.
+// BlueOS design pixels use 1.6 px per source dp/sp; no new visual system.
 import router from '@blueos.app.appmanager.router'
 import storage from '@blueos.storage.storage'
 import { rotationStep, valueStep } from '../lib/value-step.js'
@@ -21,6 +22,7 @@ import { startServer, sendEvent, replayPendingEvents, sendControl, pendingCount,
 import { storageStatus } from '../lib/persistence.js'
 import { applyEdit, applyFocus, applyRest, restOf } from '../lib/protocol.js'
 import { lastTimeView } from '../lib/watch-last-time.js'
+import { zoneView, muscleView } from '../lib/official-metrics.js'
 
 const pageDefinition = {
   data: {
@@ -47,7 +49,11 @@ const pageDefinition = {
     rowDone: false,
     kcalLabel: '0',
     volumeLabel: '0',
-    pageIndex: 0,
+    pageIndex: 1, metricIndex: 0, metricKind: 'numbers', metricPages: [{key:'numbers'}, {key:'effort'}, {key:'muscles'}], hasPulse: false, overviewRows: [], effortChips: [], metricEfforts: [],
+    doneTotal: '0/0', nextOfficial: '', hrNumber: '--', hrAverage: '--', hrMaximum: '--', hrMinimum: '--',
+    zoneRows: [], hasAge: false, muscleRows: [], muscleMore: 0, muscleEmpty: '还没有组',
+    restPercent: '100%', restWarn: false, holdingFinish: false, finishProgress: '0%',
+    mediaNotice: '',
     closeMode: '',
     paused: false,
     pauseLabel: '暂停训练',
@@ -132,6 +138,7 @@ const pageDefinition = {
     this.logInteraction('page_show')
     this.resetInteraction()
     this.visible = true
+    this.needsRefresh = false
     // Keypad/动作列表独立读取并保存会话，返回训练页时重新读取，确保重量立即回显。
     const latest = loadState()
     if (!latest.active || !latest.workout) { this.stopHrCapture(); router.replace({ uri: '/Index' }); return }
@@ -164,13 +171,17 @@ const pageDefinition = {
     try { this.$element('training').requestFocus(true) } catch (e) {}
   },
   onRotation(ev) {
+    if (!ev || this.visible === false || ev.state === 3) return
+    if (this.pageIndex === 2 && !this.effortOn && !this.closeMode && !this.diagnosticOn) {
+      const direction = rotationStep(ev); if (direction) this.stepMetrics(direction); return
+    }
     if (this.diagnosticOn) return
     if (ev && this.effortOn && ev.state !== 3) {
       const d = Number(ev.delta) || (ev.direction === true ? 1 : ev.direction === false ? -1 : 0)
       if (d) this.effortMove(d > 0 ? 1 : -1)
       return
     }
-    if (!ev || this.visible === false || ev.state === 3 || this.menuOn || this.closeMode || this.pageIndex || this.paused || this.lastOpen || this.finishOn) return
+    if (!ev || this.visible === false || ev.state === 3 || this.menuOn || this.closeMode || this.pageIndex !== 1 || this.paused || this.lastOpen || this.finishOn) return
     const delta = Number(ev.delta) || (ev.direction === true ? 1 : ev.direction === false ? -1 : 0)
     if (!delta) return
     if (this.isRest || this.restCrownDirty) this.queueRestNudge(delta > 0 ? 5 : -5)
@@ -184,13 +195,13 @@ const pageDefinition = {
     if (this.finishOn) { this.closeFinish(); return true }
     if (this.closeMode) this.cancelClose()
     else if (this.menuOn) this.menuOn = false
-    else if (this.pageIndex) this.pageIndex = 0
-    else this.openExercises()
+    else if (this.pageIndex !== 1) this.pageIndex = 1
+    else this.pageIndex = 0
     return true
   },
-  showCurrent() { this.pageIndex = 0; this.focusCrown() },
+  showCurrent() { this.pageIndex = 1; this.focusCrown() },
   openMenu() { this.menuOn = true; this.leaveChoice = false },
-  openActions() { if (!this.isRest) this.pageIndex = 1; this.menuOn = false },
+  openActions() { this.pageIndex = 0; this.menuOn = false },
   resetInteraction() {
     this.logInteraction('interaction_reset')
     this.cancelSetDotPick()
@@ -224,7 +235,7 @@ const pageDefinition = {
       this.resetInteraction()
       this.closeMode = ''; this.effortOn = false; this.menuOn = false
       this.finishOn = false; this.lastOpen = false; this.leaveChoice = false
-      this.diagnosticOn = false; this.pageIndex = 0; this.selectedField = null; this.inputNotice = ''
+      this.diagnosticOn = false; this.pageIndex = 1; this.selectedField = null; this.inputNotice = ''
       this.effortTarget = null; this.effortDraft = null; this.effortBaseVersion = 0
       this.effortStale = false; this.effortNotice = ''; this.effortScaleAtOpen = 'none'
       this.completionIgnoreUntil = 0; this.restStartAt = 0
@@ -237,7 +248,13 @@ const pageDefinition = {
 
   bindRpc() {
     const handle = (method, ...args) => {
-      // 隐藏的训练页仍会收到 RPC；保留输入页刚保存的编辑和其他页面的更新。
+      // Persisted snapshots already updated the single durable session. Hidden pages
+      // adopt it once onShow, rather than rebuilding every view behind the keypad.
+      if (method === 'onSyncUpdate' && args[1]?.persisted && this.visible === false) {
+        this.needsRefresh = true
+        return { status: 'applied', page: 'Workout', deferred: true }
+      }
+      // Legacy commands still need their business mutation while hidden.
       const latest = loadState()
       if (latest.active && latest.sid === this.state.sid) {
         this.state = this.withRestPreview(latest)
@@ -276,6 +293,7 @@ const pageDefinition = {
   },
 
   onHide() {
+    this.cancelFinishHold()
     this.logInteraction('page_hide', {}, true)
     this.cancelSetDotPick()
     this.touchCancel()
@@ -289,6 +307,7 @@ const pageDefinition = {
   },
 
   onDestroy() {
+    this.cancelFinishHold()
     this.logInteraction('page_destroy', {}, true)
     this.cancelSetDotPick()
     this.visible = false
@@ -331,6 +350,7 @@ const pageDefinition = {
     const t = e.touches && e.touches[0]
     if (t) {
       this.touchLast = { x: t.clientX, y: t.clientY }
+      if (this.holdingFinish && Math.max(Math.abs(t.clientX - this.touch.x), Math.abs(t.clientY - this.touch.y)) >= 24) this.cancelFinishHold()
       if (!this.touchAxis) {
         const dx = Math.abs(t.clientX - this.touch.x), dy = Math.abs(t.clientY - this.touch.y)
         if (Math.max(dx, dy) >= 24) this.touchAxis = dx > dy ? 'x' : 'y'
@@ -364,20 +384,12 @@ const pageDefinition = {
     // 详情打开时右滑只关闭详情；结束入口打开时不切页、不切组、不碰休息。
     if (this.lastOpen) { if (dx > 60 && Math.abs(dx) > Math.abs(dy)) this.closeLast(); return }
     if (this.finishOn) { if (dy > 60) this.closeFinish(); return }
-    if (this.isRest) {
-      if (dx > 60 && Math.abs(dx) > Math.abs(dy)) this.openExercises(true)
-      return
-    }
-    if (this.menuOn) {
-      if (dy > 60) this.menuOn = false
-      return
-    }
     const axis = axisAtRelease || (Math.abs(dx) > Math.abs(dy) ? 'x' : 'y')
     if (axis === 'x') {
-      // 右滑打开动作列表，左滑切换训练与操作页。
-      if (dx > 60) this.openExercises(true)
-      else if (dx < -60) this.pageIndex = this.pageIndex ? 0 : 1
-    }
+      this.cancelFinishHold()
+      this.pageIndex = Math.max(0, Math.min(3, this.pageIndex + (dx < 0 ? 1 : -1)))
+      this.focusCrown()
+    } else if (this.pageIndex === 2) this.stepMetrics(dy < 0 ? 1 : -1)
     // Vertical gestures belong to the visible native list; horizontal swipes navigate pages.
   },
 
@@ -487,7 +499,7 @@ const pageDefinition = {
     if (target.weightUnit !== (s.weightUnit || 'kg')) { this.clearFieldSelection(); return }
     this.state = s
     if (this.selectedField === field && this.fieldTarget && this.fieldTarget.setId === target.setId) {
-      router.push({ uri: '/Keypad', params: { ...target, field, inputMode: 'quick' } }); return
+      router.push({ uri: '/Keypad', params: { ...target, field, inputMode: 'keypad' } }); return
     }
     this.selectedField = field; this.fieldTarget = target; this.inputNotice = ''
     this.focusCrown()
@@ -681,6 +693,7 @@ const pageDefinition = {
   },
 
   onCurrentSetAction() {
+    if (this.paused && !this.closeMode && !this.interactionBlocked()) return this.onPause()
     if (this.setDotPicker?.pending()) {
       if (this.dotActionWaiting) return this.dotActionWaiting
       const target = this.dotPreview
@@ -805,6 +818,7 @@ const pageDefinition = {
   },
 
   onSyncUpdate(msg, options) {
+    if (options?.persisted && this.visible === false) { this.needsRefresh = true; return { status: 'applied', page: 'Workout', deferred: true } }
     if (!msg || !Array.isArray(msg.exercises) || !msg.exercises.length) {
       return { status: 'rejected', page: 'Workout', reason: 'empty_exercises' }
     }
@@ -1033,13 +1047,8 @@ const pageDefinition = {
   // ---- 结束入口 ---------------------------------------------------------------
   // 旗帜和“结束训练”只发起确认：不直接调 endSession/onEnd，也不补完成任何组。
   openFinish() {
-    if (this.closeMode) return
-    const s = this.state
-    if (!s || !s.active) return
-    this.lastOpen = false
-    this.finishOn = true
-    this.finishName = (s.workout && s.workout.name) || '自由训练'
-    this.refresh()
+    this.cancelSetDotPick(); this.clearFieldSelection()
+    this.finishOn = false; this.pageIndex = 0; this.focusCrown()
   },
   closeFinish() {
     this.finishOn = false
@@ -1242,7 +1251,7 @@ const pageDefinition = {
     this.exName = ex ? ex.name : ''
     const exerciseRows = s.workout.rows[s.exIdx] || []
     this.remainingLabel = '余 ' + exerciseRows.filter(r => !r.done).length + ' 组'
-    this.groupLabel = ex ? '第 ' + (s.setIdx + 1) + ' / ' + (ex.sets || 1) + ' 组' : ''
+    this.groupLabel = ex ? '第 ' + (s.setIdx + 1) + ' 组，共 ' + exerciseRows.length + ' 组' : ''
     this.weightVal = row && row.w !== '' && row.w != null ? row.w + ' ' + (s.weightUnit || 'kg') : '—'
     this.repsVal = row && row.r !== '' && row.r != null ? row.r + (this.isTimed(ex) ? ' 秒' : ' 次') : '—'
     // 数值与单位分开渲染：数字大、单位弱一级。
@@ -1251,7 +1260,6 @@ const pageDefinition = {
     this.repsNum = row && row.r !== '' && row.r != null ? String(row.r) : '—'
     this.repsSuffix = this.isTimed(ex) ? '秒' : '次'
     this.isRest = !!s.restUntil
-    if (this.isRest) this.pageIndex = 0
     this.paused = !!s.pausedAt
     this.pauseLabel = this.paused ? '继续训练' : '暂停训练'
 
@@ -1322,7 +1330,7 @@ const pageDefinition = {
 
     // 上次（只读参考）：当前动作的载荷 → 主数值下方一行摘要；没历史就整行隐藏。
     const lastView = this.lastViewOf(ex, s.weightUnit)
-    this.lastLine = lastView ? '上次 ' + lastView.text + ' ›' : ''
+    this.lastLine = lastView ? '上次: ' + lastView.text : ''
     this.lastOn = !!lastView
     if (this.lastOpen && !this.lastTargetStillThere(s)) {
       // 结构更新把目标动作移除了：关掉详情回当前有效训练页，不按下标误指新动作。
@@ -1346,8 +1354,78 @@ const pageDefinition = {
     this.lastEffortText = '末组 ' + scaleLabel + '  '
       + (lastDoneKind && lastDoneValue != null ? formatEffort(lastDoneValue) : '未填写')
 
+    this.updateOfficialViews()
     this.syncClockTimer()
     this.tickClock(true)
+  },
+  // These map existing business state to the official views; they do not mutate it.
+  updateOfficialViews() {
+    const s = this.state
+    let done = 0, total = 0
+    this.overviewRows = s.workout.exercises.map((ex, i) => {
+      const rows = s.workout.rows[i] || [], n = rows.filter(r => r.done).length
+      done += n; total += rows.length
+      return { key: ex.entryInstanceId || String(i), index: i, name: ex.name, count: n + '/' + rows.length,
+        current: i === s.exIdx, finished: rows.length > 0 && n === rows.length }
+    })
+    this.doneTotal = done + '/' + total
+    const current = s.workout.rows[s.exIdx]?.[s.setIdx]
+    const next = current && !current.done ? { exIdx: s.exIdx, setIdx: s.setIdx } : nextUndone(s)
+    this.nextOfficial = next ? s.workout.exercises[next.exIdx].name + '，第 ' + (next.setIdx + 1) + ' 组' : '所有组已完成'
+    // Effort.chips / Og.effortColor: the exact four shortcuts from upstream.
+    this.effortChips = (this.effortScale === 'rpe' ? [10, 9, 8, 7] : [0, 1, 2, 3]).map((value, i) => ({
+      key: String(value), value, label: this.effortScale === 'rpe' && value === 7 ? '≤7' : this.effortScale === 'rir' && value === 3 ? '3+' : String(value), cls: ['band-0','band-2','band-3','band-4'][i] }))
+    this.metricEfforts = s.workout.exercises.map((ex, i) => {
+      const values = (s.workout.rows[i] || []).filter(r => r.done).map(r => effortValueOf(r, this.effortScale)).filter(v => v != null)
+      return { key: ex.entryInstanceId || String(i), name: ex.name, value: values.length ? (values.reduce((a,b) => a+b, 0) / values.length).toFixed(1) : null }
+    }).filter(r => r.value != null).slice(-4)
+    const muscles = muscleView(s.workout)
+    this.muscleRows = muscles.rows; this.muscleMore = muscles.more
+    this.muscleEmpty = done > 0 ? '该动作暂无肌群数据' : '还没有组'
+  },
+  stepMetrics(d) {
+    this.metricIndex = Math.max(0, Math.min(this.metricPages.length - 1, this.metricIndex + d))
+    this.metricKind = this.metricPages[this.metricIndex].key
+  },
+  updateMetricPages(hasPulse) {
+    if (this.hasPulse === hasPulse) return
+    this.hasPulse = hasPulse
+    this.metricPages = (hasPulse ? ['numbers','pulse','effort','zones','muscles'] : ['numbers','effort','muscles']).map(key => ({key}))
+    this.metricIndex = 0; this.metricKind = 'numbers'
+  },
+  async jumpOverview(item) {
+    if (this.interactionBlocked() || this.localCommitPending) return
+    // Overview jumps may cross exercises and may happen during rest. Resolve the
+    // durable entry identity inside the transaction, never use the old row index.
+    const id = item.key
+    return commitPageAction(this, function() {
+      const s = this.state, index = s.workout.exercises.findIndex(ex => (ex.entryInstanceId || '') === id)
+      if (index < 0) throw new Error('该动作已被删除')
+      const rows = s.workout.rows[index] || [], set = Math.max(0, rows.findIndex(r => !r.done))
+      if (!rows[set]) return
+      s.exIdx = index; s.setIdx = set; s.focusAt = Date.now()
+      stageSessionEvent(s, { t: 'focus', sid: s.sid, entryInstanceId: id, setId: rows[set].setId, ex: index, set: set + 1, at: s.focusAt, source: 'watch' })
+      this.clearFieldSelection(); this.pageIndex = 1; this.refresh()
+    }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
+  },
+  rateChip(item) {
+    if (this.interactionBlocked()) return
+    this.openEffort()
+    if (this.effortOn) { this.effortDraft = item.value; return this.confirmEffort() }
+  },
+  startFinishHold() {
+    if (this.closeSaving || this.interactionBlocked()) return
+    this.cancelFinishHold()
+    this.holdingFinish = true; this.finishHoldAt = Date.now()
+    this.finishHoldTimer = setInterval(() => {
+      const fraction = Math.min(1, (Date.now() - this.finishHoldAt) / 1000)
+      this.finishProgress = String(fraction * 100) + '%'
+      if (fraction >= 1) { this.cancelFinishHold(); this.saveEnd() }
+    }, 50)
+  },
+  cancelFinishHold() {
+    if (this.finishHoldTimer) clearInterval(this.finishHoldTimer)
+    this.finishHoldTimer = null; this.holdingFinish = false; this.finishProgress = '0%'
   },
   isTimed(ex) { return ex && String(ex.reps || '').indexOf('秒') >= 0 },
 
@@ -1415,6 +1493,10 @@ const pageDefinition = {
     }
     const restLabel = this.mmss(left)
     if (this.restLabel !== restLabel) this.restLabel = restLabel
+    this.restWarn = left > 0 && left <= 5
+    const total = Math.max(1, (s.restUntil - (this.restStartAt || s.restUntil - 90000)))
+    const percent = String(Math.max(0, Math.min(100, (s.restUntil - Date.now()) * 100 / total))) + '%'
+    if (percent !== this.restPercent) this.restPercent = percent
     this.tickMetrics(force === true)
     this.tickSyncStatus(force === true)
   },
@@ -1429,6 +1511,13 @@ const pageDefinition = {
       if (hr) s.hr = hr
       const hrLabel = s.hr?.last && at - (s.hr.sampleAt || 0) < 15000 && !s.pausedAt ? '心率 ' + s.hr.last : '心率 --'
       if (this.hrLabel !== hrLabel) this.hrLabel = hrLabel
+      this.updateMetricPages(!!s.hr?.count)
+      this.hrNumber = hrLabel.replace('心率 ', '')
+      this.hrAverage = s.hr?.count ? String(Math.round(s.hr.sum / s.hr.count)) : '--'
+      this.hrMaximum = s.hr?.max ? String(s.hr.max) : '--'
+      this.hrMinimum = s.hr?.min ? String(s.hr.min) : '--'
+      const zones = zoneView(s.hr, s.profile?.birthYear)
+      this.hasAge = zones.max != null; this.zoneRows = zones.rows
     }
     if (force || this.caloriesUpdatedAt == null || at - this.caloriesUpdatedAt >= 5000) {
       this.caloriesUpdatedAt = at
@@ -1546,288 +1635,187 @@ const pageDefinition = {
 
 export default pageDefinition
 </script>
-
 <template>
 <div class="page" id="training" touch-focusable="true" onrotation="onRotation" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
-  <div class="screen" if="{{ pageIndex === 0 && !closeMode && !effortOn && !lastOpen && !finishOn && !diagnosticOn }}">
-    <div class="topbar">
-      <text class="heart" if="{{ !syncWarning }}">{{ hrLabel }}</text>
-      <text class="status" if="{{ syncWarning }}" onclick="showDiagnostics">{{ syncLabel }} ›</text>
-      <text class="clock">{{ clockLabel }}</text>
+  <div class="topbar" if="{{ !effortOn && !lastOpen && !diagnosticOn }}"><text class="top-lead" if="{{ !syncWarning }}">{{ hrLabel }}</text><text class="sync-pill" if="{{ syncWarning }}" onclick="showDiagnostics">{{ syncLabel }}</text><text class="clock">{{ clockLabel }}</text></div>
+  <div class="pager" if="{{ !closeMode && !effortOn && !lastOpen && !diagnosticOn }}">
+    <div class="screen overview-screen" if="{{ pageIndex === 0 }}">
+      <list class="overview-scroll"><list-item type="overview-title" class="overview-head"><text class="overview-name">{{ finishName }}</text><text class="quiet">{{ doneTotal }} 组</text></list-item>
+        <list-item type="exercise" class="overview-row {{ item.current ? 'overview-current' : '' }}" for="{{ item in overviewRows }}" tid="key" onclick="jumpOverview(item)"><div class="exercise-mark"><image class="mark-icon" src="/common/icons/wear-play-accent.svg" if="{{ item.current }}" /><image class="mark-icon" src="/common/icons/wear-check.svg" if="{{ !item.current && item.finished }}" /></div><div class="overview-copy"><text class="overview-ex {{ item.finished ? 'muted' : '' }}">{{ item.name }}</text><text class="overview-count">{{ item.count }}</text></div></list-item>
+        <list-item type="overview-actions" class="overview-actions"><text class="quiet sync-line" onclick="showDiagnostics">{{ syncLabel }}</text><div class="hold-finish" ontouchstart="startFinishHold" ontouchend="cancelFinishHold" ontouchcancel="cancelFinishHold"><image class="button-icon" src="/common/icons/wear-flag.svg" /><text class="button-word">按住以结束</text><div class="hold-fill" style="width: {{ finishProgress }};"><div class="hold-ink-label"><image class="button-icon" src="/common/icons/wear-flag-ink.svg" /><text class="button-word ink">按住以结束</text></div></div></div><input class="row-button danger" type="button" value="放弃训练" onclick="askAbandon" /><input class="row-button" type="button" if="{{ lastEffortOn }}" value="{{ lastEffortText }}" onclick="openLastEffort" /><input class="row-button" type="button" value="动作详情" onclick="openExercises" /><div class="extension-row"><input class="extension-button" type="button" value="加组" onclick="onMenuAddSet" /><input class="extension-button" type="button" value="减组" onclick="onMenuRemoveSet" /></div><input class="row-button" type="button" value="{{ pauseLabel }}" onclick="onPause" /></list-item>
+      </list>
     </div>
-    <div class="training-panel compact" if="{{ !isRest }}">
-      <div class="training-content">
-        <div class="ex" onclick="openExercises"><text class="ex-name">{{ exName }} ›</text><text class="remaining {{ remainingLabel.length > 7 ? 'remaining-wide' : '' }}">{{ remainingLabel }}</text></div>
-        <text class="group {{ rowDone ? 'group-done' : '' }}">{{ inputNotice || (groupLabel + (rowDone ? ' · 已完成 · 可撤回' : '')) }}</text>
-        <div class="inputs">
-          <div class="field weight-field {{ rowDone ? 'field-done' : selectedField === 'w' ? 'field-selected' : '' }}" onclick="editWeight">
-            <text class="fval {{ weightNum.length > 7 ? 'extra-long-value' : weightNum.length > 4 ? 'long-value' : '' }}">{{ weightNum }}</text><text class="funit">{{ weightSuffix }}</text>
-          </div>
-          <text class="times">×</text>
-          <div class="field reps-field {{ rowDone ? 'field-done' : selectedField === 'r' ? 'field-selected' : '' }}" onclick="editReps">
-            <text class="fval {{ repsNum.length > 7 ? 'extra-long-value' : repsNum.length > 4 ? 'long-value' : '' }}">{{ repsNum }}</text><text class="funit">{{ repsSuffix || '次' }}</text>
-          </div>
-        </div>
-        <div class="last-row" if="{{ lastOn }}" onclick="openLast"><text class="last-text">{{ lastLine }}</text></div><div class="last-space" if="{{ !lastOn }}"></div>
-        <div class="navrow">
-          <div class="complete {{ rowDone || paused ? 'secondary' : '' }}" onclick="onCurrentSetAction"><image class="complete-icon" src="{{ paused ? '/common/icons/pause.svg' : rowDone ? '/common/icons/undo.svg' : '/common/icons/check.svg' }}" /></div>
-          <div class="effort-circle" if="{{ effortEntryOn }}" onclick="openEffort"><text class="effort-caption">{{ effortScaleLabel }}</text><text class="effort-entry-value">{{ effortNumber }}</text></div>
-        </div>
-        <div class="set-dots">
-          <input class="set-hit segment" if="{{ dotSegmented }}" type="button" value="‹" disabled="{{ !dotHasPrev }}" onclick="prevDotSegment" />
-          <div class="set-hit" for="{{ item in setDots }}" tid="key" onclick="pickSetDot(item)"><div class="set-dot {{ item.current ? 'set-current' : item.done ? 'set-done' : '' }}"></div></div>
-          <input class="set-hit segment" if="{{ dotSegmented }}" type="button" value="›" disabled="{{ !dotHasNext }}" onclick="nextDotSegment" />
-        </div>
+    <div class="screen live-screen" if="{{ pageIndex === 1 }}">
+      <div class="training-content" if="{{ !isRest }}">
+        <div class="set-lines"><text class="ex-name" onclick="openExercises">{{ exName }}</text><text class="place">{{ inputNotice || (groupLabel + (rowDone ? ' · 完成' : '')) }}</text>
+        <div class="inputs"><div class="field {{ selectedField === 'w' ? 'field-selected' : '' }}" onclick="editWeight"><text class="field-label">重量</text><div class="field-number"><text class="fval {{ weightNum.length > 4 ? 'long-value' : '' }}">{{ weightNum }}</text><text class="funit">{{ weightSuffix }}</text></div></div><div class="field {{ selectedField === 'r' ? 'field-selected' : '' }}" onclick="editReps"><text class="field-label">{{ repsSuffix === '秒' ? '保持' : '次数' }}</text><div class="field-number"><text class="fval {{ repsNum.length > 4 ? 'long-value' : '' }}">{{ repsNum }}</text><text class="funit" if="{{ repsSuffix === '秒' }}">s</text></div></div></div>
+        <text class="last-text" if="{{ lastOn }}" onclick="openLast">{{ lastLine }}</text><text class="quiet" if="{{ effortEntryOn && rowDone }}" onclick="openEffort">{{ effortEntryText }}</text></div>
+        <div class="navrow"><div class="arrow-button" onclick="onPrevSet"><image class="arrow-icon" src="/common/icons/wear-left.svg" /></div><div class="primary-button" onclick="onCurrentSetAction"><image class="button-icon" src="{{ rowDone ? '/common/icons/wear-undo-ink.svg' : '/common/icons/wear-check-ink.svg' }}" /><text class="primary-word">{{ paused ? '继续训练' : rowDone ? '撤回' : '完成' }}</text></div><div class="arrow-button" onclick="onNextSet"><image class="arrow-icon" src="/common/icons/wear-right.svg" /></div></div>
+      </div>
+      <div class="rest-content" if="{{ isRest }}"><div class="countdown-row"><div class="arrow-button" onclick="openRestExercise"><image class="arrow-icon" src="/common/icons/wear-left.svg" /></div><text class="rest {{ restWarn ? 'rest-warning' : '' }}">{{ restLabel }}</text><div class="arrow-spacer"></div></div><div class="time-track"><div class="time-fill" style="width: {{ restPercent }};"></div></div>
+        <div class="rrow"><input class="edge-button" type="button" value="−15" onclick="onRestMinus" /><div class="skip-button" onclick="onSkipRest"><image class="button-icon" src="/common/icons/wear-next.svg" /><text class="button-word">跳过</text></div><input class="edge-button" type="button" value="+15" onclick="onRestPlus" /></div>
+        <div class="effort-slot" if="{{ effortEntryOn }}"><text class="quiet" if="{{ effortNumber === '—' }}">{{ effortScaleLabel }} · 这组有多吃力？</text><div class="chip-row" if="{{ effortNumber === '—' }}"><input class="effort-chip {{ item.cls }}" type="button" for="{{ item in effortChips }}" tid="key" value="{{ item.label }}" onclick="rateChip(item)" /></div><input class="rated-pill" type="button" if="{{ effortNumber !== '—' }}" value="{{ effortEntryText }}" onclick="openEffort" /></div>
+        <div class="up-next" onclick="openNextExercise"><div class="up-next-head"><text class="next-label">下一个</text><text class="quiet">{{ elapsedLabel }}</text></div><text class="next-name">{{ nextOfficial }}</text><text class="next-values">{{ nextValuesLabel }}</text></div>
       </div>
     </div>
-    <div class="training-panel rest-panel" if="{{ isRest }}">
-      <div class="rest-content">
-        <text class="rest-ex" onclick="openRestExercise">{{ restExerciseName }}</text>
-        <text class="rest">{{ restLabel }}</text>
-        <div class="next" onclick="openNextExercise"><text class="next-name">{{ nextTargetLabel }}</text><text class="next-set">{{ nextSetLabel }}</text></div>
-        <input class="effort-row" type="button" if="{{ effortEntryOn }}" value="{{ effortEntryLabel + '  ' + effortEntryText + '  ›' }}" onclick="openEffort" />
-      </div>
+    <div class="screen metrics-screen" if="{{ pageIndex === 2 }}"><div class="metrics-main" if="{{ metricKind === 'numbers' }}"><text class="metric-time">{{ elapsedLabel }}</text><div class="metric-line"><text class="metric-number red">{{ hrNumber }}</text><image class="metric-heart" src="/common/icons/wear-heart-red.svg" /></div><div class="metric-line"><text class="metric-number">{{ kcalLabel }}</text><text class="metric-unit">KCAL</text></div><div class="metric-line" if="{{ volumeLabel !== '0' }}"><text class="metric-number">{{ volumeLabel }}</text><text class="metric-unit">{{ weightUnit }}</text></div><div class="metric-line"><text class="metric-number">{{ doneTotal }}</text><text class="metric-unit">组数</text></div></div>
+      <div class="metrics-main" if="{{ metricKind === 'pulse' }}"><div class="metric-line"><text class="metric-number red">{{ hrAverage }}</text><image class="metric-heart" src="/common/icons/wear-heart-red.svg" /><text class="metric-unit red">平均</text></div><div class="metric-line"><text class="metric-number">{{ hrMaximum }}</text><text class="metric-unit">最高</text><text class="pulse-min">{{ hrMinimum }}</text><text class="metric-unit">最低</text></div></div>
+      <div class="metric-efforts" if="{{ metricKind === 'effort' }}"><text class="quiet" if="{{ !metricEfforts.length }}">尚未评定强度</text><div class="metric-effort-row" for="{{ item in metricEfforts }}" tid="key"><text class="effort-ex">{{ item.name }}</text><text class="effort-average">{{ item.value }}</text></div></div>
+      <div class="zone-page" if="{{ metricKind === 'zones' }}"><div class="zone-track {{ item.cls }} {{ item.current ? 'zone-current' : '' }} {{ item.dim ? 'zone-dim' : '' }} {{ !hasAge ? 'zone-no-age' : '' }}" style="border-color: {{ item.border }};" for="{{ item in zoneRows }}" tid="key"><div class="zone-fill" style="width: {{ item.fill }}; background-color: {{ item.color }};"></div><div class="zone-copy" if="{{ hasAge }}"><text class="zone-name">{{ item.zone }}</text><text class="zone-band">{{ item.band }}</text><text class="zone-time">{{ item.time }}</text></div></div><div class="no-age" if="{{ !hasAge }}"><text class="no-age-title">未设置年龄</text><text class="quiet">在手机应用中添加出生年份</text></div></div>
+      <div class="muscles-page" if="{{ metricKind === 'muscles' }}"><div class="muscle-track"></div><div class="muscle-segment" for="{{ item in muscleRows }}" tid="key" style="top: {{ item.top }}; height: {{ item.height }}; background-color: {{ item.color }};"></div><div class="muscle-list" if="{{ muscleRows.length }}"><div class="muscle-row" for="{{ item in muscleRows }}" tid="key"><div class="muscle-dot" style="background-color: {{ item.color }};"></div><text class="muscle-number">{{ item.value }}</text><text class="muscle-name">{{ item.name }}</text></div><text class="quiet more-muscles" if="{{ muscleMore > 0 }}">另有 {{ muscleMore }} 项</text></div><text class="quiet muscle-empty" if="{{ !muscleRows.length }}">{{ muscleEmpty }}</text></div>
+      <div class="vertical-dots"><div class="pager-dot {{ metricKind === item.key ? 'pager-current' : '' }}" for="{{ item in metricPages }}" tid="key"></div></div>
     </div>
-    <div class="primary-footer" if="{{ !isRest }}"><text class="list-link" onclick="openExercises">动作列表</text><text class="end-link" onclick="openFinish">结束 ›</text></div>
-    <div class="rrow" if="{{ isRest }}"><input class="rbtn" type="button" value="−15s" onclick="onRestMinus" /><input class="rbtn" type="button" value="+15s" onclick="onRestPlus" /><input class="skip" type="button" value="跳过" onclick="onSkipRest" /></div>
+    <div class="screen media-screen" if="{{ pageIndex === 3 }}"><list class="media-scroll"><list-item type="media" class="media-content"><text class="media-title">正在播放</text><text class="quiet media-hint">音乐在手机上？去“媒体控制”。</text><div class="media-buttons"><div class="media-edge disabled"><image class="media-icon" src="/common/icons/wear-prev.svg" /></div><div class="media-primary disabled"><image class="media-play-icon" src="/common/icons/wear-play-pause-ink.svg" /></div><div class="media-edge disabled"><image class="media-icon" src="/common/icons/wear-next.svg" /></div></div><div class="volume-buttons"><div class="edge-button disabled"><image class="media-icon" src="/common/icons/wear-minus.svg" /></div><div class="edge-button disabled"><image class="media-icon" src="/common/icons/wear-plus.svg" /></div></div><text class="quiet media-hint">媒体控制暂不可用</text></list-item></list></div>
   </div>
-  <div class="screen operation-screen" if="{{ pageIndex === 1 && !closeMode && !effortOn && !lastOpen && !finishOn && !diagnosticOn }}">
-    <div class="topbar"><text class="status" onclick="showDiagnostics">{{ syncLabel }} ›</text><text class="clock">{{ clockLabel }}</text></div>
-    <list class="operation-scroll"><list-item type="operation-content" class="scroll-content">
-      <text class="elapsed-label">已用时</text><text class="elapsed-value">{{ elapsedLabel }}</text>
-      <input class="history-button" type="button" if="{{ lastOn }}" value="上次训练详情 ›" onclick="openLast" />
-      <div class="metrics"><text class="hr">{{ hrLabel }}</text><text class="energy">{{ kcalLabel }} 千卡</text></div>
-      <text class="op-title" onclick="openExercises">{{ exName }} ›</text><text class="op-group">{{ groupLabel }}</text><div class="op-prescription"><div class="op-metric"><text class="op-label">重量</text><text class="op-detail">{{ weightNum }} {{ weightSuffix }}</text></div><div class="op-metric"><text class="op-label">次数</text><text class="op-detail">{{ repsNum }} {{ repsSuffix }}</text></div></div><text class="op-group">容量 {{ volumeLabel }} {{ weightUnit }}</text>
-      <div class="mrow"><input class="m" type="button" value="上一组" onclick="onPrevSet" /><input class="m" type="button" value="下一组" onclick="onNextSet" /></div>
-      <div class="mrow"><input class="m" type="button" value="加组" onclick="onMenuAddSet" /><input class="m" type="button" value="减组" onclick="onMenuRemoveSet" /></div>
-      <div class="mrow"><input class="m" type="button" value="{{ pauseLabel }}" onclick="onPause" /><input class="m m-end" type="button" value="结束训练" onclick="openFinish" /></div>
-      <input class="abandon-button" type="button" value="放弃训练" onclick="askAbandon" />
-      <div class="return-button" onclick="showCurrent"><image class="back-icon" src="/common/icons/back.svg" /><text class="back-label">返回当前组</text></div>
-    </list-item></list>
-  </div>
-  <div class="completion-panel" if="{{ closeMode === 'complete' && !effortOn }}">
-    <list class="modal-scroll"><list-item type="confirmation" class="modal-content">
-    <text class="completion-title">全部组已完成</text><text class="completion-progress">{{ setProgressLabel }}</text>
-    <input class="completion-btn effort" type="button" if="{{ effortEntryOn }}" value="{{ '登记本组强度 · ' + effortEntryText }}" onclick="openEffort" />
-    <input class="completion-btn finish" type="button" value="保存结束" onclick="saveEnd" /><input class="completion-btn continue" type="button" value="继续训练" onclick="cancelClose" />
-    </list-item></list>
-  </div>
-  <div class="completion-panel confirm-panel" if="{{ closeMode === 'end' }}">
-    <list class="modal-scroll"><list-item type="confirmation" class="modal-content">
-    <text class="confirm-title">结束本次训练？</text><text class="confirm-remain">{{ confirmRemain }}</text><text class="confirm-note">保留已记录的 RPE / RIR</text>
-    <input class="pill confirm-save" type="button" value="保存并结束" onclick="saveEnd" /><input class="pill confirm-back" type="button" value="继续训练" onclick="cancelClose" />
-    </list-item></list>
-  </div>
-  <div class="completion-panel confirm-panel" if="{{ closeMode === 'abandon' }}">
-    <list class="modal-scroll"><list-item type="confirmation" class="modal-content">
-    <text class="confirm-title">放弃本次训练？</text><text class="confirm-note">本次训练不会保存到历史</text>
-    <input class="pill confirm-abandon" type="button" value="确认放弃" onclick="abandonEnd" /><input class="pill confirm-back" type="button" value="继续训练" onclick="cancelClose" />
-    </list-item></list>
-  </div>
-  <div class="effort-layer finish-layer" if="{{ finishOn && !closeMode && !effortOn }}">
-    <div class="topbar"><text class="heart">{{ hrLabel }}</text><text class="clock">{{ clockLabel }}</text></div>
-    <list class="finish-scroll"><list-item type="finish-content" class="scroll-content finish-content">
-    <text class="finish-name">{{ finishName }}</text>
-    <div class="flag" onclick="askEnd"><div class="flag-inner"><div class="pole"></div><div class="pennant"></div></div></div>
-    <text class="finish-title" onclick="askEnd">结束训练</text><text class="finish-count">{{ finishCount }}</text>
-    <input class="last-effort" type="button" if="{{ lastEffortOn }}" value="{{ lastEffortText + '  ›' }}" onclick="openLastEffort" /><text class="finish-back" onclick="closeFinish">继续训练</text>
-    <input class="abandon-button" type="button" value="放弃训练" onclick="askAbandon" />
-    </list-item></list>
-  </div>
-  <div class="effort-layer last-layer" if="{{ lastOpen && !closeMode && !finishOn }}">
-    <div class="last-head"><div class="last-back" onclick="closeLast"><image class="back-icon" src="/common/icons/back.svg" /><text class="back-label">返回训练</text></div></div><text class="last-title">{{ lastTitle }}</text><text class="last-meta">{{ lastMeta }}</text>
-    <list class="last-list" id="history" touch-focusable="true"><list-item class="last-item" type="historyRow" for="{{ r in lastRows }}" tid="key"><text class="last-no">{{ r.no }}</text><text class="last-value">{{ r.label }}</text></list-item></list>
-    <text class="last-hint">仅显示实际完成的工作组 · 不影响本次记录</text>
-  </div>
-  <div class="effort-layer diagnostic-layer" if="{{ diagnosticOn }}"><text class="diagnostic-title">{{ diagnosticTitle }}</text><list class="diagnostic-scroll"><list-item type="diagnostic"><text class="diagnostic-text">{{ diagnosticText }}</text></list-item></list><div class="diagnostic-buttons"><input class="m" type="button" value="返回" onclick="closeDiagnostics" /><input class="m" type="button" value="下一页" onclick="nextDiagnostic" /></div></div>
-  <div class="effort-layer" if="{{ effortOn && !diagnosticOn }}">
-    <list class="effort-scroll"><list-item type="effort-content" class="scroll-content">
-      <div class="effort-head"><div class="effort-back" onclick="closeEffort"><image class="back-icon" src="/common/icons/back.svg" /><text class="back-label">返回</text></div><text class="effort-timer">{{ effortRestLabel }}</text></div>
-      <text class="effort-target">{{ effortTargetLabel }}</text><text class="effort-scale">{{ effortScaleLabel }}</text>
-      <div class="effort-pick"><input class="effort-arrow" type="button" value="−" onclick="effortMinus" /><text class="effort-value">{{ effortDraftLabel }}</text><input class="effort-arrow" type="button" value="+" onclick="effortPlus" /></div>
-      <text class="effort-meaning" if="{{ effortDraft != null }}">{{ effortMeaning }}</text><text class="effort-meaning" if="{{ effortDraft == null }}">尚未登记</text><text class="effort-hint">{{ effortNotice || effortHint }}</text>
-      <div class="effort-actions"><input class="effort-cancel" type="button" value="取消" onclick="closeEffort" /><input class="effort-ok" type="button" value="保存" onclick="confirmEffort" /></div>
-      <text class="effort-clear" if="{{ effortHasSaved }}" onclick="clearEffort">清除评分</text>
-    </list-item></list>
-  </div>
+  <div class="page-dots" if="{{ !closeMode && !effortOn && !lastOpen && !diagnosticOn }}"><div class="pager-dot {{ pageIndex === 0 ? 'pager-current' : '' }}"></div><div class="pager-dot {{ pageIndex === 1 ? 'pager-current' : '' }}"></div><div class="pager-dot {{ pageIndex === 2 ? 'pager-current' : '' }}"></div><div class="pager-dot {{ pageIndex === 3 ? 'pager-current' : '' }}"></div></div>
+  <div class="overlay" if="{{ closeMode && !effortOn }}"><list class="modal-scroll"><list-item type="confirm" class="modal-content"><div class="done-mark" if="{{ closeMode === 'complete' }}"><image class="done-icon" src="/common/icons/wear-check-ink.svg" /></div><text class="confirm-title">{{ closeMode === 'complete' ? '所有组已完成' : closeMode === 'abandon' ? '放弃训练？' : '结束训练？' }}</text><text class="quiet confirm-note">{{ confirmRemain }}</text><input class="row-button" type="button" if="{{ closeMode === 'complete' && effortEntryOn }}" value="{{ effortEntryText }}" onclick="openEffort" /><input class="row-button danger" type="button" if="{{ closeMode === 'abandon' }}" value="放弃训练" onclick="abandonEnd" /><input class="primary-input" type="button" if="{{ closeMode === 'end' }}" value="结束并保存" onclick="saveEnd" /><div class="hold-finish" if="{{ closeMode === 'complete' }}" ontouchstart="startFinishHold" ontouchend="cancelFinishHold" ontouchcancel="cancelFinishHold"><image class="button-icon" src="/common/icons/wear-flag.svg" /><text class="button-word">按住以结束</text><div class="hold-fill" style="width: {{ finishProgress }};"><div class="hold-ink-label"><image class="button-icon" src="/common/icons/wear-flag-ink.svg" /><text class="button-word ink">按住以结束</text></div></div></div><input class="row-button" type="button" value="继续训练" onclick="cancelClose" /></list-item></list></div>
+  <div class="overlay" if="{{ lastOpen && !closeMode }}"><list class="modal-scroll" id="history" touch-focusable="true"><list-item type="last-title" class="modal-content"><text class="confirm-title">{{ lastTitle }}</text><text class="quiet">{{ lastMeta }}</text></list-item><list-item type="last-row" class="history-row" for="{{ r in lastRows }}" tid="key"><text class="history-no">{{ r.no }}</text><text class="history-value">{{ r.label }}</text></list-item><list-item type="last-back" class="modal-content"><input class="row-button" type="button" value="继续训练" onclick="closeLast" /></list-item></list></div>
+  <div class="overlay" if="{{ effortOn && !diagnosticOn }}"><list class="modal-scroll"><list-item type="effort" class="modal-content"><text class="quiet">{{ effortRestLabel }}</text><text class="confirm-title">这组有多吃力？</text><text class="quiet">{{ effortTargetLabel }}</text><text class="quiet">{{ effortScaleLabel }}</text><div class="effort-pick"><input class="edge-button" type="button" value="−" onclick="effortMinus" /><text class="effort-value">{{ effortDraftLabel }}</text><input class="edge-button" type="button" value="+" onclick="effortPlus" /></div><text class="quiet effort-description">{{ effortNotice || effortMeaning || effortHint }}</text><input class="primary-input" type="button" value="保存" onclick="confirmEffort" /><input class="row-button" type="button" value="取消" onclick="closeEffort" /><input class="row-button danger" type="button" if="{{ effortHasSaved }}" value="清除评分" onclick="clearEffort" /></list-item></list></div>
+  <div class="overlay" if="{{ diagnosticOn }}"><list class="modal-scroll"><list-item type="diagnostic" class="modal-content"><text class="confirm-title">{{ diagnosticTitle }}</text><text class="diagnostic-text">{{ diagnosticText }}</text><input class="row-button" type="button" value="下一页" onclick="nextDiagnostic" /><input class="row-button" type="button" value="返回" onclick="closeDiagnostics" /></list-item></list></div>
 </div>
 </template>
-
 <style>
-/* Current set and rest are fixed, non-scrolling screens. Secondary pages scroll.
-   Keep dimensions within the explicit 390×450 / 466×466 safe-area budgets. */
+/* openGym v1.4.5 square Wear UI. Source dp/sp ×1.6, 390×450 design canvas. */
 .page { width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
+.topbar { position: absolute; top: 8px; left: 64px; width: 262px; height: 28px; flex-direction: row; justify-content: space-between; align-items: center; }
+.top-lead { font-size: 19px; color: #FF453A; width: 180px; lines: 1; }
+.clock { color: #FFFFFF; font-size: 19px; width: 70px; text-align: right; }
+.sync-pill { max-width: 180px; height: 26px; border-radius: 13px; background-color: #2E1D02; color: #FF9F0A; font-size: 19px; lines: 1; }
+.pager { width: 100%; flex: 1; min-height: 0px; }
 .screen { width: 100%; height: 100%; flex-direction: column; align-items: center; }
-.topbar { width: 314px; height: 44px; margin-top: 18px; flex-direction: row; align-items: center; justify-content: space-between; flex-shrink: 0; }
-.clock { width: 92px; flex-shrink: 0; font-size: 26px; color: #FFFFFF; text-align: right; lines: 1; }
-.heart { flex: 1; min-width: 0px; font-size: 18px; color: #FF453A; lines: 1; }
-.status { flex: 1; min-width: 0px; height: 44px; line-height: 44px; font-size: 16px; color: #FF9F0A; lines: 1; }
-.training-panel { width: 338px; flex: 1; min-height: 0px; }
-.training-content { width: 338px; flex-direction: column; align-items: flex-start; height: 328px; flex-shrink: 0; }
-.ex { width: 338px; height: 52px; flex-direction: row; align-items: center; }
-.ex-name { width: 246px; height: 52px; line-height: 26px; font-size: 26px; color: #FFFFFF; font-weight: bold; lines: 2; text-overflow: ellipsis; }
-.remaining { width: 84px; height: 52px; margin-left: 8px; font-size: 18px; color: #929297; text-align: right; lines: 1; flex-shrink: 0; }
-.remaining-wide { font-size: 14px; }
-.group { width: 338px; height: 24px; font-size: 19px; color: #929297; lines: 1; }
-.group-done { color: #30D158; }
-.inputs { width: 338px; height: 96px; flex-direction: row; align-items: center; justify-content: space-between; }
-.field { height: 96px; flex-direction: column; align-items: center; border-radius: 16px; background-color: #000000; justify-content: center; }
-.weight-field { width: 157px; }
-.reps-field { width: 157px; }
-.field-selected { background-color: #1C1C1E; border: 1px solid #30D158; }
-.field-done { background-color: #161618; }
-.fval { font-size: 56px; font-weight: bold; color: #FFFFFF; lines: 1; flex-shrink: 0; width: 100%; height: 66px; line-height: 66px; text-align: center; }
-.long-value { font-size: 36px; }
-.extra-long-value { font-size: 27px; }
-.funit { flex-shrink: 0; width: 100%; height: 28px; line-height: 28px; font-size: 20px; color: #929297; text-align: center; lines: 1; }
-.times { width: 24px; font-size: 26px; color: #929297; text-align: center; }
-.last-space { width: 338px; height: 44px; }
-.last-row { width: 338px; height: 44px; align-items: center; }
-.last-text { width: 338px; font-size: 18px; color: #929297; lines: 1; }
-.navrow { width: 338px; height: 64px; flex-direction: row; align-items: center; justify-content: center; }
-.complete { width: 64px; height: 64px; border-radius: 32px; background-color: #30D158; justify-content: center; align-items: center; }
-.complete-icon { width: 40px; height: 40px; }
-.back-icon { width: 26px; height: 26px; margin-right: 6px; }
-.back-label { color: #30D158; font-size: 20px; }
-.secondary { background-color: #242725; color: #30D158; }
-.effort-circle { width: 108px; height: 64px; margin-left: 12px; border-radius: 24px; background-color: #1C1C1E; flex-direction: column; align-items: center; justify-content: center; }
-.effort-caption { font-size: 18px; color: #929297; }
-.effort-entry-value { font-size: 26px; color: #FFFFFF; }
-.set-dots { width: 338px; min-height: 48px; flex-direction: row; flex-wrap: nowrap; align-items: center; justify-content: center; height: 48px; }
-.set-hit { width: 48px; height: 48px; align-items: center; justify-content: center; flex-shrink: 0; }
-.set-dot { width: 24px; height: 24px; border-radius: 12px; background-color: #333638; }
-.set-current { width: 28px; height: 28px; border-radius: 14px; background-color: #000000; border: 2px solid #FFFFFF; }
-.set-done { background-color: #FFFFFF; }
-.segment { background-color: #000000; color: #929297; font-size: 26px; }
-.primary-footer { width: 314px; height: 44px; margin-bottom: 16px; flex-direction: row; align-items: center; justify-content: space-between; flex-shrink: 0; }
-.list-link { width: 152px; height: 44px; line-height: 44px; font-size: 22px; color: #30D158; text-align: center; background-color: #1C1C1E; border-radius: 22px; }
-.end-link { width: 152px; height: 44px; line-height: 44px; font-size: 22px; color: #30D158; text-align: center; background-color: #1C1C1E; border-radius: 22px; }
-.rest-panel { margin-bottom: 0px; justify-content: center; align-items: center; }
-.scroll-content { width: 338px; flex-direction: column; align-items: center; }
-.rest-ex { width: 338px; height: 56px; line-height: 28px; font-size: 26px; color: #FF9F0A; lines: 2; text-align: center; }
-.rest { width: 338px; height: 112px; line-height: 112px; font-size: 88px; color: #FFFFFF; text-align: center; lines: 1; }
-.next { width: 338px; height: 56px; flex-direction: column; align-items: center; }
-.next-name { width: 338px; height: 28px; font-size: 22px; color: #929297; text-align: center; lines: 1; line-height: 28px; text-overflow: ellipsis; }
-.next-set { width: 338px; height: 28px; font-size: 19px; color: #929297; text-align: center; lines: 1; line-height: 28px; }
-.effort-row { width: 338px; height: 56px; border-radius: 18px; background-color: #1C1C1E; color: #FFFFFF; font-size: 22px; }
-.rrow { width: 338px; height: 64px; margin-top: 0px; flex-direction: row; justify-content: space-between; margin-bottom: 18px; flex-shrink: 0; align-items: center; }
-.rbtn { width: 100px; height: 60px; border-radius: 30px; font-size: 23px; background-color: #242725; color: #FFFFFF; }
-.skip { width: 122px; height: 60px; border-radius: 30px; font-size: 25px; background-color: #0A3418; color: #30D158; }
-.operation-scroll { width: 338px; flex: 1; margin-bottom: 24px; min-height: 0px; }
-.elapsed-label { height: 28px; font-size: 19px; color: #929297; }
-.elapsed-value { width: 338px; height: 104px; font-size: 72px; line-height: 104px; color: #FFFFFF; text-align: center; lines: 1; }
-.metrics { width: 338px; height: 56px; flex-direction: row; justify-content: space-between; align-items: center; }
-.hr { font-size: 22px; color: #FF453A; }
-.energy { font-size: 22px; color: #FFFFFF; }
-.op-title { width: 338px; min-height: 64px; font-size: 28px; color: #FFFFFF; lines: 2; line-height: 32px; }
-.op-prescription { width: 338px; min-height: 44px; flex-direction: column; align-items: flex-start; justify-content: space-between; }
-.op-label { width: 72px; flex-shrink: 0; font-size: 20px; color: #929297; }
-.op-metric { width: 338px; min-height: 60px; flex-direction: row; align-items: center; }
-.op-detail { flex: 1; min-width: 0px; font-size: 26px; color: #FFFFFF; lines: 2; }
-.op-group { width: 338px; height: 36px; font-size: 20px; color: #929297; }
-.mrow { width: 338px; height: 72px; flex-direction: row; justify-content: space-between; align-items: center; }
-.m { width: 164px; height: 60px; border-radius: 30px; background-color: #242725; font-size: 24px; color: #FFFFFF; }
-.m-end { background-color: #0A3418; color: #30D158; }
-.return-button { width: 338px; height: 64px; background-color: #000000; color: #30D158; font-size: 20px; align-items: center; justify-content: center; }
-.completion-panel { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; justify-content: flex-start; }
-.completion-title { width: 338px; height: 64px; font-size: 30px; color: #FFFFFF; text-align: center; lines: 2; }
-.completion-progress { width: 338px; height: 44px; font-size: 21px; color: #929297; text-align: center; }
-.completion-btn { width: 338px; height: 64px; margin-top: 12px; border-radius: 32px; font-size: 24px; background-color: #1C1C1E; color: #FFFFFF; }
-.finish { background-color: #0A3418; color: #30D158; }
-.confirm-title { width: 338px; height: 56px; font-size: 28px; color: #FFFFFF; text-align: center; }
-.confirm-remain { width: 338px; height: 72px; font-size: 24px; color: #FFFFFF; text-align: center; lines: 2; }
-.confirm-note { width: 338px; height: 56px; font-size: 21px; color: #929297; text-align: center; lines: 2; }
-.pill { width: 338px; height: 64px; margin-top: 12px; border-radius: 32px; font-size: 24px; }
-.confirm-save { background-color: #0A3418; color: #30D158; }
-.confirm-back { background-color: #242725; color: #FFFFFF; }
-.effort-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
-.finish-scroll { width: 338px; flex: 1; min-height: 0px; margin-bottom: 24px; }
-.finish-content { align-items: center; }
-.abandon-button { width: 338px; height: 60px; flex-shrink: 0; border-radius: 30px; font-size: 24px; background-color: #1C1C1E; color: #FF453A; margin-top: 8px; }
-.confirm-abandon { background-color: #351010; color: #FF453A; }
-.finish-name { width: 338px; height: 48px; font-size: 24px; color: #929297; text-align: center; lines: 2; }
-.flag { width: 132px; height: 132px; border-radius: 66px; background-color: #30D158; align-items: center; justify-content: center; margin-top: 8px; }
-.flag-inner { width: 44px; height: 52px; flex-direction: row; }
-.pole { width: 5px; height: 52px; background-color: #000000; }
-.pennant { width: 34px; height: 29px; background-color: #000000; border-radius: 4px; margin-left: 3px; }
-.finish-title { width: 338px; height: 56px; line-height: 56px; font-size: 30px; color: #30D158; text-align: center; font-weight: bold; }
-.finish-count { width: 338px; height: 38px; font-size: 20px; color: #929297; text-align: center; }
-.last-effort { width: 338px; height: 60px; border-radius: 26px; background-color: #1C1C1E; color: #FFFFFF; font-size: 22px; }
-.finish-back { width: 338px; height: 60px; line-height: 60px; color: #30D158; text-align: center; font-size: 24px; }
-.last-head { width: 314px; height: 64px; margin-top: 18px; align-items: center; }
-.last-back { width: 314px; height: 56px; line-height: 44px; color: #30D158; font-size: 21px; align-items: center; justify-content: center; }
-.last-title { width: 338px; min-height: 42px; font-size: 26px; color: #FFFFFF; lines: 2; }
-.last-meta { width: 338px; height: 40px; font-size: 21px; color: #929297; }
-.last-list { width: 338px; flex: 1; min-height: 0px; }
-.last-item { width: 338px; min-height: 64px; flex-direction: row; align-items: center; }
-.last-no { width: 80px; font-size: 20px; color: #929297; }
-.last-value { width: 258px; font-size: 26px; color: #FFFFFF; lines: 2; }
-.last-hint { width: 314px; height: 54px; margin-bottom: 24px; font-size: 16px; color: #929297; lines: 2; }
-.effort-scroll { width: 338px; flex: 1; min-height: 0px; margin-top: 18px; margin-bottom: 24px; }
-.effort-head { width: 338px; height: 64px; margin-top: 0px; flex-direction: row; align-items: center; justify-content: space-between; }
-.effort-back { width: 126px; height: 56px; line-height: 44px; font-size: 21px; color: #30D158; align-items: center; justify-content: center; }
-.effort-timer { font-size: 17px; color: #FF9F0A; }
-.effort-target { width: 338px; min-height: 64px; font-size: 24px; color: #FFFFFF; lines: 2; line-height: 32px; }
-.effort-scale { width: 338px; height: 36px; font-size: 24px; color: #929297; text-align: center; }
-.effort-pick { width: 338px; height: 112px; flex-direction: row; align-items: center; justify-content: space-between; }
-.effort-arrow { width: 64px; height: 64px; border-radius: 32px; font-size: 34px; background-color: #242725; color: #FFFFFF; }
-.effort-value { width: 194px; height: 110px; line-height: 110px; font-size: 80px; color: #30D158; text-align: center; lines: 1; }
-.effort-meaning { width: 338px; height: 64px; font-size: 24px; color: #FFFFFF; text-align: center; lines: 2; }
-.effort-hint { width: 338px; height: 64px; font-size: 20px; color: #929297; text-align: center; lines: 2; }
-.effort-actions { width: 338px; height: 72px; flex-direction: row; justify-content: space-between; }
-.effort-cancel { width: 146px; height: 64px; border-radius: 28px; font-size: 24px; background-color: #242725; color: #FFFFFF; }
-.effort-ok { width: 182px; height: 64px; border-radius: 28px; font-size: 24px; background-color: #0A3418; color: #30D158; }
-.effort-clear { width: 314px; height: 56px; margin-bottom: 0px; line-height: 56px; font-size: 22px; color: #FF9F0A; text-align: center; }
-.diagnostic-layer { justify-content: center; }
-.diagnostic-title { width: 314px; min-height: 64px; font-size: 24px; color: #FFFFFF; lines: 2; line-height: 32px; margin-top: 24px; }
-.diagnostic-scroll { width: 338px; flex: 1; min-height: 0px; }
-.diagnostic-text { width: 338px; font-size: 22px; color: #FFFFFF; lines: 0; }
-.diagnostic-buttons { width: 338px; height: 72px; flex-direction: row; justify-content: space-between; margin-bottom: 24px; }
-
-.rest-content { width: 338px; flex-direction: column; align-items: center; }
-.history-button { width: 338px; height: 60px; margin-bottom: 12px; border-radius: 30px; font-size: 23px; background-color: #1C1C1E; color: #FFFFFF; }
-.modal-scroll { width: 338px; flex: 1; min-height: 0px; margin-top: 40px; margin-bottom: 32px; }
-.modal-content { width: 338px; flex-direction: column; align-items: center; padding-bottom: 16px; }
-
-@media screen and (device: watch-round) {
-
- .topbar { width: 220px; margin-top: 30px; }
- .training-panel, .training-content, .inputs, .last-space, .last-row, .last-text, .navrow, .set-dots, .ex, .group, .rest-content, .rest-ex, .rest, .next, .effort-row, .rrow { width: 300px; }
- .training-content { height: 322px; }
- .ex-name { width: 208px; }
- .next-name, .next-set { width: 300px; }
- .group { height: 22px; font-size: 18px; }
- .inputs, .field { height: 92px; }
- .weight-field, .reps-field { width: 138px; }
- .fval { height: 62px; line-height: 62px; font-size: 52px; }
- .long-value { font-size: 32px; }
- .extra-long-value { font-size: 24px; }
- .effort-circle { width: 96px; margin-left: 10px; }
- .set-hit { width: 48px; height: 48px; }
- .set-dots { justify-content: center; }
- .primary-footer { width: 220px; margin-bottom: 26px; }
- .list-link, .end-link { width: 104px; font-size: 22px; }
- .rrow { width: 260px; margin-bottom: 36px; }
- .rbtn { width: 76px; height: 56px; font-size: 20px; }
- .skip { width: 92px; height: 56px; font-size: 23px; }
- .operation-scroll, .finish-scroll, .last-list { width: 300px; margin-bottom: 58px; }
- .scroll-content, .history-button, .op-title, .op-prescription, .op-metric, .op-group, .mrow, .return-button, .abandon-button, .elapsed-value, .metrics { width: 300px; }
- .m { width: 144px; }
- .finish-name, .finish-title, .finish-count, .last-effort, .finish-back, .last-title, .last-meta, .last-item { width: 300px; }
- .last-head { width: 220px; margin-top: 30px; }
- .last-back { width: 220px; }
- .last-value { width: 220px; }
- .last-hint { width: 280px; margin-bottom: 58px; }
- .last-list { margin-bottom: 0px; }
- .effort-scroll, .modal-scroll { width: 300px; margin-top: 58px; margin-bottom: 58px; }
- .effort-head, .effort-target, .effort-scale, .effort-pick, .effort-meaning, .effort-hint, .effort-actions, .effort-clear, .modal-content { width: 300px; }
- .effort-value { width: 156px; }
- .effort-cancel { width: 128px; }
- .effort-ok { width: 160px; }
- .completion-btn, .completion-title, .completion-progress, .confirm-title, .confirm-remain, .confirm-note, .pill { width: 300px; }
- .diagnostic-scroll, .diagnostic-buttons, .diagnostic-text { width: 300px; }
- .diagnostic-title { width: 300px; margin-top: 58px; }
- .diagnostic-buttons { margin-bottom: 58px; }
-
-}
+.page-dots { width: 100%; height: 26px; flex-direction: row; justify-content: center; align-items: center; }
+.pager-dot { width: 6px; height: 6px; border-radius: 3px; background-color: #4A4A4D; margin-left: 4px; margin-right: 4px; }
+.pager-current { background-color: #FFFFFF; }
+.overview-scroll { width: 352px; flex: 1; min-height: 0px; margin-top: 42px; margin-bottom: 24px; padding-top: 6px; padding-bottom: 40px; }
+.overview-head { width: 352px; flex-direction: column; align-items: center; margin-bottom: 5px; }
+.overview-name { width: 340px; font-size: 24px; font-weight: bold; color: #FFFFFF; text-align: center; lines: 2; }
+.quiet { color: #8D8D93; font-size: 19px; text-align: center; lines: 2; }
+.overview-row { width: 352px; min-height: 77px; padding: 10px 13px; background-color: #1C1C1E; border-radius: 19px; margin-bottom: 5px; flex-direction: row; align-items: center; border-width: 2px; border-color: #1C1C1E; }
+.overview-current { background-color: #2C2C2E; border-color: #A3E635; }
+.exercise-mark { width: 48px; height: 48px; border-radius: 11px; background-color: #2C2C2E; align-items: center; justify-content: center; margin-right: 13px; }
+.mark-icon { width: 19px; height: 19px; }
+.overview-copy { flex: 1; min-width: 0px; flex-direction: column; }
+.overview-ex { font-size: 21px; font-weight: bold; color: #FFFFFF; lines: 2; }
+.overview-count { font-size: 19px; color: #8D8D93; }
+.muted { color: #8D8D93; }
+.overview-actions { width: 352px; flex-direction: column; align-items: center; }
+.sync-line { margin-top: 10px; margin-bottom: 6px; }
+.hold-finish { width: 100%; height: 77px; border-radius: 39px; background-color: #2C2C2E; border-width: 2px; border-color: #A3E635; align-items: center; justify-content: center; margin-top: 6px; margin-bottom: 5px; }
+.hold-fill { overflow: hidden; position: absolute; top: 0px; left: 0px; height: 100%; background-color: #A3E635; border-radius: 39px; }
+.hold-ink-label { width: 348px; height: 73px; flex-shrink: 0; align-items: center; justify-content: center; }
+.button-word.ink { color: #0C0E12; }
+.button-icon { width: 22px; height: 22px; margin-right: 10px; }
+.button-word { font-size: 24px; color: #FFFFFF; font-weight: bold; lines: 1; }
+.row-button { width: 100%; height: 77px; border-radius: 22px; background-color: #1C1C1E; color: #FFFFFF; font-size: 24px; margin-bottom: 5px; }
+.danger { color: #FF453A; }
+.extension-row { width: 100%; height: 77px; flex-direction: row; justify-content: space-between; margin-bottom: 5px; }
+.extension-button { width: 173px; height: 77px; border-radius: 22px; background-color: #1C1C1E; color: #FFFFFF; font-size: 24px; }
+.training-content { width: 364px; height: 100%; padding-top: 42px; padding-bottom: 10px; flex-direction: column; align-items: center; }
+.set-lines { width: 364px; flex: 1; min-height: 0px; flex-direction: column; align-items: center; }
+.ex-name { width: 352px; min-height: 58px; line-height: 29px; font-size: 24px; font-weight: bold; color: #FFFFFF; text-align: center; lines: 2; }
+.place { width: 352px; min-height: 28px; line-height: 24px; font-size: 19px; color: #8D8D93; text-align: center; lines: 2; margin-top: 3px; margin-bottom: 3px; }
+.inputs { width: 364px; height: 140px; flex-direction: row; justify-content: space-between; }
+.field { width: 178px; height: 140px; border-radius: 19px; background-color: #1A2508; border-width: 3px; border-color: #1A2508; flex-direction: column; align-items: center; justify-content: center; padding: 5px 6px; }
+.field-selected { border-color: #A3E635; }
+.field-label { color: #A3E635; font-size: 21px; font-weight: bold; text-align: center; height: 30px; }
+.field-number { width: 160px; height: 84px; flex-direction: row; align-items: center; justify-content: center; }
+.fval { height: 84px; line-height: 80px; font-size: 64px; color: #A3E635; font-weight: bold; max-width: 160px; lines: 1; }
+.long-value { font-size: 26px; }
+.funit { color: #83B82A; font-size: 22px; margin-left: 4px; height: 38px; margin-top: 25px; }
+.last-text { width: 352px; min-height: 28px; color: #8D8D93; font-size: 19px; text-align: center; lines: 1; margin-top: 3px; }
+.navrow { width: 364px; height: 77px; flex-direction: row; justify-content: space-between; align-items: center; margin-top: 6px; }
+.arrow-button { width: 51px; height: 77px; border-radius: 16px; background-color: #1C1C1E; justify-content: center; align-items: center; }
+.arrow-icon { width: 26px; height: 26px; }
+.primary-button { width: 249px; height: 77px; border-radius: 39px; background-color: #A3E635; align-items: center; justify-content: center; }
+.primary-word { font-size: 24px; font-weight: bold; color: #0C0E12; lines: 1; }
+.rest-content { width: 370px; height: 100%; padding-top: 36px; padding-bottom: 10px; flex-direction: column; align-items: center; }
+.countdown-row { width: 370px; flex: 1; min-height: 77px; flex-direction: row; align-items: center; }
+.rest { flex: 1; height: 136px; line-height: 134px; font-size: 110px; font-weight: bold; color: #A3E635; text-align: center; lines: 1; }
+.rest-warning { color: #FF9F0A; }
+.arrow-spacer { width: 51px; height: 77px; }
+.time-track { width: 344px; height: 8px; border-radius: 4px; background-color: #2C2C2E; margin-bottom: 5px; }
+.time-fill { height: 8px; border-radius: 4px; background-color: #A3E635; }
+.rrow { width: 370px; height: 77px; flex-direction: row; align-items: center; justify-content: space-between; margin-bottom: 5px; }
+.edge-button { width: 64px; height: 64px; border-radius: 32px; background-color: #2C2C2E; font-size: 21px; font-weight: bold; color: #FFFFFF; align-items: center; justify-content: center; }
+.skip-button { width: 229px; height: 77px; border-radius: 22px; background-color: #1C1C1E; align-items: center; justify-content: center; }
+.effort-slot { width: 370px; height: 74px; flex-direction: column; align-items: center; justify-content: center; margin-bottom: 5px; }
+.chip-row { width: 350px; height: 45px; flex-direction: row; justify-content: space-between; margin-top: 3px; }
+.effort-chip { width: 82px; height: 45px; border-radius: 23px; font-size: 21px; font-weight: bold; }
+.band-0 { color: #BF5AF2; background-color: #22102C; }
+.band-1 { color: #FF453A; background-color: #2E0C0A; }
+.band-2 { color: #FF9F0A; background-color: #2E1D02; }
+.band-3 { color: #FFD60A; background-color: #2E2702; }
+.band-4 { color: #A3E635; background-color: #1D290A; }
+.rated-pill { min-width: 136px; height: 45px; border-radius: 23px; font-size: 19px; color: #A3E635; background-color: #1D290A; }
+.up-next { width: 370px; min-height: 76px; flex-direction: column; align-items: center; }
+.up-next-head { width: 370px; height: 26px; flex-direction: row; justify-content: space-between; align-items: center; }
+.next-label { color: #A3E635; font-size: 19px; font-weight: bold; }
+.next-name { width: 352px; min-height: 25px; font-size: 19px; color: #8D8D93; text-align: center; lines: 2; }
+.next-values { width: 352px; height: 28px; color: #FFFFFF; font-size: 21px; font-weight: bold; text-align: center; lines: 1; }
+.metrics-main { width: 358px; height: 100%; padding-top: 48px; flex-direction: column; }
+.metric-time { width: 358px; height: 112px; font-size: 102px; color: #FFD60A; font-weight: bold; lines: 1; }
+.metric-line { width: 358px; height: 62px; flex-direction: row; align-items: center; }
+.metric-number { font-size: 58px; color: #FFFFFF; font-weight: bold; max-width: 286px; lines: 1; }
+.metric-heart { width: 27px; height: 27px; margin-left: 6px; }
+.metric-unit { font-size: 24px; color: #FFFFFF; margin-left: 6px; margin-top: 19px; }
+.red { color: #FF453A; }
+.metric-efforts { width: 352px; padding-top: 54px; flex-direction: column; }
+.metric-effort-row { width: 352px; min-height: 60px; padding: 8px 12px; border-radius: 26px; background-color: #1C1C1E; align-items: center; margin-bottom: 10px; }
+.effort-ex { flex: 1; color: #FFFFFF; font-size: 21px; lines: 2; }
+.effort-average { min-width: 61px; height: 39px; border-radius: 20px; background-color: #A3E635; color: #0C0E12; font-size: 24px; font-weight: bold; text-align: center; }
+.zone-page { width: 336px; height: 330px; margin-top: 48px; flex-direction: column; justify-content: space-between; }
+.zone-track { width: 336px; height: 62px; border-radius: 19px; border-width: 3px; border-color: #000000; align-items: center; }
+.zone-dim { opacity: 0.7; }
+.zone-no-age { opacity: 0.3; }
+.zone-current { border-color: #FFFFFF; }
+.zone-fill { position: absolute; left: 0px; top: 0px; height: 100%; border-radius: 16px; background-color: #FFFFFF; opacity: 0.5; }
+.zone-copy { width: 100%; height: 100%; padding: 0px 10px; flex-direction: row; align-items: center; }
+.zone-name { color: #FFFFFF; font-size: 21px; font-weight: bold; width: 40px; }
+.zone-band { color: #FFFFFF; font-size: 19px; flex: 1; }
+.zone-time { color: #FFFFFF; font-size: 21px; font-weight: bold; }
+.pulse-min { color: #FFFFFF; font-size: 42px; font-weight: bold; margin-left: 12px; }
+.zone-red { background-color: #380F0D; }
+.zone-orange { background-color: #382302; }
+.zone-yellow { background-color: #382F02; }
+.zone-green { background-color: #24330C; }
+.zone-teal { background-color: #0E2C31; }
+.no-age { position: absolute; top: 115px; left: 0px; width: 336px; min-height: 80px; padding: 10px 13px; background-color: #1C1C1E; border-radius: 26px; flex-direction: column; align-items: center; justify-content: center; }
+.no-age-title { font-size: 21px; font-weight: bold; color: #FFFFFF; text-align: center; }
+.muscles-page { width: 100%; height: 100%; }
+.muscle-list { position: absolute; left: 38px; top: 96px; width: 314px; flex-direction: column; }
+.muscle-row { width: 314px; min-height: 40px; margin-bottom: 3px; flex-direction: row; align-items: center; }
+.muscle-dot { width: 11px; height: 11px; border-radius: 6px; margin-right: 11px; }
+.muscle-number { width: 51px; color: #A3E635; font-size: 24px; text-align: right; font-weight: bold; margin-right: 11px; }
+.muscle-name { flex: 1; color: #FFFFFF; font-size: 21px; font-weight: bold; lines: 3; }
+.more-muscles { margin-left: 84px; text-align: left; }
+.muscle-segment { position: absolute; left: 16px; margin-top: 96px; width: 11px; border-radius: 6px; }
+.muscle-track { position: absolute; left: 16px; top: 96px; width: 11px; height: 260px; background-color: #2C2C2E; border-radius: 6px; }
+.muscle-empty { position: absolute; left: 54px; top: 109px; font-size: 24px; font-weight: bold; }
+.vertical-dots { position: absolute; top: 185px; right: 5px; width: 12px; height: 54px; flex-direction: column; align-items: center; justify-content: space-between; }
+.media-scroll { width: 332px; height: 100%; padding-top: 48px; padding-bottom: 54px; }
+.media-content { width: 332px; flex-direction: column; align-items: center; }
+.media-title { font-size: 22px; font-weight: bold; color: #FFFFFF; margin-bottom: 13px; }
+.media-hint { width: 332px; margin-bottom: 13px; lines: 3; }
+.media-buttons { width: 300px; height: 90px; flex-direction: row; align-items: center; justify-content: space-between; margin-bottom: 13px; }
+.media-edge { width: 77px; height: 77px; border-radius: 39px; background-color: #2C2C2E; align-items: center; justify-content: center; }
+.media-primary { width: 90px; height: 90px; border-radius: 45px; background-color: #A3E635; align-items: center; justify-content: center; }
+.media-icon { width: 28px; height: 28px; }
+.media-play-icon { width: 38px; height: 38px; }
+.volume-buttons { width: 150px; height: 64px; flex-direction: row; justify-content: space-between; margin-bottom: 13px; }
+.disabled { opacity: 0.35; }
+.overlay { position: absolute; top: 0px; left: 0px; width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
+.modal-scroll { width: 320px; flex: 1; min-height: 0px; margin-top: 40px; margin-bottom: 32px; padding-top: 8px; padding-bottom: 32px; }
+.modal-content { width: 320px; flex-direction: column; align-items: center; }
+.confirm-title { width: 320px; min-height: 52px; font-size: 26px; font-weight: bold; color: #FFFFFF; text-align: center; lines: 2; }
+.confirm-note { width: 320px; margin-bottom: 10px; }
+.primary-input { width: 320px; height: 77px; border-radius: 39px; background-color: #A3E635; color: #0C0E12; font-size: 24px; font-weight: bold; margin-top: 6px; margin-bottom: 5px; }
+.done-mark { width: 64px; height: 64px; border-radius: 32px; background-color: #A3E635; align-items: center; justify-content: center; margin-bottom: 10px; }
+.done-icon { width: 32px; height: 32px; }
+.history-row { width: 320px; min-height: 60px; flex-direction: row; align-items: center; }
+.history-no { width: 60px; font-size: 19px; color: #8D8D93; }
+.history-value { width: 260px; font-size: 24px; color: #FFFFFF; lines: 2; }
+.effort-pick { width: 320px; height: 100px; flex-direction: row; align-items: center; justify-content: space-between; }
+.effort-value { width: 180px; font-size: 64px; color: #A3E635; text-align: center; }
+.effort-description { width: 320px; min-height: 50px; lines: 3; }
+.diagnostic-text { width: 320px; font-size: 19px; color: #FFFFFF; lines: 0; margin-bottom: 12px; }
 </style>

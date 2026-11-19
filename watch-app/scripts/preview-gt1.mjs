@@ -46,6 +46,7 @@ function page(name, env = environment()) {
 function workout(configure = () => {}) {
   const env = environment(); const s = env.ctx.startSession(clone(plan))
   s.startedAt = Date.now() - 32 * 60000; s.effortScale = 'rpe'; s.setIdx = 2
+  s.hr={count:3,sum:354,max:120,min:116,last:118,sampleAt:Date.now(),bpmSeconds:{116:10,120:10}}
   s.workout.rows[0][0].done = true; s.workout.rows[0][0].at = Date.now() - 120000
   s.workout.rows[0][1].done = true; s.workout.rows[0][1].at = Date.now() - 110000
   configure(s); env.ctx.save(s)
@@ -94,7 +95,7 @@ p.targetName='这是一个用于验证两行显示的很长的训练动作名称
 env=environment();env.disk.set('plan_catalog',{plans:[{...plan,name:'这是一个用于验证两行训练计划名称显示的推部训练计划'}]});env.disk.set('summary_last',{savedAt:Date.now()});p=page('Index',env);p.onInit({});scene('32-home-long','Index',p,'首页 · 长计划名与最近结果')
 p=workout();p.openFinish();scene('33-finish-bottom','Workout',p,'结束页 · 放弃入口',true)
 p=workout();p.openFinish();p.askAbandon();scene('34-abandon-confirm','Workout',p,'放弃训练 · 独立确认')
-p=workout(s=>{s.workout.rows[0][2].w='99999.999';s.workout.rows[0][2].r='99999'});p.pageIndex=1;p.syncLabel='正在同步训练记录，请保持连接';scene('35-operation-long','Workout',p,'操作页 · 长数值与同步状态')
+p=workout(s=>{s.workout.rows[0][2].w='99999.999';s.workout.rows[0][2].r='99999'});p.pageIndex=2;p.syncLabel='正在同步训练记录，请保持连接';scene('35-operation-long','Workout',p,'操作页 · 长数值与同步状态')
 p=workout();p.inputNotice='同步中，请稍候再编辑';scene('36-current-notice','Workout',p,'当前组 · 输入提示')
 p=workout();p.diagnosticOn=true;p.diagnosticTitle='同步诊断 1/3';p.diagnosticText='圆点待处理：否\n本地保存：成功\n页面状态：已更新\n'+('同步事件已确认\n'.repeat(12));scene('37-diagnostics','Workout',p,'同步诊断 · 大字')
 p=workout();p.openEffort();p.effortDraftLabel='0';p.effortMeaning='还能再做零次';p.effortNotice='手机已更改本组评分，请确认后重新保存';p.effortHasSaved=true;scene('38-effort-notice','Workout',p,'评分 · 过期提示与清除')
@@ -120,9 +121,19 @@ for (let i=0;i<longNames.length;i++) {
 }
 p=workout(s=>{s.workout.exercises[0].name=longNames[0];s.restUntil=Date.now()+90000});scene('51-long-rest','Workout',p,'长动作名休息 · 组号独立')
 p=workout();p.inputNotice='请先同步或恢复存储后再编辑';scene('52-input-warning','Workout',p,'错误提示 · 保留全宽')
+p=workout();p.pageIndex=0;scene('53-official-overview','Workout',p,'官方概览 · 当前与已完成动作')
+scene('54-official-overview-actions','Workout',p,'官方结束控件 · 保留本地操作入口',true)
+p=workout();p.pageIndex=2;scene('55-official-numbers','Workout',p,'官方统计 · 数值')
+p=workout(s=>{s.hr={count:3,sum:360,max:150,min:100,last:110,sampleAt:Date.now(),bpmSeconds:{100:12,120:30,150:5}}});p.pageIndex=2;p.metricKind='pulse';scene('56-official-pulse','Workout',p,'心率统计 · 曲线尚未移植')
+p.metricKind='zones';scene('57-official-no-age','Workout',p,'官方心率区间 · 真实缺年龄空态')
+p=workout(s=>{s.profile={birthYear:1996};s.hr={count:4,sum:552,max:169,min:112,last:150,sampleAt:Date.now(),bpmSeconds:{112:30,113:12,150:3,169:15}}});p.pageIndex=2;p.metricKind='zones';scene('58-official-zones','Workout',p,'官方心率区间 · 真实样本计算')
+p=workout(s=>{s.workout.exercises[0].muscles={chest:1,triceps:.5,deltoids:.3}});p.pageIndex=2;p.metricKind='muscles';scene('59-official-muscles','Workout',p,'官方肌群 · 完成组权重计算')
+p=workout();p.pageIndex=2;p.metricKind='muscles';scene('60-muscles-no-metadata','Workout',p,'已有训练 · 缺肌肉元数据')
+p=workout();p.pageIndex=3;scene('61-media-platform-gap','Workout',p,'媒体控制 · 平台接口未验证')
+p=workout();p.pageIndex=0;p.overviewRows=[];p.finishProgress='50%';scene('62-finish-progress','Workout',p,'按住结束 · 50% 填充')
 const runtime = `
 function val(exp,ctx){if(typeof exp!=='string')return exp;if(exp.startsWith('function'))return Function('return ('+exp+')')().call(ctx);return exp.split('.').reduce((a,k)=>a?.[k],ctx)}
-function render(n,ctx){if(n.repeat){let frag=document.createDocumentFragment();for(const item of val(n.repeat.$exp,ctx)||[]){let sub=Object.create(ctx);sub[n.repeat.value]=item;frag.append(render({...n,repeat:null},sub))}return frag}if(n.$shown&&!val(n.$shown,ctx))return document.createDocumentFragment();const el=document.createElement(n.type==='input'?'button':n.type==='text'?'native-text':n.type==='image'?'img':'div');el.className=(n.$class?val(n.$class,ctx).flat(Infinity).filter(Boolean).join(' '):n.class||'');el.dataset.type=n.type;if(n.action||n.events?.click||n.events?.$click)el.dataset.action=n.action||n.events.click||n.events.$click;let a=n.attr||{};if(a.id)el.id=a.id;if(n.type==='image'){let src=a.$src?val(a.$src,ctx):a.src;el.src=ICONS[src]||src;el.alt=''}if(a.$disabled)el.disabled=!!val(a.$disabled,ctx);if(n.style)Object.assign(el.style,n.style);if(n.type==='text'||n.type==='input'){let text=a.$value?val(a.$value,ctx):a.value||'';let span=document.createElement('span');span.textContent=text??'';el.append(span)}for(let c of n.children||[])el.append(render(c,ctx));return el}
+function render(n,ctx){if(n.repeat){let frag=document.createDocumentFragment();for(const item of val(n.repeat.$exp,ctx)||[]){let sub=Object.create(ctx);sub[n.repeat.value]=item;frag.append(render({...n,repeat:null},sub))}return frag}if(n.$shown&&!val(n.$shown,ctx))return document.createDocumentFragment();const el=document.createElement(n.type==='input'?'button':n.type==='text'?'native-text':n.type==='image'?'img':'div');el.className=(n.$class?val(n.$class,ctx).flat(Infinity).filter(Boolean).join(' '):n.class||'');el.dataset.type=n.type;if(n.action||n.events?.click||n.events?.$click)el.dataset.action=n.action||n.events.click||n.events.$click;let a=n.attr||{};if(a.id)el.id=a.id;if(n.type==='image'){let src=a.$src?val(a.$src,ctx):a.src;el.src=ICONS[src]||src;el.alt=''}if(a.$disabled)el.disabled=!!val(a.$disabled,ctx);if(n.style)Object.assign(el.style,n.style);for(const [k,v] of Object.entries(n.inlineStyle||{}))el.style[k.startsWith('$')?k.slice(1):k]=k.startsWith('$')?val(v,ctx):v;if(n.type==='text'||n.type==='input'){let text=a.$value?val(a.$value,ctx):a.value||'';let span=document.createElement('span');span.textContent=text??'';el.append(span)}for(let c of n.children||[])el.append(render(c,ctx));return el}
 document.querySelector('#viewport').append(render(SCENE.template,SCENE.state));
 for(let el of document.querySelectorAll('[data-type="text"]')){const lines=getComputedStyle(el).getPropertyValue('-webkit-line-clamp').trim();if(lines){el.firstChild.style.webkitLineClamp=lines}}
 if(SCENE.bottom)for(let el of document.querySelectorAll('[data-type="list"]'))el.scrollTop=el.scrollHeight;

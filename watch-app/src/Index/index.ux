@@ -8,10 +8,10 @@ import { WATCH_VERSION } from '../lib/version.js'
 
 export default {
   data: { version: WATCH_VERSION, status: '正在连接手机', plans: [], selected: null, workoutName: '',
-    exerciseCount: 0, canResume: false, conflict: null, hasSummary: false,
+    exerciseCount: 0, setCount: 0, canResume: false, conflict: null, hasSummary: false,
     // 文案由数据决定：有今日计划就是“开始训练”，只有缓存计划就是“快速开始”；
     // 本地没有缓存、手机也没下发过时提示去同步，而不是假装“今日没有计划”。
-    todayLabel: '今日训练', startLabel: '快速开始', needSync: false },
+    todayLabel: '今天', startLabel: '快速开始', needSync: false },
   onInit(params) {
     if (this.$app && this.$app.$def) bindRuntime(this.$app.$def)
     this.visible = true
@@ -63,11 +63,11 @@ export default {
       preview: (p.exercises || []).slice(0, 3).map(e => (e && e.name) || '').filter(Boolean).join('、')
         + ((p.exercises || []).length > 3 ? ' 等 ' + p.exercises.length + ' 个动作' : ''),
     }))
-    if (!this.selected || !this.plans.some(p => p.id === this.selected.id)) this.selected = this.plans[0] || null
+    if (!this.selected || !this.plans.some(p => p.id === this.selected.id)) this.selected = this.plans.find(p => p.today) || this.plans[0] || null
     this.startLabel = this.plans.some(p => p.today) ? '开始训练' : '快速开始'
     // 手机刚下发计划：立即不再提示“请先同步”，否则要等到下一次 onShow 才更新。
     this.needSync = !this.plans.length && !this.canResume
-    if (!this.canResume && this.selected) { this.workoutName = this.selected.name; this.exerciseCount = this.selected.exercises.length }
+    if (!this.canResume && this.selected) { this.workoutName = this.selected.name; this.exerciseCount = this.selected.exercises.length; this.setCount = this.selected.exercises.reduce((n,e) => n + Number(e.sets || 0), 0) }
   },
   onPlan(msg) {
     if (!msg || !Array.isArray(msg.exercises) || !msg.exercises.length) return { status: 'rejected', reason: 'empty_exercises', page: 'Index' }
@@ -91,7 +91,8 @@ export default {
     this.enterWorkout()
     return { status: 'applied', page: 'Index' }
   },
-  choose(p) { this.selected = p; this.workoutName = p.name; this.exerciseCount = p.exercises.length },
+  startPlan(p) { this.choose(p); return this.onStart() },
+  choose(p) { this.selected = p; this.workoutName = p.name; this.exerciseCount = p.exercises.length; this.setCount = p.exercises.reduce((n,e) => n + Number(e.sets || 0), 0) },
   async onStart() {
     if (this.startSaving) return
     if (loadState().active) { this.onResume(); return }
@@ -125,66 +126,30 @@ export default {
   showSummary() { router.push({ uri: '/Summary' }) },
 }
 </script>
-<template>
-<div class="page">
-  <div class="content" if="{{ !conflict }}">
-    <div class="topbar"><text class="brand">opengym</text><text class="version">v{{ version }}</text></div>
-    <list class="home-scroll"><list-item type="intro" class="home-section">
-    <text class="status">{{ status }}</text>
-    <div class="hero" if="{{ canResume }}"><text class="card-name">{{ workoutName }}</text><text class="card-meta">{{ exerciseCount }} 个动作 · 训练进行中</text><div class="start-circle" onclick="onResume"><image class="start-icon" src="/common/icons/play.svg" /></div><text class="start-label" onclick="onResume">继续当前训练</text></div>
-    <div class="hero" if="{{ !canResume && selected }}"><text class="card-name">{{ selected.name }}</text><text class="card-meta">{{ exerciseCount }} 个动作</text><div class="start-circle" onclick="onStart"><image class="start-icon" src="/common/icons/play.svg" /></div><text class="start-label" onclick="onStart">{{ startLabel }}</text></div>
-    </list-item><list-item class="plan {{ selected && selected.id === p.id ? 'selected' : '' }}" type="plan" for="{{ p in (canResume ? [] : plans) }}" tid="id" onclick="choose(p)"><text class="plan-name">{{ p.name }} ›</text><text class="plan-preview">{{ p.preview }}</text></list-item><list-item type="home-links" class="home-section">
-    <div class="empty-state" if="{{ !canResume && !plans.length }}"><text class="empty-icon">＋</text><text class="empty-title">{{ needSync ? '尚未同步' : '暂无可用计划' }}</text><text class="empty">{{ needSync ? '请先打开手机应用同步计划' : '在手机上创建训练计划后同步至手表' }}</text></div>
-    <div class="links" if="{{ hasSummary }}"><input class="link" type="button" value="最近训练结果 ›" onclick="showSummary" if="{{ hasSummary }}" /></div>
-    </list-item></list>
-  </div>
-  <div class="overlay" if="{{ conflict }}"><list class="modal-scroll"><list-item type="conflict" class="modal-content"><text class="overlay-title">手机已有活动训练</text><text class="overlay-text">继续手机训练将丢弃本地未保存训练</text><input class="btn" type="button" value="继续手机训练" onclick="acceptConflict" /><input class="link" type="button" value="返回" onclick="keepConflict" /></list-item></list></div>
-</div>
-</template>
-
+<template><div class="page"><list class="home-scroll" if="{{ !conflict }}"><list-item type="today" class="home-section"><text class="today" if="{{ selected }}">今天</text><div class="today-card" if="{{ selected }}"><text class="card-name">{{ workoutName }}</text><div class="stats"><div class="stat"><text class="stat-number">{{ exerciseCount }}</text><text class="quiet">动作库</text></div><div class="stat"><text class="stat-number">{{ setCount }}</text><text class="quiet">组数</text></div></div><input class="primary" type="button" value="{{ canResume ? '继续训练' : startLabel }}" onclick="onStart" /></div><div class="empty-state" if="{{ !selected && !canResume }}"><image class="logo" src="/common/icons/wear-logo.svg" /><text class="empty-title">{{ needSync ? '尚未同步' : '没有进行中的训练' }}</text><text class="quiet empty-hint">在手机上打开一次 openGym，你的训练计划就会出现在这里。</text></div></list-item><list-item type="plan" class="plan" for="{{ p in (canResume ? [] : plans) }}" tid="id" onclick="startPlan(p)"><image class="play-icon" src="/common/icons/wear-play.svg" /><text class="plan-name">{{ p.name }}</text></list-item><list-item type="status" class="home-section"><text class="quiet sync-line">{{ status }}</text><text class="version">v{{ version }}</text><input class="row-button" type="button" if="{{ hasSummary }}" value="最近训练结果" onclick="showSummary" /></list-item></list><div class="overlay" if="{{ conflict }}"><list class="modal-scroll"><list-item type="conflict" class="home-section"><text class="empty-title">手机已有活动训练</text><text class="quiet empty-hint">继续手机训练将丢弃本地未保存训练</text><input class="primary" type="button" value="继续手机训练" onclick="acceptConflict" /><input class="row-button" type="button" value="返回" onclick="keepConflict" /></list-item></list></div></div></template>
 <style>
-/* Full viewport; Apple-style routine hero, circular start, scrollable alternate plans. */
+/* Screens.kt StartScreen/TodayCard; source dp/sp ×1.6. */
 .page { width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
-.content { width: 100%; height: 100%; flex-direction: column; align-items: center; }
-.topbar { width: 314px; height: 44px; margin-top: 18px; flex-direction: row; justify-content: space-between; align-items: center; }
-.brand { font-size: 26px; color: #FFFFFF; }
-.version { font-size: 18px; color: #929297; }
-.status { width: 338px; height: 40px; font-size: 20px; color: #FF9F0A; lines: 2; }
-.hero { width: 338px; height: 244px; flex-direction: column; align-items: center; }
-.card-name { width: 338px; height: 64px; line-height: 32px; font-size: 28px; font-weight: bold; color: #FFFFFF; text-align: center; lines: 2; }
-.card-meta { width: 338px; height: 32px; font-size: 21px; color: #929297; text-align: center; lines: 1; }
-.start-circle { width: 96px; height: 96px; border-radius: 48px; background-color: #30D158; align-items: center; justify-content: center; }
-.start-icon { width: 42px; height: 42px; }
-.start-label { width: 338px; height: 52px; line-height: 52px; font-size: 25px; font-weight: bold; color: #30D158; text-align: center; }
-.plan { width: 338px; min-height: 128px; padding: 12px; margin-bottom: 12px; border-radius: 22px; background-color: #1C1C1E; flex-direction: column; }
-.selected { background-color: #242725; }
-.plan-name { width: 314px; height: 64px; line-height: 32px; font-size: 26px; color: #FFFFFF; lines: 2; }
-.plan-preview { width: 314px; height: 56px; line-height: 28px; font-size: 20px; color: #929297; lines: 2; }
-.empty-state { width: 338px; flex-direction: column; justify-content: center; align-items: center; min-height: 244px; }
-.empty-icon { width: 100px; height: 94px; font-size: 80px; color: #30D158; text-align: center; }
-.empty-title { width: 338px; height: 48px; font-size: 27px; color: #FFFFFF; text-align: center; }
-.empty { width: 310px; min-height: 72px; font-size: 24px; color: #929297; text-align: center; lines: 3; }
-.links { width: 338px; height: 64px; margin-bottom: 0px; justify-content: center; }
-.link { width: 338px; height: 60px; background-color: #000000; color: #30D158; font-size: 24px; }
-.overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; justify-content: flex-start; }
-.overlay-title { width: 338px; height: 60px; font-size: 27px; color: #FFFFFF; text-align: center; lines: 2; }
-.overlay-text { width: 338px; height: 86px; font-size: 21px; color: #929297; text-align: center; lines: 3; }
-.btn { width: 338px; height: 64px; border-radius: 30px; background-color: #0A3418; color: #30D158; font-size: 25px; }
-
-.home-scroll { width: 338px; flex: 1; min-height: 0px; margin-bottom: 24px; }
-.home-section { width: 338px; flex-direction: column; align-items: center; }
-.modal-scroll { width: 338px; flex: 1; min-height: 0px; margin-top: 48px; margin-bottom: 32px; }
-.modal-content { width: 338px; flex-direction: column; align-items: center; }
-
-@media screen and (device: watch-round) {
-
- .topbar { width: 220px; margin-top: 30px; }
- .home-scroll { width: 300px; margin-bottom: 58px; }
- .home-section, .status, .hero, .card-name, .card-meta, .start-label, .plan, .links, .link, .empty-state, .empty-title, .overlay-title, .overlay-text, .btn { width: 300px; }
- .plan-name, .plan-preview { width: 276px; }
- .empty { width: 280px; }
- .modal-scroll { width: 300px; margin-top: 58px; margin-bottom: 58px; }
- .modal-content { width: 300px; }
-
-}
+.home-scroll { width: 352px; height: 100%; padding-top: 48px; padding-bottom: 64px; }
+.home-section { width: 352px; flex-direction: column; align-items: center; }
+.today { width: 352px; height: 30px; color: #FFFFFF; font-size: 19px; text-align: center; }
+.today-card { width: 352px; flex-direction: column; align-items: center; margin-bottom: 8px; }
+.card-name { width: 352px; min-height: 74px; line-height: 37px; font-size: 30px; color: #FFFFFF; font-weight: bold; text-align: center; lines: 2; }
+.stats { width: 230px; height: 70px; flex-direction: row; justify-content: center; margin-top: 6px; margin-bottom: 10px; }
+.stat { width: 103px; height: 70px; flex-direction: column; align-items: center; }
+.stat-number { color: #FFFFFF; font-size: 30px; font-weight: bold; }
+.quiet { color: #8D8D93; font-size: 19px; text-align: center; lines: 3; }
+.primary { width: 352px; height: 77px; border-radius: 39px; background-color: #A3E635; color: #0C0E12; font-size: 24px; font-weight: bold; margin-top: 10px; margin-bottom: 8px; }
+.plan { width: 352px; min-height: 77px; padding: 10px 19px; border-radius: 22px; background-color: #1C1C1E; align-items: center; margin-bottom: 8px; }
+.play-icon { width: 21px; height: 21px; margin-right: 10px; }
+.plan-name { flex: 1; color: #FFFFFF; font-size: 24px; lines: 2; text-align: center; }
+.empty-state { width: 352px; flex-direction: column; align-items: center; }
+.logo { width: 96px; height: 48px; margin-top: 40px; margin-bottom: 16px; }
+.empty-title { width: 352px; min-height: 52px; font-size: 26px; font-weight: bold; color: #FFFFFF; text-align: center; lines: 2; }
+.empty-hint { width: 332px; margin-top: 5px; margin-bottom: 16px; }
+.sync-line { width: 332px; margin-top: 10px; }
+.version { color: #4C4C4F; font-size: 19px; text-align: center; margin-top: 5px; margin-bottom: 8px; }
+.row-button { width: 352px; height: 77px; border-radius: 22px; background-color: #1C1C1E; color: #FFFFFF; font-size: 24px; margin-bottom: 8px; }
+.overlay { position: absolute; top: 0px; left: 0px; width: 100%; height: 100%; background-color: #000000; align-items: center; }
+.modal-scroll { width: 352px; height: 100%; padding-top: 48px; padding-bottom: 64px; }
 </style>

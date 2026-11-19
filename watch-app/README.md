@@ -3,6 +3,24 @@
 BlueOS watch companion for openGym. Display name: `opengym`; package identity:
 `com.zcode.gymtimer`. The circular launcher icon is in `src/assets/images/logo.png`.
 
+## Current review build: Watch 0.6.32 (square only)
+
+The 390×450 review build ports the official openGym v1.4.5 square Wear OS
+components into the actual BlueOS pages, in Chinese. It changes navigation to
+Overview / Set / Metrics / Media, replaces the old circular controls, and reduces
+persistent downlink chunk reads from quadratic to linear work. The phone also sends
+muscle metadata and a valid birth year for real metric views.
+
+This is **not a completed 100% reproduction**. Timed holds/count-in, weigh-in,
+fix/side/superset states, Pulse sparkline, system media control and native pixel
+comparison remain outside the verified implementation. The browser scenes are
+source-derived previews, not device or upstream screenshots. The default build
+script packages `watch-square` only; the previous round release is historical.
+
+See the [Chinese source mapping, transport evidence and acceptance checklist](../docs/dev/WATCH_OFFICIAL_WEAR_0_6_32.zh-CN.md).
+The following older release notes describe historical behavior; set dots and the
+two-page operations navigation no longer describe this review build.
+
 ## Training
 
 Watch 0.6.30 / phone 1.6.27 retain vector-only complete/undo controls and capsule

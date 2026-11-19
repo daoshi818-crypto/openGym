@@ -32,6 +32,16 @@ export function sourceTemplate(source) {
     if (a.id) n.attr.id = a.id
     if (a.tid) n.attr.tid = a.tid
     if (a.onclick) n.action = a.onclick
+    n.events = Object.fromEntries(Object.entries(a).filter(([k]) => /^on(touch|rotation)/.test(k)).map(([k,v]) => [k.slice(2),v]))
+    if (a.style) {
+      n.inlineStyle = {}
+      for (const part of a.style.split(';')) {
+        const colon = part.indexOf(':'); if (colon < 0) continue
+        const key = part.slice(0,colon).trim().replace(/-([a-z])/g, (_,c) => c.toUpperCase()), value = part.slice(colon+1).trim()
+        const dynamic = binding(value)
+        n.inlineStyle[(dynamic ? '$' : '') + key] = dynamic || value
+      }
+    }
     if (a.disabled) n.attr.$disabled = binding(a.disabled)
     if (n.type === 'text' || n.type === 'input') {
       const value = n.type === 'input' ? a.value || '' : (el.children || []).filter(c => c.type === 'text').map(c => c.data).join('')

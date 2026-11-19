@@ -241,7 +241,7 @@ export default {
     </div>
 
     <div class="foot">
-      <input class="endbtn save" type="button" value="保存结束" onclick="saveWorkout" />
+      <input class="endbtn save" type="button" value="结束训练" onclick="saveWorkout" />
       <div class="exit-row">
         <div class="endbtn back compact-action" onclick="onExit"><image class="back-icon" src="/common/icons/back.svg" /><text class="back-label">返回训练</text></div>
         <input class="endbtn abandon compact-action {{ abandonArmed ? 'armed' : '' }}" type="button" value="放弃训练" onclick="abandonWorkout" />
@@ -251,7 +251,7 @@ export default {
   <div class="end-panel" id="end-panel" touch-focusable="true" if="{{ endOn }}">
     <text class="title end-title">结束本次训练</text>
     <text class="hint">保存训练记录，或放弃本次训练</text>
-    <input class="endbtn end-spaced save" type="button" value="保存结束" onclick="saveWorkout" />
+    <input class="endbtn end-spaced save" type="button" value="结束训练" onclick="saveWorkout" />
     <input class="endbtn end-spaced abandon {{ abandonArmed ? 'armed' : '' }}" type="button" value="放弃训练" onclick="abandonWorkout" />
     <div class="endbtn end-spaced back" onclick="backToExercises"><image class="back-icon" src="/common/icons/back.svg" /><text class="back-label">返回动作</text></div>
   </div>
@@ -260,44 +260,44 @@ export default {
 
 
 <style>
-/* Wear OS: tap the exercise name to focus it; separate disclosure expands sets. */
+/* Existing set-detail extension, using official v1.4.5 Overview tokens. */
 .page { width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
 .content { width: 100%; height: 100%; flex-direction: column; align-items: center; }
-.title { width: 314px; height: 52px; margin-top: 18px; font-size: 28px; font-weight: bold; color: #FFFFFF; lines: 1; }
+.title { width: 314px; height: 52px; margin-top: 18px; font-size: 24px; font-weight: bold; color: #FFFFFF; lines: 1; }
 .hint-line { width: 314px; height: 52px; margin-top: 18px; font-size: 22px; color: #FF9F0A; lines: 2; }
 .body { width: 338px; flex: 1; min-height: 0px; }
 .scroll { width: 338px; height: 100%; }
-.exrow { width: 338px; padding: 12px; margin-bottom: 12px; border-radius: 22px; background-color: #1C1C1E; flex-direction: column; }
-.current { background-color: #242725; }
+.exrow { width: 338px; padding: 12px; margin-bottom: 5px; border-radius: 19px; background-color: #1C1C1E; flex-direction: column; }
+.current { background-color: #2C2C2E; border-width: 2px; border-color: #A3E635; }
 .exhead { width: 314px; min-height: 76px; flex-direction: row; align-items: center;  justify-content: space-between;}
-.exname { width: 204px; min-height: 64px; font-size: 26px; color: #FFFFFF; lines: 2;  line-height: 32px;}
-.current-name { color: #30D158; }
-.cnt { width: 46px; font-size: 20px; color: #929297; text-align: right; }
-.cnt-done { color: #30D158; }
-.expand-hit { width: 56px; height: 56px; border-radius: 22px; font-size: 30px; background-color: #242725; color: #929297; }
+.exname { width: 204px; min-height: 64px; font-size: 21px; color: #FFFFFF; lines: 2;  line-height: 32px;}
+.current-name { color: #FFFFFF; }
+.cnt { width: 46px; font-size: 20px; color: #8D8D93; text-align: right; }
+.cnt-done { color: #A3E635; }
+.expand-hit { width: 56px; height: 56px; border-radius: 19px; font-size: 24px; background-color: #2C2C2E; color: #8D8D93; }
 .rows { width: 314px; flex-direction: column; }
 .full-name { width: 314px; min-height: 64px; font-size: 24px; line-height: 32px; color: #FFFFFF; lines: 0; }
 .rrow { width: 314px; min-height: 64px; flex-direction: row; align-items: center; }
-.rno { width: 42px; font-size: 22px; color: #929297; text-align: center; }
+.rno { width: 42px; font-size: 22px; color: #8D8D93; text-align: center; }
 .rtxt { width: 242px; font-size: 25px; color: #FFFFFF; lines: 2;  line-height: 30px;}
-.done { color: #929297; }
-.done-no { color: #30D158; }
-.chev { width: 22px; font-size: 24px; color: #929297; }
+.done { color: #8D8D93; }
+.done-no { color: #A3E635; }
+.chev { width: 22px; font-size: 24px; color: #8D8D93; }
 .foot { width: 314px; height: 128px; margin-bottom: 24px; flex-direction: column; justify-content: space-between; }
-.endbtn { width: 314px; height: 60px; font-size: 24px; border-radius: 30px; background-color: #242725; color: #FFFFFF; }
-.save { background-color: #0A3418; color: #30D158; }
+.endbtn { width: 314px; height: 60px; font-size: 24px; border-radius: 30px; background-color: #2C2C2E; color: #FFFFFF; }
+.save { background-color: #1D290A; color: #A3E635; }
 .exit-row { width: 314px; height: 60px; flex-direction: row; justify-content: space-between; }
 .compact-action { width: 152px; }
 .abandon { color: #FF453A; }
 .armed { background-color: #FF453A; color: #000000; }
 .end-panel { width: 100%; height: 100%; flex-direction: column; align-items: center; justify-content: center; }
 .end-spaced { margin-top: 14px; }
-.hint { width: 338px; height: 64px; font-size: 22px; color: #929297; text-align: center; lines: 2; }
+.hint { width: 338px; height: 64px; font-size: 22px; color: #8D8D93; text-align: center; lines: 2; }
 
 
 .back { flex-direction: row; justify-content: center; align-items: center; }
 .back-icon { width: 26px; height: 26px; margin-right: 6px; }
-.back-label { font-size: 22px; color: #30D158; }
+.back-label { font-size: 22px; color: #A3E635; }
 
 
 @media screen and (device: watch-round) {

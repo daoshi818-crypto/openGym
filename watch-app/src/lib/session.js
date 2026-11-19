@@ -33,7 +33,7 @@ function latestHr(state) {
   let hr = state.hr || { sum: 0, count: 0, max: 0 }
   if (sameHrSession(state, stored)) hr = newerHr(hr, stored.hr)
   if (sameHrSession(state, buffered)) hr = newerHr(hr, buffered.hr)
-  return { ...hr } // Never expose the mutable runtime aggregate to a Page.
+  return { ...hr, ...(hr.bpmSeconds ? { bpmSeconds: { ...hr.bpmSeconds } } : {}) } // Never expose mutable runtime aggregates.
 }
 function reconcileHrCapture(state) {
   const capture = runtime().hrCapture
@@ -225,6 +225,14 @@ export async function commitSessionStart(workout, profile) {
 
 // Persistent transport applies independently of the visible Page. The marker shares
 // the training document, so state-success / transfer-index-failure is recoverable.
+function olderSnapshot(state, snapshot) {
+  if (!(snapshot.protocolVersion >= 3)) return !!snapshot.rev && snapshot.rev < (state.snapshotRev || 0)
+  const revision = state.commitRev || 0
+  // Business revisions win across phone clock adjustments. Within one revision,
+  // rev is the phone's existing snapshot stamp (rest/focus/profile can change).
+  return snapshot.commitRev < revision || snapshot.commitRev === revision &&
+    Number.isFinite(snapshot.rev) && snapshot.rev > 0 && snapshot.rev < (state.snapshotRev || 0)
+}
 export async function commitWireSnapshot(message, meta) {
   let status = 'applied'
   const result = await writeStoredAtomic(K_STATE, current => {
@@ -238,7 +246,7 @@ export async function commitWireSnapshot(message, meta) {
     if ((readStored('closed_sessions') || []).includes(snapshot.sid)) throw new Error('session_closed')
     if (latest.active && latest.sid !== snapshot.sid) throw new Error('session_conflict')
     if (latest.closeIntent || runtime().closingSid === snapshot.sid) throw new Error('session_closing')
-    if (latest.sid === snapshot.sid && snapshot.commitRev < (latest.commitRev || 0)) status = 'retained'
+    if (latest.sid === snapshot.sid && olderSnapshot(latest, snapshot)) status = 'retained'
     else {
       // Never carry cursor/HR/rest/UI flags into a different training. Unresolved
       // old intentions remain available to the existing durable replay path.
@@ -295,7 +303,7 @@ export function replacePlan(state, workout) {
 export function applySync(state, snapshot, options) {
   if (!snapshot || !Array.isArray(snapshot.exercises)) return state
   if (snapshot.sid && state.sid && snapshot.sid !== state.sid) return state
-  if (snapshot.protocolVersion >= 3 ? snapshot.commitRev < (state.commitRev || 0) : snapshot.rev && snapshot.rev < (state.snapshotRev || 0)) return state
+  if (olderSnapshot(state, snapshot)) return state
   const previousSegment = state.segmentStartedAt || state.startedAt
   if (snapshot.protocolVersion >= 3) {
     state.commitRev = snapshot.commitRev || 0
@@ -496,8 +504,16 @@ export function addRestTime(state, sec) {
 // Every valid sample enters the App aggregate, independently of Page/disk lifetime.
 export function addHr(state, bpm) {
   if (!Number.isFinite(bpm) || bpm < 30 || bpm > 220) return
+  bpm = Math.round(bpm) // Upstream stores integer bpm; at most 191 histogram bins.
   state.hr = latestHr(state)
   const sampleAt = now()
+  const previousAt = state.hr.sampleAt, previousBpm = state.hr.last
+  state.hr.bpmSeconds ||= {}
+  if (previousAt && previousBpm) {
+    const key = String(previousBpm)
+    state.hr.bpmSeconds[key] = (state.hr.bpmSeconds[key] || 0) + Math.max(0, Math.min(30, (sampleAt - previousAt) / 1000))
+  }
+  state.hr.min = state.hr.min > 0 ? Math.min(state.hr.min, bpm) : bpm
   state.hr.sampledDurationMs = (state.hr.sampledDurationMs || 0) + (state.hr.sampleAt ? Math.max(0, Math.min(15000, sampleAt - state.hr.sampleAt)) : 0)
   state.hr.sampleAt = sampleAt
   state.hr.last = bpm

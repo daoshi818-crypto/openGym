@@ -115,7 +115,7 @@ describe('actual watch workout page wiring', () => {
     expect(page.interactionBlocked()).toBe(true)
     page.touchStart({ touches: [{ clientX: 200, clientY: 200 }] })
     page.touchEnd({ changedTouches: [{ clientX: 100, clientY: 200 }] })
-    expect(page.pageIndex).toBe(index ? 0 : 1)
+    expect(page.pageIndex).toBe(index + 1)
   })
   it.each([
     ['visible', false, 'hidden'], ['touchAxis', 'y', 'touch_axis'],

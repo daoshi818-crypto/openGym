@@ -29,6 +29,18 @@ function harness() {
 }
 afterEach(() => vi.useRealTimers())
 
+it('keeps exact zone gaps capped at 30 seconds, min BPM, and detached bounded duration bins', () => {
+  const h=harness(); h.a.startSessionHr(); h.sample(120)
+  vi.advanceTimersByTime(10000); h.sample(150)
+  vi.advanceTimersByTime(45000); h.sample(110)
+  const hr=h.b.readSessionHr('s')
+  expect(hr).toMatchObject({min:110,max:150,bpmSeconds:{120:10,150:30}})
+  hr.bpmSeconds[120]=999
+  expect(h.b.readSessionHr('s').bpmSeconds[120]).toBe(10)
+  for(let i=0;i<500;i++) h.sample(30+(i%190)+.25)
+  expect(Object.keys(h.a.readSessionHr('s').bpmSeconds).length).toBeLessThanOrEqual(191)
+})
+
 it('shares one subscription and every buffered sample across separate page bundles without writing every sample', () => {
   const h = harness(), { a, b } = h
   a.startSessionHr(); b.startSessionHr()

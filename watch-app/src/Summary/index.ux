@@ -1,8 +1,7 @@
 <script>
 import { bindRuntime } from '../lib/runtime.js'
 // 结束页：本次训练摘要。手机是数据源，这里只展示手表本地结算的结果。
-// V4：左对齐、纵向滚动、标签在上、大数值在下；顶部与底部是同一个页面的上下半屏，
-// 不是两个结算步骤。所有字段来自 summary_last，同步文案只读同 sid 的关闭日志。
+// Official v1.4.5 SummaryScreen / SumStat / HrStat. Business receipt remains sid-specific.
 import storage from '@blueos.storage.storage'
 import router from '@blueos.app.appmanager.router'
 import { startServer, pendingCount, isConnected } from '../lib/rpc.js'
@@ -15,13 +14,14 @@ import {
 
 export default {
   data: {
-    blocks: [],
+    blocks: [], summaryName: '', durationLabel: '', setsLabel: '', volumeText: '', volumeUnit: '', heartText: '', caloriesText: '',
     syncLabel: '',
     clockLabel: '',
   },
 
   onInit() {
     if (this.$app && this.$app.$def) bindRuntime(this.$app.$def)
+    this.shownAt = Date.now()
     this.bindRpc()
     this.load()
   },
@@ -35,6 +35,14 @@ export default {
     // 同步文案必须匹配本总结自己的 sid：旧摘要没有 sid 就只能保守显示待确认。
     this.sid = this.summary ? (this.summary.sid || this.summary.id || '') : ''
     this.blocks = this.buildBlocks()
+    this.summaryName = summaryNameLabel(this.summary)
+    this.durationLabel = summaryDurationLabel(summaryMinutesOf(this.summary))
+    this.setsLabel = summarySetsLabel(this.summary)
+    const volume = summaryVolumeOf(this.summary), heart = summaryHeartOf(this.summary)
+    this.volumeText = volume && volume.text !== '0' ? volume.text : ''
+    this.volumeUnit = volume ? volume.unit : ''
+    this.heartText = heart ? heart.text : ''
+    this.caloriesText = summaryCaloriesOf(this.summary) || ''
     this.updateSync()
   },
 
@@ -91,65 +99,29 @@ export default {
 
   // “完成”只返回首页：不结算、不发事件、不重复关闭。
   onBack() {
+    if (Date.now() - (this.shownAt || 0) < 1000) return
     router.replace({ uri: '/Index' })
   },
 }
 </script>
-
-<template>
-<div class="page">
-  <div class="top"><text class="clock">{{ clockLabel }}</text></div>
-  <list class="scroll" id="summary" touch-focusable="true">
-    <list-item class="row" type="block" for="{{ item in blocks }}" tid="key">
-      <div class="saved" if="{{ item.kind === 'saved' }}">
-        <div class="check"><image class="saved-icon" src="/common/icons/check.svg" /></div>
-        <text class="saved-text">训练已本地保存</text>
-      </div>
-      <text class="workoutname" if="{{ item.kind === 'name' }}">{{ item.label }}</text>
-      <div class="metric" if="{{ item.kind === 'metric' }}">
-        <text class="label">{{ item.label }}</text>
-        <div class="values">
-          <text class="metric-value {{ item.cls || '' }}">{{ item.value }}</text>
-          <text class="metric-unit" if="{{ item.unit }}">{{ item.unit }}</text>
-        </div>
-      </div>
-      <text class="sync" if="{{ item.kind === 'sync' }}">{{ syncLabel }}</text>
-      <div class="done" if="{{ item.kind === 'done' }}" onclick="onBack"><image class="back-icon" src="/common/icons/back.svg" /><text class="back-label">返回首页</text></div>
-    </list-item>
-  </list>
-</div>
-</template>
-
-
+<template><div class="page"><list class="scroll" id="summary" touch-focusable="true"><list-item type="summary" class="summary-content"><div class="saved"><div class="check"><image class="saved-icon" src="/common/icons/wear-check-ink.svg" /></div><text class="saved-text">训练已保存</text></div><text class="workoutname">{{ summaryName }}</text><text class="label">时间</text><text class="duration">{{ durationLabel }}</text><div class="stats"><div class="stat"><text class="label">组数</text><text class="stat-value">{{ setsLabel }}</text></div><div class="stat" if="{{ volumeText }}"><text class="label">总量</text><text class="stat-value">{{ volumeText }} {{ volumeUnit }}</text></div></div><div class="heart" if="{{ heartText }}"><text class="label">心率</text><text class="heart-value">{{ heartText }}</text></div><div class="stat" if="{{ caloriesText }}"><text class="label">估算热量</text><text class="stat-value">{{ caloriesText }} kcal</text></div><text class="sync">{{ syncLabel }}</text><input class="done" type="button" value="完成" onclick="onBack" /></list-item></list></div></template>
 <style>
-/* V4 same single left-aligned scroll, top and bottom are not separate results. */
+/* Screens.kt SummaryScreen. Source dp/sp ×1.6; local estimated kcal is labelled honestly. */
 .page { width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
-.top { width: 314px; height: 44px; margin-top: 18px; flex-direction: row; justify-content: flex-end; align-items: center; }
-.clock { font-size: 26px; color: #FFFFFF; }
-.scroll { width: 338px; flex: 1; margin-bottom: 24px; min-height: 0px; }
-.row { width: 338px; flex-direction: column; align-items: flex-start; }
-.saved { width: 338px; min-height: 44px; flex-direction: row; align-items: center; }
-.check { width: 29px; height: 29px; border-radius: 15px; background-color: #30D158; justify-content: center; align-items: center; }
-.saved-icon { width: 22px; height: 22px; }
-.saved-text { margin-left: 12px; font-size: 26px; color: #FFFFFF; lines: 2; flex: 1; min-width: 0px; }
-.workoutname { width: 338px; min-height: 32px; font-size: 24px; color: #929297; lines: 2; margin-top: 16px; margin-bottom: 21px; }
-.metric { width: 338px; flex-direction: column; align-items: flex-start; margin-bottom: 22px; }
-.label { min-height: 32px; font-size: 23px; color: #929297; margin-bottom: 4px; }
-.values { width: 338px; flex-direction: row; align-items: flex-end; flex-wrap: wrap; }
-.metric-value { max-width: 338px; font-size: 52px; color: #FFFFFF; lines: 2; }
-.hr-value { font-size: 34px; color: #FF453A; }
-.metric-unit { font-size: 29px; color: #FFFFFF; margin-left: 8px; }
-.sync { width: 338px; min-height: 44px; font-size: 22px; color: #929297; lines: 3; margin-bottom: 20px; }
-.done { width: 338px; height: 64px; border-radius: 32px; background-color: #0A3418; margin-bottom: 18px; justify-content: center; align-items: center; }
-.back-icon { width: 26px; height: 26px; margin-right: 6px; }
-.back-label { font-size: 25px; color: #30D158; }
-@media screen and (device: watch-round) {
-
- .top { width: 220px; margin-top: 30px; }
- .scroll { width: 300px; margin-bottom: 58px; }
- .row, .saved, .workoutname, .metric, .values, .sync, .done { width: 300px; }
- .metric-value { max-width: 300px; font-size: 48px; }
- .hr-value { font-size: 34px; }
-
-}
+.scroll { width: 338px; flex: 1; min-height: 0px; margin-top: 42px; margin-bottom: 32px; padding-top: 10px; padding-bottom: 32px; }
+.summary-content { width: 338px; flex-direction: column; align-items: center; }
+.saved { width: 338px; min-height: 38px; flex-direction: row; align-items: center; justify-content: center; }
+.check { width: 29px; height: 29px; border-radius: 15px; background-color: #A3E635; justify-content: center; align-items: center; }
+.saved-icon { width: 18px; height: 18px; }
+.saved-text { margin-left: 10px; font-size: 24px; font-weight: bold; color: #FFFFFF; lines: 2; }
+.workoutname { width: 338px; font-size: 19px; color: #8D8D93; text-align: center; lines: 2; margin-top: 6px; margin-bottom: 6px; }
+.label { min-height: 25px; font-size: 19px; color: #8D8D93; text-align: center; }
+.duration { width: 338px; height: 62px; font-size: 48px; font-weight: bold; color: #FFD60A; text-align: center; lines: 1; }
+.stats { width: 338px; min-height: 64px; flex-direction: row; justify-content: center; margin-bottom: 6px; }
+.stat { min-width: 104px; max-width: 235px; min-height: 60px; margin-left: 11px; margin-right: 11px; flex-direction: column; align-items: center; }
+.stat-value { font-size: 29px; color: #FFFFFF; font-weight: bold; text-align: center; lines: 1; }
+.heart { width: 338px; flex-direction: column; align-items: center; margin-top: 4px; margin-bottom: 4px; }
+.heart-value { width: 338px; font-size: 21px; color: #FF453A; text-align: center; lines: 2; }
+.sync { width: 338px; min-height: 38px; font-size: 19px; color: #8D8D93; text-align: center; lines: 3; margin-top: 6px; margin-bottom: 6px; }
+.done { width: 338px; height: 77px; border-radius: 39px; background-color: #A3E635; color: #0C0E12; font-size: 24px; font-weight: bold; margin-top: 6px; }
 </style>

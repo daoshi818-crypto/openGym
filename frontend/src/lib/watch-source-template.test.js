@@ -14,3 +14,10 @@ it('previews current source bindings, repeat scope and native vector tags withou
   expect(repeat.children.map(n => n.type)).toEqual(['image', 'input'])
   expect(value(repeat.children[0].attr.$src, { item: ctx.rows[0] })).toBe('/check.svg')
 })
+it('preserves dynamic native progress styles and hold cancellation events', () => {
+  const tree = sourceTemplate('<template><div ontouchstart="hold" ontouchend="cancel" ontouchcancel="cancel"><div style="width: {{ progress }}; background-color: {{ color }};"></div></div></template>')
+  expect(tree.events).toEqual({ touchstart: 'hold', touchend: 'cancel', touchcancel: 'cancel' })
+  const styles = tree.children[0].inlineStyle
+  expect(value(styles.$width, { progress: '42%' })).toBe('42%')
+  expect(value(styles.$backgroundColor, { color: '#A3E635' })).toBe('#A3E635')
+})

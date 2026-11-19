@@ -1,4 +1,29 @@
-# Sync protocol: watch 0.6.31 / phone 1.6.28
+# Sync protocol: watch 0.6.32 / phone 1.6.28 working tree
+
+## 0.6.32 downlink receiver changes
+
+Existing negotiated v3 full/delta and persistent fragment envelopes are retained.
+The receiver now caches only two bounded progress maps (piece byte lengths, count,
+total bytes), after successful disk writes. Begin/resume rebuild the receipt from
+disk. Completion rereads and validates every chunk, length/hash and JSON envelope
+before the atomic business apply/transfer marker. Corrupt pieces can be replaced;
+cancel, expiry, slot reuse and errors invalidate cached progress. No payload cache
+or acknowledgement before persistence is introduced.
+
+For one ordinary N-fragment transfer, the chunk phase requires 3N reads rather
+than N²+3N. Including begin/index scans, the new deterministic test budget is 4N+1.
+These are fake-store call counts, not device latency measurements.
+
+Snapshot ordering compares business commitRev first, then the existing snapshot
+rev stamp within equal v3 revisions. An older receipt is durably `retained`, never
+promoted as a delta base. A higher business revision wins even after phone clock
+rollback. Legacy direct application and persistent apply use the same ordering
+rule. This adds no new capability field or message type.
+
+Persisted downlinks do not rebuild an invisible Workout page; onShow reloads the
+committed state. Legacy business commands keep their existing application path.
+The protocol cannot use Android Wear DataItem on BlueOS; reliability comes from
+the existing phone/watch durable stores and explicit application receipts.
 
 ## Watch event envelope and App teardown
 

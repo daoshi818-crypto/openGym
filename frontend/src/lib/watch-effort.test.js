@@ -100,7 +100,7 @@ describe('per-set effort on the watch (RPE/RIR)', () => {
     expect(workout.effortMeaning).toBe('还能再做约4次，较轻松')
     await workout.confirmEffort()
     expect(workout.effortEntryText).toBe('RPE 6')
-    expect(source('Workout/index.ux')).toContain('<text class="effort-meaning" if="{{ effortDraft != null }}">')
+    expect(source('Workout/index.ux')).toContain('<text class="quiet effort-description">')
   })
 
   it('keeps the picker bound to stable exercise/set IDs across exercise reordering', async () => {
@@ -294,7 +294,7 @@ describe('per-set effort on the watch (RPE/RIR)', () => {
     // All sets done: the existing save/continue panel still opens, with an optional effort entry.
     expect(workout.closeMode).toBe('complete')
     expect(workout.effortEntryOn).toBe(true)
-    expect(source('Workout/index.ux')).toContain('value="{{ \'登记本组强度 · \' + effortEntryText }}"')
+    expect(source('Workout/index.ux')).toContain('value="{{ effortEntryText }}"')
   })
 
   it('sends one effort event carrying stable ids, scale, value, version and base version', async () => {

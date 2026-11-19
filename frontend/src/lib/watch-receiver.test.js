@@ -220,7 +220,7 @@ describe('watch completed sets and rest clock', () => {
     expect([workout.state.exIdx, workout.state.setIdx]).toEqual(position)
     expect(router.push).not.toHaveBeenCalled()
     expect(sessions.loadState().active).toBe(true)
-    expect(source('Workout/index.ux')).toContain('if="{{ closeMode === \'complete\' && !effortOn }}"')
+    expect(source('Workout/index.ux')).toContain('if="{{ closeMode && !effortOn }}"')
     expect(source('Workout/index.ux')).toContain('value="继续训练" onclick="cancelClose"')
   })
 
@@ -287,25 +287,19 @@ describe('watch completed sets and rest clock', () => {
     expect(workout.elapsedLabel).toBe('1:00')
   })
 
-  it('keeps rest on one page while allowing the exercise list and crown time adjustment', async () => {
+  it('keeps rest in the Set pager while allowing Overview / Metrics and crown adjustment', async () => {
     const { workout } = resting()
-    workout.openExercises = vi.fn()
-    for (const [dx, dy] of [[0, -100], [0, 100], [-100, 0]]) {
-      workout.touchStart({ touches: [{ clientX: 180, clientY: 180 }] })
-      workout.touchEnd({ changedTouches: [{ clientX: 180 + dx, clientY: 180 + dy }] })
-      expect(workout.pageIndex).toBe(0)
+    for (const dy of [-100,100]) {
+      workout.touchStart({ touches:[{clientX:180,clientY:180}] })
+      workout.touchEnd({ changedTouches:[{clientX:180,clientY:180+dy}] })
+      expect(workout.pageIndex).toBe(1)
     }
-    workout.openActions()
-    expect(workout.pageIndex).toBe(0)
-    workout.pageIndex = 1
-    workout.refresh()
-    expect(workout.pageIndex).toBe(0)
-    workout.touchStart({ touches: [{ clientX: 180, clientY: 180 }] })
-    workout.touchEnd({ changedTouches: [{ clientX: 280, clientY: 180 }] })
-    expect(workout.openExercises).toHaveBeenCalledOnce()
-    const before = workout.state.restUntil
-    await workout.onRotation({ delta: 1, state: 2 })
-    expect(workout.state.restUntil).toBe(before + 5000)
+    const before=workout.state.restUntil
+    workout.touchStart({ touches:[{clientX:180,clientY:180}] })
+    workout.touchEnd({ changedTouches:[{clientX:80,clientY:180}] })
+    expect(workout.pageIndex).toBe(2); expect(workout.state.restUntil).toBe(before)
+    workout.showCurrent(); await workout.onRotation({delta:1,state:2})
+    expect(workout.state.restUntil).toBe(before+5000)
   })
 
   it('does not route crown events to hidden, operation or paused training pages', async () => {
@@ -543,7 +537,7 @@ describe('watch business message boundary', () => {
     list.backToExercises()
     expect(list.endOn).toBe(false)
     const ux = source('ExerciseList/index.ux')
-    expect(ux.match(/value="保存结束"/g)).toHaveLength(2)
+    expect(ux.match(/value="结束训练"/g)).toHaveLength(2)
     expect(ux.match(/value="放弃训练"/g)).toHaveLength(2)
     expect(ux).toContain('onclick="backToExercises"><image class="back-icon" src="/common/icons/back.svg" /><text class="back-label">返回动作</text>')
     expect(ux).toContain('onclick="onExit"><image class="back-icon" src="/common/icons/back.svg" /><text class="back-label">返回训练</text>')
@@ -616,41 +610,16 @@ describe('watch business message boundary', () => {
     expect(sendEvent.mock.calls.at(-1)[0]).toMatchObject({ t: 'focus', ex: 0, set: 1 })
   })
 
-  it('keeps the main training surface focused and moves metrics to operations', async () => {
-    const ux = source('Workout/index.ux')
-    // The compact main page keeps the two big fields label-free; the operation page is the
-    // one that spells the prescription out (weight/reps labels live there).
-    const mainPage = ux.slice(ux.indexOf('<div class="screen"'), ux.indexOf('<div class="screen operation-screen"'))
-    expect(mainPage).not.toContain('>重量<')
-    expect(mainPage).not.toContain('>次数<')
-    expect(ux).toContain('>重量<')
-    expect(ux).toContain('>次数<')
-    expect(ux).toContain('onclick="pickSetDot(item)"')
-    expect(ux).toContain('class="set-hit"')
-    expect(ux).toContain('class="complete')
-    expect(mainPage).not.toContain('<list ')
-    expect(mainPage).toContain('<div class="training-content">')
-    expect(ux).not.toContain('value="训练动作"')
-    expect(ux).toContain('onclick="openExercises"')
-    expect(ux).toContain('{{ setProgressLabel }}')
-    const trainingPage = ux.slice(ux.indexOf('<div class="screen"'), ux.indexOf('<div class="screen operation-screen"'))
-    const operationPage = ux.slice(ux.indexOf('<div class="screen operation-screen"'))
-    expect(trainingPage).not.toContain('{{ kcalLabel }} 千卡')
-    expect(trainingPage).toContain('class="heart"') // V4 sampled HR in the top bar, not a metrics dashboard
-    expect(trainingPage).not.toContain('估算')
-    expect(operationPage).toContain('{{ clockLabel }}')
-    expect(operationPage).toContain('class="elapsed-value"')
-    expect(operationPage).toContain('{{ elapsedLabel }}')
-    expect(operationPage).toContain('{{ volumeLabel }} {{ weightUnit }}')
-    expect(operationPage).toContain('{{ kcalLabel }} 千卡')
-    expect(operationPage).toContain('{{ hrLabel }}')
-    expect(operationPage).not.toContain('估算')
-    expect(ux).toContain('class="training-panel rest-panel"')
-    // Compiled rest bounds are checked against the child heights by verify-layout.cjs.
-    expect(ux).not.toContain('训练操作')
-    expect(source('ExerciseList/index.ux')).not.toContain('value="训练动作"')
-    expect(source('Index/index.ux')).toContain('justify-content: center')
+  it('keeps the main set focused and moves workout statistics to the official Metrics pager', () => {
+    const ux=source('Workout/index.ux')
+    const main=ux.slice(ux.indexOf('<div class="screen live-screen"'),ux.indexOf('<div class="screen metrics-screen"'))
+    expect(main).not.toContain('<list ')
+    for(const field of ['weightNum','repsNum','lastLine']) expect(main).toContain('{{ '+field+' }}')
+    for(const field of ['elapsedLabel','volumeLabel','kcalLabel','hrNumber']) expect(ux).toContain('{{ '+field+' }}')
+    expect(ux).toContain('onclick="onPrevSet"'); expect(ux).toContain('onclick="onNextSet"')
+    expect(ux).toContain('class="primary-button"'); expect(ux).toContain('class="rest-content"')
   })
+
   it('finalizes on a delayed phone end, sends energy reliably and refuses stale plans for the closed session', async () => {
     const sessions = session(), c = connection(), rpc = transport(c, sessions)
     const state = sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
@@ -697,7 +666,7 @@ describe('watch business message boundary', () => {
     expect(workout.menuOn).toBe(false)
     await workout.onRotation({ delta: 1, state: 1 })
     expect(workout.state.setIdx).toBe(0) // no selected field: crown is inert
-    workout.editReps(); await workout.onRotation({ delta: 1, state: 1 })
+    workout.showCurrent(); workout.editReps(); await workout.onRotation({ delta: 1, state: 1 })
     expect(workout.state.workout.rows[0][0].r).toBe('9')
     workout.state.restUntil = Date.now() + 30000
     workout.refresh()
@@ -719,7 +688,7 @@ describe('watch business message boundary', () => {
     expect(sessions.loadState().workout.rows[0][0].w).toBe('60.5')
   })
 
-  it.each([[-100, 1], [100, 0]])(
+  it.each([[-100, 2], [100, 0]])(
     'opens the horizontal panel for a BlueOS touches-only gesture (%s)', (dx, panel) => {
       const sessions = session(), rpc = transport(connection())
       sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
@@ -744,7 +713,7 @@ describe('watch business message boundary', () => {
     workout.touchStart({ touches: [{ clientX: 100, clientY: 180 }] })
     workout.touchMove({ touches: [{ clientX: 130, clientY: 185 }] })
     workout.touchEnd({ changedTouches: [{ clientX: 180, clientY: 300 }] })
-    expect(router.push).toHaveBeenCalledWith({ uri: '/ExerciseList', params: { detailEx: '0' } })
+    expect(router.push).not.toHaveBeenCalled()
     expect(workout.pageIndex).toBe(0)
   })
 
@@ -764,7 +733,7 @@ describe('watch business message boundary', () => {
     expect(workout.menuOn).toBe(false)
     workout.touchStart({ touches: [{ clientX: 180, clientY: 160 }] })
     workout.touchEnd({ changedTouches: [{ clientX: 60, clientY: 160 }] })
-    expect(workout.pageIndex).toBe(1)
+    expect(workout.pageIndex).toBe(2)
   })
 
   it('opens on the first set and preserves the cursor across repeated plan deliveries', async () => {
@@ -772,14 +741,14 @@ describe('watch business message boundary', () => {
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
     const workout = training(sessions, rpc)
     workout.onInit()
-    expect(workout.groupLabel).toBe('第 1 / 3 组')
+    expect(workout.groupLabel).toBe('第 1 组，共 3 组')
     c.onMessage({ data: plan })
     c.onMessage({ data: plan })
-    expect(workout.groupLabel).toBe('第 1 / 3 组')
+    expect(workout.groupLabel).toBe('第 1 组，共 3 组')
     await workout.onComplete()
-    expect(workout.groupLabel).toBe('第 2 / 3 组')
+    expect(workout.groupLabel).toBe('第 2 组，共 3 组')
     c.onMessage({ data: plan })
-    expect(workout.groupLabel).toBe('第 2 / 3 组')
+    expect(workout.groupLabel).toBe('第 2 组，共 3 组')
   })
 
   it.each([['w', 'weight', '72.5'], ['r', 'reps', '12']])(
@@ -870,9 +839,9 @@ describe('watch business message boundary', () => {
     workout.onInit()
     c.onMessage({ data: { t: 'set', sid: plan.sid, ex: 0, set: 1 } })
     expect(sessions.loadState().workout.rows[0][0].done).toBe(true)
-    expect(workout.groupLabel).toBe('第 2 / 3 组')
+    expect(workout.groupLabel).toBe('第 2 组，共 3 组')
     c.onMessage({ data: { t: 'set', sid: plan.sid, ex: 0, set: 1 } })
-    expect(workout.groupLabel).toBe('第 2 / 3 组')
+    expect(workout.groupLabel).toBe('第 2 组，共 3 组')
   })
 
   it('advances past a phone-completed set from another exercise', async () => {

@@ -9,6 +9,7 @@ import { effectiveRoutineIds, effortOf, entryRoutineId } from './history.js'
 import { todayISO } from './format.js'
 import { EFFORT_CAPABILITY } from '../../../watch-app/src/lib/effort-scale.js'
 import { watchLastTimeOf } from './watch-last-time.js'
+import { loadOf, MUSCLES } from './muscles.js'
 
 /**
  * 活动条目只存 id；计划与重连快照必须和手机界面解析出相同名称。
@@ -23,10 +24,13 @@ export function watchExercisesOf(S, entries, { routineId = null, sourceWorkout =
     const rows = e.sets.filter(x => !isWarmupRow(x))
     // 条目自带的 rid 优先于外层默认计划：合并日的自由动作因此仍查它自己的计划历史。
     const source = sourceWorkout ? entryRoutineId(sourceWorkout, e) : (e.rid || routineId || null)
+    const muscles = Object.fromEntries(Object.entries(loadOf([{ id: e.id, ex, sets: 1 }]))
+      .filter(([key, weight]) => MUSCLES.includes(key) && weight > 0)
+      .map(([key, weight]) => [key, Math.round(weight * 100) / 100]))
     return { id: e.id, entryInstanceId: e.entryInstanceId, weightUnit: S.unit || 'kg', setIds: rows.map(r => r.setId), name: e.id ? exerciseNameFor(ex) : e.name || '', sets: rows.length,
       reps: rows[0]?.sec != null ? rows[0].sec + '秒' : rows[0]?.r ?? rows[0]?.reps ?? '',
       restSec: e.target?.restSec > 0 ? e.target.restSec : S.restSec || 60, weight: rows[0]?.w ?? '',
-      lastTime: watchLastTimeOf(S, e, source) }
+      ...(Object.keys(muscles).length ? { muscles } : {}), lastTime: watchLastTimeOf(S, e, source) }
   })
 }
 
@@ -91,5 +95,7 @@ export function watchProfileOf(S) {
   const bw = S.bodyweight?.at(-1)?.w
   const known = typeof bw === 'number' && Number.isFinite(bw) && bw > 0
   const bodyWeightKg = known ? Math.round((S.unit === 'lb' ? bw * 0.45359237 : bw) * 10) / 10 : 70
-  return { weight: bodyWeightKg, bodyWeightKg, bodyWeightSource: known ? 'recorded' : 'default', weightUnit: S.unit || 'kg' }
+  const year = new Date().getFullYear(), age = year - S.birthYear
+  return { weight: bodyWeightKg, bodyWeightKg, bodyWeightSource: known ? 'recorded' : 'default', weightUnit: S.unit || 'kg',
+    ...(Number.isInteger(S.birthYear) && age >= 10 && age <= 100 ? { birthYear: S.birthYear } : {}) }
 }

@@ -632,6 +632,7 @@ async function flushPendingPlan() {
           ...(e.id ? { id: e.id } : {}), entryInstanceId: e.entryInstanceId, setIds: e.setIds, weightUnit: e.weightUnit,
           name: e.name || '',
           lastTime: e.lastTime,
+          ...(e.muscles ? { muscles: e.muscles } : {}),
           sets: e.sets || 1,
           reps: e.reps != null ? String(e.reps) : '',
           restSec: e.restSec || 60,

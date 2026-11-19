@@ -394,7 +394,7 @@ it('durable new-session notification replaces old page and clears session-only i
   p.onSyncUpdate(msg, { persisted: true })
   expect([p.state.sid, p.state.exIdx, p.state.setIdx]).toEqual(['new', 0, 0])
   expect([p.closeMode, p.effortOn, p.menuOn, p.finishOn, p.lastOpen, p.restCrownDirty]).toEqual(['', false, false, false, false, false])
-  expect(p.completionIgnoreUntil).toBe(0); expect(p.restStartAt).toBe(0); expect(p.effortTarget).toBe(null); expect(p.pageIndex).toBe(0)
+  expect(p.completionIgnoreUntil).toBe(0); expect(p.restStartAt).toBe(0); expect(p.effortTarget).toBe(null); expect(p.pageIndex).toBe(1)
   expect(write.mock.calls.filter(([item]) => item.key === 'session_state')).toHaveLength(0)
   expect(await p.onComplete()).toBe(true); expect(p.state.workout.rows[0][0].done).toBe(true)
   p.onSyncUpdate(snapshot(h, 'old'), { persisted: true }); expect(p.state.sid).toBe('new')

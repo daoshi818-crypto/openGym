@@ -1,8 +1,9 @@
-param([string]$Compiler = $env:BLUEOS_PACK)
+param([string]$Compiler = $env:BLUEOS_PACK, [string[]]$Targets = @('watch-square'))
 $ErrorActionPreference = 'Stop'
 $project = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if (!$Compiler) {
-    $Compiler = 'E:/BlueOSStudioAAAAAA/resources/app/extensions/blueos-debugger/node_modules/blueos-pack/bin/index.js'
+    $Compiler = @('D:/BlueOSStudio/_/resources/app/extensions/blueos-debugger/node_modules/blueos-pack/bin/index.js',
+        'E:/BlueOSStudioAAAAAA/resources/app/extensions/blueos-debugger/node_modules/blueos-pack/bin/index.js') | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 }
 if (!(Test-Path -LiteralPath $Compiler)) { throw 'Set BLUEOS_PACK to BlueOS Studio blueos-pack/bin/index.js.' }
 Push-Location $project
@@ -10,7 +11,8 @@ $manifestPath = Join-Path $project 'src/manifest.json'
 $originalManifest = [IO.File]::ReadAllBytes($manifestPath)
 try {
     $manifest = Get-Content 'src/manifest.json' -Raw | ConvertFrom-Json
-    $targets = @('watch-square', 'watch-round')
+    $targets = $Targets
+    if ($targets | Where-Object { $_ -ne 'watch-square' }) { throw '0.6.32 official Wear UI is validated for watch-square only; keep the previous round release.' }
     foreach ($targetDevice in $targets) {
         # Both layouts use their own design-pixel canvas. A 390px designWidth on
         # the 466px round layout would scale every px again and crop the footer.

@@ -46,7 +46,7 @@ describe('watch navigation lifetime', () => {
     expect(router.back).toHaveBeenCalledTimes(1)
     expect(router.replace).not.toHaveBeenCalled()
     workout.onShow()
-    expect(workout.finishOn).toBe(true)
+    expect(workout.pageIndex).toBe(0); expect(workout.finishOn).toBe(false)
     expect(shared.finishRequest).toBeFalsy()
     workout.finishOn = false; workout.onShow()
     expect(workout.finishOn).toBe(false)

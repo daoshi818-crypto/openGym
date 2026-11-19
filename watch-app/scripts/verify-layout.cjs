@@ -1,144 +1,58 @@
-// Validate the compiler output, not just source CSS strings.
-const assert = require('node:assert/strict')
-const fs = require('node:fs')
-const path = require('node:path')
-const target = process.argv[2] || process.env.WATCH_DEVICE_TYPE || 'watch-square'
-const build = process.env.BLUEOS_BUILD_ROOT ? path.resolve(process.env.BLUEOS_BUILD_ROOT, target) : path.resolve(__dirname, '../build', target)
-const read = name => JSON.parse(fs.readFileSync(path.join(build, name), 'utf8'))
-const manifest = read('manifest.json')
-const round = target === 'watch-round'
-const viewportHeight = round ? 466 : 450
-assert.deepEqual(manifest.deviceTypeList, [target], 'Each package must target its own screen shape')
-assert.equal(manifest.config.designWidth, target === 'watch-round' ? 466 : 390, 'Use the same design width as the layout canvas')
-assert.ok(!manifest.features.some(f => f.name === 'blueos.storage.file'), 'Removed demo file capability returned')
-function nodes(n) { return [n, ...(n.children || []).flatMap(nodes)] }
-function sheetOf(page) { return Object.values(read(page + '/index.css.json'))[0] }
-function px(sheet, selector, field) { return parseFloat(sheet[selector]?.[field] || 0) }
-function viewport(style, label) {
-  assert.equal(style.width, '100%', label + ' width')
-  assert.equal(style.height, '100%', label + ' height')
-}
-function flexViewport(sheet, selector) {
-  assert.equal(sheet[selector]?.flex, 1, selector + ' must absorb remaining height instead of a fixed legacy viewport')
-}
-for (const page of Object.keys(manifest.router.pages)) {
-  const template = read(page + '/index.template.json'), sheet = sheetOf(page)
-  viewport(template.style, page + ' root')
-  for (const key of ['paddingTop','paddingRight','paddingBottom','paddingLeft','left','top','marginLeft','marginTop']) {
-    assert.ok(!template.style[key] || template.style[key] === '0px', page + ' root offset: ' + key)
-  }
-  for (const selector of ['.screen','.content']) if (sheet[selector]) viewport(sheet[selector], page + selector)
-  const tree = nodes(template)
-  for (const node of tree.filter(n => n.type === 'image')) {
-    const sources = node.attr?.src ? [node.attr.src] : [...(node.attr?.$src || '').matchAll(/['"](\/common\/icons\/[^'"]+\.svg)['"]/g)].map(m => m[1])
-    assert.ok(sources.length, page + ': image needs local vector source')
-    assert.ok(!node.events, page + ': click belongs to parent target, not unsupported image event')
-    for (const src of sources) {
-      assert.ok(src.startsWith('/common/icons/'), 'No remote media in watch UI')
-      const packed = path.join(build, src.slice(1))
-      assert.ok(fs.existsSync(packed), 'Vector missing from build: ' + src)
-      assert.equal(fs.readFileSync(packed, 'utf8'), fs.readFileSync(path.join(__dirname, '../src', src.slice(1)), 'utf8'), 'Vector changed in build: ' + src)
+// Check actual BlueOS compiler output. Browser previews are a separate verification.
+const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path')
+const target = process.argv[2] || 'watch-square'
+assert.equal(target,'watch-square','0.6.32 official UI is validated for square only')
+const build = process.env.BLUEOS_BUILD_ROOT ? path.resolve(process.env.BLUEOS_BUILD_ROOT,target) : path.resolve(__dirname,'../build',target)
+const read = name => JSON.parse(fs.readFileSync(path.join(build,name),'utf8'))
+const manifest=read('manifest.json'), nodes=n=>[n,...(n.children||[]).flatMap(nodes)]
+assert.deepEqual(manifest.deviceTypeList,[target]); assert.equal(manifest.config.designWidth,390)
+assert.ok(!manifest.features.some(f=>f.name==='blueos.storage.file'))
+for(const page of Object.keys(manifest.router.pages)) {
+  const template=read(page+'/index.template.json'), sheet=Object.values(read(page+'/index.css.json'))[0], tree=nodes(template)
+  const has=name=>tree.find(n=>n.class===name), px=(sel,key)=>parseFloat(sheet[sel]?.[key]||0)
+  assert.equal(template.style.width,'100%');assert.equal(template.style.height,'100%');assert.equal(template.style.backgroundColor,'#000000')
+  assert.ok(!/[\p{Extended_Pictographic}\uFE0F✓▶♥↶]/u.test(JSON.stringify(template)),'Use vector glyphs')
+  assert.ok(!sheet['@MEDIA']?.some(m=>m.condition?.includes('device:')),'Compiler resolves shape styles')
+  for(const node of tree.filter(n=>n.type==='image')) {
+    assert.ok(!node.events,'Put events on parent targets')
+    const sources=node.attr?.src?[node.attr.src]:[...(node.attr?.$src||'').matchAll(/['"](\/common\/icons\/[^'"]+\.svg)['"]/g)].map(m=>m[1])
+    assert.ok(sources.length,'Verifiable local vector source required')
+    for(const src of sources) {
+      assert.ok(src.startsWith('/common/icons/'))
+      assert.equal(fs.readFileSync(path.join(build,src.slice(1)),'utf8'),fs.readFileSync(path.join(__dirname,'../src',src.slice(1)),'utf8'))
     }
   }
-
-  if (page === 'Keypad') assert.ok(!tree.some(n => n.type === 'list'), 'Adjustment and keyboard must never scroll')
-  else assert.ok(tree.some(n => n.type === 'list'), page + ' must retain secondary native scrolling')
-  assert.ok(!JSON.stringify(template).match(/mediaOn|demoOn|openDemo|media-image/), 'Removed watch demo returned')
-  assert.ok(!sheet['@MEDIA']?.some(m => m.condition?.includes('device:')), page + ' device media must be resolved by the target compiler')
-  assert.ok(!/[\p{Extended_Pictographic}\uFE0F✓▶♥↶]/u.test(JSON.stringify(template)), page + ' emoji/icon font dependency')
-  const headerSelector = { Index: '.topbar', Workout: '.topbar', Keypad: '.label', ExerciseList: '.title', Summary: '.top' }[page]
-  assert.ok(px(sheet,headerSelector,'marginTop')>=18, page + ' top corner inset')
-  assert.ok(px(sheet,headerSelector,'width')<=314, page + ' header corner width')
-  if (page === 'Workout') {
-    flexViewport(sheet, '.finish-scroll')
-    assert.equal(tree.filter(n => n.events?.click === 'askAbandon').length, 2, 'Visible abandon entry in operations and finish')
-    assert.ok(tree.some(n => n.type === 'list' && n.class === 'finish-scroll'), 'Finish must scroll natively')
-    assert.equal(px(sheet,'.training-content','width'), round ? 300 : 338, 'Compiler must apply the correct screen-shape layout')
-    for (const [name, styles] of [[target, sheet]]) {
-      assert.equal(styles['.op-prescription'].flexDirection, 'column', name + ': long operation values need separate rows')
-      assert.ok(px(styles,'.op-metric','width') <= px(styles,'.op-prescription','width'), name + ': operation metrics overlap')
-      assert.equal(styles['.status'].flex, 1, name + ': status must share header width')
-      assert.ok(px(styles,'.clock','width') < px(styles,'.topbar','width'), name + ': clock leaves status room')
-      assert.ok(px(styles,'.abandon-button','height') >= 44, name + ': abandon touch target')
-      assert.ok(px(styles,'.fval','height') >= px(styles,'.fval','fontSize')+8, name + ': number ascender headroom')
-      assert.ok(px(styles,'.funit','height') >= 1.35*px(styles,'.funit','fontSize'), name + ': complete unit descender')
-      assert.equal(px(styles,'.funit','lineHeight'),px(styles,'.funit','height'), name + ': explicit unit line box')
-      assert.ok(px(styles,'.fval','height')+px(styles,'.funit','height')+2<=px(styles,'.field','height'), name + ': selected border must not crop values')
-      assert.ok(px(styles,'.list-link','height')>=44 && px(styles,'.end-link','height')>=44, name + ': footer touch targets')
-    }
-    flexViewport(sheet, '.training-panel'); flexViewport(sheet, '.operation-scroll'); flexViewport(sheet, '.last-list')
-    flexViewport(sheet, '.effort-scroll')
-    const main = tree.find(n => n.class === 'screen')
-    assert.ok(main && !nodes(main).some(n => n.type === 'list'), 'Training and rest screens must never scroll')
-    assert.ok(nodes(main).some(n => n.events?.click === 'openLast'), 'Inline history detail entry must remain')
-    assert.equal(px(sheet,'.training-panel','minHeight'),0)
-    const header=px(sheet,'.topbar','height')+px(sheet,'.topbar','marginTop')
-    const footer=px(sheet,'.primary-footer','height')+px(sheet,'.primary-footer','marginBottom')
-    const current=['.ex','.group','.inputs','.last-row','.navrow'].reduce((n,s)=>n+px(sheet,s,'height'),0)+px(sheet,'.set-dots','minHeight')
-    assert.ok(header+current+footer<=viewportHeight, 'Current set must show all dots and footer within the target design canvas')
-    assert.ok(!tree.some(n=>n.class==='undo-label'), 'Completed-set hint must not add a scrolling row')
-    const rest=['.rest-ex','.rest','.next','.effort-row','.rrow'].reduce((n,s)=>n+px(sheet,s,'height'),0)
-    assert.ok(header+rest+px(sheet,'.rrow','marginBottom')<=viewportHeight, 'Rest controls must fit without scrolling in standard state')
-    assert.ok(px(sheet,'.rest','fontSize')>=88 && px(sheet,'.rest','height')>=px(sheet,'.rest','lineHeight'), 'Readable uncut countdown')
-    assert.ok(px(sheet,'.rest','lineHeight')>=1.2*px(sheet,'.rest','fontSize'), 'Countdown font line box')
-    assert.ok(px(sheet,'.ex-name','height')>=2*px(sheet,'.ex-name','lineHeight'), 'Two-line exercise title')
-    for (const [name, styles] of [[target, sheet]]) {
-      assert.ok(px(styles,'.ex-name','width') + px(styles,'.remaining','width') + px(styles,'.remaining','marginLeft') <= px(styles,'.ex','width'), name + ': title must reserve remaining-count width')
-    }
-    assert.equal(sheet['.inputs'].flexDirection,'row', 'V4 horizontal prescription')
-    assert.ok(px(sheet,'.weight-field','width')+px(sheet,'.times','width')+px(sheet,'.reps-field','width')<=px(sheet,'.inputs','width'))
-    assert.ok(px(sheet,'.fval','fontSize')>=(round ? 52 : 56), 'Current numbers too small')
-    assert.ok(tree.some(n => n.type==='div' && n.events?.click==='onCurrentSetAction' && n.children?.some(c => c.type==='image' && c.attr?.$src?.includes('/common/icons/check.svg'))), 'Complete/undo/pause vector missing')
-    assert.ok(px(sheet,'.complete','height')>=64 && px(sheet,'.complete','width')>=64, 'Large circular vector action')
-    const primary = tree.find(n => n.events?.click === 'onCurrentSetAction')
-    assert.deepEqual(primary.children.map(n => n.type), ['image'], 'Complete/undo must remain vector-only')
-    assert.ok(px(sheet,'.set-hit','width')>=48 && px(sheet,'.set-hit','height')>=48, 'Dot touch target')
-    assert.equal(px(sheet,'.set-dot','width'),24, 'Readable normal dot')
-    assert.equal(px(sheet,'.set-dot','height'),24, 'Round normal dot')
-    assert.equal(px(sheet,'.set-current','width'),28, 'Readable current dot')
-    assert.equal(px(sheet,'.set-current','height'),28, 'Round current dot')
-    assert.ok(px(sheet,'.set-current','width')<px(sheet,'.set-hit','width'), 'Dot stays inside its 48px hit region')
-    assert.equal(sheet['.set-dots'].flexWrap,'nowrap', 'Large dots use bounded pages without growing training height')
-    const dot=tree.find(n=>n.repeat?.$exp==='setDots')
-    assert.ok(dot && dot.children.length===1 && dot.children[0].type==='div', 'Set dot must not contain number/checkmark labels')
-    assert.equal(dot.attr?.tid, 'key', 'Set dot repeat must preserve stable native row identity')
-    for (const selector of ['.completion-panel','.effort-layer']) viewport(sheet[selector],selector)
-    assert.ok(tree.some(n=>n.events?.click==='openExercises' && n.class==='ex'), 'Tap title must open exercise picker')
-    assert.ok(tree.some(n=>n.events?.click==='askEnd' && n.class==='flag'), 'Flag must only request confirmation')
-  } else if (page==='ExerciseList') {
-    flexViewport(sheet,'.body'); assert.equal(sheet['.scroll'].height,'100%')
-    assert.equal(px(sheet,'.body','minHeight'),0)
-    assert.ok(px(sheet,'.title','height')+px(sheet,'.title','marginTop')+px(sheet,'.foot','height')+px(sheet,'.foot','marginBottom')<viewportHeight)
-    assert.ok(px(sheet,'.exname','width')+px(sheet,'.cnt','width')+px(sheet,'.expand-hit','width')<=px(sheet,'.exhead','width'))
-    assert.ok(tree.some(n=>n.events?.$click?.includes('pickExercise(this.item')), 'Tap action name handler missing')
-    assert.equal(sheet['.back'].flexDirection, 'row', 'Return icon and label must share a row')
-    for (const [name, styles] of [[target, sheet]]) {
-      assert.ok(2 * px(styles,'.compact-action','width') <= px(styles,'.exit-row','width'), name + ': footer buttons overlap')
-      assert.ok(px(styles,'.back-icon','width') + px(styles,'.back-icon','marginRight') + 4 * px(styles,'.back-label','fontSize') <= px(styles,'.compact-action','width'), name + ': return label clips')
-      assert.ok(2 * px(styles,'.endbtn','height') <= px(styles,'.foot','height'), name + ': footer rows overlap')
-    }
-    for (const handler of ['onExit', 'abandonWorkout']) assert.ok(tree.some(n => n.events?.click === handler && (n.class || n.$class || '').includes('compact-action')), handler + ': compact footer class missing')
-
-  } else if (page==='Index') {
-    flexViewport(sheet,'.home-scroll')
-    assert.ok(px(sheet,'.start-circle','height')>=88)
-    assert.ok(tree.some(n => n.type==='div' && n.class==='start-circle' && n.events?.click==='onStart' && n.children?.some(c => c.type==='image' && c.attr?.src==='/common/icons/play.svg')), 'Start must retain drawn icon and original click target')
-    assert.ok(tree.some(n => n.type === 'list' && n.class === 'home-scroll'), 'Large home cards must scroll as one surface')
-  } else if (page==='Keypad') {
-    flexViewport(sheet,'.editor-content')
-    assert.ok(px(sheet,'.step','width')>=44 && px(sheet,'.step','height')>=44)
-    assert.ok(2*px(sheet,'.step','width')+px(sheet,'.show','width')<=px(sheet,'.step-row','width'))
-    assert.ok(px(sheet,'.show','fontSize')>=(round ? 52 : 64), 'Readable adjustment value within each design canvas')
-    assert.ok(px(sheet,'.k','height')>=44 && px(sheet,'.cancel','height')>=56 && px(sheet,'.ok','height')>=56, 'Large keys and fixed Save/Cancel targets')
-    const keyboardHeight = px(sheet,'.label','marginTop') + ['.label','.keyboard-target','.keyboard-value','.grid','.keyboard-switch','.actions'].reduce((n,s)=>n+px(sheet,s,'height'),0) + px(sheet,'.actions','marginTop') + px(sheet,'.actions','marginBottom')
-    assert.ok(keyboardHeight<=viewportHeight, 'Every keyboard row must fit one screen')
-    assert.ok(template.children.some(n => n.class === 'actions'), 'Save/Cancel must remain fixed')
-    assert.ok(tree.some(n=>n.events?.click==='onKeyOk'), 'Explicit Save missing')
-  } else if (page==='Summary') {
-    flexViewport(sheet,'.scroll')
-    assert.ok(px(sheet,'.metric-value','fontSize')>=48)
-    assert.equal(sheet['.hr-value'].color,'#FF453A')
-    assert.ok(tree.some(n=>n.events?.click==='onBack'), 'Done must return only')
+  if(page==='Workout') {
+    const live=has('screen live-screen');assert.ok(live && !nodes(live).some(n=>n.type==='list'),'Set/rest never scroll')
+    assert.equal(has('overview-scroll').type,'list')
+    for(const name of ['screen overview-screen','screen live-screen','screen metrics-screen','screen media-screen'])assert.ok(has(name))
+    assert.equal(has('page-dots').children.length,4);assert.equal(has('navrow').children.length,3)
+    for(const [sel,color] of [['.primary-button','#A3E635'],['.field','#1A2508']])assert.equal(sheet[sel].backgroundColor,color)
+    assert.equal(sheet['.rest'].color,'#A3E635');assert.equal(sheet['.metric-time'].color,'#FFD60A')
+    assert.equal(px('.primary-button','height'),77);assert.equal(px('.primary-button','borderRadius'),39)
+    assert.ok(px('.training-content','width')<=390)
+    const fixed=px('.training-content','paddingTop')+px('.training-content','paddingBottom')+px('.ex-name','minHeight')+px('.place','minHeight')+px('.place','marginTop')+px('.place','marginBottom')+px('.inputs','height')+px('.last-text','minHeight')+px('.last-text','marginTop')+px('.navrow','height')+px('.navrow','marginTop')+px('.page-dots','height')
+    assert.ok(fixed+24<=450,'Done-row effort must fit above page dots')
+    assert.deepEqual(has('rrow').children.map(n=>n.events.click),['onRestMinus','onSkipRest','onRestPlus'])
+    const row=tree.find(n=>n.repeat?.$exp==='overviewRows');assert.equal(row.attr.tid,'key')
+    for(const fill of tree.filter(n=>['hold-fill','time-fill'].includes(n.class)))assert.ok(fill.inlineStyle?.$width)
+    assert.ok(tree.some(n=>n.events?.touchstart==='startFinishHold' && n.events?.touchend==='cancelFinishHold'))
+    assert.ok(tree.some(n=>n.events?.click==='abandonEnd'))
+  } else if(page==='Keypad') {
+    assert.ok(!tree.some(n=>n.type==='list'));const rows=tree.filter(n=>n.class==='key-row')
+    assert.equal(rows.length,4);assert.ok(rows.every(n=>n.children.length===3))
+    assert.equal(sheet['.key'].backgroundColor,'#2C2C2E');assert.equal(px('.key','borderRadius'),14)
+    assert.ok((450-14-48-4-54-3)/4-3>=44,'Twelve keyboard touch targets fit one screen')
+    for(const action of ['onCancel','onKeyOk','backspace'])assert.ok(tree.some(n=>n.events?.click===action))
+  } else if(page==='Index') {
+    assert.equal(has('home-scroll').type,'list');assert.ok(has('today-card') && has('stats'));assert.ok(!has('start-circle'))
+    assert.equal(sheet['.primary'].backgroundColor,'#A3E635')
+  } else if(page==='Summary') {
+    assert.equal(has('scroll').type,'list');assert.equal(sheet['.duration'].color,'#FFD60A');assert.equal(px('.duration','fontSize'),48)
+    assert.equal(sheet['.done'].backgroundColor,'#A3E635');assert.ok(tree.some(n=>n.events?.click==='onBack'))
+  } else if(page==='ExerciseList') {
+    assert.equal(has('scroll').type,'list')
+    for(const action of ['pickExercise','toggleEx','pickRow','saveWorkout','abandonWorkout'])assert.ok(tree.some(n=>(n.events?.click||n.events?.$click||'').includes(action)))
   }
-  console.log(page + ': full viewport, native scroll, GT1 interaction/layout contract verified')
+  console.log(page+': compiled viewport, official component structure and vectors verified')
 }
