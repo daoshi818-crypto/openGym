@@ -2,8 +2,8 @@
   "package": "com.zcode.gymtimer",
   "name": "opengym",
   "icon": "/assets/images/logo.png",
-  "versionName": "0.6.35",
-  "versionCode": 50,
+  "versionName": "0.6.36",
+  "versionCode": 51,
   "appCategory": ["health"],
   "deviceTypeList": ["watch"],
   "config": {
@@ -28,7 +28,6 @@
     "pages": {
       "Index": { "component": "index" },
       "Workout": { "component": "index", "followHand": "disable" },
-      "Keypad": { "component": "index" },
       "ExerciseList": { "component": "index", "followHand": "disable" },
       "Summary": { "component": "index" }
     }

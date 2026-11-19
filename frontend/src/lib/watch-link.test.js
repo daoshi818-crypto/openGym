@@ -34,6 +34,18 @@ beforeEach(async () => {
 describe('watch app and plan delivery', () => {
   const workout = name => ({ name, exercises: [{ name: 'Squat', sets: 3, reps: 8 }] })
   const drain = async () => { for (let i = 0; i < 15; i++) await Promise.resolve() }
+  it('negotiates generation fencing and narrow dependencies only when the peer advertises them', async () => {
+    native.sendEvent.mockResolvedValue({ ok: true })
+    await link.connectWatch()
+    native.events.watchEvent({ t: 'hello', protocolVersion: 3, capabilities: { narrowDependencies: true, snapshotGenerations: true } })
+    await drain()
+    let hello = native.sendEvent.mock.calls.map(([m]) => JSON.parse(m.json)).filter(m => m.t === 'hello_ack').at(-1)
+    expect(hello.capabilities).toMatchObject({ narrowDependencies: true, snapshotGenerations: true })
+    native.events.watchEvent({ t: 'hello', protocolVersion: 3, capabilities: {} })
+    await drain()
+    hello = native.sendEvent.mock.calls.map(([m]) => JSON.parse(m.json)).filter(m => m.t === 'hello_ack').at(-1)
+    expect(hello.capabilities).toMatchObject({ narrowDependencies: false, snapshotGenerations: false })
+  })
   it('preserves Last time and effort capabilities in the actual native plan payload', async () => {
     const S = { unit: 'kg', effort: 'rir', routines: [{ id: 'back', name: 'Back', ex: [{ id: '0025', sets: 4, reps: 8 }] }], watchPlanIds: ['back'],
       workouts: [{ d: '2026-11-01', routineIds: ['back'], entries: [{ id: '0025', rid: 'back', target: { sets: 4 }, sets: [{ w: 42, r: 8, done: true }] }] }] }

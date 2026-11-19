@@ -61,13 +61,13 @@ for(const page of Object.keys(manifest.router.pages)) {
       assert.equal(hit.events.touchstart,'startFinishHold'); assert.equal(hit.events.touchcancel,'cancelFinishHold')
     }
     assert.ok(tree.some(n=>n.events?.click==='abandonEnd'))
-  } else if(page==='Keypad') {
-    assert.ok(!tree.some(n=>n.type==='list'));const rows=tree.filter(n=>n.class==='key-row')
+
+    const keyboard=nodes(has('number-keypad'));const rows=keyboard.filter(n=>n.class==='num-key-row')
     assert.equal(rows.length,4);assert.ok(rows.every(n=>n.children.length===3))
-    assert.equal(sheet['.key'].backgroundColor,'#2C2C2E');assert.equal(px('.key','borderRadius'),14)
+    assert.equal(sheet['.num-key'].backgroundColor,'#2C2C2E');assert.equal(px('.num-key','borderRadius'),14)
     assert.ok((450-58-50-4-44-56-6)/4-3>=44,'Twelve keyboard targets fit even with two-line error notice')
-    assert.ok(px('.number-row','width')<=334 && px('.ok','width')<=304,'Keyboard top and bottom controls stay inside square corners')
-    for(const action of ['onCancel','onKeyOk','backspace'])assert.ok(tree.some(n=>n.events?.click===action))
+    assert.ok(px('.num-number-row','width')<=334 && px('.num-ok','width')<=304,'Keyboard top and bottom controls stay inside square corners')
+    for(const action of ['closeNumberKeypad','saveNumberKeypad','numberBackspace'])assert.ok(tree.some(n=>n.events?.click===action))
   } else if(page==='Index') {
     assert.equal(has('home-scroll').type,'list');assert.ok(has('today-card') && has('stats'));assert.ok(!has('start-circle'))
     assert.equal(sheet['.primary'].backgroundColor,'#A3E635')

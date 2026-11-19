@@ -7,6 +7,7 @@ import { recordDiagnostic, flushDiagnosticLog } from '../lib/diagnostic-log.js'
 import router from '@blueos.app.appmanager.router'
 import storage from '@blueos.storage.storage'
 import { rotationStep, valueStep } from '../lib/value-step.js'
+import { numberDraft, changeNumber, applyNumberDraft, keypadPress } from '../lib/number-draft.js'
 import { captureRow, rowTarget, setDotWindow, createSetDotPicker } from '../lib/workout-interaction.js'
 import brightness from '@blueos.hardware.display.brightness'
 import {
@@ -27,7 +28,7 @@ import { zoneView, muscleView } from '../lib/official-metrics.js'
 const pageDefinition = {
   // Native reactiveMap retains proxies until Page destruction. Business documents
   // must stay in staticData; only the small display projection belongs in data.
-  staticData: { sessionModel: { current: null, restFlush: null, touchPoints: { start: { x: 0, y: 0 }, last: { x: 0, y: 0 } } } },
+  staticData: { sessionModel: { current: null, restFlush: null, numberDraft: null, keypadDraft: null, touchPoints: { start: { x: 0, y: 0 }, last: { x: 0, y: 0 } } } },
   stateOf(value) {
     // Detached transaction drafts (and legacy page callers) own their state.
     if (this.sessionActionDraft || !this.sessionModel) {
@@ -44,9 +45,29 @@ const pageDefinition = {
     if (arguments.length) owner.restFlush = value
     return owner.restFlush
   },
+  numberDraftOf(value) {
+    const owner = this.sessionModel || this
+    if (arguments.length) owner.numberDraft = value
+    return owner.numberDraft
+  },
+  keypadDraftOf(value) {
+    const owner = this.sessionModel || this
+    if (arguments.length) owner.keypadDraft = value
+    return owner.keypadDraft
+  },
+  updateNumbers() {
+    const draft = numberDraft(this.stateOf(), this.numberDraftOf())
+    this.numberDraftOf(draft)
+    if (this.keypadOn && (!draft || this.keypadDraftOf() !== draft)) this.closeNumberKeypad()
+    if (draft) {
+      this.weightNum = draft.w || '—'; this.repsNum = draft.r || '—'
+    }
+    return draft
+  },
   data: {
     exName: '', remainingLabel: '', syncWarning: false,
     selectedField: null, setDots: [], dotSegmented: false, dotHasPrev: false, dotHasNext: false, inputNotice: '',
+    keypadOn: false, keypadValue: '', keypadUnit: '', keypadField: 'w', keypadNotice: '',
     groupLabel: '',
     setProgressLabel: '',
     elapsedLabel: '',
@@ -199,6 +220,14 @@ const pageDefinition = {
   onRotation(ev) {
     ev = ev?.detail && typeof ev.detail === 'object' ? ev.detail : ev
     if (!ev || this.visible === false || ev.state === 3) return
+    if (this.keypadOn) {
+      const direction = rotationStep(ev)
+      if (direction) {
+        this.keypadBuffer = valueStep(this.keypadBuffer, this.keypadField, direction, this.weightStep)
+        this.keypadValue = this.keypadBuffer; this.keypadReplace = false
+      }
+      return
+    }
     this.logInteraction('crown_input', { detail: this.selectedField || (this.isRest ? 'rest' : 'page'), type: String(this.pageIndex) })
     if (this.pageIndex === 2 && !this.effortOn && !this.closeMode && !this.diagnosticOn) {
       const direction = rotationStep(ev); if (direction) this.stepMetrics(direction); return
@@ -217,6 +246,7 @@ const pageDefinition = {
   },
   onBackPress() {
     this.cancelFinishHold()
+    if (this.keypadOn) { this.closeNumberKeypad(); return true }
     if (this.diagnosticOn) { this.closeDiagnostics(); return true }
     if (this.effortOn) { this.closeEffort(); return true }
     // 详情/结束入口只关闭自己，不切组、不停表、不退出会话。
@@ -349,7 +379,7 @@ const pageDefinition = {
     this.timer = null
     const pending = this.flushRestNudge()
     this.setRestScreenLock(false)
-    if (this.sessionModel) this.sessionModel.current = null
+    if (this.sessionModel) { this.sessionModel.current = null; this.sessionModel.numberDraft = null; this.sessionModel.keypadDraft = null }
     return pending
   },
 
@@ -396,6 +426,7 @@ const pageDefinition = {
 
   touchEnd(e) {
     this.endFinishHold()
+    if (this.keypadOn) { this.touchCancel(); return }
     if (this.diagnosticOn) { this.touchCancel(); return }
     if (!this.touch) return
     // 固件触摸回调未必带 changedTouches，用最后一次 move 的坐标兜底。
@@ -535,8 +566,10 @@ const pageDefinition = {
     if (target.weightUnit !== (s.weightUnit || 'kg')) { this.clearFieldSelection(); return }
     this.stateOf(s)
     if (this.selectedField === field && this.fieldTarget && this.fieldTarget.setId === target.setId) {
-      router.push({ uri: '/Keypad', params: { ...target, field, inputMode: 'keypad' } }); return
+      this.openNumberKeypad(field); return
     }
+    this.weightStep = storage.getSync({ key: 'weight_step' })
+    this.updateNumbers()
     this.selectedField = field; this.fieldTarget = target; this.inputNotice = ''
     this.logInteraction('field_selected', { detail: field })
     this.focusCrown()
@@ -546,22 +579,52 @@ const pageDefinition = {
   adjustSelectedField(direction) {
     // A stray crown callback must not clone and persist an unchanged session.
     if (!direction || !this.selectedField || !this.fieldTarget || this.interactionBlocked()) return
-    return commitPageAction(this, function() {
-    if (!direction || !this.selectedField || !this.fieldTarget || this.interactionBlocked()) return
-    const s = loadState(), found = rowTarget(s, this.fieldTarget)
+    if (this.localCommitPending || this.keypadOn) return
+    const s = this.stateOf(), found = rowTarget(s, this.fieldTarget)
     if (!found || found.row.done || s.pausedAt || s.restUntil || this.fieldTarget.weightUnit !== (s.weightUnit || 'kg') || found.exIdx !== s.exIdx || found.setIdx !== s.setIdx) {
       this.clearFieldSelection(); this.inputNotice = '目标已变化，请重新选择'; return
     }
-    // Conservative input-only backpressure; never trim accepted edits or completion events.
-    if (persistenceStatus().failed || storageStatus().failed || pendingCount() >= 256 || (s.pendingEdits || []).length >= 256) {
-      this.inputNotice = '请先同步或恢复存储后再编辑'; return
-    }
-    const value = valueStep(found.row[this.selectedField], this.selectedField, direction, storage.getSync({ key: 'weight_step' }))
-    this.stateOf(s)
-    setRowValue(s, found.exIdx, found.setIdx, this.selectedField, value, true)
-    this.flushPendingRowEdits(); this.refresh()
-    }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
+    const draft = this.updateNumbers()
+    if (!draft) { this.clearFieldSelection(); return }
+    const value = valueStep(draft[this.selectedField], this.selectedField, direction, this.weightStep)
+    changeNumber(draft, this.selectedField, value)
+    if (this.selectedField === 'w') this.weightNum = value
+    else this.repsNum = value
   },
+  openNumberKeypad(field) {
+    if (this.localCommitPending || this.interactionBlocked()) return
+    const draft = this.updateNumbers()
+    if (!draft) return
+    this.keypadDraftOf(draft); this.keypadField = field
+    this.keypadBuffer = draft[field]; this.keypadValue = draft[field] || '—'
+    this.keypadUnit = field === 'w' ? draft.target.weightUnit : this.repsSuffix === '秒' ? 's' : ''
+    this.keypadReplace = true; this.keypadNotice = ''; this.keypadOn = true
+    this.focusCrown()
+  },
+  closeNumberKeypad() { this.keypadOn = false; this.keypadDraftOf(null); this.keypadNotice = ''; this.focusCrown() },
+  numberKey(key) {
+    if (!this.keypadOn) return
+    this.keypadBuffer = keypadPress(this.keypadBuffer, key, this.keypadField, this.keypadReplace)
+    this.keypadReplace = false; this.keypadValue = this.keypadBuffer || '—'
+  },
+  saveNumberKeypad() {
+    const expected = this.keypadDraftOf(), draft = this.updateNumbers()
+    if (!this.keypadOn || draft !== expected || !draft) return
+    if (!changeNumber(draft, this.keypadField, this.keypadBuffer)) { this.keypadNotice = '请输入有效数值'; return }
+    this.closeNumberKeypad(); this.updateNumbers()
+  },
+  numberKey1() { this.numberKey('1') },
+  numberKey2() { this.numberKey('2') },
+  numberKey3() { this.numberKey('3') },
+  numberKey4() { this.numberKey('4') },
+  numberKey5() { this.numberKey('5') },
+  numberKey6() { this.numberKey('6') },
+  numberKey7() { this.numberKey('7') },
+  numberKey8() { this.numberKey('8') },
+  numberKey9() { this.numberKey('9') },
+  numberKey0() { this.numberKey('0') },
+  numberKeyDot() { this.numberKey('.') },
+  numberBackspace() { this.numberKey('back') },
   refreshSetDots(page) {
     // Keep all five standard sets visible; larger plans use three-dot windows
     // plus two 48px navigation targets, including on the round safe width.
@@ -682,6 +745,10 @@ const pageDefinition = {
 
   onComplete(expectedTarget) {
     this.logInteraction('complete_tap')
+    if (this.keypadOn) return
+    const input = this.numberDraftOf()
+    // Freeze only these bounded scalars; an arriving phone snapshot may reconcile the live draft.
+    const numbers = input ? { ...input, target: { ...input.target } } : null
     return commitPageAction(this, function() {
     if (this.isRest || this.paused || this.closeMode || this.interactionBlocked() || Date.now() < (this.completionIgnoreUntil || 0)) return
     const s = this.stateOf()
@@ -690,6 +757,7 @@ const pageDefinition = {
     const exIdx = s.exIdx, setIdx = s.setIdx
     const current = s.workout.rows[exIdx] && s.workout.rows[exIdx][setIdx]
     if (!current || current.done) return
+    applyNumberDraft(s, numbers)
     this.completionIgnoreUntil = Date.now() + 700
     this.clearFieldSelection()
     const row = toggleSet(s, true)
@@ -1299,6 +1367,7 @@ const pageDefinition = {
     this.weightSuffix = s.weightUnit || 'kg'
     this.repsNum = row && row.r !== '' && row.r != null ? String(row.r) : '—'
     this.repsSuffix = this.isTimed(ex) ? '秒' : '次'
+    this.updateNumbers()
     this.isRest = !!s.restUntil
     this.paused = !!s.pausedAt
     this.pauseLabel = this.paused ? '继续训练' : '暂停训练'
@@ -1707,8 +1776,8 @@ export default pageDefinition
 </script>
 <template>
 <div class="page" id="training" touch-focusable="true" onrotation="onRotation" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
-  <div class="topbar" if="{{ !effortOn && !lastOpen && !diagnosticOn }}"><text class="top-lead" if="{{ !syncWarning }}">{{ hrLabel }}</text><text class="sync-pill" if="{{ syncWarning }}">{{ syncLabel }}</text><text class="clock">{{ clockLabel }}</text></div>
-  <div class="pager" if="{{ !closeMode && !effortOn && !lastOpen && !diagnosticOn }}">
+  <div class="topbar" if="{{ !effortOn && !lastOpen && !diagnosticOn && !keypadOn }}"><text class="top-lead" if="{{ !syncWarning }}">{{ hrLabel }}</text><text class="sync-pill" if="{{ syncWarning }}">{{ syncLabel }}</text><text class="clock">{{ clockLabel }}</text></div>
+  <div class="pager" if="{{ !closeMode && !effortOn && !lastOpen && !diagnosticOn && !keypadOn }}">
     <div class="screen overview-screen" show="{{ pageIndex === 0 }}">
       <list class="overview-scroll"><list-item type="overview-title" class="overview-head"><text class="overview-name">{{ finishName }}</text><text class="quiet">{{ doneTotal }} 组</text></list-item>
         <list-item type="exercise" class="overview-row {{ item.current ? 'overview-current' : '' }}" for="{{ item in overviewRows }}" tid="key" onclick="jumpOverview(item)"><div class="exercise-mark"><image class="mark-icon" src="/common/icons/wear-play-accent.svg" if="{{ item.current }}" /><image class="mark-icon" src="/common/icons/wear-check.svg" if="{{ !item.current && item.finished }}" /></div><div class="overview-copy"><text class="overview-ex {{ item.finished ? 'muted' : '' }}">{{ item.name }}</text><text class="overview-count">{{ item.count }}</text></div></list-item>
@@ -1736,11 +1805,12 @@ export default pageDefinition
       <div class="vertical-dots"><div class="pager-dot {{ metricKind === item.key ? 'pager-current' : '' }}" for="{{ item in metricPages }}" tid="key"></div></div>
     </div>
   </div>
-  <div class="page-dots" if="{{ !closeMode && !effortOn && !lastOpen && !diagnosticOn }}"><div class="pager-dot {{ pageIndex === 0 ? 'pager-current' : '' }}"></div><div class="pager-dot {{ pageIndex === 1 ? 'pager-current' : '' }}"></div><div class="pager-dot {{ pageIndex === 2 ? 'pager-current' : '' }}"></div></div>
+  <div class="page-dots" if="{{ !closeMode && !effortOn && !lastOpen && !diagnosticOn && !keypadOn }}"><div class="pager-dot {{ pageIndex === 0 ? 'pager-current' : '' }}"></div><div class="pager-dot {{ pageIndex === 1 ? 'pager-current' : '' }}"></div><div class="pager-dot {{ pageIndex === 2 ? 'pager-current' : '' }}"></div></div>
   <div class="overlay" if="{{ closeMode && !effortOn }}"><list class="modal-scroll"><list-item type="confirm" class="modal-content"><div class="done-mark" if="{{ closeMode === 'complete' }}"><image class="done-icon" src="/common/icons/wear-check-ink.svg" /></div><text class="confirm-title">{{ closeMode === 'complete' ? '所有组已完成' : closeMode === 'abandon' ? '放弃训练？' : '结束训练？' }}</text><text class="quiet confirm-note">{{ closeError || confirmRemain }}</text><input class="row-button" type="button" if="{{ closeMode === 'complete' && effortEntryOn }}" value="{{ effortEntryText }}" onclick="openEffort" /><input class="row-button danger" type="button" if="{{ closeMode === 'abandon' }}" value="放弃训练" onclick="abandonEnd" /><input class="primary-input" type="button" if="{{ closeMode === 'end' }}" value="结束并保存" onclick="saveEnd" /><div class="hold-finish" if="{{ closeMode === 'complete' }}"><image class="button-icon" src="/common/icons/wear-flag.svg" /><text class="button-word">{{ closeSaving ? '正在保存…' : '按住以结束' }}</text><div class="hold-fill" style="width: {{ finishProgress }};"><div class="hold-ink-label modal-ink-label"><image class="button-icon" src="/common/icons/wear-flag-ink.svg" /><text class="button-word ink">{{ closeSaving ? '正在保存…' : '按住以结束' }}</text></div></div><div class="hold-touch" ontouchstart="startFinishHold" ontouchend="endFinishHold" ontouchcancel="cancelFinishHold"></div></div><input class="row-button" type="button" value="继续训练" onclick="cancelClose" /></list-item></list></div>
   <div class="overlay" if="{{ lastOpen && !closeMode }}"><list class="modal-scroll" id="history" touch-focusable="true"><list-item type="last-title" class="modal-content"><text class="confirm-title">{{ lastTitle }}</text><text class="quiet">{{ lastMeta }}</text></list-item><list-item type="last-row" class="history-row" for="{{ r in lastRows }}" tid="key"><text class="history-no">{{ r.no }}</text><text class="history-value">{{ r.label }}</text></list-item><list-item type="last-back" class="modal-content"><input class="row-button" type="button" value="继续训练" onclick="closeLast" /></list-item></list></div>
   <div class="overlay" if="{{ effortOn && !diagnosticOn }}"><list class="modal-scroll"><list-item type="effort" class="modal-content"><text class="quiet">{{ effortRestLabel }}</text><text class="confirm-title">这组有多吃力？</text><text class="quiet">{{ effortTargetLabel }}</text><text class="quiet">{{ effortScaleLabel }}</text><div class="effort-pick"><input class="edge-button" type="button" value="−" onclick="effortMinus" /><text class="effort-value">{{ effortDraftLabel }}</text><input class="edge-button" type="button" value="+" onclick="effortPlus" /></div><text class="quiet effort-description">{{ effortNotice || effortMeaning || effortHint }}</text><input class="primary-input" type="button" value="保存" onclick="confirmEffort" /><input class="row-button" type="button" value="取消" onclick="closeEffort" /><input class="row-button danger" type="button" if="{{ effortHasSaved }}" value="清除评分" onclick="clearEffort" /></list-item></list></div>
   <div class="overlay" if="{{ diagnosticOn }}"><list class="modal-scroll"><list-item type="diagnostic" class="modal-content"><text class="confirm-title">{{ diagnosticTitle }}</text><text class="diagnostic-text">{{ diagnosticText }}</text><input class="row-button" type="button" value="下一页" onclick="nextDiagnostic" /><input class="row-button" type="button" value="返回" onclick="closeDiagnostics" /></list-item></list></div>
+  <div class="number-keypad" id="keypad" if="{{ keypadOn }}"><div class="num-number-row"><div class="num-cancel" onclick="closeNumberKeypad"><image class="num-cancel-icon" src="/common/icons/wear-left.svg" /></div><text class="num-keyboard-value {{ keypadValue.length > 6 ? 'num-long-value' : '' }}">{{ keypadValue }}</text><text class="num-unit">{{ keypadUnit }}</text></div><text class="num-notice" if="{{ keypadNotice }}">{{ keypadNotice }}</text><div class="num-grid"><div class="num-key-row"><input class="num-key" type="button" value="1" onclick="numberKey1" /><input class="num-key" type="button" value="2" onclick="numberKey2" /><input class="num-key" type="button" value="3" onclick="numberKey3" /></div><div class="num-key-row"><input class="num-key" type="button" value="4" onclick="numberKey4" /><input class="num-key" type="button" value="5" onclick="numberKey5" /><input class="num-key" type="button" value="6" onclick="numberKey6" /></div><div class="num-key-row"><input class="num-key" type="button" value="7" onclick="numberKey7" /><input class="num-key" type="button" value="8" onclick="numberKey8" /><input class="num-key" type="button" value="9" onclick="numberKey9" /></div><div class="num-key-row"><input class="num-key num-decimal" type="button" value="." disabled="{{ keypadField !== 'w' }}" onclick="numberKeyDot" /><input class="num-key" type="button" value="0" onclick="numberKey0" /><div class="num-key num-symbol" onclick="numberBackspace"><image class="num-key-icon" src="/common/icons/wear-back.svg" /></div></div></div><div class="num-ok" onclick="saveNumberKeypad"><image class="num-ok-icon" src="/common/icons/wear-check-ink.svg" /></div></div>
 </div>
 </template>
 <style>
@@ -1888,4 +1958,22 @@ export default pageDefinition
 .effort-value { width: 180px; font-size: 64px; color: #A3E635; text-align: center; }
 .effort-description { width: 320px; min-height: 50px; lines: 3; }
 .diagnostic-text { width: 320px; font-size: 19px; color: #FFFFFF; lines: 0; margin-bottom: 12px; }
+
+/* Screens.kt KeypadView, square branch. Source dp/sp ×1.6. */
+.number-keypad { position: absolute; left: 0px; top: 0px; width: 100%; height: 100%; padding: 30px 28px 28px; background-color: #000000; flex-direction: column; align-items: center; }
+.num-number-row { width: 334px; height: 50px; flex-direction: row; align-items: center; margin-bottom: 4px; }
+.num-cancel { width: 40px; height: 40px; border-radius: 24px; background-color: #2C2C2E; justify-content: center; align-items: center; margin-right: 8px; }
+.num-cancel-icon { width: 18px; height: 18px; }
+.num-keyboard-value { max-width: 250px; height: 50px; line-height: 50px; font-size: 38px; font-weight: bold; color: #FFFFFF; lines: 1; }
+.num-long-value { font-size: 30px; }
+.num-unit { font-size: 19px; color: #8D8D93; margin-left: 5px; }
+.num-notice { width: 320px; font-size: 17px; color: #FF9F0A; lines: 2; line-height: 22px; }
+.num-grid { width: 334px; flex: 1; min-height: 0px; flex-direction: column; justify-content: space-between; }
+.num-key-row { width: 334px; flex: 1; min-height: 0px; flex-direction: row; justify-content: space-between; margin-bottom: 3px; }
+.num-key { width: 108px; height: 100%; border-radius: 14px; background-color: #2C2C2E; color: #FFFFFF; font-size: 27px; font-weight: bold; }
+.num-symbol { justify-content: center; align-items: center; }
+.num-key-icon { width: 29px; height: 29px; }
+.num-ok { width: 304px; height: 56px; border-radius: 28px; background-color: #A3E635; justify-content: center; align-items: center; margin-top: 6px; }
+.num-ok-icon { width: 27px; height: 27px; }
+
 </style>

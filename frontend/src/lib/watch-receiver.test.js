@@ -667,7 +667,7 @@ describe('watch business message boundary', () => {
     await workout.onRotation({ delta: 1, state: 1 })
     expect(workout.state.setIdx).toBe(0) // no selected field: crown is inert
     workout.showCurrent(); workout.editReps(); await workout.onRotation({ delta: 1, state: 1 })
-    expect(workout.state.workout.rows[0][0].r).toBe('9')
+    expect(workout.repsNum).toBe('9'); expect(workout.state.workout.rows[0][0].r).toBe('8')
     workout.state.restUntil = Date.now() + 30000
     workout.refresh()
     const before = workout.state.restUntil
@@ -678,14 +678,14 @@ describe('watch business message boundary', () => {
     expect(workout.state.restUntil).toBe(after)
   })
 
-  it('lets the crown fine tune keypad values without typing', async () => {
-    const sessions = session()
+  it('lets the crown fine tune an inline keyboard draft without persisting it', () => {
+    const sessions = session(), rpc = transport(connection())
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
-    const keypad = page('Keypad/index.ux', { ...sessions, router: { back() {} } })
-    keypad.onInit({ exIdx: 0, setIdx: 0, field: 'w' })
-    keypad.onRotation({ delta: 1, state: 1 })
-    keypad.commit()
-    expect(sessions.loadState().workout.rows[0][0].w).toBe('60.5')
+    const workout = training(sessions, rpc); workout.onInit()
+    workout.editWeight(); workout.editWeight()
+    workout.onRotation({ delta: 1, state: 1 }); workout.saveNumberKeypad()
+    expect(workout.weightNum).toBe('60.5')
+    expect(sessions.loadState().workout.rows[0][0].w).toBe('60')
   })
 
   it.each([[-100, 2], [100, 0]])(
@@ -752,56 +752,39 @@ describe('watch business message boundary', () => {
   })
 
   it.each([['w', 'weight', '72.5'], ['r', 'reps', '12']])(
-    'hands a Keypad %s edit back to the connected Workout transport and preserves other updates', (field, type, value) => {
+    'completes the inline %s draft in one set event while preserving other rows', async (field, type, value) => {
       const sessions = session(), c = connection()
       sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
       const rpc = transport(c, { loadState: sessions.loadState })
-      const workout = training(sessions, rpc)
-      workout.onInit()
-      // Page bundles may have independent rpc modules; Keypad has no initialized connection.
-      const keypad = page('Keypad/index.ux', { ...sessions, ...transport(c), router: { back: vi.fn() } })
-      keypad.onInit({ exIdx: 0, setIdx: 0, field })
-      const changed = sessions.loadState()
-      sessions.setRowValue(changed, 0, 1, 'w', '90')
-      for (const key of value) keypad.onKey(key)
-      keypad.commit()
-      workout.onShow()
+      const workout = training(sessions, rpc); workout.onInit()
+      workout.selectField(field); workout.selectField(field)
+      const changed = sessions.loadState(); sessions.setRowValue(changed, 0, 1, 'w', '90')
+      for (const key of value) workout.numberKey(key)
+      workout.saveNumberKeypad()
       expect(sessions.loadState().workout.rows[0][1].w).toBe('90')
-      expect(c.sent.find(m => m.t === type)).toMatchObject({ sid: plan.sid, ex: 0, set: 1, [type]: value })
-      expect(field === 'w' ? workout.weightVal : workout.repsVal).toBe(value + (field === 'w' ? ' kg' : ' 次'))
+      expect(field === 'w' ? workout.weightNum : workout.repsNum).toBe(value)
+      expect(c.sent.find(m => m.t === type && m.set === 1)).toBeUndefined()
+      await workout.onComplete()
+      expect(sessions.loadState().workout.rows[0][0]).toMatchObject({ [field]: value, done: true })
+      expect(c.sent.find(m => m.t === 'set')).toMatchObject({ [type]: value, set: 1 })
     })
 
-  it('keeps the shown value when Keypad is confirmed without typing', async () => {
-    const sessions = session()
-    sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
-    const keypad = page('Keypad/index.ux', { ...sessions, sendControl() {}, router: { back() {} } })
-    keypad.onInit({ exIdx: 0, setIdx: 0, field: 'w' })
-    keypad.commit()
-    expect(sessions.loadState().workout.rows[0][0].w).toBe('60')
+  it('keeps the shown value when the inline keyboard is confirmed without typing', () => {
+    const sessions = session(); sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+    const workout = training(sessions, transport(connection())); workout.onInit()
+    workout.editWeight(); workout.editWeight(); workout.saveNumberKeypad()
+    expect(workout.weightNum).toBe('60')
+    expect(sessions.loadState().pendingEdits || []).toHaveLength(0)
   })
 
-  it('keeps a saved Keypad edit across a phone snapshot arriving before the page returns', async () => {
+  it('retains a deliberate local draft across repeated snapshots without sending per-digit messages', () => {
     const sessions = session(), c = connection(), rpc = transport(c, sessions)
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
-    const workout = training(sessions, rpc)
-    workout.onInit()
-    const keypad = page('Keypad/index.ux', { ...sessions, router: { back() {} } })
-    keypad.onInit({ exIdx: 0, setIdx: 0, field: 'w' })
-    keypad.onKey('8'); keypad.onKey('0'); keypad.commit()
-    c.onMessage({ data: { ...plan, t: 'sync', rows: [[{ w: '60', r: '8', done: false }]] } })
-    workout.onShow()
-    expect(workout.weightVal).toBe('80 kg')
-    expect(c.sent.find(m => m.t === 'weight')).toMatchObject({ weight: '80', set: 1 })
-    // Native hello responses can arrive after onShow has moved the edit into the outbox.
-    c.onMessage({ data: { ...plan, t: 'sync', rows: [[{ w: '60', r: '8', done: false }]] } })
-    expect(workout.weightVal).toBe('80 kg')
-    const edit = c.sent.find(m => m.t === 'weight')
-    workout.onShow()
-    expect(c.sent.filter(m => m.t === 'weight')).toHaveLength(1)
-    c.onMessage({ data: { ...edit, editAt: edit.at } })
-    expect(sessions.loadState().pendingEdits).toHaveLength(0)
-    c.onMessage({ data: { t: 'weight', sid: plan.sid, ex: 0, set: 1, weight: '85' } })
-    expect(workout.weightVal).toBe('85 kg')
+    const workout = training(sessions, rpc); workout.onInit()
+    workout.editWeight(); workout.editWeight(); workout.numberKey8(); workout.numberKey0(); workout.saveNumberKeypad()
+    for (let i = 0; i < 3; i++) c.onMessage({ data: { ...plan, t: 'sync', rows: [[{ w: '60', r: '8', done: false }]] } })
+    expect(workout.weightNum).toBe('80')
+    expect(c.sent.filter(m => m.t === 'weight')).toHaveLength(0)
   })
 
   it('retries unacknowledged edits after reconnecting instead of leaving them permanently sent', async () => {

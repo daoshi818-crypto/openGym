@@ -40,6 +40,26 @@ describe('watch store transaction', () => {
     expect(sendAck).toHaveBeenCalledOnce()
     receive.dispose()
   })
+  it('records a repeatable failed reducer after three actual rollbacks and permits an independent set', async () => {
+    const send = vi.fn(), finish = vi.fn(() => { throw new Error('broken finish reducer') })
+    const receive = createDurableWatchLifecycle({ getState: () => useStore.getState().S,
+      update: fn => useStore.getState().update(fn, false),
+      transaction: fn => useStore.getState().withWatchTransaction(fn),
+      checkpoint: () => useStore.getState().checkpointWatchState(), getTimer: () => null,
+      send, sendAck() {}, sendSync() {}, sendEnded() {}, finish })
+    try {
+      receive({ t: 'end', sid: 's', eventId: 'bad', protocolVersion: 3, at: Date.now() }); await receive.idle()
+      receive.retry(); await receive.idle(); receive.retry(); await receive.idle()
+      expect(finish).toHaveBeenCalledTimes(3)
+      expect(useStore.getState().S.active.watchSid).toBe('s')
+      const stored = JSON.parse(localStorage.getItem('gym_state_v1'))
+      expect(Object.values(stored.watchCommits)[0]).toMatchObject({ failedEvent: { eventId: 'bad' }, decision: { status: 'rejected' } })
+      expect(send).toHaveBeenCalledWith(expect.objectContaining({ eventId: 'bad', status: 'rejected' }))
+      receive({ t: 'set', sid: 's', eventId: 'good', protocolVersion: 3, ex: 0, set: 1, at: Date.now() }); await receive.idle()
+      expect(useStore.getState().S.active.entries[0].sets[0].done).toBe(true)
+      expect(send).toHaveBeenCalledWith(expect.objectContaining({ eventId: 'good', status: 'applied' }))
+    } finally { receive.dispose() }
+  })
   it('rolls back a reducer exception and propagates a failed checkpoint', async () => {
     const before = clone(useStore.getState().S)
     expect(() => useStore.getState().withWatchTransaction(() => { useStore.getState().update(s => { s.active = null }); throw new Error('reducer') })).toThrow('reducer')

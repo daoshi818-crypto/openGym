@@ -192,3 +192,67 @@ describe('persistent acknowledged-base compaction', () => {
     expect(base).toEqual(full(1))
   })
 })
+
+
+describe('negotiated full snapshot generation fencing', () => {
+  it('replaces a stalled old transfer with the latest full snapshot after three due retries', async () => {
+    const store = disk(), rxDisk = disk(); let time = 1000
+    const tx = persistentSender(store, () => {}, () => time, null, s => ({ ...s, t: 'sync_delta' }), { fenced: true })
+    const applied = [], rx = persistentReceiver(rxDisk, async s => { applied.push(s.commitRev); return { ok: true } }, () => time, { fenced: true })
+    await tx.enqueue(snapshot(1)); const old = await tx.next()
+    await rx.receive(old) // deliberately lose all receipts from the old transfer
+    await tx.enqueue(snapshot(2))
+    for (let i = 0; i < 2; i++) { time += 65000; expect((await tx.next()).transferId).toBe(old.transferId) }
+    time += 65000; const latest = await tx.next()
+    expect(latest).toMatchObject({ t: 'sync_begin', revision: 2, fence: true, full: true })
+    expect(latest.generation).toBeGreaterThan(old.generation)
+    await tx.receipt((await rx.receive(latest))[0])
+    for (let i = 0; i < 100; i++) {
+      const m = await tx.next(); if (!m) break
+      for (const r of await rx.receive(m)) await tx.receipt(r)
+    }
+    expect(applied).toEqual([2])
+    expect(await tx.next()).toBeNull()
+    const restarted = persistentReceiver(rxDisk, async () => { throw new Error('stale rollback') }, () => time + TRANSFER_TTL + 1, { fenced: true })
+    expect((await restarted.receive(old))[0].reason).toBe('transfer_fenced')
+    expect(rxDisk.map.get('sync_rx_v1').fence.generation).toBe(latest.generation)
+  })
+  it('requires persisted fencing and negotiated support before acknowledging replacement', async () => {
+    const store = disk(), job = makeTransfer(snapshot(), 3)
+    const begin = { ...job.meta, t: 'sync_begin', fence: true, full: true }
+    const legacy = persistentReceiver(store, async () => ({ ok: true }))
+    expect((await legacy.receive(begin))[0].reason).toBe('fence_not_negotiated')
+    const rx = persistentReceiver(store, async () => ({ ok: true }), Date.now, { fenced: true })
+    store.fail(true); expect((await rx.receive(begin))[0].reason).toBe('transfer_storage')
+    expect(store.map.has('sync_rx_v1')).toBe(false)
+    store.fail(false); expect((await rx.receive(begin))[0].t).toBe('sync_begin_ack')
+    expect(store.map.get('sync_rx_v1').fence.generation).toBe(3)
+  })
+  it('never abandons a legacy transfer when fencing was not negotiated', async () => {
+    const store = disk(); let time = 1000
+    const tx = persistentSender(store, () => {}, () => time)
+    await tx.enqueue(snapshot(1)); const first = await tx.next(); await tx.enqueue(snapshot(2))
+    for (let i = 0; i < 8; i++) { time += 65000; expect((await tx.next()).transferId).toBe(first.transferId) }
+  })
+  it('recovers sender generation loss from the durable receiver watermark without rolling state back', async () => {
+    const receiverDisk = disk(), rx = persistentReceiver(receiverDisk, async () => ({ ok: true }), () => 1000, { fenced: true })
+    const old = makeTransfer(snapshot(5), 90, 1)
+    await rx.receive({ ...old.meta, t: 'sync_begin', fence: true, full: true })
+    const tx = persistentSender(disk(), () => {}, () => 1000, null, null, { fenced: true })
+    await tx.enqueue(snapshot(6)); const first = await tx.next()
+    const rejected = (await rx.receive(first))[0]
+    expect(rejected).toMatchObject({ reason: 'transfer_fenced', fenceGeneration: 90 })
+    await tx.receipt(rejected)
+    const replacement = await tx.next()
+    expect(replacement.generation).toBeGreaterThan(90)
+    expect((await rx.receive(replacement))[0].t).toBe('sync_begin_ack')
+  })
+})
+
+it('preserves negotiated retry attempts through repeated reconnects so newer full state cannot starve', async () => {
+  const d = disk(); let time = 1000
+  const tx = persistentSender(d, () => {}, () => time, null, null, { fenced: true })
+  await tx.enqueue(snapshot(1)); const first = await tx.next(); await tx.enqueue(snapshot(2))
+  for (let i = 0; i < 2; i++) { await tx.resume(); expect((await tx.next()).transferId).toBe(first.transferId) }
+  await tx.resume(); expect((await tx.next()).revision).toBe(2)
+})

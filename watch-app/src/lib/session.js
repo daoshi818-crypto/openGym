@@ -194,6 +194,9 @@ export function stageSessionEvent(state, event) {
   if (msg.t === 'add_set') msg.newSetIds = (state.workout.rows[msg.ex] || []).map(r => r.setId)
   const frontier = runtime().rpc?.peerCapabilities?.causalFrontier === true
   if (frontier) msg.causalFrontier = true
+  // Freeze the negotiated footprint with this event. Old accepted dependencies
+  // remain byte-identical when an endpoint upgrades or reconnects.
+  if (runtime().rpc?.peerCapabilities?.narrowDependencies === true) msg.narrowDependencies = true
   msg.dependsOn = dependenciesFor(msg, pending.filter(e => !e.sid || e.sid === state.sid), frontier)
   pending.push(JSON.parse(JSON.stringify(msg)))
   return pending[pending.length - 1]

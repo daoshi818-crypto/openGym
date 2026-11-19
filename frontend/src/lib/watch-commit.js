@@ -17,7 +17,9 @@ const decisionOf = record => {
 }
 const keyOf = ev => JSON.stringify([ev.sid || '', ev.eventId || ev._inboxId || [ev.t, ev.ex, ev.set, ev.at]])
 
-// The bridge claims synchronously. Business work, durable checkpoint and replies run serially.
+// The bridge claims synchronously. Business work and its durable checkpoint run serially.
+// Reply delivery is a separate transport concern: the watch retries until it has the
+// durable decision, which is replayed verbatim from watchCommits after loss/restart.
 // A failed checkpoint keeps the head and its decision: retry never re-runs finish/rest effects.
 export function createDurableWatchLifecycle(deps) {
   const queue = []
@@ -117,7 +119,25 @@ export function createDurableWatchLifecycle(deps) {
               })
               }
               try { (deps.transaction || (run => run()))(stage, ev) }
-              catch (error) { item.replies = null; throw error }
+              catch (error) {
+                item.replies = null
+                item.businessFailures = (item.businessFailures || 0) + 1
+                // Only the transactional v3 path can prove rollback and retain a
+                // failed intention on BOTH endpoints. Legacy failures stay queued.
+                if (!deps.transaction || error?.watchReducerRolledBack !== true || ev.protocolVersion < 3 || !ev.eventId || item.businessFailures < 3) throw error
+                const decision = { t: 'committed', sid: ev.sid, eventId: ev.eventId, status: 'rejected',
+                  commitRev: deps.getState().active?.syncRev || 0,
+                  detail: { reason: 'business_exception', error: String(error?.message || error).slice(0, 160) } }
+                const replies = [{ kind: 'send', msg: decision }]
+                deps.transaction(() => deps.update(s => {
+                  s.watchCommitRev = (s.watchCommitRev || 0) + 1
+                  s.watchCommits ||= {}
+                  s.watchCommits[key] = { replies, decision, failedEvent: copy(ev), parents: [...(ev.dependsOn || [])], rev: s.watchCommitRev }
+                }), ev)
+                // The watch archives the exact rejected operation and its dependents
+                // before releasing them. Independent operations may now progress.
+                item.replies = replies; item.startedSid = null
+              }
             }
           }
           if (ev.t !== 'hello' && !deps.getState().watchCommits?.[key]) throw new Error('watch decision was not published')
@@ -148,9 +168,9 @@ export function createDurableWatchLifecycle(deps) {
               if (reply.kind === 'sync') {
                 const snapshot = watchSnapshotOf(deps.getState(), deps.getTimer())
                 if (snapshot) Promise.resolve(deps.sendSync(snapshot)).catch(() => {})
-              } else if (reply.kind === 'ack') await deps.sendAck(reply.at, reply.eventId)
-              else if (reply.kind === 'ended') await deps.sendEnded(reply.msg)
-              else await deps.send(reply.msg)
+              } else if (reply.kind === 'ack') Promise.resolve(deps.sendAck(reply.at, reply.eventId)).catch(() => {})
+              else if (reply.kind === 'ended') Promise.resolve(deps.sendEnded(reply.msg)).catch(() => {})
+              else Promise.resolve(deps.send(reply.msg)).catch(() => {})
             } catch { /* lost replies are reproduced when the watch resends */ }
           }
           replying = false

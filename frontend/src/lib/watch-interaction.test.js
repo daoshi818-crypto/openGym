@@ -3,11 +3,11 @@ import { describe, expect, it, vi } from 'vitest'
 import { runInNewContext } from 'node:vm'
 import { rotationStep, valueStep } from '../../../watch-app/src/lib/value-step.js'
 import { captureRow, rowTarget, setDotWindow, createSetDotPicker } from '../../../watch-app/src/lib/workout-interaction.js'
-import { stripImports, watchSource } from './watch-test-harness.js'
+import { stripImports, watchSource, watchInteractionDeps } from './watch-test-harness.js'
 const makeState = (count = 4) => ({ active: true, sid: 's', exIdx: 0, setIdx: 0, weightUnit: 'kg', workout: {
   exercises: [{ entryInstanceId: 'e', name: 'Row' }], rows: [Array.from({ length: count }, (_, i) => ({ setId: 'r' + i, w: '', r: 8, done: false }))] } })
 function workout(s = makeState()) {
-  const ctx = { Date, setTimeout, clearTimeout, commitPageAction, commitSessionAction: async (sid, action) => ({ ok: true, output: action(s) }), replayPendingEvents: vi.fn(), rotationStep, valueStep, captureRow, rowTarget, setDotWindow, createSetDotPicker,
+  const ctx = { ...watchInteractionDeps, Date, setTimeout, clearTimeout, commitPageAction, commitSessionAction: async (sid, action) => ({ ok: true, output: action(s) }), replayPendingEvents: vi.fn(), rotationStep, valueStep, captureRow, rowTarget, setDotWindow, createSetDotPicker,
     storage: { getSync: () => 0.5 }, loadState: () => s, save: vi.fn(),
     persistenceStatus: () => ({ failed: false }), storageStatus: () => ({ failed: false }), pendingCount: () => 0,
     setRowValue: vi.fn((state, ex, set, field, value) => { state.workout.rows[ex][set][field] = value; state.pendingEdits = [{ eventId: 'original', t: 'weight' }] }),
@@ -79,14 +79,17 @@ describe('actual watch workout page wiring', () => {
     const { page } = workout(); page.stepSet = vi.fn(); await page.onRotation({ delta: 1 })
     expect(page.stepSet).not.toHaveBeenCalled()
   })
-  it('selects first, opens editor on second tap, edits through original pending event on crown', async () => {
-    const { page, ctx } = workout()
-    page.editWeight(); expect(ctx.router.push).not.toHaveBeenCalled(); expect(page.selectedField).toBe('w')
-    await page.onRotation({ delta: 1 })
-    expect(ctx.setRowValue).toHaveBeenCalledWith(page.state, 0, 0, 'w', '0.5', true)
-    expect(ctx.replayPendingEvents).toHaveBeenCalledOnce()
-    expect(page.emitEvent).not.toHaveBeenCalled()
-    page.editWeight(); expect(ctx.router.push).toHaveBeenCalledWith(expect.objectContaining({ uri: '/Keypad' }))
+  it('keeps 400 crown steps local and opens the official keyboard on the same page', () => {
+    const { page, ctx, s } = workout()
+    page.editWeight(); expect(page.selectedField).toBe('w')
+    for (let i = 0; i < 400; i++) page.onRotation({ delta: 1 })
+    expect(page.weightNum).toBe('200')
+    expect(s.workout.rows[0][0].w).toBe('')
+    expect(ctx.setRowValue).not.toHaveBeenCalled()
+    expect(ctx.replayPendingEvents).not.toHaveBeenCalled()
+    expect(ctx.save).not.toHaveBeenCalled()
+    page.editWeight(); expect(page.keypadOn).toBe(true)
+    expect(ctx.router.push).not.toHaveBeenCalled()
   })
   it('stops on stale units, deleted targets, completed rows and pause', async () => {
     for (const change of [s => { s.weightUnit = 'lb' }, s => { s.workout.rows[0][0].setId = 'new' }, s => { s.workout.rows[0][0].done = true }, s => { s.pausedAt = 1 }]) {
@@ -104,7 +107,7 @@ describe('actual watch workout page wiring', () => {
     const before = structuredClone(s.pendingEdits)
     await page.onRotation({ delta: 1 })
     expect(ctx.setRowValue).not.toHaveBeenCalled(); expect(s.pendingEdits).toEqual(before)
-    expect(page.inputNotice).toContain('同步')
+    expect(page.weightNum).toBe('0.5') // a local draft needs no storage/transport capacity
   })
   it.each([0, 1])('leaves vertical scrolling on page %s; preserves horizontal navigation', index => {
     const { page } = workout(); page.pageIndex = index
@@ -177,54 +180,50 @@ describe('actual watch workout page wiring', () => {
 })
 
 function keypad(s = makeState(), params = {}) {
-  const ctx = { commitSessionAction: async (sid, action) => ({ ok: true, output: action(s) }), rotationStep, valueStep, rowTarget, loadState: () => s,
-    storage: { getSync: () => 0.5 }, setRowValue: vi.fn(), router: { back: vi.fn() } }
-  runInNewContext(stripImports(watchSource('Keypad/index.ux').match(/<script>([\s\S]*?)<\/script>/)[1]).replace('export default', 'this.page ='), ctx)
-  const page = { ...ctx.page, ...ctx.page.data }
-  page.onInit({ ...captureRow(s), field: 'w', ...params })
-  return { page, ctx, s }
+  const h = workout(s)
+  h.page.selectField(params.field || 'w'); h.page.selectField(params.field || 'w')
+  return h
 }
-describe('actual watch focused editor', () => {
-  it('backspaces one repetition digit instead of silently clearing the whole field', async () => {
+describe('inline official keyboard', () => {
+  it('backspaces repetitions, permits weight decimals, and never persists keystrokes', () => {
     const s = makeState(); s.workout.rows[0][0].r = '125'
-    const { page, ctx } = keypad(s, { field: 'r' })
-    page.decimalOrClear(); expect(page.show).toBe('12')
-    page.decimalOrClear(); expect(page.show).toBe('1')
-    page.decimalOrClear(); expect(page.show).toBe('—')
-    expect(ctx.setRowValue).not.toHaveBeenCalled()
+    const a = keypad(s, { field: 'r' })
+    a.page.numberBackspace(); expect(a.page.keypadValue).toBe('12')
+    a.page.numberBackspace(); expect(a.page.keypadValue).toBe('1')
+    a.page.numberBackspace(); expect(a.page.keypadValue).toBe('—')
+    const b = keypad(); b.page.numberKey1(); b.page.numberKeyDot(); b.page.numberKey2()
+    expect(b.page.keypadValue).toBe('1.2')
+    expect(b.ctx.setRowValue).not.toHaveBeenCalled()
+    b.page.saveNumberKeypad(); expect(b.page.weightNum).toBe('1.2')
+    expect(b.s.workout.rows[0][0].w).toBe('')
   })
-  it('keeps the weight decimal key distinct from explicit clear', async () => {
-    const { page, ctx } = keypad()
-    page.onKey1(); page.decimalOrClear(); page.onKey2()
-    expect(page.show).toBe('1.2'); expect(ctx.setRowValue).not.toHaveBeenCalled()
+  it('cancel discards the keyboard buffer but preserves an earlier crown draft', () => {
+    const { page, s } = workout()
+    page.editWeight(); page.onRotation({ delta: 1 }); page.editWeight()
+    page.numberKey9(); page.closeNumberKeypad()
+    page.updateNumbers(); expect(page.weightNum).toBe('0.5')
+    expect(s.workout.rows[0][0].w).toBe('')
   })
-  it('does not write an empty field on unchanged Save or cancel', async () => {
-    const a = keypad(); await a.page.commit(); expect(a.ctx.setRowValue).not.toHaveBeenCalled()
-    const b = keypad(); b.page.plus(); b.page.onCancel(); expect(b.ctx.setRowValue).not.toHaveBeenCalled()
+  it('blocks swiping through the keyboard and back closes only the keyboard', () => {
+    const { page } = keypad()
+    page.touchStart({ touches: [{ clientX: 250, clientY: 200 }] })
+    page.touchEnd({ changedTouches: [{ clientX: 50, clientY: 200 }] })
+    expect(page.pageIndex).toBe(1)
+    expect(page.onBackPress()).toBe(true)
+    expect(page.keypadOn).toBe(false); expect(page.pageIndex).toBe(1)
   })
-  it('shares draft across quick and keyboard, writes only on explicit Save', async () => {
-    const { page, ctx, s } = keypad(); page.plus(); page.useKeyboard(); page.useQuick()
-    expect(page.show).toBe('0.5'); expect(ctx.setRowValue).not.toHaveBeenCalled()
-    await page.commit(); expect(ctx.setRowValue).toHaveBeenCalledWith(s, 0, 0, 'w', '0.5', true)
-  })
-  it('rejects deleted stable identity instead of applying to the new neighbour', async () => {
-    const { page, ctx, s } = keypad(); page.plus(); s.workout.rows[0].shift(); await page.commit()
-    expect(ctx.setRowValue).not.toHaveBeenCalled(); expect(page.notice).toBeTruthy()
-  })
-  it('uses captured sid, even when shared runtime state mutates', async () => {
-    const { page, ctx, s } = keypad(); page.plus(); s.sid = 'new'; await page.commit()
-    expect(ctx.setRowValue).not.toHaveBeenCalled()
-  })
-  it('uses captured units when converting the draft after an incoming unit change', async () => {
-    const s = makeState(); s.workout.rows[0][0].w = 10
-    const { page, ctx } = keypad(s); page.plus(); s.weightUnit = 'lb'; await page.commit()
-    expect(Number(ctx.setRowValue.mock.calls[0][4])).toBeCloseTo(23.149, 3)
-  })
-  it.each(['done', 'paused', 'rest'])('rejects a target that became %s while editing', async reason => {
-    const { page, ctx, s } = keypad(); page.plus()
+  it.each(['sid','unit','deleted','done','paused','rest'])('invalidates an open keyboard on %s changes', reason => {
+    const { page, s, ctx } = keypad()
+    page.numberKey9()
+    if (reason === 'sid') s.sid = 'new'
+    if (reason === 'unit') s.weightUnit = 'lb'
+    if (reason === 'deleted') s.workout.rows[0].shift()
     if (reason === 'done') s.workout.rows[0][0].done = true
     if (reason === 'paused') s.pausedAt = 1
     if (reason === 'rest') s.restUntil = Date.now() + 30000
-    await page.commit(); expect(ctx.setRowValue).not.toHaveBeenCalled()
+    page.saveNumberKeypad()
+    expect(page.keypadOn).toBe(false)
+    expect(ctx.setRowValue).not.toHaveBeenCalled()
+    expect(s.workout.rows[0].some(r => r.w === '9')).toBe(false)
   })
 })

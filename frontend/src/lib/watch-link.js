@@ -109,12 +109,13 @@ export function prepareWatchCommandState(event, snapshot) {
   return commandReceiptsEnabled ? commandStates.prepare(event, snapshot) : null
 }
 let pendingSync = null, syncRetryTimer = null, syncQueue = Promise.resolve()
+let snapshotGenerations = false
 let persistentEnabled = false, persistentPumpTimer = null, persistentPumping = false, persistentAgain = false
 let persistentHasWork = false
 function snapshotSender() {
   const owner = devices.read().selectedId
   if (!snapshotSenders.has(owner)) snapshotSenders.set(owner, persistentSender(transferStore('sync', owner),
-    snapshot => { if (devices.read().selectedId === owner) { adoptSyncBase(snapshot); confirmSnapshotPlan(snapshot) } }, () => Date.now(), null, snapshot => compactWire(syncBase, snapshot)))
+    snapshot => { if (devices.read().selectedId === owner) { adoptSyncBase(snapshot); confirmSnapshotPlan(snapshot) } }, () => Date.now(), null, snapshot => compactWire(syncBase, snapshot), { fenced: () => snapshotGenerations && devices.read().selectedId === owner }))
   return snapshotSenders.get(owner)
 }
 function catalogSender() {
@@ -122,7 +123,7 @@ function catalogSender() {
   if (!catalogSenders.has(owner)) catalogSenders.set(owner, persistentSender(transferStore('catalog', owner), message => {
     if (devices.read().selectedId !== owner || latestCatalog?.catalogId !== message.catalogId) return
     setCatalogStatus({ phase: 'synced', confirmedAt: Date.now(), error: '' })
-  }, () => Date.now(), null, null, { channel: 'catalog', types: ['plan_catalog'], onRetained(message) {
+  }, () => Date.now(), null, null, { channel: 'catalog', types: ['plan_catalog'], fenced: () => snapshotGenerations && devices.read().selectedId === owner, onRetained(message) {
     if (devices.read().selectedId === owner && latestCatalog?.catalogId === message.catalogId) setCatalogStatus({ phase: 'failed', error: '手表保留了更新目录，请校准手机时间后重试' })
   } }))
   return catalogSenders.get(owner)
@@ -351,7 +352,7 @@ function onNativeWatchState(ev) {
   setState(next === 'disconnected' ? 'off' : next, ev && ev.reason ? ev.reason : '')
   if (next === 'disconnected' || next === 'off' || next === 'error' || ev?.connected === false) {
     peerNegotiated = false; catalogSupported = false; lastVerifiedAt = 0; peerId = ''; identifiedPeer = false
-    persistentEnabled = false; clearTimeout(persistentPumpTimer)
+    persistentEnabled = false; snapshotGenerations = false; clearTimeout(persistentPumpTimer)
     connectionProbe?.finish(false); clearTimeout(catalogTimer)
     emitConnection()
   }
@@ -379,7 +380,7 @@ function onNativeWatchEvent(ev) {
     }
     if (ev.t === 'hello' && ev.capabilities?.deviceSelection === true && source) {
       if (!devices.discover(source, { ...(device || {}), watchVersion: ev.watchVersion })) return
-      if (peerId !== source) { connectionProbe?.finish(false); persistentEnabled = false; peerNegotiated = false; catalogSupported = false }
+      if (peerId !== source) { connectionProbe?.finish(false); persistentEnabled = false; snapshotGenerations = false; peerNegotiated = false; catalogSupported = false }
       identifiedPeer = true; peerId = source; lastVerifiedAt = 0
       emitConnection()
       if (!devices.accepts(source)) return
@@ -401,11 +402,12 @@ function onNativeWatchEvent(ev) {
     if (ev.t === 'hello') {
       peerNegotiated = true
       catalogSupported = ev.capabilities?.planCatalogChunks === true
+      snapshotGenerations = ev.capabilities?.snapshotGenerations === true
       watchVersion = ev.watchVersion ? String(ev.watchVersion) : 'not_reported'
       watchReceiptsSupported = ev.receipts === true
       persistentEnabled = ev.protocolVersion >= 3 && ev.capabilities?.durableCommit === true && ev.capabilities?.snapshotChunks === true && ev.capabilities?.selectiveChunkAck === true && ev.capabilities?.persistentTransfers === true
       commandReceiptsEnabled = ev.protocolVersion >= 3 && ev.capabilities?.commandReceipts === true && ev.capabilities?.durableCommit === true
-      sendWatchEvent({ t: 'hello_ack', protocolVersion: 3, capabilities: { deviceSelection: ev.capabilities?.deviceSelection === true, planCatalogChunks: catalogSupported, causalFrontier: ev.capabilities?.causalFrontier === true, durableCommit: true, snapshotChunks: true, watchEventChunks: true, commandReceipts: commandReceiptsEnabled, dependencyEvents: ev.capabilities?.dependencyEvents === true, selectiveChunkAck: ev.capabilities?.selectiveChunkAck === true, persistentTransfers: ev.capabilities?.persistentTransfers === true } })
+      sendWatchEvent({ t: 'hello_ack', protocolVersion: 3, capabilities: { deviceSelection: ev.capabilities?.deviceSelection === true, planCatalogChunks: catalogSupported, snapshotGenerations, narrowDependencies: ev.capabilities?.narrowDependencies === true, causalFrontier: ev.capabilities?.causalFrontier === true, durableCommit: true, snapshotChunks: true, watchEventChunks: true, commandReceipts: commandReceiptsEnabled, dependencyEvents: ev.capabilities?.dependencyEvents === true, selectiveChunkAck: ev.capabilities?.selectiveChunkAck === true, persistentTransfers: ev.capabilities?.persistentTransfers === true } })
       if (latestCatalog && catalogSupported) pushWatchCatalog(latestCatalog, true)
       if (catalogSupported) catalogSender().resume().then(() => kickCatalog()).catch(e => setCatalogStatus({ phase: 'failed', error: e.message }))
       if (persistentEnabled) snapshotSender().resume().then(() => kickPersistent()).catch(error => { lastError = error.message; kickPersistent(6000) })
@@ -511,7 +513,7 @@ export async function disconnectWatch() {
   peerNegotiated = false
   catalogSupported = false; lastVerifiedAt = 0; peerId = ''; identifiedPeer = false
   clearTimeout(catalogTimer); connectionProbe?.finish(false)
-  clearTimeout(persistentPumpTimer); persistentEnabled = false
+  clearTimeout(persistentPumpTimer); persistentEnabled = false; snapshotGenerations = false
   watchDiagnosticProbe?.finish('disconnected')
   clearTimeout(syncRetryTimer); pendingSync = null
   const p = await watchPlugin()
@@ -566,7 +568,7 @@ export async function selectWatchDevice(id) {
   if (!devices.select(id)) return { ok: false, reason: '尚未识别这块手表，请先在运动健康中连接并打开手表应用' }
   selectionEpoch++; connectionProbe?.finish(false)
   lastVerifiedAt = 0; syncBase = null; sentSnapshots.clear(); commandStates.clear?.()
-  coveredCommandPlan = null; persistentEnabled = false; persistentHasWork = false; clearTimeout(persistentPumpTimer)
+  coveredCommandPlan = null; persistentEnabled = false; snapshotGenerations = false; persistentHasWork = false; clearTimeout(persistentPumpTimer)
   clearTimeout(syncRetryTimer); pendingSync = null
   setCatalogStatus({ phase: latestCatalog ? 'queued' : 'idle', confirmedAt: 0, error: '' })
   clearTimeout(catalogTimer); catalogSupported = false; peerNegotiated = false

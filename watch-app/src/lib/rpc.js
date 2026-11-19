@@ -205,7 +205,7 @@ function sendHello() {
     t: 'hello',
     installationId: rpcState().installationId,
     watchVersion: WATCH_VERSION, protocolVersion: 3, stableIds: true,
-    capabilities: { deviceSelection: true, planCatalogChunks: true, causalFrontier: true, durableCommit: true, snapshotChunks: true, deltas: true, dependencyEvents: true, selectiveChunkAck: true, persistentTransfers: true, commandReceipts: true, watchEventChunks: true },
+    capabilities: { deviceSelection: true, planCatalogChunks: true, snapshotGenerations: true, narrowDependencies: true, causalFrontier: true, durableCommit: true, snapshotChunks: true, deltas: true, dependencyEvents: true, selectiveChunkAck: true, persistentTransfers: true, commandReceipts: true, watchEventChunks: true },
     receipts: true,
     sid: s.sid || '',
     rev: s.rev || 0,
@@ -680,7 +680,7 @@ export function startServer(h) {
         const r = rpcState()
         r.catalogReceiver ||= persistentReceiver({ read: key => readStored(key),
           write: async (key, value) => (await writeStoredAtomic(key, () => value)).ok },
-          applyCatalog, () => Date.now(), { channel: 'catalog', types: ['plan_catalog'] })
+          applyCatalog, () => Date.now(), { channel: 'catalog', types: ['plan_catalog'], fenced: () => rpcState().peerCapabilities?.snapshotGenerations === true })
         for (const reply of await r.catalogReceiver.receive(msg)) sendControl(reply)
       }, 'catalogQueue')
       return
@@ -700,7 +700,7 @@ export function startServer(h) {
               if (snapshot) { try { r.handlers.onSync?.(snapshot, { persisted: true }) } catch (error) { trace('page_sync_error', snapshot, error) } }
             }
             return result
-          })
+          }, () => Date.now(), { fenced: () => rpcState().peerCapabilities?.snapshotGenerations === true })
         for (const reply of await r.persistentReceiver.receive(msg)) sendControl(reply)
       })
       return

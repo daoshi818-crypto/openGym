@@ -33,7 +33,7 @@ const tree = page => sourceTemplate(watchSource(page + '/index.ux'))
 const css = page => watchSource(page + '/index.ux').match(/<style>([\s\S]*?)<\/style>/)[1]
 afterEach(() => vi.useRealTimers())
 describe('v1.4.5 official square Wear UI contracts', () => {
-  it.each(['Index','Workout','Keypad','ExerciseList','Summary'])('%s keeps a full viewport', name => {
+  it.each(['Index','Workout','ExerciseList','Summary'])('%s keeps a full viewport', name => {
     expect(css(name)).toMatch(/\.page\s*\{[^}]*width: 100%;[^}]*height: 100%;/)
     expect(css(name)).toContain('background-color: #000000')
     expect(watchSource(name + '/index.ux')).not.toContain('#30D158')
@@ -57,14 +57,14 @@ describe('v1.4.5 official square Wear UI contracts', () => {
     expect(all.some(n => n.class === 'overview-scroll' && n.type === 'list')).toBe(true)
   })
   it('has the official twelve-key layout, backspace, cancel arrow and save glyph', () => {
-    const all = nodes(tree('Keypad'))
+    const all = nodes(nodes(tree('Workout')).find(n => n.class === 'number-keypad'))
     expect(all.some(n => n.type === 'list')).toBe(false)
-    const rows = all.filter(n => n.class === 'key-row')
+    const rows = all.filter(n => n.class === 'num-key-row')
     expect(rows).toHaveLength(4); expect(rows.every(n => n.children.length === 3)).toBe(true)
-    expect(all.some(n => n.action === 'backspace')).toBe(true)
-    expect(all.some(n => n.action === 'onCancel')).toBe(true)
-    expect(all.some(n => n.action === 'onKeyOk')).toBe(true)
-    expect(css('Keypad')).toContain('border-radius: 14px') // 9dp
+    expect(all.some(n => n.action === 'numberBackspace')).toBe(true)
+    expect(all.some(n => n.action === 'closeNumberKeypad')).toBe(true)
+    expect(all.some(n => n.action === 'saveNumberKeypad')).toBe(true)
+    expect(css('Workout')).toContain('border-radius: 14px') // 9dp
   })
   it('uses TodayCard and the official barbell mark without an invented start circle', () => {
     const src = watchSource('Index/index.ux')
@@ -151,7 +151,7 @@ describe('v1.4.5 official square Wear UI contracts', () => {
     const names=readdirSync(new URL('../../../watch-app/src/common/icons/',import.meta.url)).filter(n=>n.startsWith('wear-'))
     expect(names.length).toBeGreaterThan(10)
     for(const name of names) expect(watchSource('common/icons/'+name)).not.toMatch(/<(script|text|image|foreignObject)\b|href=|url\(/i)
-    for(const page of ['Index','Workout','Keypad','ExerciseList','Summary']) expect(watchSource(page+'/index.ux')).not.toMatch(/[\p{Extended_Pictographic}\uFE0F✓▶♥↶]/u)
+    for(const page of ['Index','Workout','ExerciseList','Summary']) expect(watchSource(page+'/index.ux')).not.toMatch(/[\p{Extended_Pictographic}\uFE0F✓▶♥↶]/u)
   })
   it('retains discard confirmation and effort while removing non-upstream Overview actions', () => {
     const src=watchSource('Workout/index.ux')

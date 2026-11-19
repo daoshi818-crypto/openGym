@@ -16,6 +16,16 @@ function app(S = state(), overrides = {}) {
 }
 const event = (eventId = 'A') => ({ t: 'set', sid: '1000', ex: 0, set: 1, eventId, at: 20, _inboxId: eventId })
 describe('durable watch commits', () => {
+  it('commits later operations even when a previous transport reply never settles', async () => {
+    const a = app(undefined, { sendAck: vi.fn((at, id) => id === 'A' ? new Promise(() => {}) : undefined) })
+    a.receive(event('A'))
+    a.receive({ ...event('B'), t: 'unset', at: 21 })
+    await a.receive.idle()
+    expect(a.deps.sendAck.mock.calls.map(c => c[1])).toEqual(['A', 'B'])
+    expect(a.disk().active.entries[0].sets[0].done).toBe(false)
+    expect(a.deps.completeInbox).toHaveBeenCalledWith('B')
+    a.receive.dispose()
+  })
   it('does not hold outgoing replies behind an event arriving during the previous reply', async () => {
     let blocked = false, receive
     const a = app(undefined, { holdOutbound: () => { blocked = true; return () => { blocked = false } },
@@ -130,4 +140,34 @@ it('covers automatic plan echoes only after checkpoint succeeds and before relea
     expect(a.deps.commandStateCommitted).toHaveBeenCalledWith(correction)
     expect(order).toEqual(['saved', 'covered', 'released', 'sent'])
   } finally { a.receive.dispose() }
+})
+
+
+it('quarantines a repeatable transactional v3 fault durably without success ACK or blocking independent events', async () => {
+  let S = state(), durable, calls = 0
+  const send = vi.fn(), sendAck = vi.fn()
+  const deps = {
+    getState: () => S, getTimer: () => null,
+    update: fn => fn(S),
+    checkpoint: async () => { durable = structuredClone(S) }, send, sendAck, sendSync() {}, sendEnded() {},
+  }
+  // Inject only into the business transaction, not into the failure-decision update.
+  deps.transaction = (run, ev) => {
+    const before = structuredClone(S)
+    try { if (ev.eventId === 'bad' && calls++ < 3) { S.active.entries[0].sets[0].w = 999; throw new Error('bad business row') } run() }
+    catch (e) { S = before; e.watchReducerRolledBack = true; throw e }
+  }
+  const receive = createDurableWatchLifecycle(deps)
+  try {
+    receive({ ...event('bad'), protocolVersion: 3 }); await receive.idle()
+    receive.retry(); await receive.idle()
+    receive.retry(); await receive.idle()
+    const rejected = send.mock.calls.find(([m]) => m.eventId === 'bad')[0]
+    expect(rejected).toMatchObject({ status: 'rejected', detail: { reason: 'business_exception' } })
+    expect(durable.active.entries[0].sets[0].w).toBe(60)
+    expect(Object.values(durable.watchCommits)[0].failedEvent.eventId).toBe('bad')
+    expect(sendAck).not.toHaveBeenCalled()
+    receive({ ...event('independent'), protocolVersion: 3 }); await receive.idle()
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ eventId: 'independent', status: 'applied' }))
+  } finally { receive.dispose() }
 })

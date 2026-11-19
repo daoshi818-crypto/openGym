@@ -4,12 +4,12 @@ import { wireHash, wireBytes } from './sync-wire.js'
 export const TRANSFER_TTL = 86400000
 const MAX_BYTES = 131072, MAX_CHUNKS = 132
 const copy = value => JSON.parse(JSON.stringify(value))
-const signature = m => JSON.stringify([m.transferId, m.sid, m.revision, m.generation, m.count, m.bytes, m.hash, m.encoding, m.hashAlgorithm])
+const signature = m => JSON.stringify([m.transferId, m.sid, m.revision, m.generation, m.count, m.bytes, m.hash, m.encoding, m.hashAlgorithm, m.fence, m.full])
 const valid = m => typeof m.transferId === 'string' && /^[a-zA-Z0-9:_-]{1,128}$/.test(m.transferId) && typeof m.sid === 'string' && m.sid.length <= 256 &&
   Number.isSafeInteger(m.revision) && m.revision >= 0 && Number.isSafeInteger(m.generation) && m.generation >= 0 && Number.isInteger(m.count) && m.count > 0 && m.count <= MAX_CHUNKS &&
   Number.isInteger(m.bytes) && m.bytes > 0 && m.bytes <= MAX_BYTES && /^[0-9a-f]{1,8}$/.test(m.hash) && m.encoding === 'json-utf8' && m.hashAlgorithm === 'fnv1a-utf16-v1'
 const matches = (a, b) => a.transferId === b.transferId && a.sid === b.sid && a.revision === b.revision && a.hash === b.hash
-const receipt = (t, m, extra = {}) => ({ t, transferId: m.transferId, sid: m.sid, revision: m.revision, hash: m.hash, ...extra })
+const receipt = (t, m, extra = {}) => ({ t, transferId: m.transferId, sid: m.sid, revision: m.revision, generation: m.generation, hash: m.hash, ...extra })
 function serialOwner() {
   let tail = Promise.resolve()
   return task => { const next = tail.then(task); tail = next.catch(() => {}); return next }
@@ -62,6 +62,7 @@ export function persistentReceiver(store, apply, now = () => Date.now(), options
     if (wireBytes(text) !== job.meta.bytes || wireHash(text) !== job.meta.hash) throw new Error('transfer_checksum')
     const message = JSON.parse(text)
     if (!(options.types || ['sync', 'sync_delta']).includes(message.t) || message.sid !== job.meta.sid || message.commitRev !== job.meta.revision) throw new Error('transfer_snapshot')
+    if (job.meta.fence === true && message.t !== (namespace === 'catalog' ? 'plan_catalog' : 'sync')) throw new Error('full_snapshot_required')
     // apply MUST persist its transferId marker with the training state. A retry after
     // state success/index failure is then an exact idempotent apply, not a new operation.
     const outcome = await apply(message, job.meta)
@@ -77,6 +78,12 @@ export function persistentReceiver(store, apply, now = () => Date.now(), options
       for (const id of progress.keys()) if (!state.jobs.some(j => j.meta.transferId === id)) progress.delete(id)
       let job = state.jobs.find(j => j.meta.transferId === msg.transferId)
       try {
+        // Retire transport bytes only. This durable watermark survives restart/TTL;
+        // it is never a receipt for a set, close journal or any other business event.
+        const fence = state.fence
+        if (fence && msg.t !== 'sync_cancel' && (!Number.isSafeInteger(msg.generation) || msg.generation < fence.generation ||
+            msg.generation === fence.generation && msg.transferId !== fence.transferId))
+          return [receipt('sync_error', msg, { reason: 'transfer_fenced', fenceGeneration: fence.generation })]
         if (msg.t === 'sync_cancel') {
           if (job && !matches(job.meta, msg)) throw new Error('transfer_mismatch')
           state.jobs = state.jobs.filter(j => j !== job); await put(store, key, state)
@@ -85,6 +92,15 @@ export function persistentReceiver(store, apply, now = () => Date.now(), options
         }
         if (msg.t === 'sync_begin') {
           if (!valid(msg)) throw new Error('invalid_transfer')
+          if (msg.fence === true) {
+            if (!(typeof options.fenced === 'function' ? options.fenced() : options.fenced) || msg.full !== true) throw new Error('fence_not_negotiated')
+            if (!fence || msg.generation > fence.generation) {
+              state.fence = { generation: msg.generation, transferId: msg.transferId }
+              state.jobs = state.jobs.filter(j => j.meta.generation >= msg.generation)
+              for (const id of progress.keys()) if (!state.jobs.some(j => j.meta.transferId === id)) progress.delete(id)
+              job = state.jobs.find(j => j.meta.transferId === msg.transferId)
+            }
+          }
           if (job && signature(job.meta) !== signature(msg)) throw new Error('transfer_mismatch')
           if (!job) {
             // At most two fixed disk slots (264 chunk keys), never per-transfer key growth.
@@ -136,11 +152,21 @@ export function persistentReceiver(store, apply, now = () => Date.now(), options
 }
 export function persistentSender(store, onApplied = () => {}, now = () => Date.now(), fullSnapshot = null, encode = null, options = {}) {
   const serial = serialOwner(), key = (options.channel === 'catalog' ? 'catalog' : 'sync') + '_tx_v1'
+  const fenced = () => !!(typeof options.fenced === 'function' ? options.fenced() : options.fenced)
+  const fullType = options.channel === 'catalog' ? 'plan_catalog' : 'sync'
   function prepare(snapshot, generation, compact) {
     const wire = compact && encode ? encode(copy(snapshot)) : snapshot
     const job = makeTransfer(copy(wire), generation, now(), options)
     if (wire.t === 'sync_delta' && snapshot.t === 'sync') job.authoritativeSnapshot = copy(snapshot)
+    if (fenced() && wire.t === fullType) { job.meta.fence = true; job.meta.full = true }
     return job
+  }
+  async function supersede(state, source) {
+    const full = source.authoritativeSnapshot || (source.snapshot.t === fullType ? source.snapshot : await fullSnapshot?.(copy(source.snapshot)))
+    if (!full || full.t !== fullType || full.sid !== source.meta.sid) return false
+    state.active = prepare(full, ++state.generation, false)
+    state.queued = null
+    return true
   }
   const stateOf = async () => (await store.read(key)) || { generation: 0, active: null, queued: null }
   return {
@@ -154,10 +180,16 @@ export function persistentSender(store, onApplied = () => {}, now = () => Date.n
       await put(store, key, state); return true
     }),
     next: () => serial(async () => {
-      const state = await stateOf(), job = state.active
+      const state = await stateOf()
+      let job = state.active
       if (!job) return null
       if (now() - job.at > TRANSFER_TTL && !job.cancelReason) job.cancelReason = 'expired'
       if (now() < job.retryAt) return null
+      if (fenced() && job.attempts >= 3 && (state.queued || job.cancelReason)) {
+        // Bound the blocked predecessor, never coalesce accepted watch events.
+        // Replacement must be a full snapshot, not a delta with an unproven base.
+        if (await supersede(state, state.queued || job)) job = state.active
+      }
       let message
       if (job.cancelReason) message = receipt('sync_cancel', job.meta, { reason: job.cancelReason })
       else if (!job.begun) message = { ...job.meta, t: 'sync_begin' }
@@ -206,6 +238,10 @@ export function persistentSender(store, onApplied = () => {}, now = () => Date.n
       } else if (msg.t === 'unknown_transfer') { job.begun = false; job.acknowledged = [] }
       else if (msg.t === 'sync_error') {
         job.lastError = String(msg.reason || 'snapshot_error').slice(0, 80)
+        if (msg.reason === 'transfer_fenced' && fenced() && Number.isSafeInteger(msg.fenceGeneration) && msg.fenceGeneration >= 0) {
+          state.generation = Math.max(state.generation, msg.fenceGeneration)
+          if (await supersede(state, state.queued || job)) { await put(store, key, state); return true }
+        }
         if (['transfer_storage', 'transfer_capacity'].includes(msg.reason)) {
           // A temporary disk/capacity failure keeps exact bytes and backoff, not a cancel storm.
           await put(store, key, state); return false
@@ -219,7 +255,12 @@ export function persistentSender(store, onApplied = () => {}, now = () => Date.n
     wakeIn: () => serial(async () => { const s = await stateOf(); return s.active ? Math.max(0, s.active.retryAt - now()) : null }),
     resume: () => serial(async () => {
       const state = await stateOf()
-      if (state.active) { state.active.begun = false; state.active.retryAt = 0; state.active.attempts = 0; await put(store, key, state) }
+      if (state.active) {
+        state.active.begun = false; state.active.retryAt = 0
+        // Repeated link flaps must not reset the negotiated starvation bound.
+        if (!fenced()) state.active.attempts = 0
+        await put(store, key, state)
+      }
     }),
   }
 }

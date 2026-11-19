@@ -1358,7 +1358,7 @@ export const useStore = create((set, get) => {
       // in this synchronous draft; publish/persist exactly once with the event decision.
       set({ S: draft })
       try { run() }
-      catch (error) { set({ S: before }); throw error }
+      catch (error) { set({ S: before }); if (error && typeof error === 'object') error.watchReducerRolledBack = true; throw error }
       finally { watchDraft = null; set({ S: before }) }
       get().update(s => { for (const key of Object.keys(s)) delete s[key]; Object.assign(s, draft) }, true, { skipWatchStamp: true })
     },

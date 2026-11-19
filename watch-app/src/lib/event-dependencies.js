@@ -3,7 +3,9 @@ export function eventFootprint(event) {
   const row = event.entryInstanceId && event.setId ? event.entryInstanceId + ':' + event.setId : null
   const reads = ['session', 'structure', 'structure:' + (event.entryInstanceId || '')]
   let writes
-  if (row && ['weight', 'reps', 'effort'].includes(event.t)) writes = [row + ':' + event.t]
+  if (event.narrowDependencies === true && event.t === 'focus') writes = ['focus']
+  else if (event.narrowDependencies === true && event.t === 'rest') writes = ['rest']
+  else if (row && ['weight', 'reps', 'effort'].includes(event.t)) writes = [row + ':' + event.t]
   else if (row && event.t === 'set') writes = [row + ':done', row + ':weight', row + ':reps', 'rest', 'focus']
   else if (row && event.t === 'unset') writes = [row + ':done', 'rest', 'focus']
   else return { barrier: true, reads: [], writes: [] }

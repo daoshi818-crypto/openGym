@@ -6,7 +6,7 @@ import { watchSource, stripImports, watchInteractionDeps, watchPersistence, load
 import * as effort from '../../../watch-app/src/lib/effort-scale.js'
 import * as protocol from '../../../watch-app/src/lib/protocol.js'
 import { lastTimeView } from '../../../watch-app/src/lib/watch-last-time.js'
-import { dependenciesFor, causalAncestor } from '../../../watch-app/src/lib/event-dependencies.js'
+import { dependenciesFor, causalAncestor, selectReadyEvent } from '../../../watch-app/src/lib/event-dependencies.js'
 
 // Model the observed BlueOS Vm.ctx contract (Studio framework 7af9d62):
 // bound methods, receiver-ignoring writes, raw staticData, strong reactiveMap.
@@ -36,7 +36,8 @@ function setup() {
     tick() {}, restOver() {}, persistenceStatus: () => ({}), storageStatus: () => ({}), synchronizationStatus: () => ({}),
     pendingCount: () => 0, isConnected: () => true, router: { replace() {}, push() {} }, brightness: {} })
   loadWatchModule('event-id', ctx, ['allocateEventIdentity', 'rememberEventAt'])
-  loadWatchModule('session', ctx, ['startSession', 'loadState', 'save', 'setRowValue', 'nextUndone', 'calories', 'commitSessionAction'])
+  loadWatchModule('session', ctx, ['startSession', 'loadState', 'save', 'setRowValue', 'nextUndone', 'calories', 'commitSessionAction', 'toggleSet', 'stageSessionEvent'])
+  ctx.sendEvent = ev => ctx.stageSessionEvent(ctx.loadState(), ev)
   ctx.startSession({ sid: 'device', name: '推日', protocolVersion: 3, exercises: [
     { entryInstanceId: 'bench', name: '哑铃卧推', sets: 5, weight: 12, reps: 12, restSec: 60, muscles: { chest: 1 } },
   ] })
@@ -61,15 +62,15 @@ it('reuses visible zone and overview objects throughout 30 minutes of HR display
   expect(page.zoneRows).toBe(zones); expect(page.zoneRows[0]).toBe(firstZone)
   expect(page.overviewRows).toBe(overview); expect(page.overviewRows[0]).toBe(firstEntry)
 })
-it('selects weight, handles both native and wrapped crown events, and preserves disk-first edits', async () => {
+it('selects weight, handles both native and wrapped crown events, and keeps a raw local number draft', async () => {
   const { page, ctx, focus } = setup()
   page.editWeight(); expect(page.selectedField).toBe('w')
   await page.onRotation({ detail: { state: 1, direction: true, delta: 1 } })
-  expect(ctx.loadState().workout.rows[0][0].w).toBe('12.5')
+  expect(page.weightNum).toBe('12.5'); expect(ctx.loadState().workout.rows[0][0].w).toBe(12)
   await page.onRotation({ state: 2, direction: false, delta: -1 })
-  expect(ctx.loadState().workout.rows[0][0].w).toBe('12')
+  expect(ctx.loadState().workout.rows[0][0].w).toBe(12)
   await page.onRotation({ state: 3, delta: 1 })
-  expect(ctx.loadState().pendingEdits).toHaveLength(2)
+  expect(ctx.loadState().pendingEdits || []).toHaveLength(0)
   vi.advanceTimersByTime(1); expect(focus).toHaveBeenCalledWith(true)
   page.onHide(); const calls = focus.mock.calls.length
   vi.advanceTimersByTime(100); expect(focus).toHaveBeenCalledTimes(calls)
@@ -115,4 +116,57 @@ it('requires durable same-session applied ancestry for compact field conflict ch
   expect(causalAncestor(event, 'grandparent', id => records[id])).toBe(false)
   delete records.grandparent
   expect(causalAncestor(event, 'grandparent', id => records[id])).toBe(false)
+})
+
+it('keeps keyboard draft objects out of the native proxy map and commits final values with completion', async () => {
+  const { page, ctx, retained, storage } = setup()
+  const writes = vi.spyOn(storage, 'set')
+  page.editWeight()
+  for (let i = 0; i < 200; i++) page.onRotation({ delta: 1 })
+  page.editWeight(); page.numberKey8(); page.numberKey0(); page.saveNumberKeypad()
+  page.editReps(); page.onRotation({ delta: 1 })
+  expect(writes).not.toHaveBeenCalled()
+  expect(page.keypadOn).toBe(false); expect(page.weightNum).toBe('80')
+  expect([...retained.keys()].filter(o => o.target && 'dirtyW' in o)).toHaveLength(0)
+  expect(await page.onComplete()).toBe(true)
+  const s = ctx.loadState(), events = s.pendingEdits
+  expect(s.workout.rows[0][0]).toMatchObject({ w: '80', r: '13', done: true })
+  expect(events.filter(e => e.t === 'set')).toHaveLength(1)
+  expect(events.find(e => e.t === 'set')).toMatchObject({ weight: '80', reps: '13' })
+  expect(events.filter(e => ['weight','reps'].includes(e.t))).toHaveLength(0)
+  expect(writes.mock.calls.filter(([v]) => v.key === 'session_state')).toHaveLength(1)
+})
+it('keeps the number draft after failed completion and retries without duplicating a set event', async () => {
+  const { page, ctx, storage } = setup()
+  page.editWeight(); page.onRotation({ delta: 1 })
+  const original = storage.set
+  storage.set = item => item.key === 'session_state' ? item.fail?.({ code: 'disk_full' }) : original(item)
+  expect(await page.onComplete()).toBe(false)
+  expect(ctx.loadState().workout.rows[0][0].done).toBe(false)
+  expect(page.numberDraftOf().w).toBe('12.5')
+  storage.set = original
+  expect(await page.onComplete()).toBe(true)
+  expect(ctx.loadState().workout.rows[0][0]).toMatchObject({ w: '12.5', done: true })
+  expect(ctx.loadState().pendingEdits.filter(e => e.t === 'set')).toHaveLength(1)
+})
+it('reconciles untouched fields but preserves an intentional draft across phone snapshots', () => {
+  const { page, ctx } = setup()
+  page.editWeight(); page.onRotation({ delta: 1 })
+  const remote = ctx.loadState(); remote.workout.rows[0][0].w = '50'; remote.workout.rows[0][0].r = '15'
+  page.adoptSession(remote); page.refresh()
+  expect(page.weightNum).toBe('12.5'); expect(page.repsNum).toBe('15')
+  page.onHide(); page.onShow(); expect(page.weightNum).toBe('12.5')
+})
+
+it('allows a new negotiated focus to be overtaken by an independent row edit, preserving lifecycle barriers', () => {
+  const focus = { sid: 's', t: 'focus', eventId: 'focus', dependencyEvents: true, narrowDependencies: true, dependsOn: [] }
+  const weight = { sid: 's', t: 'weight', eventId: 'weight', entryInstanceId: 'e', setId: 'r', dependencyEvents: true, narrowDependencies: true, dependsOn: [] }
+  expect(dependenciesFor(weight, [focus])).toEqual([])
+  const entries = [{ msg: focus, nextAttemptAt: 5000 }, { msg: weight }]
+  expect(selectReadyEvent(entries, new Set(['focus','weight']), {}, 1000, true)?.msg.eventId).toBe('weight')
+  expect(dependenciesFor(weight, [{ ...focus, narrowDependencies: false }])).toEqual(['focus'])
+  for (const t of ['session_close','watch_start','pause','add_set','remove_set']) {
+    expect(dependenciesFor(weight, [{ ...focus, t }])).toEqual(['focus'])
+  }
+  expect(dependenciesFor({ ...weight, sid: 'new' }, [focus])).toEqual(['focus'])
 })

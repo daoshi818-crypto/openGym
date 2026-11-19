@@ -8,9 +8,10 @@ import { commitPageAction } from '../../../watch-app/src/lib/local-action.js'
 import { rotationStep, valueStep } from '../../../watch-app/src/lib/value-step.js'
 import { captureRow, rowTarget, setDotWindow, createSetDotPicker } from '../../../watch-app/src/lib/workout-interaction.js'
 import { zoneView, muscleView } from '../../../watch-app/src/lib/official-metrics.js'
+import { numberDraft, changeNumber, applyNumberDraft, keypadPress } from '../../../watch-app/src/lib/number-draft.js'
 
 // Real page imports, not stubs: keep VM tests in sync with the shipped page modules.
-export const watchInteractionDeps = { zoneView, muscleView, replayPendingEvents: () => {}, commitPageAction, rotationStep, valueStep, captureRow, rowTarget, setDotWindow, createSetDotPicker }
+export const watchInteractionDeps = { numberDraft, changeNumber, applyNumberDraft, keypadPress, zoneView, muscleView, replayPendingEvents: () => {}, commitPageAction, rotationStep, valueStep, captureRow, rowTarget, setDotWindow, createSetDotPicker }
 
 export const watchSource = path => readFileSync(new URL('../../../watch-app/src/' + path, import.meta.url), 'utf8')
 export const stripImports = code => code
