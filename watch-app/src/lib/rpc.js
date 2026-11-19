@@ -425,10 +425,10 @@ function summaryForEvent(eventId) {
 }
 
 // 关闭/结束两类消息串行消费：乱序或重复到达时只会得到同一条冻结汇总，也不会并发建两份日志。
-function serial(task) {
-  const prev = rpcState().lifecycleQueue || Promise.resolve()
+function serial(task, queue = 'lifecycleQueue') {
+  const prev = rpcState()[queue] || Promise.resolve()
   const next = prev.then(() => { if (runtime().destroyed || rpcState().stopped) return null; try { return task() } catch (e) { return null } }).catch(() => null)
-  rpcState().lifecycleQueue = next
+  rpcState()[queue] = next
   return next
 }
 
@@ -682,7 +682,7 @@ export function startServer(h) {
           write: async (key, value) => (await writeStoredAtomic(key, () => value)).ok },
           applyCatalog, () => Date.now(), { channel: 'catalog', types: ['plan_catalog'] })
         for (const reply of await r.catalogReceiver.receive(msg)) sendControl(reply)
-      })
+      }, 'catalogQueue')
       return
     }
     if (msg.transferId?.startsWith('p:') && ['sync_begin', 'sync_chunk', 'sync_resume', 'sync_cancel'].includes(msg.t)) {
@@ -728,7 +728,7 @@ export function startServer(h) {
       serial(async () => {
         const result = await applyCatalog(msg)
         sendControl({ t: 'plan_catalog_ack', at: msg.at, catalogId: msg.catalogId, contentHash: msg.contentHash, status: result.ok ? result.status : 'storage_failed' })
-      })
+      }, 'catalogQueue')
       return
     }
     if (msg.t === 'watch_start_ack') {

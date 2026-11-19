@@ -5,6 +5,7 @@ import { loadWatchModule, stripImports, watchPersistence, watchSource } from './
 import { watchCatalogOf } from './watch-workout.js'
 import { startFromWatch } from './watch-events.js'
 import { wireHash } from '../../../watch-app/src/lib/sync-wire.js'
+import { makeTransfer } from '../../../watch-app/src/lib/persistent-transfer.js'
 
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-19T12:00:00')) })
 afterEach(() => vi.useRealTimers())
@@ -72,4 +73,25 @@ it('publishes the catalog and an applied receipt only after confirmed storage, a
   expect(sent.findLast(m => m.t === 'plan_catalog_ack').status).toBe('retained')
   expect(disk.get('plan_catalog').catalogId).toBe('catalog:1')
   expect(changed).toHaveBeenCalledOnce()
+})
+it('does not block training transfer receipts behind a delayed catalog disk write', async () => {
+  const { ctx, storage } = watchPersistence(), sent = []
+  const connection = { getReadyState({ success }) { success({ status: 1 }) }, send({ data, success }) { sent.push(data); success() } }
+  Object.assign(ctx, { console, Date, setTimeout, clearTimeout, setInterval: () => 1, clearInterval() {},
+    interconnect: { instance: () => connection }, loadState: () => ({}), save() {}, WATCH_VERSION: 'test',
+    pendingSummaries: () => [], pendingCloseEvents: () => [] })
+  loadWatchModule('rpc', ctx, ['startServer'])
+  ctx.startServer({}); await drain()
+  connection.onMessage({ data: { t: 'hello_ack', protocolVersion: 3, capabilities: { planCatalogChunks: true, persistentTransfers: true, selectiveChunkAck: true } } })
+  const original = storage.set, held = []
+  storage.set = item => { if (item.key.startsWith('catalog_')) held.push(item); else original(item) }
+  const library = makeTransfer({ t: 'plan_catalog', sid: 'catalog', commitRev: 1, plans: [], date: '2026-11-19' }, 1, Date.now(), { channel: 'catalog', types: ['plan_catalog'] })
+  const training = makeTransfer({ t: 'sync', sid: 'training', commitRev: 1, exercises: [] }, 1, Date.now())
+  connection.onMessage({ data: { ...library.meta, t: 'sync_begin' } }); await drain()
+  expect(held).toHaveLength(1)
+  connection.onMessage({ data: { ...training.meta, t: 'sync_begin' } }); await drain()
+  await vi.advanceTimersByTimeAsync(150)
+  expect(sent).toContainEqual(expect.objectContaining({ t: 'sync_begin_ack', transferId: training.meta.transferId }))
+  for (const item of held) original(item)
+  await drain()
 })
