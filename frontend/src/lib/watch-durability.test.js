@@ -4,7 +4,11 @@ import { loadWatchModule } from './watch-test-harness.js'
 
 function harness() {
   const shared = {}, disk = new Map(), writes = [], sent = [], failures = []
-  const storage = { getSync: ({key}) => structuredClone(disk.get(key)), set: item => writes.push(item) }
+  // Delay the business writes under test, not unrelated identity/diagnostic metadata.
+  const storage = { getSync: ({key}) => structuredClone(disk.get(key)), set: item => {
+    if (['rpc_outbox', 'session_state'].includes(item.key)) writes.push(item)
+    else { disk.set(item.key, structuredClone(item.value)); item.success?.() }
+  } }
   const runtime = () => shared
   const context = { runtime, storage, console, Date, setTimeout, clearTimeout }
   loadWatchModule('persistence', context, ['readStored', 'writeStored', 'writeStoredConfirmed', 'retryStorage', 'storageStatus'])

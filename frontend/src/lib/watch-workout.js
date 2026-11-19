@@ -5,6 +5,7 @@ import { exOr } from './exercises.js'
 import { exerciseNameFor } from './i18n-core.js'
 import { watchSidOf, elapsedMsOf } from './session-resume.js'
 import { buildSessionEntries } from './session-start.js'
+import { deriveSessionName } from './session-merge.js'
 import { effectiveRoutineIds, effortOf, entryRoutineId } from './history.js'
 import { todayISO } from './format.js'
 import { EFFORT_CAPABILITY } from '../../../watch-app/src/lib/effort-scale.js'
@@ -76,19 +77,27 @@ export function watchSnapshotOf(S, timer, now = Date.now()) {
 
 export function watchCatalogOf(S, date = todayISO()) {
   const today = effectiveRoutineIds({ ...S, routines: S.routines || [], dayPlan: S.dayPlan || {}, week: S.week || {}, workouts: S.workouts || [] }, date, date)
-  const ids = [...new Set([...today, ...(S.watchPlanIds || [])])]
+  const ids = [...new Set((S.routines || []).map(r => r.id))]
   const profile = watchProfileOf(S)
-  return { t: 'plan_catalog', date, at: Date.now(), plans: ids.map(id => {
+  const plans = ids.map(id => {
     const routine = S.routines?.find(r => r.id === id)
     if (!routine) return null
-    const entries = buildSessionEntries(S, routine)
+    const entries = buildSessionEntries(S, routine).map(e => ({ ...e, rid: routine.id }))
     ensureWatchIdentity({ entries }, 'catalog:' + routine.id + ':' + fingerprint(routine.ex || []))
-    // 目录条目不写 rid，来源只能是这个计划本身；不能拿 S.active 推断。
+    // Match the official session-start path: every entry retains its source routine.
     const exercises = watchExercisesOf(S, entries, { routineId: routine.id })
     return { protocolVersion: 2, weightUnit: S.unit || 'kg', effortScale: effortOf(S), capabilities: { setEffort: EFFORT_CAPABILITY },
-      id: routine.id, name: routine.name, today: today.includes(id), available: exercises.length > 0,
+      id: routine.id, routineIds: [routine.id], name: routine.name, today: today.includes(id), available: exercises.length > 0,
       exercises, entries, profile, rows: entries.map(e => e.sets.filter(r => !isWarmupRow(r)).map(r => ({ setId: r.setId, w: r.w ?? '', r: r.sec ?? r.r ?? '', done: false, at: 0 }))) }
-  }).filter(Boolean) }
+  }).filter(Boolean)
+  const todayPlans = today.map(id => plans.find(p => p.id === id)).filter(p => p?.available)
+  const todayPlan = todayPlans.length > 1 ? {
+    ...todayPlans[0], id: 'today:' + date, routineIds: todayPlans.map(p => p.id),
+    name: deriveSessionName(todayPlans.map(p => p.name)),
+    entries: todayPlans.flatMap(p => p.entries.map(e => ({ ...e, rid: p.id }))),
+    exercises: todayPlans.flatMap(p => p.exercises), rows: todayPlans.flatMap(p => p.rows),
+  } : todayPlans[0] || null
+  return { t: 'plan_catalog', date, at: Date.now(), todayIds: todayPlans.map(p => p.id), todayPlan, plans }
 }
 
 export function watchProfileOf(S) {

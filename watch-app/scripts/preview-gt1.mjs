@@ -26,7 +26,8 @@ function environment() {
   loadWatchModule('session', ctx, ['loadState', 'startSession', 'save', 'replacePlan', 'applySync', 'nextUndone', 'nextUndoneFrom', 'setRowValue', 'toggleSet', 'addSet', 'removeSet', 'addRestTime', 'calories', 'endSession', 'closeSession', 'buildSessionSummary', 'summaryEventOf', 'setEffort'])
   return { ctx, disk, storage }
 }
-const plan = { id: 'p1', sid: 'preview', name: '推部训练', workout: '推部训练', effortScale: 'rpe', weightUnit: 'kg', exercises: [
+const now = new Date(), catalogDate = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0')
+const plan = { id: 'p1', today: true, sid: 'preview', name: '推部训练', workout: '推部训练', effortScale: 'rpe', weightUnit: 'kg', exercises: [
   { entryInstanceId: 'bench', name: '杠铃卧推', sets: 4, weight: '62.5', reps: '8', rest: 90, lastTime: { date: '2026-11-02', weightUnit: 'kg', rows: [{label:'60 × 10'},{label:'60 × 8'},{label:'57.5 × 10'}] } },
   { entryInstanceId: 'fly', name: '上斜哑铃飞鸟', sets: 3, weight: '15', reps: '12', rest: 90 },
   { entryInstanceId: 'push', name: '坐姿哑铃肩上推举', sets: 3, weight: '20', reps: '10', rest: 90 },
@@ -61,7 +62,7 @@ function scene(id, name, p, title, bottom = false) {
   const css = watchSource(name + '/index.ux').match(/<style>([\s\S]*?)<\/style>/)[1]
   scenes.push({ id, name, state, template, css, title, bottom })
 }
-let env = environment(); env.disk.set('plan_catalog', { plans: [plan, {...plan, id: 'pull', name: '拉部训练'}, {...plan, id: 'legs', name: '腿部训练'}] })
+let env = environment(); env.disk.set('plan_catalog', { date: catalogDate, plans: [plan, {...plan, today: false, id: 'pull', name: '拉部训练'}, {...plan, today: false, id: 'legs', name: '腿部训练'}] })
 let p = page('Index', env); p.onInit({}); scene('01-home','Index',p,'开始训练')
 p = page('Index'); p.onInit({}); scene('02-empty','Index',p,'首次同步空态')
 scene('03-current','Workout',workout(),'当前组 · RPE')
@@ -85,14 +86,14 @@ scene('21-many-dots','Workout',workout(s=>{s.workout.rows[0]=Array.from({length:
 scene('22-timed-wide','Workout',workout(s=>{s.workout.exercises[0].reps='99999秒';s.workout.rows[0][2].r='99999';s.workout.rows[0][2].w='99999.999'}),'极值 · 单位不裁切')
 scene('23-rest-no-effort','Workout',workout(s=>{s.restUntil=Date.now()+90000;s.effortScale='none'}),'休息 · 关闭评分')
 env=environment();p=page('Summary',env);p.onInit();p.clockLabel='9:23';scene('24-summary-missing','Summary',p,'总结 · 无历史统计')
-env=environment();env.disk.set('plan_catalog',{plans:[plan]});env.disk.set('summary_last',{savedAt:Date.now()});p=page('Index',env);p.onInit({});scene('25-home-summary','Index',p,'首页 · 最近结果入口')
+env=environment();env.disk.set('plan_catalog',{date:catalogDate,plans:[plan]});env.disk.set('summary_last',{savedAt:Date.now()});p=page('Index',env);p.onInit({});scene('25-home-summary','Index',p,'首页 · 最近结果入口')
 env=environment();env.ctx.startSession(clone(plan));p=page('Index',env);p.onInit({});scene('26-resume','Index',p,'恢复进行中训练')
 p=page('Index',env);p.onInit({conflict:JSON.stringify({...plan,sid:'phone-session'})});scene('27-conflict','Index',p,'手机训练冲突确认')
 scene('28-paused','Workout',workout(s=>{s.pausedAt=Date.now()}),'暂停 · 禁止误完成')
 env=environment();env.ctx.startSession(clone(plan));p=page('ExerciseList',env);p.onInit();p.endOn=true;scene('29-exercise-end','ExerciseList',p,'动作列表 · 结束操作')
 env=environment();env.ctx.startSession(clone(plan));p=page('Keypad',env);p.onInit({exIdx:0,setIdx:0,field:'r',inputMode:'keypad'});scene('30-keyboard-reps','Keypad',p,'次数键盘 · 完整一屏')
 p.targetName='这是一个用于验证两行显示的很长的训练动作名称';p.notice='目标已变化，未保存';scene('31-keyboard-notice','Keypad',p,'键盘 · 长动作名与过期提示')
-env=environment();env.disk.set('plan_catalog',{plans:[{...plan,name:'这是一个用于验证两行训练计划名称显示的推部训练计划'}]});env.disk.set('summary_last',{savedAt:Date.now()});p=page('Index',env);p.onInit({});scene('32-home-long','Index',p,'首页 · 长计划名与最近结果')
+env=environment();env.disk.set('plan_catalog',{date:catalogDate,plans:[{...plan,name:'这是一个用于验证两行训练计划名称显示的推部训练计划'}]});env.disk.set('summary_last',{savedAt:Date.now()});p=page('Index',env);p.onInit({});scene('32-home-long','Index',p,'首页 · 长计划名与最近结果')
 p=workout();p.openFinish();scene('33-finish-bottom','Workout',p,'结束页 · 放弃入口',true)
 p=workout();p.openFinish();p.askAbandon();scene('34-abandon-confirm','Workout',p,'放弃训练 · 独立确认')
 p=workout(s=>{s.workout.rows[0][2].w='99999.999';s.workout.rows[0][2].r='99999'});p.pageIndex=2;p.syncLabel='正在同步训练记录，请保持连接';scene('35-operation-long','Workout',p,'操作页 · 长数值与同步状态')
@@ -130,6 +131,9 @@ p=workout(s=>{s.profile={birthYear:1996};s.hr={count:4,sum:552,max:169,min:112,l
 p=workout(s=>{s.workout.exercises[0].muscles={chest:1,triceps:.5,deltoids:.3}});p.pageIndex=2;p.metricKind='muscles';scene('59-official-muscles','Workout',p,'官方肌群 · 完成组权重计算')
 p=workout();p.pageIndex=2;p.metricKind='muscles';scene('60-muscles-no-metadata','Workout',p,'已有训练 · 缺肌肉元数据')
 p=workout();p.pageIndex=0;p.overviewRows=[];p.finishProgress='50%';scene('62-finish-progress','Workout',p,'按住结束 · 50% 填充')
+env=environment();env.disk.set('plan_catalog',{date:catalogDate,plans:[{...plan,today:false}]});p=page('Index',env);p.onInit({});scene('63-home-no-today','Index',p,'今日无安排 · 保留全部其他计划')
+env=environment();env.disk.set('plan_catalog',{date:catalogDate,plans:[]});p=page('Index',env);p.onInit({});scene('64-home-empty-synced','Index',p,'目录已同步 · 空计划')
+env=environment();env.disk.set('plan_catalog',{date:catalogDate,todayPlan:{...plan,id:'today:'+catalogDate,name:'推部训练 + 核心稳定训练',exercises:[...plan.exercises,...plan.exercises]},plans:[plan,{...plan,id:'legs',today:false,name:'腿部训练'}]});p=page('Index',env);p.onInit({});scene('65-home-combined','Index',p,'今日多计划 · 合并训练')
 const runtime = `
 function val(exp,ctx){if(typeof exp!=='string')return exp;if(exp.startsWith('function'))return Function('return ('+exp+')')().call(ctx);return exp.split('.').reduce((a,k)=>a?.[k],ctx)}
 function render(n,ctx){if(n.repeat){let frag=document.createDocumentFragment();for(const item of val(n.repeat.$exp,ctx)||[]){let sub=Object.create(ctx);sub[n.repeat.value]=item;frag.append(render({...n,repeat:null},sub))}return frag}if(n.$shown&&!val(n.$shown,ctx)||n.attr?.$show&&!val(n.attr.$show,ctx))return document.createDocumentFragment();const el=document.createElement(n.type==='input'?'button':n.type==='text'?'native-text':n.type==='image'?'img':'div');el.className=(n.$class?val(n.$class,ctx).flat(Infinity).filter(Boolean).join(' '):n.class||'');el.dataset.type=n.type;if(n.action||n.events?.click||n.events?.$click)el.dataset.action=n.action||n.events.click||n.events.$click;let a=n.attr||{};if(a.id)el.id=a.id;if(n.type==='image'){let src=a.$src?val(a.$src,ctx):a.src;el.src=ICONS[src]||src;el.alt=''}if(a.$disabled)el.disabled=!!val(a.$disabled,ctx);if(n.style)Object.assign(el.style,n.style);for(const [k,v] of Object.entries(n.inlineStyle||{}))el.style[k.startsWith('$')?k.slice(1):k]=k.startsWith('$')?val(v,ctx):v;if(n.type==='text'||n.type==='input'){let text=a.$value?val(a.$value,ctx):a.value||'';let span=document.createElement('span');span.textContent=text??'';el.append(span)}for(let c of n.children||[])el.append(render(c,ctx));return el}

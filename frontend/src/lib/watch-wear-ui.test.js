@@ -8,6 +8,7 @@ import { runInNewContext } from 'node:vm'
 import { applyEdit, applyRest, restOf, applyFocus } from '../../../watch-app/src/lib/protocol.js'
 import { loadWatchModule, watchPersistence, watchInteractionDeps } from './watch-test-harness.js'
 import { effortScaleOf, effortValueOf, effortKindOf, stepEffortValue, effortMeaning, effortSummaryText, formatEffort } from '../../../watch-app/src/lib/effort-scale.js'
+import { todayISO } from './format.js'
 
 const source = path => readFileSync(new URL('../../../watch-app/src/' + path, import.meta.url), 'utf8')
 const imports = /^import[\s\S]*?from ['"][^'"]+['"]\r?$/gm
@@ -50,13 +51,15 @@ describe('Index 启动页（官方 IdleScreen 映射）', () => {
 
   it('有手机计划时不再提示同步，并把今日计划排在“开始训练”上', async () => {
     const { page: p, callbacks } = indexPage()
-    callbacks.onCatalog({ plans: [plan('p1', '推日', 5, true), plan('p2', '拉日', 2, false)] })
+    callbacks.onCatalog({ date: todayISO(), plans: [plan('p1', '推日', 5, true), plan('p2', '拉日', 2, false)] })
     expect(p.needSync).toBe(false)
     expect(p.startLabel).toBe('开始训练')
     expect(p.selected.id).toBe('p1')
-    // 计划行第二行：最多三个动作名，多出来的用“等 N 个动作”收尾。
-    expect(p.plans[0].preview).toBe('推日 动作1、推日 动作2、推日 动作3 等 5 个动作')
-    expect(p.plans[1].preview).toBe('拉日 动作1、拉日 动作2')
+    expect(p.hasToday).toBe(true)
+    expect(p.exerciseCount).toBe(5)
+    // Official home lists only other routines beneath the combined Today card.
+    expect(p.plans.map(p => p.id)).toEqual(['p2'])
+    expect(p.plans[0].preview).toBe('拉日 动作1、拉日 动作2')
   })
 
   it('只有缓存计划（没有今日）时用“快速开始”', async () => {

@@ -113,11 +113,12 @@ export function startFromWatch(S, ev) {
   if (!Number.isFinite(ev.startedAt) || ev.startedAt <= 0 || ev.startedAt > Date.now() + 300000) return 'invalid_plan'
   if (Date.now() - ev.startedAt > 7 * 864e5) return 'expired'
   if (!p?.entries?.length || p.entries.length > 100 || !ev.sid || p.entries.some(e => !Array.isArray(e.sets) || e.sets.length > 100)) return 'invalid_plan'
+  if (p.routineIds != null && (!Array.isArray(p.routineIds) || p.routineIds.length > 100 || p.routineIds.some(id => typeof id !== 'string' || !id || id.length > 256))) return 'invalid_plan'
   const sourceUnit = p.weightUnit || S.unit || 'kg'
   const entries = JSON.parse(JSON.stringify(p.entries))
   if (sourceUnit !== (S.unit || 'kg')) for (const e of entries) for (const row of e.sets) if (row.w != null) row.w = convertWatchWeight(row.w, sourceUnit, S.unit || 'kg')
   S.active = { id: ev.sid, watchSid: ev.sid, start: Number(ev.startedAt) || Date.now(), d: todayISO(),
-    name: p.name, routineIds: [p.id], entries, cur: 0,
+    name: p.name, routineIds: Array.isArray(p.routineIds) && p.routineIds.length ? p.routineIds : [p.id], entries, cur: 0,
     workoutView: S.workoutView || 'cards' }
   ensureWatchIdentity(S.active)
   return 'started'

@@ -34,7 +34,7 @@ function connection() {
 }
 function page(path, deps) {
   const script = source(path).match(/<script>([\s\S]*?)<\/script>/)[1]
-  const context = { ...watchInteractionDeps, replayPendingEvents() {}, console, WATCH_VERSION: 'test-watch', applyEdit, applyRest, restOf, applyFocus, persistenceStatus: () => ({}), storageStatus: () => ({}), synchronizationStatus: () => ({}),
+  const context = { ...watchInteractionDeps, replayPendingEvents() {}, setTimeout: () => 1, clearTimeout() {}, console, WATCH_VERSION: 'test-watch', applyEdit, applyRest, restOf, applyFocus, persistenceStatus: () => ({}), storageStatus: () => ({}), synchronizationStatus: () => ({}),
     effortScaleOf, effortValueOf, effortKindOf, stepEffortValue, effortMeaning, effortSummaryText, formatEffort,
     storage: { getSync: () => null, set() {} }, replacePlan() {}, ...deps }
   runInNewContext(script.replace(imports, '').replace('export default', 'this.page ='), context)

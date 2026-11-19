@@ -15,26 +15,26 @@ function serialOwner() {
   return task => { const next = tail.then(task); tail = next.catch(() => {}); return next }
 }
 async function put(store, key, value) { if (!(await store.write(key, copy(value)))) throw new Error('transfer_storage') }
-export function makeTransfer(snapshot, generation, now = Date.now()) {
+export function makeTransfer(snapshot, generation, now = Date.now(), options = {}) {
   const text = JSON.stringify(snapshot), chunks = []
-  if (!['sync', 'sync_delta'].includes(snapshot.t) || wireBytes(text) > MAX_BYTES) throw new Error('snapshot_too_large')
+  if (!(options.types || ['sync', 'sync_delta']).includes(snapshot.t) || wireBytes(text) > MAX_BYTES) throw new Error('snapshot_too_large')
   for (let i = 0; i < text.length;) {
     let end = Math.min(i + 1000, text.length)
     if (end < text.length && text.charCodeAt(end - 1) >= 0xd800 && text.charCodeAt(end - 1) <= 0xdbff) end--
     chunks.push(text.slice(i, end)); i = end
   }
   const hash = wireHash(text)
-  const meta = { transferId: 'p:' + now.toString(36) + ':' + generation + ':' + hash, sid: snapshot.sid, revision: snapshot.commitRev,
+  const meta = { transferId: (options.channel === 'catalog' ? 'c:' : 'p:') + now.toString(36) + ':' + generation + ':' + hash, sid: snapshot.sid, revision: snapshot.commitRev,
     generation, count: chunks.length, bytes: wireBytes(text), hash, encoding: 'json-utf8', hashAlgorithm: 'fnv1a-utf16-v1' }
   if (!valid(meta)) throw new Error('invalid_transfer')
   return { meta, chunks, snapshot, at: now, acknowledged: [], begun: false, attempts: 0, retryAt: 0 }
 }
-export function persistentReceiver(store, apply, now = () => Date.now()) {
-  const serial = serialOwner(), key = 'sync_rx_v1'
+export function persistentReceiver(store, apply, now = () => Date.now(), options = {}) {
+  const serial = serialOwner(), namespace = options.channel === 'catalog' ? 'catalog' : 'sync', key = namespace + '_rx_v1'
   // Only receipt metadata is cached, never snapshot payloads. Disk remains authoritative
   // on restart/reconnect; successful chunk writes advance this bounded bitmap in O(1).
   const progress = new Map()
-  const chunkKey = (slot, i) => 'sync_rx_' + slot + '_' + i
+  const chunkKey = (slot, i) => namespace + '_rx_' + slot + '_' + i
   const index = async () => (await store.read(key)) || { jobs: [] }
   const sound = (saved, job, i) => saved?.id === job.meta.transferId && saved.index === i && typeof saved.data === 'string' && saved.data.length > 0 && saved.data.length <= 1000 && wireHash(saved.data) === saved.hash
   async function received(job, rescan = false) {
@@ -61,7 +61,7 @@ export function persistentReceiver(store, apply, now = () => Date.now()) {
     }
     if (wireBytes(text) !== job.meta.bytes || wireHash(text) !== job.meta.hash) throw new Error('transfer_checksum')
     const message = JSON.parse(text)
-    if (!['sync', 'sync_delta'].includes(message.t) || message.sid !== job.meta.sid || message.commitRev !== job.meta.revision) throw new Error('transfer_snapshot')
+    if (!(options.types || ['sync', 'sync_delta']).includes(message.t) || message.sid !== job.meta.sid || message.commitRev !== job.meta.revision) throw new Error('transfer_snapshot')
     // apply MUST persist its transferId marker with the training state. A retry after
     // state success/index failure is then an exact idempotent apply, not a new operation.
     const outcome = await apply(message, job.meta)
@@ -134,11 +134,11 @@ export function persistentReceiver(store, apply, now = () => Date.now()) {
     }),
   }
 }
-export function persistentSender(store, onApplied = () => {}, now = () => Date.now(), fullSnapshot = null, encode = null) {
-  const serial = serialOwner(), key = 'sync_tx_v1'
+export function persistentSender(store, onApplied = () => {}, now = () => Date.now(), fullSnapshot = null, encode = null, options = {}) {
+  const serial = serialOwner(), key = (options.channel === 'catalog' ? 'catalog' : 'sync') + '_tx_v1'
   function prepare(snapshot, generation, compact) {
     const wire = compact && encode ? encode(copy(snapshot)) : snapshot
-    const job = makeTransfer(copy(wire), generation, now())
+    const job = makeTransfer(copy(wire), generation, now(), options)
     if (wire.t === 'sync_delta' && snapshot.t === 'sync') job.authoritativeSnapshot = copy(snapshot)
     return job
   }
@@ -182,6 +182,7 @@ export function persistentSender(store, onApplied = () => {}, now = () => Date.n
       } else if (msg.t === 'sync_applied' && ['applied', 'retained'].includes(msg.status)) {
         // Retention is durable receipt of an older snapshot, NOT a Delta base.
         if (msg.status === 'applied') await onApplied(copy(job.authoritativeSnapshot || job.snapshot), copy(job.meta))
+        else if (options.onRetained) await options.onRetained(copy(job.snapshot))
         state.failures = 0
         state.active = state.queued && msg.status === 'applied'
           ? prepare(state.queued.authoritativeSnapshot || state.queued.snapshot, ++state.generation, true)
@@ -192,12 +193,13 @@ export function persistentSender(store, onApplied = () => {}, now = () => Date.n
         // Never touch business Outbox/pendingEdits/close-journal here.
         let replacement = state.queued
         if (!replacement && job.cancelReason !== 'expired') {
-          const full = job.authoritativeSnapshot || (job.snapshot.t === 'sync' ? job.snapshot : await fullSnapshot?.(copy(job.snapshot)))
-          if (!full || full.t !== 'sync' || full.sid !== job.meta.sid) {
+          const fullType = options.channel === 'catalog' ? 'plan_catalog' : 'sync'
+          const full = job.authoritativeSnapshot || (job.snapshot.t === fullType ? job.snapshot : await fullSnapshot?.(copy(job.snapshot)))
+          if (!full || full.t !== fullType || full.sid !== job.meta.sid) {
             job.lastError = 'full_snapshot_required'; job.retryAt = now() + 60000
             await put(store, key, state); return false
           }
-          replacement = makeTransfer(copy(full), ++state.generation, now())
+          replacement = makeTransfer(copy(full), ++state.generation, now(), options)
         }
         if (replacement) replacement.retryAt = now() + Math.min(60000, 2000 * 2 ** Math.min(5, (state.failures || 1) - 1))
         state.active = replacement; state.queued = null

@@ -9,11 +9,11 @@ import { useUI } from '../store/useUI.js'
 import { bindUI } from '../components/ui.jsx'
 import { collectWatchDiagnosticReport } from '../lib/watch-diagnostic-export.js'
 import { shareExport, isAndroid } from '../lib/mobile.js'
-import { sendToWatch } from '../lib/watch-link.js'
+import { pushWatchCatalog, selectWatchDevice } from '../lib/watch-link.js'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 globalThis.__APP_VERSION__ = 'test'
-const mocks = vi.hoisted(() => ({ sheet: null, navigate: vi.fn() }))
+const mocks = vi.hoisted(() => ({ sheet: null, navigate: vi.fn(), connection: { devices: [], selectedId: '', sdkConnected: false, appConnected: false } }))
 vi.mock('../store/useStore.js', () => {
   const state = { S: { unit: 'kg', restSec: 90, effort: 'none', workouts: [], routines: [], exWeights: {} }, user: null, update: vi.fn() }
   state.update.mockImplementation(fn => fn(state.S))
@@ -28,12 +28,16 @@ vi.mock('../store/useUI.js', () => {
   return { useUI }
 })
 vi.mock('react-router-dom', () => ({ useNavigate: () => mocks.navigate }))
-vi.mock('../lib/mobile.js', () => ({ MOBILE: true, isAndroid: vi.fn(), shareExport: vi.fn(), syncReminder: vi.fn() }))
+vi.mock('../lib/mobile.js', () => ({ MOBILE: true, isAndroid: vi.fn(), shareExport: vi.fn(), syncReminder: vi.fn(), onAppActive: () => () => {} }))
 vi.mock('../lib/rest-alert.js', () => ({ overlayStatus: async () => null }))
 vi.mock('../lib/watch-link.js', async importOriginal => ({ ...await importOriginal(), watchState: () => 'off',
   watchAvailable: async () => ({ available: true }), onWatchState: () => () => {}, watchDevice: () => null,
-  onWatchCommitStatus: () => () => {}, sendToWatch: vi.fn() }))
-vi.mock('../lib/watch-workout.js', () => ({ watchCatalogOf: S => ({ t: 'catalog', selected: S.watchPlanIds }) }))
+  onWatchCommitStatus: () => () => {}, watchConnection: () => mocks.connection,
+  onWatchConnection: cb => { cb(mocks.connection); return () => {} },
+  watchCatalogStatus: () => ({ phase: 'idle' }), onWatchCatalogStatus: () => () => {},
+  discoverWatchDevices: vi.fn(async () => true), probeWatchConnection: vi.fn(async () => false),
+  getWatchDeviceInfo: vi.fn(async () => null), pushWatchCatalog: vi.fn(async () => true), selectWatchDevice: vi.fn(async () => ({ ok: true })) }))
+vi.mock('../lib/watch-workout.js', () => ({ watchCatalogOf: S => ({ t: 'plan_catalog', date: '2026-11-19', plans: S.routines, todayPlan: null }) }))
 vi.mock('../lib/watch-diagnostic-export.js', () => ({ collectWatchDiagnosticReport: vi.fn() }))
 
 let root, host
@@ -44,7 +48,8 @@ beforeEach(() => {
   useStore.getState().S.modules = {}
   useStore.getState().S.routines = []
   useStore.getState().S.watchPlanIds = []
-  sendToWatch.mockClear()
+  mocks.connection = { devices: [], selectedId: '', sdkConnected: false, appConnected: false }
+  pushWatchCatalog.mockClear(); selectWatchDevice.mockClear()
   isAndroid.mockResolvedValue(true)
   host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host)
   shareExport.mockReset().mockResolvedValue(undefined)
@@ -55,7 +60,7 @@ async function openSheet() {
   await act(async () => root.render(<Integrations />))
   const row = [...host.querySelectorAll('.lrow')].find(e => e.textContent.includes('vivo BlueOS watch'))
   expect(row).toBeTruthy()
-  expect(host.textContent).toContain('发送到手表的计划')
+  expect(host.textContent).not.toContain('发送到手表的计划')
   act(() => row.click())
   expect(mocks.navigate).not.toHaveBeenCalled()
   await act(async () => root.render(mocks.sheet(vi.fn())))
@@ -67,16 +72,16 @@ describe('watch controls in integrations', () => {
     await openSheet()
     expect(exportButton()).toBeTruthy()
   })
-  it('preserves plan selection and catalog delivery in the new location', async () => {
+  it('offers a concrete known device and syncs the entire catalog instead of one optional plan', async () => {
     useStore.getState().S.routines = [{ id: 'plan-a', name: 'Strength A' }]
-    await act(async () => root.render(<Integrations />))
-    const row = [...host.querySelectorAll('.lrow')].find(e => e.textContent.includes('发送到手表的计划'))
-    act(() => row.click())
-    await act(async () => root.render(mocks.sheet(vi.fn())))
-    const option = [...host.querySelectorAll('button')].find(e => e.textContent === 'Strength A')
-    act(() => option.click())
-    expect(useStore.getState().S.watchPlanIds).toEqual(['plan-a'])
-    expect(sendToWatch).toHaveBeenCalledWith({ t: 'catalog', selected: ['plan-a'] })
+    mocks.connection = { devices: [{ id: 'watch-one', name: 'WATCH GT' }, { id: 'watch-two', name: 'WATCH GT' }], selectedId: 'watch-one', sdkConnected: true, appConnected: false }
+    await openSheet()
+    expect(host.textContent).toContain('目标手表应用：未确认连接')
+    expect(host.textContent).toContain('watch-two')
+    await act(async () => [...host.querySelectorAll('button')].find(e => e.textContent === '选择').click())
+    expect(selectWatchDevice).toHaveBeenCalledWith('watch-two')
+    await act(async () => [...host.querySelectorAll('button')].find(e => e.textContent === '同步全部训练计划').click())
+    expect(pushWatchCatalog).toHaveBeenCalledWith(expect.objectContaining({ t: 'plan_catalog', plans: [{ id: 'plan-a', name: 'Strength A' }] }), true)
   })
   it('removes device controls from workout settings', async () => {
     await act(async () => root.render(<Settings page="workout" />))

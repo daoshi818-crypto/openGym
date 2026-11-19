@@ -230,9 +230,12 @@ export function initReminderSync(getState) {
 export function onAppActive(cb) {
   if (!MOBILE) return
   // Returned, not dropped, for the same reason as in initReminderSync.
+  let gone = false, listener
+  const remove = handle => { try { Promise.resolve(handle?.remove()).catch(() => {}) } catch { /* bridge already closed */ } }
   import('@capacitor/app').then(({ App }) =>
-    App.addListener('appStateChange', ({ isActive }) => { if (isActive) cb() })
-  ).catch(() => {})
+    App.addListener('appStateChange', ({ isActive }) => { if (!gone && isActive) cb() })
+  ).then(handle => { if (gone) remove(handle); else listener = handle }).catch(() => {})
+  return () => { gone = true; remove(listener); listener = null }
 }
 
 // WKWebView can't do blob-URL downloads, so the backup goes out through the OS share sheet

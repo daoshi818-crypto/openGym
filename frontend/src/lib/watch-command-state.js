@@ -20,7 +20,7 @@ export function createCommandStateCache() {
     const base = snapshots.get(event.appliedHash || event.baseHash || event.wireHash)?.snapshot
     return base?.sid === event.sid && base.commitRev === (event.appliedRev ?? event.baseCommitRev ?? event.commitRev) ? base : null
   }
-  return { remember, lookup,
+  return { remember, lookup, clear() { snapshots.clear(); bytes = 0 },
     prepare(event, snapshot) {
       if (!(event.protocolVersion >= 3) || !COMMANDS.has(event.t)) return null
       const base = lookup(event)

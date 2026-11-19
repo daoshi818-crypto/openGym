@@ -20,6 +20,7 @@ export const stripImports = code => code
   .replace(/^export function /gm, 'function ')
 
 export function loadWatchModule(name, ctx, names) {
+  if (name === 'rpc' && !ctx.allocateEventIdentity) loadWatchModule('event-id', ctx, ['allocateEventIdentity', 'rememberEventAt'])
   if (['rpc', 'session'].includes(name) && !ctx.compactStartEvent) {
     if (!ctx.wireBytes) loadWatchModule('sync-wire', ctx, ['wireHash', 'wireBytes', 'acceptWireChunk', 'expandWireDelta'])
     loadWatchModule('event-wire', ctx, ['compactStartEvent', 'createEventWire', 'nextEventFrame', 'EVENT_FRAME_BYTES'])

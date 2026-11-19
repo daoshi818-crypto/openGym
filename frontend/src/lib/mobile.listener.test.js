@@ -61,4 +61,14 @@ describe('onAppActive — the App plugin rejecting must not go unhandled', () =>
     await settled(() => mocks.App.calls > 0)
     expect(unhandled).toEqual([])
   })
+  it('removes a listener whose asynchronous registration finishes after cleanup', async () => {
+    let installed, callback
+    const remove = vi.fn(async () => { throw Error('bridge closed') }), notify = vi.fn()
+    mocks.App = { addListener(name, cb) { callback = cb; return new Promise(resolve => { installed = resolve }) } }
+    const m = await load(), dispose = m.onAppActive(notify)
+    await settled(() => !!installed)
+    dispose(); installed({ remove }); await tick(); await tick()
+    callback({ isActive: true })
+    expect(remove).toHaveBeenCalledOnce(); expect(notify).not.toHaveBeenCalled()
+  })
 })

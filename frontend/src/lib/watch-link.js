@@ -1,14 +1,15 @@
 import { createCommandStateCache } from './watch-command-state.js'
+import { createWatchDevices } from './watch-devices.js'
 import { phoneWatchLog } from './watch-diagnostic-log.js'
 import { persistentSender } from '../../../watch-app/src/lib/persistent-transfer.js'
 // 手表连接（vivo 智能终端 SDK）：设置页的「连接手表」与训练页的自动推计划都走这里。
 //
-// 手机侧不再扫描/选择设备。DeviceRpcManager 绑定 vivo 运动健康后，
-// 手表应用用手机包名 + 证书指纹创建 interconnect 实例，连接由 SDK 完成。
+// 具体设备由应用安装身份识别、用户明确选择；SDK 的物理通道仍由运动健康管理。
+// 选择和双向探测都不能把 SDK 已绑定/发送成功当作目标应用在线。
 // 协议仍是 plan / set / end / rest / weight / unset / ack，只是底层从 GATT 换成 RPC。
 import { MOBILE, isAndroid } from './mobile.js'
 import { isWarmupRow } from './workout-model.js'
-import { splitWire, compactWire, canonicalWire } from '../../../watch-app/src/lib/sync-wire.js'
+import { splitWire, compactWire, canonicalWire, wireHash, wireBytes } from '../../../watch-app/src/lib/sync-wire.js'
 import { watchPlanOf, watchSnapshotOf } from './watch-workout.js'
 
 let pluginP = null
@@ -25,6 +26,34 @@ let state = 'off' // off | connecting | connected | ready | error
 let lastError = ''
 let device = null
 const listeners = new Set()
+const devices = createWatchDevices()
+const connectionListeners = new Set()
+let peerId = '', identifiedPeer = false, lastVerifiedAt = 0, connectionProbe = null
+let catalogSupported = false, catalogTimer = null, catalogBusy = false, latestCatalog = null
+let catalogStatus = { phase: 'idle', count: 0, date: '', confirmedAt: 0, error: '' }
+const catalogListeners = new Set(), snapshotSenders = new Map(), catalogSenders = new Map()
+let selectionEpoch = 0
+export function watchConnection() {
+  const preference = devices.read()
+  return { ...preference, peerId, sdkConnected: state === 'connected', lastVerifiedAt,
+    appConnected: state === 'connected' && !!lastVerifiedAt && Date.now() - lastVerifiedAt < 15000 && (!preference.selectedId || preference.selectedId === peerId),
+    selectionRequired: identifiedPeer && !preference.selectedId,
+    differentDevice: !!preference.selectedId && !!peerId && peerId !== preference.selectedId,
+    catalogSupported }
+}
+function emitConnection() { for (const cb of connectionListeners) { try { cb(watchConnection()) } catch { /* subscriber */ } } }
+export function onWatchConnection(cb) { connectionListeners.add(cb); cb(watchConnection()); return () => connectionListeners.delete(cb) }
+export function watchCatalogStatus() { return { ...catalogStatus } }
+export function onWatchCatalogStatus(cb) { catalogListeners.add(cb); cb(watchCatalogStatus()); return () => catalogListeners.delete(cb) }
+function setCatalogStatus(patch) { catalogStatus = { ...catalogStatus, ...patch }; for (const cb of catalogListeners) { try { cb(watchCatalogStatus()) } catch { /* subscriber */ } } }
+const targetReady = () => !devices.read().selectedId ? !identifiedPeer : peerId === devices.read().selectedId
+const routed = msg => devices.read().selectedId && msg.t !== 'link_discover' ? { ...msg, targetInstallationId: devices.read().selectedId } : msg
+function transferStore(channel, owner) {
+  return {
+    read: async () => { const p = await watchPlugin(); if (!p) throw Error('transfer_unavailable'); return JSON.parse((await p.WatchRpc.loadSyncTransfer({ channel, deviceId: owner })).json) },
+    write: async (_, value) => { const p = await watchPlugin(); if (!p) return false; await p.WatchRpc.saveSyncTransfer({ channel, deviceId: owner, json: JSON.stringify(value) }); return true },
+  }
+}
 let pendingPlan = null
 let latestPlan = null
 let planPushInFlight = false
@@ -82,10 +111,61 @@ export function prepareWatchCommandState(event, snapshot) {
 let pendingSync = null, syncRetryTimer = null, syncQueue = Promise.resolve()
 let persistentEnabled = false, persistentPumpTimer = null, persistentPumping = false, persistentAgain = false
 let persistentHasWork = false
-const snapshotSender = persistentSender({
-  read: async () => { const p = await watchPlugin(); if (!p) throw new Error('transfer_unavailable'); return JSON.parse((await p.WatchRpc.loadSyncTransfer()).json) },
-  write: async (_, value) => { const p = await watchPlugin(); if (!p) return false; await p.WatchRpc.saveSyncTransfer({ json: JSON.stringify(value) }); return true },
-}, snapshot => { adoptSyncBase(snapshot); confirmSnapshotPlan(snapshot) }, () => Date.now(), null, snapshot => compactWire(syncBase, snapshot))
+function snapshotSender() {
+  const owner = devices.read().selectedId
+  if (!snapshotSenders.has(owner)) snapshotSenders.set(owner, persistentSender(transferStore('sync', owner),
+    snapshot => { if (devices.read().selectedId === owner) { adoptSyncBase(snapshot); confirmSnapshotPlan(snapshot) } }, () => Date.now(), null, snapshot => compactWire(syncBase, snapshot)))
+  return snapshotSenders.get(owner)
+}
+function catalogSender() {
+  const owner = devices.read().selectedId
+  if (!catalogSenders.has(owner)) catalogSenders.set(owner, persistentSender(transferStore('catalog', owner), message => {
+    if (devices.read().selectedId !== owner || latestCatalog?.catalogId !== message.catalogId) return
+    setCatalogStatus({ phase: 'synced', confirmedAt: Date.now(), error: '' })
+  }, () => Date.now(), null, null, { channel: 'catalog', types: ['plan_catalog'], onRetained(message) {
+    if (devices.read().selectedId === owner && latestCatalog?.catalogId === message.catalogId) setCatalogStatus({ phase: 'failed', error: '手表保留了更新目录，请校准手机时间后重试' })
+  } }))
+  return catalogSenders.get(owner)
+}
+function kickCatalog(delay = 0) {
+  clearTimeout(catalogTimer)
+  if (!catalogSupported || !targetReady() || state !== 'connected' || catalogBusy) return
+  catalogTimer = setTimeout(pumpCatalog, delay); catalogTimer.unref?.()
+}
+async function pumpCatalog() {
+  if (catalogBusy || !catalogSupported || !targetReady() || state !== 'connected') return
+  catalogBusy = true
+  let delay = null
+  try {
+    // Active training and exact business receipts retain priority over the plan library.
+    if (commitStatus.pending || pendingPlan || planPushInFlight || pendingSync || persistentHasWork || outboundBarrier) { delay = 1000; return }
+    const epoch = selectionEpoch, sender = catalogSender(), message = await sender.next()
+    if (message && epoch === selectionEpoch) await sendWatchEvent(message)
+    delay = await sender.wakeIn()
+  } catch (e) { setCatalogStatus({ phase: 'failed', error: e.message }); delay = 6000 }
+  finally { catalogBusy = false; if (delay != null) kickCatalog(Math.max(40, delay)) }
+}
+export async function pushWatchCatalog(catalog, force = false) {
+  const { at, catalogId, contentHash, commitRev, sid, contentKey, ...body } = catalog
+  const key = JSON.stringify(body)
+  if (!force && latestCatalog?.contentKey === key && catalogStatus.phase === 'synced') return true
+  if (!force && latestCatalog?.contentKey === key && ['queued', 'syncing'].includes(catalogStatus.phase)) { kickCatalog(); return true }
+  const same = latestCatalog?.contentKey === key
+  const stamp = Math.max(Date.now(), (latestCatalog?.at || 0) + 1)
+  const message = same ? (({ contentKey, ...rest }) => rest)(latestCatalog)
+    : { ...body, at: stamp, sid: 'catalog', commitRev: stamp, catalogId: 'catalog:' + stamp.toString(36) }
+  if (!same) message.contentHash = wireHash(message)
+  latestCatalog = { ...message, contentKey: key }
+  setCatalogStatus({ phase: 'queued', count: body.plans?.length || 0, date: body.date || '', confirmedAt: 0, error: '' })
+  await bindNative()
+  if (!catalogSupported || !targetReady()) return false
+  try {
+    // A directory that exceeds the bounded watch transport is reported, never silently truncated.
+    if (wireBytes(JSON.stringify(message)) > 131072) throw Error('catalog_too_large')
+    if (!(await catalogSender().enqueue(message))) throw Error('catalog_revision')
+    setCatalogStatus({ phase: 'syncing' }); kickCatalog(); return true
+  } catch (e) { setCatalogStatus({ phase: 'failed', error: e.message }); return false }
+}
 function adoptSyncBase(snapshot) {
   // Delayed transfer receipts must not roll back a newer inline receipt baseline.
   if (!syncBase || syncBase.sid !== snapshot.sid || snapshot.commitRev >= syncBase.commitRev) syncBase = snapshot
@@ -102,13 +182,13 @@ function kickPersistent(delay = 0) {
   persistentPumpTimer.unref?.()
 }
 async function pumpPersistent() {
-  if (!persistentEnabled || persistentPumping) return
+  if (!persistentEnabled || persistentPumping || !targetReady() || !peerNegotiated) return
   persistentPumping = true; persistentAgain = false
   let delay = null
   try {
-    const message = await snapshotSender.next()
-    if (message) await sendWatchEvent(message)
-    delay = await snapshotSender.wakeIn()
+    const epoch = selectionEpoch, sender = snapshotSender(), message = await sender.next()
+    if (message && epoch === selectionEpoch) await sendWatchEvent(message)
+    delay = await sender.wakeIn()
     persistentHasWork = delay != null
   } catch (error) { lastError = 'snapshot: ' + error.message; delay = 6000 }
   finally { persistentPumping = false; if (persistentAgain) kickPersistent(); else if (delay != null) kickPersistent(Math.max(20, delay)) }
@@ -170,7 +250,8 @@ export async function drainWatchInbox() {
   try {
     const p = await watchPlugin()
     if (!p?.WatchRpc.drainInbox) return
-    const batch = await p.WatchRpc.drainInbox()
+    const selectedId = devices.read().selectedId
+    const batch = await p.WatchRpc.drainInbox(selectedId ? { deviceId: selectedId } : {})
     for (const ev of batch?.events || []) onNativeWatchEvent(ev)
   } catch (e) { listenerError = 'watch inbox: ' + (e?.message || String(e)) }
   finally { drainingInbox = false }
@@ -222,6 +303,8 @@ function setState(s, error = '') {
   phoneWatchLog.record('connection', { status: s, code: error ? 'connection_error' : '' })
   state = s
   lastError = error
+  if (s !== 'connected') lastVerifiedAt = 0
+  emitConnection()
   for (const cb of listeners) {
     try { cb(state) } catch { /* 单个订阅者出错不影响别人 */ }
   }
@@ -266,7 +349,12 @@ function onNativeWatchState(ev) {
   const next = ev && ev.state ? ev.state : 'off'
   if (typeof ev?.connected === 'boolean') device = { ...(device || {}), connected: ev.connected }
   setState(next === 'disconnected' ? 'off' : next, ev && ev.reason ? ev.reason : '')
-  if (next === 'disconnected' || next === 'off' || next === 'error') peerNegotiated = false
+  if (next === 'disconnected' || next === 'off' || next === 'error' || ev?.connected === false) {
+    peerNegotiated = false; catalogSupported = false; lastVerifiedAt = 0; peerId = ''; identifiedPeer = false
+    persistentEnabled = false; clearTimeout(persistentPumpTimer)
+    connectionProbe?.finish(false); clearTimeout(catalogTimer)
+    emitConnection()
+  }
   if (next === 'ready' || next === 'connected') {
     if (!pendingPlan && latestPlan) pendingPlan = latestPlan
     Promise.resolve().then(flushPendingPlan)
@@ -276,6 +364,8 @@ function onNativeWatchState(ev) {
 function onNativeWatchEvent(ev) {
   try {
     if (!ev) return
+    const source = ev.sourceInstallationId || ev.installationId
+    if (ev.t !== 'hello' && ev.t !== 'device' && devices.read().selectedId && source !== devices.read().selectedId) return
     if (ev.t === 'watch_log') {
       if (watchLogProbe?.id === ev.requestId && watchLogProbe.offset === ev.offset) watchLogProbe.finish(ev)
       return
@@ -284,25 +374,46 @@ function onNativeWatchEvent(ev) {
     if (ev._inboxId && claimedInboxIds.has(ev._inboxId)) return
     if (ev.t === 'device') {
       device = { ...(device || {}), ...ev }
+      emitConnection()
+      return
+    }
+    if (ev.t === 'hello' && ev.capabilities?.deviceSelection === true && source) {
+      if (!devices.discover(source, { ...(device || {}), watchVersion: ev.watchVersion })) return
+      if (peerId !== source) { connectionProbe?.finish(false); persistentEnabled = false; peerNegotiated = false; catalogSupported = false }
+      identifiedPeer = true; peerId = source; lastVerifiedAt = 0
+      emitConnection()
+      if (!devices.accepts(source)) return
+    } else if (ev.t !== 'link_probe_ack' && devices.read().selectedId && source !== devices.read().selectedId) return
+    if (ev.t === 'link_probe_ack') {
+      if (connectionProbe?.id === ev.requestId && devices.accepts(source) && source === peerId && state === 'connected') connectionProbe.finish(true)
       return
     }
     if (ev.watchVersion) watchVersion = String(ev.watchVersion)
+    if (['sync_begin_ack', 'sync_chunk_ack', 'sync_resume', 'sync_applied', 'sync_cancel_ack', 'unknown_transfer', 'sync_error'].includes(ev.t) && ev.transferId?.startsWith('c:')) {
+      if (ev.t === 'sync_error' && catalogSupported) setCatalogStatus({ phase: 'failed', error: ev.reason || 'transfer_failed' })
+      if (catalogSupported) catalogSender().receipt(ev).then(() => kickCatalog()).catch(e => setCatalogStatus({ phase: 'failed', error: e.message }))
+      return
+    }
     if (['sync_begin_ack', 'sync_chunk_ack', 'sync_resume', 'sync_applied', 'sync_cancel_ack', 'unknown_transfer', 'sync_error'].includes(ev.t) && ev.transferId?.startsWith('p:')) {
-      if (persistentEnabled) snapshotSender.receipt(ev).then(() => kickPersistent()).catch(error => { lastError = error.message; kickPersistent(6000) })
+      if (persistentEnabled) snapshotSender().receipt(ev).then(() => kickPersistent()).catch(error => { lastError = error.message; kickPersistent(6000) })
       return
     }
     if (ev.t === 'hello') {
       peerNegotiated = true
+      catalogSupported = ev.capabilities?.planCatalogChunks === true
       watchVersion = ev.watchVersion ? String(ev.watchVersion) : 'not_reported'
       watchReceiptsSupported = ev.receipts === true
       persistentEnabled = ev.protocolVersion >= 3 && ev.capabilities?.durableCommit === true && ev.capabilities?.snapshotChunks === true && ev.capabilities?.selectiveChunkAck === true && ev.capabilities?.persistentTransfers === true
       commandReceiptsEnabled = ev.protocolVersion >= 3 && ev.capabilities?.commandReceipts === true && ev.capabilities?.durableCommit === true
-      sendWatchEvent({ t: 'hello_ack', protocolVersion: 3, capabilities: { causalFrontier: ev.capabilities?.causalFrontier === true, durableCommit: true, snapshotChunks: true, watchEventChunks: true, commandReceipts: commandReceiptsEnabled, dependencyEvents: ev.capabilities?.dependencyEvents === true, selectiveChunkAck: ev.capabilities?.selectiveChunkAck === true, persistentTransfers: ev.capabilities?.persistentTransfers === true } })
-      if (persistentEnabled) snapshotSender.resume().then(() => kickPersistent()).catch(error => { lastError = error.message; kickPersistent(6000) })
+      sendWatchEvent({ t: 'hello_ack', protocolVersion: 3, capabilities: { deviceSelection: ev.capabilities?.deviceSelection === true, planCatalogChunks: catalogSupported, causalFrontier: ev.capabilities?.causalFrontier === true, durableCommit: true, snapshotChunks: true, watchEventChunks: true, commandReceipts: commandReceiptsEnabled, dependencyEvents: ev.capabilities?.dependencyEvents === true, selectiveChunkAck: ev.capabilities?.selectiveChunkAck === true, persistentTransfers: ev.capabilities?.persistentTransfers === true } })
+      if (latestCatalog && catalogSupported) pushWatchCatalog(latestCatalog, true)
+      if (catalogSupported) catalogSender().resume().then(() => kickCatalog()).catch(e => setCatalogStatus({ phase: 'failed', error: e.message }))
+      if (persistentEnabled) snapshotSender().resume().then(() => kickPersistent()).catch(error => { lastError = error.message; kickPersistent(6000) })
       else clearTimeout(persistentPumpTimer)
       syncProtocol = ev.protocolVersion >= 3 && ev.capabilities?.durableCommit && ev.capabilities?.snapshotChunks ? 3 : 2
       syncBase = null; sentSnapshots.clear(); coveredCommandPlan = null
       clearTimeout(syncRetryTimer); pendingSync = null
+      emitConnection()
     }
     if (ev.t === 'plan_ack') {
       lastPlanReceipt = { ...ev, receivedAt: Date.now() }
@@ -398,6 +509,8 @@ export async function connectWatch() {
 export async function disconnectWatch() {
   coveredCommandPlan = null
   peerNegotiated = false
+  catalogSupported = false; lastVerifiedAt = 0; peerId = ''; identifiedPeer = false
+  clearTimeout(catalogTimer); connectionProbe?.finish(false)
   clearTimeout(persistentPumpTimer); persistentEnabled = false
   watchDiagnosticProbe?.finish('disconnected')
   clearTimeout(syncRetryTimer); pendingSync = null
@@ -437,7 +550,8 @@ export async function getWatchDeviceInfo() {
       const info = parsed.device || parsed
       device = { ...(device || {}), ...info }
       if ((state === 'ready' || state === 'connected') && typeof info.connected === 'boolean') {
-        setState(info.connected ? 'connected' : 'ready')
+        if (info.connected) setState('connected')
+        else onNativeWatchState({ state: 'ready', connected: false })
       }
       return info
     } catch { return { raw: r.data } }
@@ -445,6 +559,51 @@ export async function getWatchDeviceInfo() {
 }
 
 export function watchDevice() { return device ? { ...device } : null }
+export async function selectWatchDevice(id) {
+  const previous = devices.read().selectedId
+  if (previous === id) return { ok: true }
+  if (previous && (trainingStore?.getState()?.active || hasPendingWatchWork() || catalogBusy || persistentPumping)) return { ok: false, reason: '请先结束训练并等待待保存记录处理完成，再切换手表' }
+  if (!devices.select(id)) return { ok: false, reason: '尚未识别这块手表，请先在运动健康中连接并打开手表应用' }
+  selectionEpoch++; connectionProbe?.finish(false)
+  lastVerifiedAt = 0; syncBase = null; sentSnapshots.clear(); commandStates.clear?.()
+  coveredCommandPlan = null; persistentEnabled = false; persistentHasWork = false; clearTimeout(persistentPumpTimer)
+  clearTimeout(syncRetryTimer); pendingSync = null
+  setCatalogStatus({ phase: latestCatalog ? 'queued' : 'idle', confirmedAt: 0, error: '' })
+  clearTimeout(catalogTimer); catalogSupported = false; peerNegotiated = false
+  emitConnection()
+  scheduleInboxDrain()
+  // Health owns the current physical route. A fresh discovery proves it, never a label switch.
+  await sendWatchEvent({ t: 'link_discover' })
+  return { ok: true }
+}
+export async function openWatchHealth() {
+  const p = await watchPlugin()
+  try { await p.WatchRpc.openHealth(); return true } catch { return false }
+}
+export async function discoverWatchDevices() {
+  await bindNative()
+  if (state === 'off' || state === 'error') await connectWatch()
+  await getWatchDeviceInfo()
+  return sendWatchEvent({ t: 'link_discover' })
+}
+export async function probeWatchConnection() {
+  await bindNative()
+  await getWatchDeviceInfo()
+  if (state !== 'connected' || !devices.read().selectedId || !targetReady()) { lastVerifiedAt = 0; emitConnection(); return false }
+  if (connectionProbe) return connectionProbe.promise
+  const id = 'probe:' + Date.now().toString(36) + ':' + Math.random().toString(36).slice(2, 8)
+  let resolve
+  const promise = new Promise(done => { resolve = done })
+  const probe = { id, promise, finish(ok) {
+    if (connectionProbe !== probe) return
+    clearTimeout(probe.timer); connectionProbe = null; lastVerifiedAt = ok ? Date.now() : 0
+    emitConnection(); resolve(ok)
+  } }
+  connectionProbe = probe
+  probe.timer = setTimeout(() => probe.finish(false), 5000); probe.timer.unref?.()
+  sendWatchEvent({ t: 'link_probe', requestId: id }).then(ok => { if (!ok) probe.finish(false) })
+  return promise
+}
 export function watchLastError() { return lastError || listenerError }
 
 /** 原生 SDK 日志（最近 300 行），用于设置页排查连接问题。 */
@@ -495,7 +654,7 @@ export async function getWatchDiagnostics() {
       planDelivery: !latestPlan ? 'idle' : latestPlan.receipt?.status || latestPlan.delivery,
       watchVersion, watchReceiptsSupported, lastPlanReceipt, lastSyncReceipt, lastWatchRx,
       lastWatchTransport, watchDiagnosticRequest,
-      commitStatus,
+      commitStatus, connection: watchConnection(), catalogStatus: watchCatalogStatus(),
       syncProtocol, syncCommitRev: syncBase?.commitRev || 0,
       lastPublishedPlan, lastPlanClear }
   } catch (e) {
@@ -594,6 +753,7 @@ async function flushPendingPlan() {
   if (outboundBarrier) return
   if (planPushInFlight || !pendingPlan) return
   if (state !== 'ready' && state !== 'connected') return
+  if (!targetReady()) return
   // A training session must start from a complete, negotiated phone baseline.
   if (trainingStore && !peerNegotiated) return
   // 在第一个 await 前占用发送位，ready/hello/新计划共用同一串行队列。
@@ -616,7 +776,11 @@ async function flushPendingPlan() {
       if (trainingStore && syncProtocol >= 3) {
         const snapshot = watchSnapshotOf(trainingStore.getState(), trainingStore.getTimer?.())
         if (!snapshot || snapshot.sid !== next.sid || latestPlan !== next) continue
-        if (!(await pushSyncToWatch(snapshot)) && latestPlan === next) { pendingPlan ||= next; break }
+        const sent = await pushSyncToWatch(snapshot)
+        // hello reconciliation may supersede this send with the same/newer baseline.
+        // That is not a transport failure and must not resurrect the old manual plan.
+        const superseded = pendingSync?.snapshot.sid === snapshot.sid && pendingSync.snapshot.commitRev >= snapshot.commitRev
+        if (!sent && !superseded && latestPlan === next && next.receipt?.status !== 'applied') { pendingPlan ||= next; break }
         continue
       }
       const msg = {
@@ -642,7 +806,7 @@ async function flushPendingPlan() {
       let failed = false
       next.delivery = 'awaiting_receipt'
       try {
-        const r = await p.WatchRpc.sendPlan({ json: JSON.stringify(msg) })
+        const r = await p.WatchRpc.sendPlan({ json: JSON.stringify(routed(msg)) })
         failed = !r?.ok
         if (failed) next.delivery = 'transport_failed'
         lastError = failed ? `send plan code=${r?.code ?? -1}: ${r?.data || ''}` : ''
@@ -664,6 +828,9 @@ async function flushPendingPlan() {
 
 async function sendWatchEvent(obj) {
   if (!MOBILE || !obj) return false
+  if (obj.t === 'plan_catalog') return pushWatchCatalog(obj)
+  if (!targetReady() && !['link_probe', 'link_discover'].includes(obj.t)) return false
+  const epoch = selectionEpoch
   while (outboundBarrier && ['sync', 'sync_chunk', 'sync_delta', 'sync_begin'].includes(obj.t)) await outboundBarrier.promise
   const S = trainingStore?.getState(), A = S?.active
   if (A && obj.sid === String(A.watchSid || A.start) && Number.isInteger(obj.ex)) {
@@ -683,7 +850,8 @@ async function sendWatchEvent(obj) {
   if (!p) return false
   try {
     if (!obj.t.startsWith('sync') && !['hello_ack', 'ack', 'committed', 'received', 'effort_ack', 'event_rejected', 'watch_start_ack'].includes(obj.t)) await trainingStore?.checkpoint?.()
-    const r = await p.WatchRpc.sendEvent({ json: JSON.stringify(obj) })
+    if (epoch !== selectionEpoch || !targetReady() && !['link_probe', 'link_discover'].includes(obj.t)) return false
+    const r = await p.WatchRpc.sendEvent({ json: JSON.stringify(routed(obj)) })
     phoneWatchLog.record('send_result', { ...obj, ok: !!r?.ok })
     if (r && !r.ok) lastError = r.data || 'send event failed'
     return !!(r && r.ok)
@@ -796,7 +964,7 @@ export async function pushSyncToWatch(snapshot) {
   commandStates.remember(next)
   const plan = latestPlan?.sid === snapshot.sid ? latestPlan : null
   if (persistentEnabled) {
-    if (!(await snapshotSender.enqueue(next))) return false
+    if (!(await snapshotSender().enqueue(next))) return false
     if (plan) { plan.snapshotHash = next.wireHash; plan.delivery = 'awaiting_receipt' }
     if (plan && pendingPlan === plan) pendingPlan = null
     persistentHasWork = true; kickPersistent(); return true

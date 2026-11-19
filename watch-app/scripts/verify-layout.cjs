@@ -1,7 +1,7 @@
 // Check actual BlueOS compiler output. Browser previews are a separate verification.
 const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path')
 const target = process.argv[2] || 'watch-square'
-assert.equal(target,'watch-square','0.6.33 official UI is validated for square only')
+assert.equal(target,'watch-square','0.6.34 official UI is validated for square only')
 const build = process.env.BLUEOS_BUILD_ROOT ? path.resolve(process.env.BLUEOS_BUILD_ROOT,target) : path.resolve(__dirname,'../build',target)
 const read = name => JSON.parse(fs.readFileSync(path.join(build,name),'utf8'))
 const manifest=read('manifest.json'), nodes=n=>[n,...(n.children||[]).flatMap(nodes)]

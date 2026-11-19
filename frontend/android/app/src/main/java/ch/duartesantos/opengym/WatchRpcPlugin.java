@@ -134,7 +134,7 @@ public class WatchRpcPlugin extends Plugin {
         try {
             JSObject ret = new JSObject();
             synchronized (this) {
-                AtomicFile file = new AtomicFile(new File(getContext().getFilesDir(), "watch-sync-tx.json"));
+                AtomicFile file = transferFile(call);
                 ret.put("json", file.getBaseFile().exists() ? new String(file.readFully(), StandardCharsets.UTF_8) : "null");
             }
             call.resolve(ret);
@@ -146,17 +146,46 @@ public class WatchRpcPlugin extends Plugin {
             String json = call.getString("json");
             if (json == null || json.getBytes(StandardCharsets.UTF_8).length > 1048576) throw new IOException("transfer size");
             new JSONObject(json);
-            synchronized (this) { atomicWrite(new AtomicFile(new File(getContext().getFilesDir(), "watch-sync-tx.json")), json.getBytes(StandardCharsets.UTF_8)); }
+            synchronized (this) { atomicWrite(transferFile(call), json.getBytes(StandardCharsets.UTF_8)); }
             call.resolve();
         } catch (Exception e) { call.reject("transfer write failed", e); }
+    }
+
+    private AtomicFile transferFile(PluginCall call) throws IOException {
+        String channel = call.getString("channel", "sync");
+        String deviceId = call.getString("deviceId", "");
+        if (!(channel.equals("sync") || channel.equals("catalog")) || !deviceId.matches("[a-zA-Z0-9:_-]{0,128}")) throw new IOException("invalid transfer owner");
+        // A fixed SHA-256 suffix avoids identity aliases and overlong filenames.
+        StringBuilder encoded = new StringBuilder();
+        try {
+            for (byte b : MessageDigest.getInstance("SHA-256").digest(deviceId.getBytes(StandardCharsets.UTF_8)))
+                encoded.append(String.format(java.util.Locale.ROOT, "%02x", b & 0xff));
+        } catch (java.security.NoSuchAlgorithmException e) { throw new IOException(e); }
+        String suffix = deviceId.isEmpty() ? "" : "-" + encoded;
+        return new AtomicFile(new File(getContext().getFilesDir(), "watch-" + channel + "-tx" + suffix + ".json"));
+    }
+
+    @PluginMethod
+    public void openHealth(PluginCall call) {
+        Intent intent = getContext().getPackageManager().getLaunchIntentForPackage(TARGET_PACKAGE);
+        if (intent == null) { call.reject("vivo Health not installed"); return; }
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        getContext().startActivity(intent);
+        call.resolve();
     }
 
     @PluginMethod
     public void drainInbox(PluginCall call) {
         try {
             JSArray events = new JSArray();
-            for (Map.Entry<String, String> item : inbox().batch(32).entrySet()) {
-                JSONObject ev = new JSONObject(item.getValue()); ev.put("_inboxId", item.getKey()); events.put(ev);
+            String selected = call.getString("deviceId", "");
+            // Other watches' durable events remain on disk and cannot occupy this watch's whole batch.
+            for (Map.Entry<String, String> item : inbox().batch(WatchInbox.MAX_COUNT).entrySet()) {
+                JSONObject ev = new JSONObject(item.getValue());
+                String owner = ev.optString("sourceInstallationId", ev.optString("installationId", ""));
+                if (!selected.isEmpty() && !selected.equals(owner)) continue;
+                ev.put("_inboxId", item.getKey()); events.put(ev);
+                if (events.length() >= 32) break;
             }
             JSObject ret = new JSObject(); ret.put("events", events); ret.put("pending", inbox().size());
             ret.put("error", inboxError); call.resolve(ret);

@@ -4,12 +4,12 @@ import ModulesPage from './views/Modules.jsx'
 import IntegrationsPage from './views/Integrations.jsx'
 import ExerciseMergePage from './views/ExerciseMerge.jsx'
 import ReportsPage from './views/Reports.jsx'
-import { useEffect, useLayoutEffect, useRef, useMemo } from 'react'
+import { useEffect, useLayoutEffect, useRef, useMemo, useState } from 'react'
 import { HashRouter, Routes, Route, Navigate, useNavigate, useLocation, useNavigationType } from 'react-router-dom'
 import { useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
 import { bindUI } from './components/ui.jsx'
-import { setWeightDecimals } from './lib/format.js'
+import { setWeightDecimals, todayISO } from './lib/format.js'
 import { accentValue, applyAccent } from './lib/accent.js'
 import { seasonAccent } from './lib/seasonal.js'
 import { setLang, useLang, baseLang } from './lib/i18n.js'
@@ -88,7 +88,17 @@ function Shell() {
   const loc = useLocation()
   const navType = useNavigationType()
   const { S, user, ready } = useStore()
+  const langV = useLang()   // refresh watch exercise names when the language pack changes
   const watchOn = isOn(S, 'watch')
+  const [watchDate, setWatchDate] = useState(todayISO)
+  useEffect(() => {
+    if (!MOBILE || !ready || !watchOn) return
+    const refresh = () => setWatchDate(todayISO())
+    const timer = setInterval(refresh, 60000)
+    const off = onAppActive(refresh)
+    document.addEventListener('visibilitychange', refresh)
+    return () => { clearInterval(timer); off?.(); document.removeEventListener('visibilitychange', refresh) }
+  }, [ready, watchOn])
   const watchPlan = MOBILE && watchOn ? JSON.stringify(watchPlanOf(S)) : 'null'
   useEffect(() => {
     if (!MOBILE || !ready || !watchOn) return
@@ -108,9 +118,9 @@ function Shell() {
     const unbind = bindWatchLifecycle(receive, { getState: () => useStore.getState().S,
       update: fn => useStore.getState().update(fn), getTimer: () => useUI.getState().timer,
       checkpoint: () => useStore.getState().checkpointWatchState() })
-    onAppActive(() => { receive.retry(); drainWatchInbox() })
+    const offActive = onAppActive(() => { receive.retry(); drainWatchInbox() })
     watchAvailable().then(result => { if (result.available) connectWatch() })
-    return () => { unbind(); receive.dispose() }
+    return () => { offActive?.(); unbind(); receive.dispose() }
   }, [ready, watchOn])
   // 会话级生命周期：在设置页拉起手表时仍保留计划，结束/丢弃后才清除。
   useEffect(() => {
@@ -119,7 +129,8 @@ function Shell() {
     if (plan) pushPlanToWatch({ ...plan.workout, protocolVersion: plan.protocolVersion, weightUnit: plan.weightUnit, structureRevision: plan.structureRevision, effortScale: plan.effortScale, capabilities: plan.capabilities }, plan.sid, plan.profile, { automatic: true })
     else clearWatchPlan(undefined, S.active?.editingWorkoutId ? 'history_editor' : 'no_active_session')
   }, [watchPlan, ready, watchOn])
-  const watchCatalog = useMemo(() => MOBILE ? JSON.stringify({ ...watchCatalogOf(S), at: 0 }) : 'null', [S.routines, S.week, S.dayPlan, S.watchPlanIds, S.workouts])
+  const watchCatalog = useMemo(() => MOBILE && watchOn ? JSON.stringify({ ...watchCatalogOf(S, watchDate), at: 0 }) : 'null',
+    [watchOn, S.routines, S.week, S.dayPlan, S.queue, S.workouts, S.exWeights, S.exNotes, S.unit, S.birthYear, S.bodyweight, S.effort, S.showRir, S.restSec, S.startFrom, S.customEx, S.plates, S.dumbbells, S.dbLoad, S.loadKind, S.barWeights, watchDate, langV])
   const restTimer = useUI(s => s.timer)
   const restStop = useUI(s => s.restStop)
   useEffect(() => {
@@ -170,7 +181,6 @@ function Shell() {
   useEffect(() => { setAlarmBuzzer(MOBILE && S.vibrate !== false && S.vibrateOnSilent ? buzzAsAlarm : null) }, [S.vibrate, S.vibrateOnSilent])
   const isGuest = useStore(s => s.isGuest())
   const needsMobileOnboarding = useStore(s => s.needsMobileOnboarding)
-  const langV = useLang()   // re-renders the whole shell when the language (pack) changes
   useEffect(() => { setNav(navigate) }, [navigate])
   const lastEditPath = useRef(loc.pathname)
   // Any in-app route exit, browser back included, returns to the persisted draft and asks for a

@@ -179,12 +179,33 @@ function parseMessage(data) {
   return fail('envelope_depth_limit')
 }
 
+async function applyCatalog(msg) {
+  if (!Array.isArray(msg.plans) || !/^\d{4}-\d{2}-\d{2}$/.test(msg.date || '')) return { ok: false, error: 'invalid_catalog' }
+  if (msg.contentHash && (!Number.isSafeInteger(msg.at) || msg.at <= 0 || typeof msg.catalogId !== 'string')) return { ok: false, error: 'invalid_catalog' }
+  if (msg.contentHash) {
+    const { contentHash, ...body } = msg
+    if (wireHash(body) !== contentHash) return { ok: false, error: 'catalog_checksum' }
+  }
+  let status = 'applied'
+  const result = await writeStoredAtomic('plan_catalog', previous => {
+    if (previous?.at > msg.at) { status = 'retained'; return previous }
+    if (previous?.at === msg.at && previous.contentHash && previous.contentHash !== msg.contentHash) throw Error('catalog_conflict')
+    return msg
+  })
+  if (result.ok && status === 'applied') {
+    try { rpcState().handlers.onCatalog?.(msg) } catch (error) { trace('page_catalog_error', null, error) }
+  }
+  return { ok: result.ok, status, error: result.ok ? '' : 'transfer_storage' }
+}
+
 function sendHello() {
   const s = loadState()
+  rpcState().installationId ||= allocateEventIdentity('', 'link').installationId
   sendControl({
     t: 'hello',
+    installationId: rpcState().installationId,
     watchVersion: WATCH_VERSION, protocolVersion: 3, stableIds: true,
-    capabilities: { causalFrontier: true, durableCommit: true, snapshotChunks: true, deltas: true, dependencyEvents: true, selectiveChunkAck: true, persistentTransfers: true, commandReceipts: true, watchEventChunks: true },
+    capabilities: { deviceSelection: true, planCatalogChunks: true, causalFrontier: true, durableCommit: true, snapshotChunks: true, deltas: true, dependencyEvents: true, selectiveChunkAck: true, persistentTransfers: true, commandReceipts: true, watchEventChunks: true },
     receipts: true,
     sid: s.sid || '',
     rev: s.rev || 0,
@@ -322,6 +343,7 @@ function flush() {
       const base = state.active && state.sid === next.msg.sid ? state.syncBase : null
       if (base?.wireHash) data = { ...data, appliedHash: base.wireHash, appliedRev: base.commitRev }
     }
+    if (r.peerCapabilities?.deviceSelection && r.installationId) data = { ...data, sourceInstallationId: r.installationId }
     const bytes = wireBytes(JSON.stringify(data))
     trace('send_attempt', next.msg, null, null, { bytes })
     rpcState().connect.send({ data,
@@ -530,8 +552,15 @@ export function startServer(h) {
         reason: decoded.reason, decodePath: decoded.decodePath, layers: decoded.layers })
       return
     }
+    const target = msg.targetInstallationId
+    if (target) rpcState().installationId ||= allocateEventIdentity('', 'link').installationId
+    if (target && target !== rpcState().installationId) return
+    // Routing metadata is outside the frozen snapshot hash / chunk body.
+    if (target) { const { targetInstallationId, ...body } = msg; msg = body }
     // 能收到有效业务包就是连接已恢复的证据，不依赖遗漏的 onOpen。
     if (!rpcState().connected) resumeConnection()
+    if (msg.t === 'link_probe') { sendControl({ t: 'link_probe_ack', requestId: msg.requestId, installationId: rpcState().installationId, sourceInstallationId: rpcState().installationId }); return }
+    if (msg.t === 'link_discover') { sendHello(); return }
     if (msg.t === 'watch_log_request') { sendControl(diagnosticLogPage(msg, WATCH_VERSION)); return }
     if (!['watch_diagnostics_request', 'watch_log_request'].includes(msg.t)) recordDiagnostic('rpc_receive', { type: msg.t, sid: msg.sid, eventId: msg.eventId, status: msg.status, rev: msg.commitRev })
     if (msg.t === 'hello_ack') { rpcState().peerProtocol = msg.protocolVersion >= 3 ? 3 : 2; rpcState().peerCapabilities = msg.capabilities || {}; replayPendingEvents(); flush(); return }
@@ -645,6 +674,17 @@ export function startServer(h) {
       })
       return
     }
+    if (msg.transferId?.startsWith('c:') && ['sync_begin', 'sync_chunk', 'sync_resume', 'sync_cancel'].includes(msg.t)) {
+      if (!rpcState().peerCapabilities?.planCatalogChunks) return
+      serial(async () => {
+        const r = rpcState()
+        r.catalogReceiver ||= persistentReceiver({ read: key => readStored(key),
+          write: async (key, value) => (await writeStoredAtomic(key, () => value)).ok },
+          applyCatalog, () => Date.now(), { channel: 'catalog', types: ['plan_catalog'] })
+        for (const reply of await r.catalogReceiver.receive(msg)) sendControl(reply)
+      })
+      return
+    }
     if (msg.transferId?.startsWith('p:') && ['sync_begin', 'sync_chunk', 'sync_resume', 'sync_cancel'].includes(msg.t)) {
       const caps = rpcState().peerCapabilities || {}
       if (!caps.selectiveChunkAck || !caps.persistentTransfers) return
@@ -685,9 +725,10 @@ export function startServer(h) {
       return
     }
     if (msg.t === 'plan_catalog') {
-      storage.set({ key: 'plan_catalog', value: msg, fail() {} })
-      if (rpcState().handlers.onCatalog) rpcState().handlers.onCatalog(msg)
-      sendControl({ t: 'plan_catalog_ack', at: msg.at })
+      serial(async () => {
+        const result = await applyCatalog(msg)
+        sendControl({ t: 'plan_catalog_ack', at: msg.at, catalogId: msg.catalogId, contentHash: msg.contentHash, status: result.ok ? result.status : 'storage_failed' })
+      })
       return
     }
     if (msg.t === 'watch_start_ack') {

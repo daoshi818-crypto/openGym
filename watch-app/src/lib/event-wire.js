@@ -4,8 +4,8 @@ import { wireBytes, wireHash } from './sync-wire.js'
 // catalog data, not part of that operation. Keep every phone entry field intact.
 export function compactStartEvent(event) {
   if (event.t !== 'watch_start' || !event.plan) return event
-  const { id, name, weightUnit, entries } = event.plan
-  return { ...event, plan: { id, name, weightUnit, entries } }
+  const { id, name, weightUnit, entries, routineIds } = event.plan
+  return { ...event, plan: { id, name, weightUnit, entries, ...(routineIds ? { routineIds } : {}) } }
 }
 
 // This is our conservative envelope budget, not a claimed SDK firmware limit.
