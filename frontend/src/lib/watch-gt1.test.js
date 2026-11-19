@@ -41,7 +41,7 @@ describe('v1.4.5 official square Wear UI contracts', () => {
   it('uses the source accent, surfaces and transparent-tint composite', () => {
     const c = css('Workout')
     for (const token of ['#A3E635','#0C0E12','#1C1C1E','#2C2C2E','#1A2508','#FFD60A','#FF453A']) expect(c).toContain(token)
-    expect(c).toContain('height: 77px') // Og.Tap 48dp ×1.6
+    expect(c).toContain('.primary-button { width: 220px; height: 64px') // Fit 390×450; retain official capsule.
   })
   it('replaces the circular primary with arrow / capsule / arrow', () => {
     const nav = nodes(tree('Workout')).find(n => n.class === 'navrow')
@@ -133,7 +133,7 @@ describe('v1.4.5 official square Wear UI contracts', () => {
   })
   it('holds Finish for one second, cancels early release, and clears the timer on hide', () => {
     vi.useFakeTimers(); const {p,ctx}=training('none')
-    Object.assign(ctx,{setInterval,clearInterval}); p.saveEnd=vi.fn()
+    Object.assign(ctx,{setInterval,clearInterval,setTimeout,clearTimeout}); p.saveEnd=vi.fn()
     p.startFinishHold(); vi.advanceTimersByTime(950); p.cancelFinishHold(); vi.advanceTimersByTime(1000)
     expect(p.saveEnd).not.toHaveBeenCalled()
     p.startFinishHold(); vi.advanceTimersByTime(1000); expect(p.saveEnd).toHaveBeenCalledTimes(1)

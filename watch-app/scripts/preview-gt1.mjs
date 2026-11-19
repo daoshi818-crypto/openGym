@@ -14,9 +14,20 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const out = path.resolve(process.argv[2] || path.join(root, 'preview-gt1'))
 const target = process.argv[3] || 'watch-square'
 const fromSource = process.env.WATCH_PREVIEW_SOURCE !== '0'
-const view = target === 'watch-round' ? { width: 466, height: 466, radius: 233 } : { width: 390, height: 450, radius: 80 }
+const squareRadius = Number(process.env.WATCH_PREVIEW_RADIUS || 100)
+if (!(squareRadius >= 0 && squareRadius <= 195)) throw new Error('Invalid preview corner radius')
+const view = target === 'watch-round' ? { width: 466, height: 466, radius: 233 } : { width: 390, height: 450, radius: squareRadius }
 fs.mkdirSync(out, { recursive: true })
-fs.writeFileSync(path.join(out, 'preview-config.json'), JSON.stringify({ target, fromSource, ...view }))
+const fonts = process.env.WATCH_PREVIEW_FONTS
+let fontCss = ''
+if (fonts) {
+  fs.mkdirSync(path.join(out, 'fonts'), { recursive: true })
+  for (const [weight, name] of [[400,'HanyiVar-vivo-60S.ttf'],[700,'HanyiVar-vivo-70S.ttf']]) {
+    fs.copyFileSync(path.join(fonts, name), path.join(out, 'fonts', name))
+    fontCss += `@font-face{font-family:WatchSDK;src:url('./fonts/${name}');font-weight:${weight};font-style:normal;}`
+  }
+}
+fs.writeFileSync(path.join(out, 'preview-config.json'), JSON.stringify({ target, fromSource, sdkFonts: !!fonts, ...view }))
 const clone = x => JSON.parse(JSON.stringify(x))
 function environment() {
   const { ctx, disk, storage } = watchPersistence()
@@ -134,6 +145,16 @@ p=workout();p.pageIndex=0;p.overviewRows=[];p.finishProgress='50%';scene('62-fin
 env=environment();env.disk.set('plan_catalog',{date:catalogDate,plans:[{...plan,today:false}]});p=page('Index',env);p.onInit({});scene('63-home-no-today','Index',p,'今日无安排 · 保留全部其他计划')
 env=environment();env.disk.set('plan_catalog',{date:catalogDate,plans:[]});p=page('Index',env);p.onInit({});scene('64-home-empty-synced','Index',p,'目录已同步 · 空计划')
 env=environment();env.disk.set('plan_catalog',{date:catalogDate,todayPlan:{...plan,id:'today:'+catalogDate,name:'推部训练 + 核心稳定训练',exercises:[...plan.exercises,...plan.exercises]},plans:[plan,{...plan,id:'legs',today:false,name:'腿部训练'}]});p=page('Index',env);p.onInit({});scene('65-home-combined','Index',p,'今日多计划 · 合并训练')
+p=workout(s=>{s.workout.exercises[0].name='哑铃推肩';s.startedAt=Date.now()-30000;s.restUntil=Date.now()+63000});scene('66-device-rest-rpe','Workout',p,'实拍反馈复现 · 1:03 / 未评 RPE')
+p=workout(s=>{s.restUntil=Date.now()+900000});scene('67-rest-max','Workout',p,'休息上限 · 15:00 / 未评 RPE')
+p=workout(s=>{s.restUntil=Date.now()+63000;s.workout.exercises[0].name=longNames[0];s.workout.rows[0][2].w='99999.999';s.workout.rows[0][2].r='99999'});scene('68-rest-wide-next','Workout',p,'休息 · 长动作名 / 极值重量次数 / 组号独立')
+p=workout();p.pageIndex=0;p.finishProgress='70%';scene('69-hold-seventy','Workout',p,'结束入口 · 70% / 放弃按钮仍可见',true)
+p=workout();p.askAbandon();p.closeError='存储失败，未结束，请重试';scene('70-abandon-error','Workout',p,'放弃确认 · 存储错误可重试')
+env=environment();env.ctx.startSession(clone(plan));p=page('Keypad',env);p.onInit({exIdx:0,setIdx:0,field:'w'});p.inputMode='quick';p.targetName=longNames[0];p.show='99999.999';p.notice='存储失败，未保存，请重试';scene('71-quick-wide','Keypad',p,'快速调整 · 长名称 / 极值 / 提示')
+env.disk.set('summary_last',{sid:'preview',workout:longNames[0],minutes:599,sets:Array.from({length:300},()=>({done:true})),volume:99999999,weightUnit:'lb',avgHr:118,maxHr:242,calories:9999});p=page('Summary',env);p.onInit();scene('72-summary-wide','Summary',p,'总结 · 长计划名 / 大统计值');scene('73-summary-wide-bottom','Summary',p,'总结 · 大统计值 / 完成按钮',true)
+p=workout();p.pageIndex=2;p.metricKind='effort';p.metricEfforts=Array.from({length:4},(_,i)=>({key:String(i),name:longNames[0],value:'10.0'}));scene('74-effort-four-long','Workout',p,'强度统计 · 四条两行名称')
+p=workout();p.pageIndex=2;p.elapsedLabel='359:59';p.volumeLabel='999,999,999';p.doneTotal='999/1000';p.kcalLabel='99999';scene('75-metrics-wide','Workout',p,'统计 · 时长 / 容量 / 组数上限')
+p=workout();p.pageIndex=0;p.overviewRows=Array.from({length:30},(_,i)=>({key:'e'+i,index:i,name:longNames[i%3],count:'2/100',current:i===0,finished:false}));scene('76-overview-many-top','Workout',p,'概览 · 三十个长名称动作');scene('77-overview-many-bottom','Workout',p,'概览 · 三十个动作后可结束 / 放弃',true)
 const runtime = `
 function val(exp,ctx){if(typeof exp!=='string')return exp;if(exp.startsWith('function'))return Function('return ('+exp+')')().call(ctx);return exp.split('.').reduce((a,k)=>a?.[k],ctx)}
 function render(n,ctx){if(n.repeat){let frag=document.createDocumentFragment();for(const item of val(n.repeat.$exp,ctx)||[]){let sub=Object.create(ctx);sub[n.repeat.value]=item;frag.append(render({...n,repeat:null},sub))}return frag}if(n.$shown&&!val(n.$shown,ctx)||n.attr?.$show&&!val(n.attr.$show,ctx))return document.createDocumentFragment();const el=document.createElement(n.type==='input'?'button':n.type==='text'?'native-text':n.type==='image'?'img':'div');el.className=(n.$class?val(n.$class,ctx).flat(Infinity).filter(Boolean).join(' '):n.class||'');el.dataset.type=n.type;if(n.action||n.events?.click||n.events?.$click)el.dataset.action=n.action||n.events.click||n.events.$click;let a=n.attr||{};if(a.id)el.id=a.id;if(n.type==='image'){let src=a.$src?val(a.$src,ctx):a.src;el.src=ICONS[src]||src;el.alt=''}if(a.$disabled)el.disabled=!!val(a.$disabled,ctx);if(n.style)Object.assign(el.style,n.style);for(const [k,v] of Object.entries(n.inlineStyle||{}))el.style[k.startsWith('$')?k.slice(1):k]=k.startsWith('$')?val(v,ctx):v;if(n.type==='text'||n.type==='input'){let text=a.$value?val(a.$value,ctx):a.value||'';let span=document.createElement('span');span.textContent=text??'';el.append(span)}for(let c of n.children||[])el.append(render(c,ctx));return el}
@@ -147,13 +168,14 @@ const base=`html,body{margin:0;width:100%;height:100%;background:#000;font-famil
 for (const s of scenes) {
   const css=s.css.replace(/\blines:\s*(\d+);/g,'-webkit-line-clamp: $1;')
     .replace(/screen and \(device: watch-round\)/g, target === 'watch-round' ? 'screen and (min-width: 0px)' : 'screen and (min-width: 99999px)')
-  const html='<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>'+s.title+' · code preview NOT device</title><style>'+base+'\n'+css+'</style><body><div id="viewport"></div><script>const ICONS='+JSON.stringify(icons)+';const SCENE='+JSON.stringify(s).replaceAll('</','<\\/')+';'+runtime+'</script></body></html>'
+  const fontOverride = fonts ? fontCss+'html,body{font-family:WatchSDK,sans-serif}' : ''
+  const html='<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>'+s.title+' · code preview NOT device</title><style>'+base+fontOverride+'\n'+css+'</style><body><div id="viewport"></div><script>const ICONS='+JSON.stringify(icons)+';const SCENE='+JSON.stringify(s).replaceAll('</','<\\/')+';'+runtime+'</script></body></html>'
   fs.writeFileSync(path.join(out,s.id+'.html'),html)
 }
 fs.writeFileSync(path.join(out,'scenes.json'),JSON.stringify(scenes.map(({id,name,title,bottom})=>({id,name,title,bottom})),null,2))
 const dimensions = view.width + ' × ' + view.height
 const sourceLabel = fromSource ? '当前 .ux 源码模板' : '现有编译目录中的模板（不会重新构建）'
-const maskLabel = target === 'watch-round' ? '使用圆形安全区测试遮罩。' : '使用保守的80px圆角测试遮罩，不代表设备实测圆角。'
+const maskLabel = target === 'watch-round' ? '使用圆形安全区测试遮罩。' : '使用保守的'+view.radius+'px圆角测试遮罩，不代表设备实测圆角。'
 const cards=scenes.map(s=>'<article><h2>'+s.title+'</h2><iframe src="'+s.id+'.html" width="'+view.width+'" height="'+view.height+'"></iframe><a href="'+s.id+'.html">'+dimensions+' 单屏</a></article>').join('')
-fs.writeFileSync(path.join(out,'index.html'),'<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>'+dimensions+' 源码实现审阅</title><style>body{background:#121417;color:#fff;font:16px Segoe UI,Microsoft YaHei,sans-serif;margin:36px}h1{color:#30d158}main{display:flex;flex-wrap:wrap;gap:28px}article{background:#202329;padding:18px;border-radius:24px}h2{font-size:18px}iframe{border:1px solid #41434a;border-radius:'+view.radius+'px;background:#000}a{display:block;color:#30d158;margin-top:12px}</style><h1>'+dimensions+' · UI 实现预览</h1><p>从'+sourceLabel+'和实际 .ux CSS 生成，页面数据由真实脚本生成。浏览器语义适配预览，非原生编译结果或真机截图，不包含固件字体与原生渲染差异。'+maskLabel+'</p><main>'+cards+'</main></html>')
+fs.writeFileSync(path.join(out,'index.html'),'<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>'+dimensions+' 源码实现审阅</title><style>body{background:#121417;color:#fff;font:16px Segoe UI,Microsoft YaHei,sans-serif;margin:36px}h1{color:#30d158}main{display:flex;flex-wrap:wrap;gap:28px}article{background:#202329;padding:18px;border-radius:24px}h2{font-size:18px}iframe{border:1px solid #41434a;border-radius:'+view.radius+'px;background:#000}a{display:block;color:#30d158;margin-top:12px}</style><h1>'+dimensions+' · UI 实现预览</h1><p>从'+sourceLabel+'和实际 .ux CSS 生成，页面数据由真实脚本生成。浏览器语义适配预览，非原生编译结果或真机截图，字体是否来自 SDK 见 preview-config.json；浏览器仍有原生渲染差异。'+maskLabel+'</p><main>'+cards+'</main></html>')
 console.log('Generated '+scenes.length+' code-derived scenes in '+out)

@@ -27,7 +27,7 @@ import { zoneView, muscleView } from '../lib/official-metrics.js'
 const pageDefinition = {
   // Native reactiveMap retains proxies until Page destruction. Business documents
   // must stay in staticData; only the small display projection belongs in data.
-  staticData: { sessionModel: { current: null, touchPoints: { start: { x: 0, y: 0 }, last: { x: 0, y: 0 } } } },
+  staticData: { sessionModel: { current: null, restFlush: null, touchPoints: { start: { x: 0, y: 0 }, last: { x: 0, y: 0 } } } },
   stateOf(value) {
     // Detached transaction drafts (and legacy page callers) own their state.
     if (this.sessionActionDraft || !this.sessionModel) {
@@ -36,6 +36,13 @@ const pageDefinition = {
     }
     if (arguments.length) this.sessionModel.current = value
     return this.sessionModel.current
+  },
+  restFlushOf(value) {
+    // A Promise must remain raw: native Page proxies change its identity and its
+    // `then` receiver. In particular, a finished rest edit must not block closing.
+    const owner = this.sessionModel || this
+    if (arguments.length) owner.restFlush = value
+    return owner.restFlush
   },
   data: {
     exName: '', remainingLabel: '', syncWarning: false,
@@ -50,7 +57,7 @@ const pageDefinition = {
     restProgLabel: '',
     restExerciseName: '',
     nextLabel: '',
-    nextDetails: '', nextTargetLabel: '', nextSetLabel: '', nextValuesLabel: '', effortNumber: '—',
+    nextDetails: '', nextTargetLabel: '', nextExerciseName: '', nextSetLabel: '', nextValuesLabel: '', effortNumber: '—',
     hrLabel: '心率 --', weightUnit: 'kg',
     syncLabel: '',
     diagnosticOn: false, diagnosticPage: 0, diagnosticTitle: '', diagnosticText: '',
@@ -65,7 +72,7 @@ const pageDefinition = {
     doneTotal: '0/0', nextOfficial: '', hrNumber: '--', hrAverage: '--', hrMaximum: '--', hrMinimum: '--',
     zoneRows: [], hasAge: false, muscleRows: [], muscleMore: 0, muscleEmpty: '还没有组',
     restPercent: '100%', restWarn: false, holdingFinish: false, finishProgress: '0%',
-    closeMode: '',
+    closeMode: '', closeError: '', closeSaving: false,
     paused: false,
     pauseLabel: '暂停训练',
     // 视觉：数值与单位分开，单位弱一级
@@ -209,6 +216,7 @@ const pageDefinition = {
     else return this.adjustSelectedField(rotationStep(ev))
   },
   onBackPress() {
+    this.cancelFinishHold()
     if (this.diagnosticOn) { this.closeDiagnostics(); return true }
     if (this.effortOn) { this.closeEffort(); return true }
     // 详情/结束入口只关闭自己，不切组、不停表、不退出会话。
@@ -387,6 +395,7 @@ const pageDefinition = {
   },
 
   touchEnd(e) {
+    this.endFinishHold()
     if (this.diagnosticOn) { this.touchCancel(); return }
     if (!this.touch) return
     // 固件触摸回调未必带 changedTouches，用最后一次 move 的坐标兜底。
@@ -421,7 +430,7 @@ const pageDefinition = {
     // Vertical gestures belong to the visible native list; horizontal swipes navigate pages.
   },
 
-  touchCancel() { this.touch = null; this.touchLast = null; this.touchAxis = null },
+  touchCancel() { this.cancelFinishHold(); this.touch = null; this.touchLast = null; this.touchAxis = null },
 
   closeMenu() { this.menuOn = false },
   continueTraining() { this.leaveChoice = false },
@@ -925,8 +934,9 @@ const pageDefinition = {
   },
 
   async flushRestNudge() {
-    if (this.restFlushPending) {
-      const result = await this.restFlushPending
+    const pending = this.restFlushOf()
+    if (pending) {
+      const result = await pending
       if (!result.ok) return false
       return this.restCrownDirty ? this.flushRestNudge() : true
     }
@@ -941,7 +951,7 @@ const pageDefinition = {
       Object.assign(state, round)
       stageSessionEvent(state, { t: 'rest', sid, ...restOf(state) })
     })
-    this.restFlushPending = operation
+    this.restFlushOf(operation)
     try {
       const result = await operation
       if (!result.ok) { this.syncWarning = true; this.syncLabel = '存储失败，休息调整未保存，请重试'; return false }
@@ -957,12 +967,12 @@ const pageDefinition = {
       } else {
         // New input is a preview on top of this exact persisted round, not a rollback.
         this.restCrownBase = { restId: round.restId, restVersion: round.restVersion }
-        this.restFlushPending = null
+        this.restFlushOf(null)
         return this.flushRestNudge()
       }
       return true
     } finally {
-      if (this.restFlushPending === operation) this.restFlushPending = null
+      if (this.restFlushOf() === operation) this.restFlushOf(null)
     }
   },
 
@@ -1324,11 +1334,12 @@ const pageDefinition = {
       const timed = ne && String(ne.reps || '').indexOf('秒') >= 0
       const r = nr && nr.r !== '' && nr.r != null ? nr.r + (timed ? '秒' : '次') : ''
       this.nextTargetLabel = '下一组 · ' + ne.name
+      this.nextExerciseName = ne.name
       this.nextSetLabel = '第 ' + (next.setIdx + 1) + ' / ' + (s.workout.rows[next.exIdx] || []).length + ' 组'
       this.nextValuesLabel = w && r ? w + ' × ' + r : (w || r || '待填写')
       this.nextLabel = next.exIdx !== (completed ? completed.exIdx : s.exIdx) ? '下一动作 · ' + ne.name : '下一组'
       this.nextDetails = '第 ' + (next.setIdx + 1) + ' / ' + (s.workout.rows[next.exIdx] || []).length + ' 组 · ' + (w && r ? w + ' × ' + r : (w || r || '待填写'))
-    } else { this.nextLabel = '本次训练已完成'; this.nextDetails = this.restProgLabel; this.nextTargetLabel = this.nextLabel; this.nextSetLabel = this.restProgLabel; this.nextValuesLabel = this.nextDetails }
+    } else { this.nextLabel = '本次训练已完成'; this.nextExerciseName = '所有组已完成'; this.nextDetails = this.restProgLabel; this.nextTargetLabel = this.nextLabel; this.nextSetLabel = ''; this.nextValuesLabel = this.nextDetails }
 
     // 展示目标跟随当前页面，编辑目标只在打开时固定，绝不把上一组评分带入下一组。
     this.effortScale = s.effortScale === 'rpe' || s.effortScale === 'rir' ? s.effortScale : 'none'
@@ -1455,18 +1466,33 @@ const pageDefinition = {
     this.openEffort()
     if (this.effortOn) { this.effortDraft = item.value; return this.confirmEffort() }
   },
-  startFinishHold() {
-    if (this.closeSaving || this.interactionBlocked()) return
+  startFinishHold(event) {
+    // Child touchstart bubbles before the root resets the previous swipe guard.
+    if (event && event.touches && event.touches.length) this.touchStart(event)
+    if (this.closeSaving || this.visible === false || this.closeMode === 'abandon' || this.interactionBlocked()) return
     this.cancelFinishHold()
     this.holdingFinish = true; this.finishHoldAt = Date.now()
+    // Completion owns a deadline, independently of paint/progress callbacks.
+    this.finishDeadlineTimer = setTimeout(() => {
+      this.finishDeadlineTimer = null
+      if (!this.holdingFinish || this.visible === false) return
+      this.cancelFinishHold()
+      this.saveEnd()
+    }, 1000)
     this.finishHoldTimer = setInterval(() => {
-      const fraction = Math.min(1, (Date.now() - this.finishHoldAt) / 1000)
-      this.finishProgress = String(fraction * 100) + '%'
-      if (fraction >= 1) { this.cancelFinishHold(); this.saveEnd() }
-    }, 50)
+      const percent = Math.max(0, Math.min(100, Math.floor((Date.now() - this.finishHoldAt) / 10)))
+      this.finishProgress = String(percent) + '%'
+    }, 100)
+  },
+  endFinishHold() {
+    const complete = this.holdingFinish && this.visible !== false && Date.now() - this.finishHoldAt >= 1000
+    this.cancelFinishHold()
+    if (complete) return this.saveEnd()
   },
   cancelFinishHold() {
-    if (this.finishHoldTimer) clearInterval(this.finishHoldTimer)
+    if (this.finishHoldTimer != null) clearInterval(this.finishHoldTimer)
+    if (this.finishDeadlineTimer != null) clearTimeout(this.finishDeadlineTimer)
+    this.finishDeadlineTimer = null
     this.finishHoldTimer = null; this.holdingFinish = false; this.finishProgress = '0%'
   },
   isTimed(ex) { return ex && String(ex.reps || '').indexOf('秒') >= 0 },
@@ -1635,9 +1661,10 @@ const pageDefinition = {
     this.refresh()
     }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
   },
-  askEnd() { this.finishOn = false; this.closeMode = 'end' },
-  askAbandon() { this.finishOn = false; this.closeMode = 'abandon' },
+  askEnd() { this.cancelFinishHold(); this.closeError = ''; this.finishOn = false; this.closeMode = 'end' },
+  askAbandon() { this.cancelFinishHold(); this.closeError = ''; this.finishOn = false; this.closeMode = 'abandon' },
   cancelClose() {
+    this.cancelFinishHold(); this.closeError = ''
     if (this.closeMode === 'complete') {
       if (Date.now() < this.completionIgnoreUntil) return
       // 继续训练后不因时钟、同步或页面恢复反复弹窗；出现未完成组才重新提示。
@@ -1657,12 +1684,13 @@ const pageDefinition = {
     this.logInteraction('local_end', { status: typeof reason === 'string' ? reason : 'manual' }, true)
     if (typeof reason !== 'string') reason = 'manual'
     if (this.localCommitPending || this.closeSaving || !this.stateOf()?.active) return
+    this.cancelFinishHold(); this.closeError = ''
     this.cancelSetDotPick()
     this.closeSaving = true
     try {
-      if ((await this.flushRestNudge()) === false) { this.syncWarning = true; this.syncLabel = '休息调整未保存，请重试'; return }
+      if ((await this.flushRestNudge()) === false) { this.syncWarning = true; this.closeError = '休息调整未保存，请重试'; this.syncLabel = this.closeError; return }
       const result = await commitLocalClose(this.stateOf().sid, reason)
-      if (!result.ok) { this.syncWarning = true; this.syncLabel = '存储失败，未结束，请重试'; return }
+      if (!result.ok) { this.syncWarning = true; this.closeError = '存储失败，未结束，请重试'; this.syncLabel = this.closeError; return }
       this.cancelRestNudge(); this.setRestScreenLock(false); this.stopHrCapture()
       for (const event of [...(result.entry.pendingEvents || []), result.entry.closeEvent]) sendEvent(event)
       if (result.entry.delivery === 'pending') sendEvent(result.entry.summaryEvent)
@@ -1670,7 +1698,7 @@ const pageDefinition = {
       if (this.timer) clearInterval(this.timer)
       if (this.hrFlush) clearInterval(this.hrFlush)
       router.replace({ uri: reason === 'saved' ? '/Summary' : '/Index' })
-    } catch (_) { this.syncWarning = true; this.syncLabel = '存储失败，未结束，请重试' }
+    } catch (_) { this.syncWarning = true; this.closeError = '存储失败，未结束，请重试'; this.syncLabel = this.closeError }
     finally { this.closeSaving = false }
   },
 }
@@ -1684,23 +1712,23 @@ export default pageDefinition
     <div class="screen overview-screen" show="{{ pageIndex === 0 }}">
       <list class="overview-scroll"><list-item type="overview-title" class="overview-head"><text class="overview-name">{{ finishName }}</text><text class="quiet">{{ doneTotal }} 组</text></list-item>
         <list-item type="exercise" class="overview-row {{ item.current ? 'overview-current' : '' }}" for="{{ item in overviewRows }}" tid="key" onclick="jumpOverview(item)"><div class="exercise-mark"><image class="mark-icon" src="/common/icons/wear-play-accent.svg" if="{{ item.current }}" /><image class="mark-icon" src="/common/icons/wear-check.svg" if="{{ !item.current && item.finished }}" /></div><div class="overview-copy"><text class="overview-ex {{ item.finished ? 'muted' : '' }}">{{ item.name }}</text><text class="overview-count">{{ item.count }}</text></div></list-item>
-        <list-item type="overview-actions" class="overview-actions"><text class="quiet sync-line">{{ syncLabel }}</text><div class="hold-finish" ontouchstart="startFinishHold" ontouchend="cancelFinishHold" ontouchcancel="cancelFinishHold"><image class="button-icon" src="/common/icons/wear-flag.svg" /><text class="button-word">按住以结束</text><div class="hold-fill" style="width: {{ finishProgress }};"><div class="hold-ink-label"><image class="button-icon" src="/common/icons/wear-flag-ink.svg" /><text class="button-word ink">按住以结束</text></div></div></div><input class="row-button danger" type="button" value="放弃训练" onclick="askAbandon" /></list-item>
+        <list-item type="overview-actions" class="overview-actions"><text class="quiet sync-line">{{ closeError || syncLabel }}</text><div class="hold-finish"><image class="button-icon" src="/common/icons/wear-flag.svg" /><text class="button-word">{{ closeSaving ? '正在保存…' : '按住以结束' }}</text><div class="hold-fill" style="width: {{ finishProgress }};"><div class="hold-ink-label"><image class="button-icon" src="/common/icons/wear-flag-ink.svg" /><text class="button-word ink">{{ closeSaving ? '正在保存…' : '按住以结束' }}</text></div></div><div class="hold-touch" ontouchstart="startFinishHold" ontouchend="endFinishHold" ontouchcancel="cancelFinishHold"></div></div><input class="row-button danger" type="button" value="放弃训练" onclick="askAbandon" /></list-item>
       </list>
     </div>
     <div class="screen live-screen" show="{{ pageIndex === 1 }}">
       <div class="training-content" if="{{ !isRest }}">
         <div class="set-lines"><text class="ex-name" onclick="openExercises">{{ exName }}</text><text class="place">{{ inputNotice || (groupLabel + (rowDone ? ' · 完成' : '')) }}</text>
         <div class="inputs"><div class="field {{ selectedField === 'w' ? 'field-selected' : '' }}" onclick="editWeight"><text class="field-label">重量</text><div class="field-number"><text class="fval {{ weightNum.length > 4 ? 'long-value' : '' }}">{{ weightNum }}</text><text class="funit">{{ weightSuffix }}</text></div></div><div class="field {{ selectedField === 'r' ? 'field-selected' : '' }}" onclick="editReps"><text class="field-label">{{ repsSuffix === '秒' ? '保持' : '次数' }}</text><div class="field-number"><text class="fval {{ repsNum.length > 4 ? 'long-value' : '' }}">{{ repsNum }}</text><text class="funit" if="{{ repsSuffix === '秒' }}">s</text></div></div></div>
-        <text class="last-text" if="{{ lastOn }}">{{ lastLine }}</text><text class="quiet" if="{{ effortEntryOn && rowDone }}" onclick="openEffort">{{ effortEntryText }}</text></div>
+        <text class="last-text" if="{{ lastOn }}">{{ lastLine }}</text><text class="quiet done-effort" if="{{ effortEntryOn && rowDone }}" onclick="openEffort">{{ effortEntryText }}</text></div>
         <div class="navrow"><div class="arrow-button" onclick="onPrevSet"><image class="arrow-icon" src="/common/icons/wear-left.svg" /></div><div class="primary-button" onclick="onCurrentSetAction"><image class="button-icon" src="{{ rowDone ? '/common/icons/wear-undo-ink.svg' : '/common/icons/wear-check-ink.svg' }}" /><text class="primary-word">{{ paused ? '继续训练' : rowDone ? '撤回' : '完成' }}</text></div><div class="arrow-button" onclick="onNextSet"><image class="arrow-icon" src="/common/icons/wear-right.svg" /></div></div>
       </div>
       <div class="rest-content" if="{{ isRest }}"><div class="countdown-row"><div class="arrow-button" onclick="openRestExercise"><image class="arrow-icon" src="/common/icons/wear-left.svg" /></div><text class="rest {{ restWarn ? 'rest-warning' : '' }}">{{ restLabel }}</text><div class="arrow-spacer"></div></div><div class="time-track"><div class="time-fill" style="width: {{ restPercent }};"></div></div>
         <div class="rrow"><input class="edge-button" type="button" value="−15" onclick="onRestMinus" /><div class="skip-button" onclick="onSkipRest"><image class="button-icon" src="/common/icons/wear-next.svg" /><text class="button-word">跳过</text></div><input class="edge-button" type="button" value="+15" onclick="onRestPlus" /></div>
-        <div class="effort-slot" if="{{ effortEntryOn }}"><text class="quiet" if="{{ effortNumber === '—' }}">{{ effortScaleLabel }} · 这组有多吃力？</text><div class="chip-row" if="{{ effortNumber === '—' }}"><input class="effort-chip {{ item.cls }}" type="button" for="{{ item in effortChips }}" tid="key" value="{{ item.label }}" onclick="rateChip(item)" /></div><input class="rated-pill" type="button" if="{{ effortNumber !== '—' }}" value="{{ effortEntryText }}" onclick="openEffort" /></div>
-        <div class="up-next" onclick="openNextExercise"><div class="up-next-head"><text class="next-label">下一个</text><text class="quiet">{{ elapsedLabel }}</text></div><text class="next-name">{{ nextOfficial }}</text><text class="next-values">{{ nextValuesLabel }}</text></div>
+        <div class="effort-slot" if="{{ effortEntryOn }}"><text class="quiet effort-question" if="{{ effortNumber === '—' }}">{{ effortScaleLabel }} · 这组有多吃力？</text><div class="chip-row" if="{{ effortNumber === '—' }}"><input class="effort-chip {{ item.cls }}" type="button" for="{{ item in effortChips }}" tid="key" value="{{ item.label }}" onclick="rateChip(item)" /></div><input class="rated-pill" type="button" if="{{ effortNumber !== '—' }}" value="{{ effortEntryText }}" onclick="openEffort" /></div>
+        <div class="up-next" onclick="openNextExercise"><div class="up-next-head"><text class="next-label">下一个</text><text class="quiet next-elapsed">{{ elapsedLabel }}</text></div><text class="next-name">{{ nextExerciseName }}</text><div class="next-meta"><text class="next-set">{{ nextSetLabel }}</text><text class="next-values {{ nextValuesLabel.length > 17 ? 'next-values-long' : '' }}">{{ nextValuesLabel }}</text></div></div>
       </div>
     </div>
-    <div class="screen metrics-screen" show="{{ pageIndex === 2 }}"><div class="metrics-main" if="{{ metricKind === 'numbers' }}"><text class="metric-time">{{ elapsedLabel }}</text><div class="metric-line"><text class="metric-number red">{{ hrNumber }}</text><image class="metric-heart" src="/common/icons/wear-heart-red.svg" /></div><div class="metric-line"><text class="metric-number">{{ kcalLabel }}</text><text class="metric-unit">KCAL</text></div><div class="metric-line" if="{{ volumeLabel !== '0' }}"><text class="metric-number">{{ volumeLabel }}</text><text class="metric-unit">{{ weightUnit }}</text></div><div class="metric-line"><text class="metric-number">{{ doneTotal }}</text><text class="metric-unit">组数</text></div></div>
+    <div class="screen metrics-screen" show="{{ pageIndex === 2 }}"><div class="metrics-main" if="{{ metricKind === 'numbers' }}"><text class="metric-time {{ elapsedLabel.length > 5 ? 'metric-time-long' : '' }}">{{ elapsedLabel }}</text><div class="metric-line"><text class="metric-number red">{{ hrNumber }}</text><image class="metric-heart" src="/common/icons/wear-heart-red.svg" /></div><div class="metric-line"><text class="metric-number {{ kcalLabel.length > 5 ? 'metric-number-long' : '' }}">{{ kcalLabel }}</text><text class="metric-unit">KCAL</text></div><div class="metric-line" if="{{ volumeLabel !== '0' }}"><text class="metric-number {{ volumeLabel.length > 7 ? 'metric-number-long' : '' }}">{{ volumeLabel }}</text><text class="metric-unit">{{ weightUnit }}</text></div><div class="metric-line"><text class="metric-number {{ doneTotal.length > 8 ? 'metric-number-long' : '' }}">{{ doneTotal }}</text><text class="metric-unit">组数</text></div></div>
       <div class="metrics-main" if="{{ metricKind === 'pulse' }}"><div class="metric-line"><text class="metric-number red">{{ hrAverage }}</text><image class="metric-heart" src="/common/icons/wear-heart-red.svg" /><text class="metric-unit red">平均</text></div><div class="metric-line"><text class="metric-number">{{ hrMaximum }}</text><text class="metric-unit">最高</text><text class="pulse-min">{{ hrMinimum }}</text><text class="metric-unit">最低</text></div></div>
       <div class="metric-efforts" if="{{ metricKind === 'effort' }}"><text class="quiet" if="{{ !metricEfforts.length }}">尚未评定强度</text><div class="metric-effort-row" for="{{ item in metricEfforts }}" tid="key"><text class="effort-ex">{{ item.name }}</text><text class="effort-average">{{ item.value }}</text></div></div>
       <div class="zone-page" if="{{ metricKind === 'zones' }}"><div class="zone-track {{ item.cls }} {{ item.current ? 'zone-current' : '' }} {{ item.dim ? 'zone-dim' : '' }} {{ !hasAge ? 'zone-no-age' : '' }}" style="border-color: {{ item.border }};" for="{{ item in zoneRows }}" tid="key"><div class="zone-fill" style="width: {{ item.fill }}; background-color: {{ item.color }};"></div><div class="zone-copy" if="{{ hasAge }}"><text class="zone-name">{{ item.zone }}</text><text class="zone-band">{{ item.band }}</text><text class="zone-time">{{ item.time }}</text></div></div><div class="no-age" if="{{ !hasAge }}"><text class="no-age-title">未设置年龄</text><text class="quiet">在手机应用中添加出生年份</text></div></div>
@@ -1709,7 +1737,7 @@ export default pageDefinition
     </div>
   </div>
   <div class="page-dots" if="{{ !closeMode && !effortOn && !lastOpen && !diagnosticOn }}"><div class="pager-dot {{ pageIndex === 0 ? 'pager-current' : '' }}"></div><div class="pager-dot {{ pageIndex === 1 ? 'pager-current' : '' }}"></div><div class="pager-dot {{ pageIndex === 2 ? 'pager-current' : '' }}"></div></div>
-  <div class="overlay" if="{{ closeMode && !effortOn }}"><list class="modal-scroll"><list-item type="confirm" class="modal-content"><div class="done-mark" if="{{ closeMode === 'complete' }}"><image class="done-icon" src="/common/icons/wear-check-ink.svg" /></div><text class="confirm-title">{{ closeMode === 'complete' ? '所有组已完成' : closeMode === 'abandon' ? '放弃训练？' : '结束训练？' }}</text><text class="quiet confirm-note">{{ confirmRemain }}</text><input class="row-button" type="button" if="{{ closeMode === 'complete' && effortEntryOn }}" value="{{ effortEntryText }}" onclick="openEffort" /><input class="row-button danger" type="button" if="{{ closeMode === 'abandon' }}" value="放弃训练" onclick="abandonEnd" /><input class="primary-input" type="button" if="{{ closeMode === 'end' }}" value="结束并保存" onclick="saveEnd" /><div class="hold-finish" if="{{ closeMode === 'complete' }}" ontouchstart="startFinishHold" ontouchend="cancelFinishHold" ontouchcancel="cancelFinishHold"><image class="button-icon" src="/common/icons/wear-flag.svg" /><text class="button-word">按住以结束</text><div class="hold-fill" style="width: {{ finishProgress }};"><div class="hold-ink-label"><image class="button-icon" src="/common/icons/wear-flag-ink.svg" /><text class="button-word ink">按住以结束</text></div></div></div><input class="row-button" type="button" value="继续训练" onclick="cancelClose" /></list-item></list></div>
+  <div class="overlay" if="{{ closeMode && !effortOn }}"><list class="modal-scroll"><list-item type="confirm" class="modal-content"><div class="done-mark" if="{{ closeMode === 'complete' }}"><image class="done-icon" src="/common/icons/wear-check-ink.svg" /></div><text class="confirm-title">{{ closeMode === 'complete' ? '所有组已完成' : closeMode === 'abandon' ? '放弃训练？' : '结束训练？' }}</text><text class="quiet confirm-note">{{ closeError || confirmRemain }}</text><input class="row-button" type="button" if="{{ closeMode === 'complete' && effortEntryOn }}" value="{{ effortEntryText }}" onclick="openEffort" /><input class="row-button danger" type="button" if="{{ closeMode === 'abandon' }}" value="放弃训练" onclick="abandonEnd" /><input class="primary-input" type="button" if="{{ closeMode === 'end' }}" value="结束并保存" onclick="saveEnd" /><div class="hold-finish" if="{{ closeMode === 'complete' }}"><image class="button-icon" src="/common/icons/wear-flag.svg" /><text class="button-word">{{ closeSaving ? '正在保存…' : '按住以结束' }}</text><div class="hold-fill" style="width: {{ finishProgress }};"><div class="hold-ink-label modal-ink-label"><image class="button-icon" src="/common/icons/wear-flag-ink.svg" /><text class="button-word ink">{{ closeSaving ? '正在保存…' : '按住以结束' }}</text></div></div><div class="hold-touch" ontouchstart="startFinishHold" ontouchend="endFinishHold" ontouchcancel="cancelFinishHold"></div></div><input class="row-button" type="button" value="继续训练" onclick="cancelClose" /></list-item></list></div>
   <div class="overlay" if="{{ lastOpen && !closeMode }}"><list class="modal-scroll" id="history" touch-focusable="true"><list-item type="last-title" class="modal-content"><text class="confirm-title">{{ lastTitle }}</text><text class="quiet">{{ lastMeta }}</text></list-item><list-item type="last-row" class="history-row" for="{{ r in lastRows }}" tid="key"><text class="history-no">{{ r.no }}</text><text class="history-value">{{ r.label }}</text></list-item><list-item type="last-back" class="modal-content"><input class="row-button" type="button" value="继续训练" onclick="closeLast" /></list-item></list></div>
   <div class="overlay" if="{{ effortOn && !diagnosticOn }}"><list class="modal-scroll"><list-item type="effort" class="modal-content"><text class="quiet">{{ effortRestLabel }}</text><text class="confirm-title">这组有多吃力？</text><text class="quiet">{{ effortTargetLabel }}</text><text class="quiet">{{ effortScaleLabel }}</text><div class="effort-pick"><input class="edge-button" type="button" value="−" onclick="effortMinus" /><text class="effort-value">{{ effortDraftLabel }}</text><input class="edge-button" type="button" value="+" onclick="effortPlus" /></div><text class="quiet effort-description">{{ effortNotice || effortMeaning || effortHint }}</text><input class="primary-input" type="button" value="保存" onclick="confirmEffort" /><input class="row-button" type="button" value="取消" onclick="closeEffort" /><input class="row-button danger" type="button" if="{{ effortHasSaved }}" value="清除评分" onclick="clearEffort" /></list-item></list></div>
   <div class="overlay" if="{{ diagnosticOn }}"><list class="modal-scroll"><list-item type="diagnostic" class="modal-content"><text class="confirm-title">{{ diagnosticTitle }}</text><text class="diagnostic-text">{{ diagnosticText }}</text><input class="row-button" type="button" value="下一页" onclick="nextDiagnostic" /><input class="row-button" type="button" value="返回" onclick="closeDiagnostics" /></list-item></list></div>
@@ -1722,16 +1750,17 @@ export default pageDefinition
 .top-lead { font-size: 19px; color: #FF453A; width: 180px; lines: 1; }
 .clock { color: #FFFFFF; font-size: 19px; width: 70px; text-align: right; }
 .sync-pill { max-width: 180px; height: 26px; border-radius: 13px; background-color: #2E1D02; color: #FF9F0A; font-size: 19px; lines: 1; }
-.pager { width: 100%; flex: 1; min-height: 0px; }
-.screen { width: 100%; height: 100%; flex-direction: column; align-items: center; }
-.page-dots { width: 100%; height: 26px; flex-direction: row; justify-content: center; align-items: center; }
+/* Native flex minima differ from browsers: reserve an explicit content viewport. */
+.pager { position: absolute; left: 0px; top: 44px; width: 390px; height: 356px; }
+.screen { width: 390px; height: 356px; flex-direction: column; align-items: center; }
+.page-dots { position: absolute; left: 0px; top: 414px; width: 390px; height: 12px; flex-direction: row; justify-content: center; align-items: center; }
 .pager-dot { width: 6px; height: 6px; border-radius: 3px; background-color: #4A4A4D; margin-left: 4px; margin-right: 4px; }
 .pager-current { background-color: #FFFFFF; }
-.overview-scroll { width: 352px; flex: 1; min-height: 0px; margin-top: 42px; margin-bottom: 24px; padding-top: 6px; padding-bottom: 40px; }
-.overview-head { width: 352px; flex-direction: column; align-items: center; margin-bottom: 5px; }
-.overview-name { width: 340px; font-size: 24px; font-weight: bold; color: #FFFFFF; text-align: center; lines: 2; }
-.quiet { color: #8D8D93; font-size: 19px; text-align: center; lines: 2; }
-.overview-row { width: 352px; min-height: 77px; padding: 10px 13px; background-color: #1C1C1E; border-radius: 19px; margin-bottom: 5px; flex-direction: row; align-items: center; border-width: 2px; border-color: #1C1C1E; }
+.overview-scroll { width: 336px; height: 356px; padding-top: 6px; padding-bottom: 16px; }
+.overview-head { width: 336px; flex-direction: column; align-items: center; margin-bottom: 5px; }
+.overview-name { width: 328px; font-size: 22px; line-height: 28px; font-weight: bold; color: #FFFFFF; text-align: center; lines: 2; }
+.quiet { color: #8D8D93; font-size: 19px; line-height: 26px; text-align: center; lines: 2; }
+.overview-row { width: 336px; min-height: 68px; padding: 9px 11px; background-color: #1C1C1E; border-radius: 19px; margin-bottom: 5px; flex-direction: row; align-items: center; border-width: 2px; border-color: #1C1C1E; }
 .overview-current { background-color: #2C2C2E; border-color: #A3E635; }
 .exercise-mark { width: 48px; height: 48px; border-radius: 11px; background-color: #2C2C2E; align-items: center; justify-content: center; margin-right: 13px; }
 .mark-icon { width: 19px; height: 19px; }
@@ -1739,73 +1768,84 @@ export default pageDefinition
 .overview-ex { font-size: 21px; font-weight: bold; color: #FFFFFF; lines: 2;  text-overflow: ellipsis; }
 .overview-count { font-size: 19px; color: #8D8D93; }
 .muted { color: #8D8D93; }
-.overview-actions { width: 352px; flex-direction: column; align-items: center; }
+.overview-actions { width: 336px; flex-direction: column; align-items: center; }
 .sync-line { margin-top: 10px; margin-bottom: 6px; }
-.hold-finish { width: 100%; height: 77px; border-radius: 39px; background-color: #2C2C2E; border-width: 2px; border-color: #A3E635; align-items: center; justify-content: center; margin-top: 6px; margin-bottom: 5px; }
+.hold-finish { width: 100%; height: 64px; border-radius: 32px; background-color: #2C2C2E; border-width: 2px; border-color: #A3E635; align-items: center; justify-content: center; margin-top: 6px; margin-bottom: 5px; }
+/* A stable last-painted touch surface prevents the growing fill stealing contact. */
+.hold-touch { position: absolute; top: 0px; left: 0px; width: 100%; height: 100%; border-radius: 32px; }
 .hold-fill { overflow: hidden; position: absolute; top: 0px; left: 0px; height: 100%; background-color: #A3E635; border-radius: 39px; }
-.hold-ink-label { width: 348px; height: 73px; flex-shrink: 0; align-items: center; justify-content: center; }
+.hold-ink-label { width: 332px; height: 60px; flex-shrink: 0; align-items: center; justify-content: center; }
+.modal-ink-label { width: 316px; }
 .button-word.ink { color: #0C0E12; }
 .button-icon { width: 22px; height: 22px; margin-right: 10px; }
 .button-word { font-size: 24px; color: #FFFFFF; font-weight: bold; lines: 1; }
-.row-button { width: 100%; height: 77px; border-radius: 22px; background-color: #1C1C1E; color: #FFFFFF; font-size: 24px; margin-bottom: 5px; }
+.row-button { width: 100%; height: 64px; border-radius: 22px; background-color: #1C1C1E; color: #FFFFFF; font-size: 22px; margin-bottom: 5px; }
 .danger { color: #FF453A; }
 .extension-row { width: 100%; height: 77px; flex-direction: row; justify-content: space-between; margin-bottom: 5px; }
 .extension-button { width: 173px; height: 77px; border-radius: 22px; background-color: #1C1C1E; color: #FFFFFF; font-size: 24px; }
-.training-content { width: 364px; height: 100%; padding-top: 42px; padding-bottom: 10px; flex-direction: column; align-items: center; }
-.set-lines { width: 364px; flex: 1; min-height: 0px; flex-direction: column; align-items: center; }
-.ex-name { width: 352px; min-height: 58px; line-height: 29px; font-size: 24px; font-weight: bold; color: #FFFFFF; text-align: center; lines: 2;  text-overflow: ellipsis; }
-.place { width: 352px; min-height: 28px; line-height: 24px; font-size: 19px; color: #8D8D93; text-align: center; lines: 2; margin-top: 3px; margin-bottom: 3px;  text-overflow: ellipsis; }
-.inputs { width: 364px; height: 140px; flex-direction: row; justify-content: space-between; }
-.field { width: 178px; height: 140px; border-radius: 19px; background-color: #1A2508; border-width: 3px; border-color: #1A2508; flex-direction: column; align-items: center; justify-content: center; padding: 5px 6px; }
+.training-content { width: 344px; height: 356px; flex-direction: column; align-items: center; }
+.set-lines { width: 344px; height: 286px; flex-direction: column; align-items: center; }
+.ex-name { width: 336px; height: 52px; line-height: 26px; font-size: 22px; font-weight: bold; color: #FFFFFF; text-align: center; lines: 2; text-overflow: ellipsis; }
+.place { width: 336px; min-height: 26px; line-height: 22px; font-size: 18px; color: #8D8D93; text-align: center; lines: 2; margin-top: 2px; margin-bottom: 3px; text-overflow: ellipsis; }
+.inputs { width: 344px; height: 120px; flex-direction: row; justify-content: space-between; }
+.field { width: 168px; height: 120px; border-radius: 19px; background-color: #1A2508; border-width: 3px; border-color: #1A2508; flex-direction: column; align-items: center; justify-content: center; padding: 4px 5px; }
 .field-selected { border-color: #A3E635; }
-.field-label { color: #A3E635; font-size: 21px; font-weight: bold; text-align: center; height: 30px; }
-.field-number { width: 160px; height: 84px; flex-direction: row; align-items: center; justify-content: center; }
-.fval { height: 84px; line-height: 80px; font-size: 64px; color: #A3E635; font-weight: bold; max-width: 160px; lines: 1; }
+.field-label { color: #A3E635; font-size: 19px; font-weight: bold; text-align: center; height: 28px; }
+.field-number { width: 152px; height: 76px; flex-direction: row; align-items: center; justify-content: center; }
+.fval { height: 76px; line-height: 72px; font-size: 56px; color: #A3E635; font-weight: bold; max-width: 152px; lines: 1; }
 .long-value { font-size: 26px; }
-.funit { color: #83B82A; font-size: 22px; margin-left: 4px; height: 38px; margin-top: 25px; }
-.last-text { width: 352px; min-height: 28px; color: #8D8D93; font-size: 19px; text-align: center; lines: 1; margin-top: 3px;  text-overflow: ellipsis; }
-.navrow { width: 336px; height: 77px; flex-direction: row; justify-content: space-between; align-items: center; margin-top: 6px; }
-.arrow-button { width: 51px; height: 77px; border-radius: 16px; background-color: #1C1C1E; justify-content: center; align-items: center; }
+.funit { color: #83B82A; font-size: 20px; margin-left: 3px; height: 34px; margin-top: 22px; }
+.last-text { width: 336px; height: 26px; color: #8D8D93; font-size: 18px; text-align: center; lines: 1; margin-top: 3px; text-overflow: ellipsis; }
+.done-effort { width: 336px; height: 26px; font-size: 18px; lines: 1; }
+.navrow { width: 332px; height: 64px; flex-direction: row; justify-content: space-between; align-items: center; margin-top: 6px; }
+.arrow-button { width: 48px; height: 64px; border-radius: 16px; background-color: #1C1C1E; justify-content: center; align-items: center; }
 .arrow-icon { width: 26px; height: 26px; }
-.primary-button { width: 222px; height: 77px; border-radius: 39px; background-color: #A3E635; align-items: center; justify-content: center; }
+.primary-button { width: 220px; height: 64px; border-radius: 32px; background-color: #A3E635; align-items: center; justify-content: center; }
 .primary-word { font-size: 24px; font-weight: bold; color: #0C0E12; lines: 1; }
-.rest-content { width: 370px; height: 100%; padding-top: 36px; padding-bottom: 10px; flex-direction: column; align-items: center; }
-.countdown-row { width: 370px; flex: 1; min-height: 77px; flex-direction: row; align-items: center; }
-.rest { flex: 1; height: 136px; line-height: 134px; font-size: 110px; font-weight: bold; color: #A3E635; text-align: center; lines: 1; }
+.rest-content { width: 344px; height: 356px; flex-direction: column; align-items: center; }
+.countdown-row { width: 344px; flex: 1; min-height: 108px; flex-direction: row; align-items: center; }
+.rest { flex: 1; height: 108px; line-height: 104px; font-size: 88px; font-weight: bold; color: #A3E635; text-align: center; lines: 1; }
 .rest-warning { color: #FF9F0A; }
-.arrow-spacer { width: 51px; height: 77px; }
-.time-track { width: 344px; height: 8px; border-radius: 4px; background-color: #2C2C2E; margin-bottom: 5px; }
+.arrow-spacer { width: 48px; height: 64px; }
+.time-track { width: 320px; height: 8px; border-radius: 4px; background-color: #2C2C2E; margin-bottom: 6px; }
 .time-fill { height: 8px; border-radius: 4px; background-color: #A3E635; }
-.rrow { width: 370px; height: 77px; flex-direction: row; align-items: center; justify-content: space-between; margin-bottom: 5px; }
-.edge-button { width: 64px; height: 64px; border-radius: 32px; background-color: #2C2C2E; font-size: 21px; font-weight: bold; color: #FFFFFF; align-items: center; justify-content: center; }
-.skip-button { width: 229px; height: 77px; border-radius: 22px; background-color: #1C1C1E; align-items: center; justify-content: center; }
-.effort-slot { width: 370px; height: 74px; flex-direction: column; align-items: center; justify-content: center; margin-bottom: 5px; }
-.chip-row { width: 350px; height: 45px; flex-direction: row; justify-content: space-between; margin-top: 3px; }
-.effort-chip { width: 82px; height: 45px; border-radius: 23px; font-size: 21px; font-weight: bold; }
+.rrow { width: 344px; height: 64px; flex-direction: row; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.edge-button { width: 56px; height: 56px; border-radius: 28px; background-color: #2C2C2E; font-size: 20px; font-weight: bold; color: #FFFFFF; align-items: center; justify-content: center; }
+.skip-button { width: 220px; height: 64px; border-radius: 22px; background-color: #1C1C1E; align-items: center; justify-content: center; }
+.effort-slot { width: 344px; height: 66px; flex-direction: column; align-items: center; justify-content: center; margin-bottom: 4px; }
+.effort-question { width: 336px; height: 22px; line-height: 22px; font-size: 17px; lines: 1; }
+.chip-row { width: 336px; height: 40px; flex-direction: row; justify-content: space-between; margin-top: 2px; }
+.effort-chip { width: 78px; height: 40px; border-radius: 20px; font-size: 20px; font-weight: bold; }
 .band-0 { color: #BF5AF2; background-color: #22102C; }
 .band-1 { color: #FF453A; background-color: #2E0C0A; }
 .band-2 { color: #FF9F0A; background-color: #2E1D02; }
 .band-3 { color: #FFD60A; background-color: #2E2702; }
 .band-4 { color: #A3E635; background-color: #1D290A; }
 .rated-pill { min-width: 136px; height: 45px; border-radius: 23px; font-size: 19px; color: #A3E635; background-color: #1D290A; }
-.up-next { width: 370px; min-height: 76px; flex-direction: column; align-items: center; }
-.up-next-head { width: 370px; height: 26px; flex-direction: row; justify-content: space-between; align-items: center; }
-.next-label { color: #A3E635; font-size: 19px; font-weight: bold; }
-.next-name { width: 352px; min-height: 25px; font-size: 19px; color: #8D8D93; text-align: center; lines: 2;  text-overflow: ellipsis; }
-.next-values { width: 352px; height: 28px; color: #FFFFFF; font-size: 21px; font-weight: bold; text-align: center; lines: 1;  text-overflow: ellipsis; }
-.metrics-main { width: 358px; height: 100%; padding-top: 48px; flex-direction: column; }
-.metric-time { width: 358px; height: 112px; font-size: 102px; color: #FFD60A; font-weight: bold; lines: 1; }
-.metric-line { width: 358px; height: 62px; flex-direction: row; align-items: center; }
-.metric-number { font-size: 58px; color: #FFFFFF; font-weight: bold; max-width: 286px; lines: 1; }
+.up-next { width: 336px; height: 92px; flex-direction: column; align-items: center; }
+.up-next-head { width: 336px; height: 24px; flex-direction: row; justify-content: space-between; align-items: center; }
+.next-label { color: #A3E635; height: 24px; line-height: 24px; font-size: 18px; font-weight: bold; }
+.next-elapsed { height: 24px; line-height: 24px; font-size: 17px; lines: 1; }
+.next-name { width: 336px; height: 40px; line-height: 20px; font-size: 18px; color: #8D8D93; text-align: center; lines: 2; text-overflow: ellipsis; }
+.next-meta { width: 336px; height: 28px; flex-direction: row; align-items: center; justify-content: space-between; }
+.next-set { width: 108px; height: 28px; line-height: 28px; font-size: 16px; color: #8D8D93; lines: 1; }
+.next-values { width: 224px; height: 28px; line-height: 28px; color: #FFFFFF; font-size: 18px; font-weight: bold; text-align: right; lines: 1; text-overflow: ellipsis; }
+.next-values-long { font-size: 14px; }
+.metrics-main { width: 334px; height: 356px; flex-direction: column; }
+.metric-time { width: 334px; height: 94px; line-height: 94px; font-size: 80px; color: #FFD60A; font-weight: bold; lines: 1; }
+.metric-line { width: 334px; height: 56px; flex-direction: row; align-items: center; }
+.metric-number { font-size: 44px; line-height: 56px; color: #FFFFFF; font-weight: bold; max-width: 264px; lines: 1; }
+.metric-number-long { font-size: 32px; }
+.metric-time-long { font-size: 60px; }
 .metric-heart { width: 27px; height: 27px; margin-left: 6px; }
-.metric-unit { font-size: 24px; color: #FFFFFF; margin-left: 6px; margin-top: 19px; }
+.metric-unit { font-size: 21px; color: #FFFFFF; margin-left: 6px; margin-top: 16px; }
 .red { color: #FF453A; }
-.metric-efforts { width: 352px; padding-top: 54px; flex-direction: column; }
-.metric-effort-row { width: 352px; min-height: 60px; padding: 8px 12px; border-radius: 26px; background-color: #1C1C1E; align-items: center; margin-bottom: 10px; }
+.metric-efforts { width: 334px; height: 356px; flex-direction: column; justify-content: center; }
+.metric-effort-row { width: 334px; min-height: 60px; padding: 8px 12px; border-radius: 26px; background-color: #1C1C1E; align-items: center; margin-bottom: 8px; }
 .effort-ex { flex: 1; color: #FFFFFF; font-size: 21px; lines: 2; }
 .effort-average { min-width: 61px; height: 39px; border-radius: 20px; background-color: #A3E635; color: #0C0E12; font-size: 24px; font-weight: bold; text-align: center; }
-.zone-page { width: 336px; height: 330px; margin-top: 48px; flex-direction: column; justify-content: space-between; }
-.zone-track { width: 336px; height: 62px; border-radius: 19px; border-width: 3px; border-color: #000000; align-items: center; }
+.zone-page { width: 328px; height: 340px; margin-top: 8px; flex-direction: column; justify-content: space-between; }
+.zone-track { width: 328px; height: 62px; border-radius: 19px; border-width: 3px; border-color: #000000; align-items: center; }
 .zone-dim { opacity: 0.7; }
 .zone-no-age { opacity: 0.3; }
 .zone-current { border-color: #FFFFFF; }
@@ -1820,25 +1860,25 @@ export default pageDefinition
 .zone-yellow { background-color: #382F02; }
 .zone-green { background-color: #24330C; }
 .zone-teal { background-color: #0E2C31; }
-.no-age { position: absolute; top: 115px; left: 0px; width: 336px; min-height: 80px; padding: 10px 13px; background-color: #1C1C1E; border-radius: 26px; flex-direction: column; align-items: center; justify-content: center; }
+.no-age { position: absolute; top: 115px; left: 0px; width: 328px; min-height: 80px; padding: 10px 13px; background-color: #1C1C1E; border-radius: 26px; flex-direction: column; align-items: center; justify-content: center; }
 .no-age-title { font-size: 21px; font-weight: bold; color: #FFFFFF; text-align: center; }
 .muscles-page { width: 100%; height: 100%; }
-.muscle-list { position: absolute; left: 38px; top: 96px; width: 314px; flex-direction: column; }
-.muscle-row { width: 314px; min-height: 40px; margin-bottom: 3px; flex-direction: row; align-items: center; }
+.muscle-list { position: absolute; left: 46px; top: 44px; width: 302px; flex-direction: column; }
+.muscle-row { width: 302px; min-height: 40px; margin-bottom: 3px; flex-direction: row; align-items: center; }
 .muscle-dot { width: 11px; height: 11px; border-radius: 6px; margin-right: 11px; }
 .muscle-number { width: 51px; color: #A3E635; font-size: 24px; text-align: right; font-weight: bold; margin-right: 11px; }
 .muscle-name { flex: 1; color: #FFFFFF; font-size: 21px; font-weight: bold; lines: 3; }
 .more-muscles { margin-left: 84px; text-align: left; }
-.muscle-segment { position: absolute; left: 16px; margin-top: 96px; width: 11px; border-radius: 6px; }
-.muscle-track { position: absolute; left: 16px; top: 96px; width: 11px; height: 260px; background-color: #2C2C2E; border-radius: 6px; }
-.muscle-empty { position: absolute; left: 54px; top: 109px; font-size: 24px; font-weight: bold; }
-.vertical-dots { position: absolute; top: 185px; right: 5px; width: 12px; height: 54px; flex-direction: column; align-items: center; justify-content: space-between; }
+.muscle-segment { position: absolute; left: 26px; margin-top: 44px; width: 11px; border-radius: 6px; }
+.muscle-track { position: absolute; left: 26px; top: 44px; width: 11px; height: 260px; background-color: #2C2C2E; border-radius: 6px; }
+.muscle-empty { position: absolute; left: 54px; top: 109px; width: 282px; font-size: 22px; font-weight: bold; lines: 2; }
+.vertical-dots { position: absolute; top: 141px; right: 8px; width: 12px; height: 54px; flex-direction: column; align-items: center; justify-content: space-between; }
 .overlay { position: absolute; top: 0px; left: 0px; width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
-.modal-scroll { width: 320px; flex: 1; min-height: 0px; margin-top: 40px; margin-bottom: 32px; padding-top: 8px; padding-bottom: 32px; }
+.modal-scroll { width: 320px; height: 370px; margin-top: 40px; margin-bottom: 40px; padding-top: 8px; padding-bottom: 16px; }
 .modal-content { width: 320px; flex-direction: column; align-items: center; }
 .confirm-title { width: 320px; min-height: 52px; font-size: 26px; font-weight: bold; color: #FFFFFF; text-align: center; lines: 2; }
 .confirm-note { width: 320px; margin-bottom: 10px; }
-.primary-input { width: 320px; height: 77px; border-radius: 39px; background-color: #A3E635; color: #0C0E12; font-size: 24px; font-weight: bold; margin-top: 6px; margin-bottom: 5px; }
+.primary-input { width: 320px; height: 64px; border-radius: 32px; background-color: #A3E635; color: #0C0E12; font-size: 22px; font-weight: bold; margin-top: 6px; margin-bottom: 5px; }
 .done-mark { width: 64px; height: 64px; border-radius: 32px; background-color: #A3E635; align-items: center; justify-content: center; margin-bottom: 10px; }
 .done-icon { width: 32px; height: 32px; }
 .history-row { width: 320px; min-height: 60px; flex-direction: row; align-items: center; }

@@ -2,8 +2,8 @@
   "package": "com.zcode.gymtimer",
   "name": "opengym",
   "icon": "/assets/images/logo.png",
-  "versionName": "0.6.34",
-  "versionCode": 49,
+  "versionName": "0.6.35",
+  "versionCode": 50,
   "appCategory": ["health"],
   "deviceTypeList": ["watch"],
   "config": {

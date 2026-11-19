@@ -1,7 +1,7 @@
 // Check actual BlueOS compiler output. Browser previews are a separate verification.
 const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path')
 const target = process.argv[2] || 'watch-square'
-assert.equal(target,'watch-square','0.6.34 official UI is validated for square only')
+assert.equal(target,'watch-square','Current official UI adaptation is validated for square only')
 const build = process.env.BLUEOS_BUILD_ROOT ? path.resolve(process.env.BLUEOS_BUILD_ROOT,target) : path.resolve(__dirname,'../build',target)
 const read = name => JSON.parse(fs.readFileSync(path.join(build,name),'utf8'))
 const manifest=read('manifest.json'), nodes=n=>[n,...(n.children||[]).flatMap(nodes)]
@@ -39,20 +39,34 @@ for(const page of Object.keys(manifest.router.pages)) {
     assert.equal(has('page-dots').children.length,3);assert.equal(has('navrow').children.length,3)
     for(const [sel,color] of [['.primary-button','#A3E635'],['.field','#1A2508']])assert.equal(sheet[sel].backgroundColor,color)
     assert.equal(sheet['.rest'].color,'#A3E635');assert.equal(sheet['.metric-time'].color,'#FFD60A')
-    assert.equal(px('.primary-button','height'),77);assert.equal(px('.primary-button','borderRadius'),39)
+    assert.equal(px('.primary-button','height'),64);assert.equal(px('.primary-button','borderRadius'),32)
+    assert.equal(px('.pager','top'),44); assert.equal(px('.pager','height'),356)
+    assert.equal(px('.screen','height'),356); assert.equal(px('.page-dots','top'),414)
+    const restBudget=px('.countdown-row','minHeight')+px('.time-track','height')+px('.time-track','marginBottom')+px('.rrow','height')+px('.rrow','marginBottom')+px('.effort-slot','height')+px('.effort-slot','marginBottom')+px('.up-next','height')
+    assert.ok(restBudget<=px('.rest-content','height'),'Native intrinsic rest blocks must fit without shrinking')
+    assert.ok(px('.rest','height')<=px('.countdown-row','minHeight'),'Countdown text must not overflow its minimum row')
     assert.ok(px('.training-content','width')<=390)
-    const fixed=px('.training-content','paddingTop')+px('.training-content','paddingBottom')+px('.ex-name','minHeight')+px('.place','minHeight')+px('.place','marginTop')+px('.place','marginBottom')+px('.inputs','height')+px('.last-text','minHeight')+px('.last-text','marginTop')+px('.navrow','height')+px('.navrow','marginTop')+px('.page-dots','height')
-    assert.ok(fixed+24<=450,'Done-row effort must fit above page dots')
+    const fixed=px('.ex-name','height')+2*22+px('.place','marginTop')+px('.place','marginBottom')+px('.inputs','height')+px('.last-text','height')+px('.last-text','marginTop')+px('.done-effort','height')
+    assert.ok(fixed<=px('.set-lines','height'),'Two-line notices, history and done effort fit above fixed buttons')
+    assert.ok(px('.set-lines','height')+px('.navrow','height')+px('.navrow','marginTop')<=px('.training-content','height'))
     assert.deepEqual(has('rrow').children.map(n=>n.events.click),['onRestMinus','onSkipRest','onRestPlus'])
     const row=tree.find(n=>n.repeat?.$exp==='overviewRows');assert.equal(row.attr.tid,'key')
     for(const fill of tree.filter(n=>['hold-fill','time-fill'].includes(n.class)))assert.ok(fill.inlineStyle?.$width)
-    assert.ok(tree.some(n=>n.events?.touchstart==='startFinishHold' && n.events?.touchend==='cancelFinishHold'))
+    assert.ok(tree.some(n=>n.events?.touchstart==='startFinishHold' && n.events?.touchend==='endFinishHold'))
+    const holds=tree.filter(n=>n.class==='hold-finish')
+    assert.equal(holds.length,2)
+    for(const hold of holds) {
+      const hit=hold.children[hold.children.length-1]
+      assert.equal(hit.class,'hold-touch','Progress must stay below one stable full-button touch target')
+      assert.equal(hit.events.touchstart,'startFinishHold'); assert.equal(hit.events.touchcancel,'cancelFinishHold')
+    }
     assert.ok(tree.some(n=>n.events?.click==='abandonEnd'))
   } else if(page==='Keypad') {
     assert.ok(!tree.some(n=>n.type==='list'));const rows=tree.filter(n=>n.class==='key-row')
     assert.equal(rows.length,4);assert.ok(rows.every(n=>n.children.length===3))
     assert.equal(sheet['.key'].backgroundColor,'#2C2C2E');assert.equal(px('.key','borderRadius'),14)
-    assert.ok((450-14-48-4-54-3)/4-3>=44,'Twelve keyboard touch targets fit one screen')
+    assert.ok((450-58-50-4-44-56-6)/4-3>=44,'Twelve keyboard targets fit even with two-line error notice')
+    assert.ok(px('.number-row','width')<=334 && px('.ok','width')<=304,'Keyboard top and bottom controls stay inside square corners')
     for(const action of ['onCancel','onKeyOk','backspace'])assert.ok(tree.some(n=>n.events?.click===action))
   } else if(page==='Index') {
     assert.equal(has('home-scroll').type,'list');assert.ok(has('today-card') && has('stats'));assert.ok(!has('start-circle'))
@@ -62,6 +76,8 @@ for(const page of Object.keys(manifest.router.pages)) {
     assert.equal(sheet['.done'].backgroundColor,'#A3E635');assert.ok(tree.some(n=>n.events?.click==='onBack'))
   } else if(page==='ExerciseList') {
     assert.equal(has('scroll').type,'list')
+    assert.equal(px('.scroll','height'),222)
+    assert.ok(px('.title','height')+px('.body','height')+px('.body','marginBottom')+px('.foot','height')+56<=450)
     for(const action of ['pickExercise','toggleEx','pickRow','saveWorkout','abandonWorkout'])assert.ok(tree.some(n=>(n.events?.click||n.events?.$click||'').includes(action)))
   }
   console.log(page+': compiled viewport, official component structure and vectors verified')

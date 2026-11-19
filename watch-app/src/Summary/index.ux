@@ -104,24 +104,26 @@ export default {
   },
 }
 </script>
-<template><div class="page"><list class="scroll" id="summary" touch-focusable="true"><list-item type="summary" class="summary-content"><div class="saved"><div class="check"><image class="saved-icon" src="/common/icons/wear-check-ink.svg" /></div><text class="saved-text">训练已保存</text></div><text class="workoutname">{{ summaryName }}</text><text class="label">时间</text><text class="duration">{{ durationLabel }}</text><div class="stats"><div class="stat"><text class="label">组数</text><text class="stat-value">{{ setsLabel }}</text></div><div class="stat" if="{{ volumeText }}"><text class="label">总量</text><text class="stat-value">{{ volumeText }} {{ volumeUnit }}</text></div></div><div class="heart" if="{{ heartText }}"><text class="label">心率</text><text class="heart-value">{{ heartText }}</text></div><div class="stat" if="{{ caloriesText }}"><text class="label">估算热量</text><text class="stat-value">{{ caloriesText }} kcal</text></div><text class="sync">{{ syncLabel }}</text><input class="done" type="button" value="完成" onclick="onBack" /></list-item></list></div></template>
+<template><div class="page"><list class="scroll" id="summary" touch-focusable="true"><list-item type="summary" class="summary-content"><div class="saved"><div class="check"><image class="saved-icon" src="/common/icons/wear-check-ink.svg" /></div><text class="saved-text">训练已保存</text></div><text class="workoutname">{{ summaryName }}</text><text class="label">时间</text><text class="duration">{{ durationLabel }}</text><div class="stats"><div class="stat pair-stat"><text class="label">组数</text><text class="stat-value">{{ setsLabel }}</text></div><div class="stat pair-stat" if="{{ volumeText }}"><text class="label">总量</text><text class="stat-value {{ volumeText.length + volumeUnit.length > 8 ? 'stat-compact' : '' }}">{{ volumeText }} {{ volumeUnit }}</text></div></div><div class="heart" if="{{ heartText }}"><text class="label">心率</text><text class="heart-value">{{ heartText }}</text></div><div class="stat" if="{{ caloriesText }}"><text class="label">估算热量</text><text class="stat-value">{{ caloriesText }} kcal</text></div><text class="sync">{{ syncLabel }}</text><input class="done" type="button" value="完成" onclick="onBack" /></list-item></list></div></template>
 <style>
 /* Screens.kt SummaryScreen. Source dp/sp ×1.6; local estimated kcal is labelled honestly. */
 .page { width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
-.scroll { width: 338px; flex: 1; min-height: 0px; margin-top: 42px; margin-bottom: 32px; padding-top: 10px; padding-bottom: 32px; }
-.summary-content { width: 338px; flex-direction: column; align-items: center; }
-.saved { width: 338px; min-height: 38px; flex-direction: row; align-items: center; justify-content: center; }
+.scroll { width: 326px; height: 370px; margin-top: 40px; margin-bottom: 40px; padding-top: 10px; padding-bottom: 16px; }
+.summary-content { width: 326px; flex-direction: column; align-items: center; }
+.saved { width: 326px; min-height: 38px; flex-direction: row; align-items: center; justify-content: center; }
 .check { width: 29px; height: 29px; border-radius: 15px; background-color: #A3E635; justify-content: center; align-items: center; }
 .saved-icon { width: 18px; height: 18px; }
 .saved-text { margin-left: 10px; font-size: 24px; font-weight: bold; color: #FFFFFF; lines: 2; }
-.workoutname { width: 338px; font-size: 19px; color: #8D8D93; text-align: center; lines: 2; margin-top: 6px; margin-bottom: 6px; }
+.workoutname { width: 326px; font-size: 19px; color: #8D8D93; text-align: center; lines: 2; margin-top: 6px; margin-bottom: 6px; line-height: 24px; }
 .label { min-height: 25px; font-size: 19px; color: #8D8D93; text-align: center; }
-.duration { width: 338px; height: 62px; font-size: 48px; font-weight: bold; color: #FFD60A; text-align: center; lines: 1; }
-.stats { width: 338px; min-height: 64px; flex-direction: row; justify-content: center; margin-bottom: 6px; }
+.duration { width: 326px; height: 62px; font-size: 48px; font-weight: bold; color: #FFD60A; text-align: center; lines: 1; }
+.stats { width: 326px; min-height: 64px; flex-direction: row; justify-content: center; margin-bottom: 6px; }
 .stat { min-width: 104px; max-width: 235px; min-height: 60px; margin-left: 11px; margin-right: 11px; flex-direction: column; align-items: center; }
-.stat-value { font-size: 29px; color: #FFFFFF; font-weight: bold; text-align: center; lines: 1; }
-.heart { width: 338px; flex-direction: column; align-items: center; margin-top: 4px; margin-bottom: 4px; }
-.heart-value { width: 338px; font-size: 21px; color: #FF453A; text-align: center; lines: 2; }
-.sync { width: 338px; min-height: 38px; font-size: 19px; color: #8D8D93; text-align: center; lines: 3; margin-top: 6px; margin-bottom: 6px; }
-.done { width: 338px; height: 77px; border-radius: 39px; background-color: #A3E635; color: #0C0E12; font-size: 24px; font-weight: bold; margin-top: 6px; }
+.stat-value { font-size: 26px; color: #FFFFFF; font-weight: bold; text-align: center; lines: 1; line-height: 38px; }
+.heart { width: 326px; flex-direction: column; align-items: center; margin-top: 4px; margin-bottom: 4px; }
+.heart-value { width: 326px; font-size: 21px; color: #FF453A; text-align: center; lines: 2; line-height: 26px; }
+.sync { width: 326px; min-height: 38px; font-size: 19px; color: #8D8D93; text-align: center; lines: 3; margin-top: 6px; margin-bottom: 6px; line-height: 24px; }
+.done { width: 314px; height: 64px; border-radius: 32px; background-color: #A3E635; color: #0C0E12; font-size: 22px; font-weight: bold; margin-top: 6px; }
+.pair-stat { width: 146px; min-width: 146px; max-width: 146px; margin-left: 7px; margin-right: 7px; }
+.stat-compact { font-size: 19px; }
 </style>
