@@ -71,6 +71,8 @@ for(const page of Object.keys(manifest.router.pages)) {
   } else if(page==='Index') {
     assert.equal(has('home-scroll').type,'list');assert.ok(has('today-card') && has('stats'));assert.ok(!has('start-circle'))
     assert.equal(sheet['.primary'].backgroundColor,'#A3E635')
+    assert.equal(sheet['.overlay'].flexDirection,'column','Center the 336px conflict list inside the 390px square')
+    for(const action of ['saveConflict','discardConflict','retryConflict'])assert.ok(tree.some(n=>n.events?.click===action))
   } else if(page==='Summary') {
     assert.equal(has('scroll').type,'list');assert.equal(sheet['.duration'].color,'#FFD60A');assert.equal(px('.duration','fontSize'),48)
     assert.equal(sheet['.done'].backgroundColor,'#A3E635');assert.ok(tree.some(n=>n.events?.click==='onBack'))

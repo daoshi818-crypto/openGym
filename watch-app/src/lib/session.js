@@ -16,10 +16,35 @@ import { readStored, writeStored, writeStoredAtomic } from './persistence.js'
 //   session_state    当前会话的紧凑状态（含 rows、休息截止的绝对时间戳、心率累计）
 import storage from '@blueos.storage.storage'
 import { applyEdit, applyRest } from './protocol.js'
-import { prepareClose } from './close-journal.js'
+import { prepareClose, journalEntry } from './close-journal.js'
 import { allocateEventIdentity } from './event-id.js'
 
 const K_STATE = 'session_state'
+const K_PHONE_CONFLICT = 'phone_session_conflict_v1'
+
+// Small durable prompt metadata, outside the reactive page and session payload.
+// No incoming workout is activated until the user's exact close is committed.
+export function phoneConflict() { return readStored(K_PHONE_CONFLICT) || null }
+export async function recordPhoneConflict(message) {
+  const s = loadState(), previous = phoneConflict()
+  if (!s.active || s.sid === message?.sid || !message?.sid) return { ok: true, conflict: previous }
+  const result = await writeStoredAtomic(K_PHONE_CONFLICT, value => {
+    if (value?.watchSid === s.sid && journalEntry(s.sid)?.closeEvent?.conflictWith) return value
+    return { watchSid: s.sid, phoneSid: message.sid, phoneName: String(message.workout || '').slice(0, 80), at: Date.now() }
+  })
+  return { ...result, conflict: result.value }
+}
+export async function completePhoneConflict() {
+  const conflict = phoneConflict()
+  if (!conflict) return { ok: true, resolved: false }
+  const entry = journalEntry(conflict.watchSid), event = entry?.closeEvent
+  const decision = event && readStored('event_decisions')?.[event.eventId]
+  if (!event?.conflictWith || decision?.sid !== conflict.watchSid || decision.status !== 'applied') return { ok: true, resolved: false }
+  const recovered = await recoverLocalClose()
+  if (!recovered.ok || recovered.pendingRecovery || loadState().active && loadState().sid === conflict.watchSid) return { ok: false, error: 'close_recovery' }
+  const cleared = await writeStoredAtomic(K_PHONE_CONFLICT, value => value?.watchSid === conflict.watchSid ? null : value)
+  return { ...cleared, resolved: cleared.ok }
+}
 
 const now = () => Date.now()
 const hrFields = ['sid', 'startedAt', 'segmentStartedAt', 'hr', 'active', 'pausedAt', 'closeIntent']
@@ -246,6 +271,16 @@ function olderSnapshot(state, snapshot) {
     Number.isFinite(snapshot.rev) && snapshot.rev > 0 && snapshot.rev < (state.snapshotRev || 0)
 }
 export async function commitWireSnapshot(message, meta) {
+  if ((readStored('closed_sessions') || []).includes(message.sid)) return { ok: false, error: 'session_closed' }
+  // Validate before offering: corrupt or unexpandable data cannot open a prompt.
+  const before = loadState()
+  if (before.active && before.sid !== message.sid || phoneConflict()) {
+    const snapshot = message.t === 'sync_delta' ? expandWireDelta(before.syncBase, message) : message
+    const { wireHash: hash, ...value } = snapshot
+    if (!hash || wireHash(value) !== hash || snapshot.sid !== meta.sid || snapshot.commitRev !== meta.revision) return { ok: false, error: 'snapshot_checksum' }
+    const offered = await recordPhoneConflict(snapshot)
+    return { ok: offered.ok, status: 'conflict', error: offered.error }
+  }
   let status = 'applied'
   const result = await writeStoredAtomic(K_STATE, current => {
     let latest = current || blankState()
@@ -639,7 +674,7 @@ export function eventIdentity(s, ex, set) {
 
 // Freeze both close payload and prerequisites BEFORE clearing the active session.
 // The journal is the recovery source even when the process exits before Outbox save.
-export async function commitLocalClose(sid, disposition, closedAt = now()) {
+export async function commitLocalClose(sid, disposition, closedAt = now(), options = {}) {
   if (runtime().closingSid) return { ok: false, error: 'close_busy' }
   runtime().closingSid = sid
   try {
@@ -651,6 +686,12 @@ export async function commitLocalClose(sid, disposition, closedAt = now()) {
       const closeEvent = stageSessionEvent(latest, { t: 'session_close', sid, disposition, closedAt, at: closedAt,
         ...(disposition === 'saved' ? { workout: latest.workout, startedAt: latest.startedAt, weightUnit: latest.weightUnit || 'kg',
           summary: { minutes: session.minutes, avgHr: session.avgHr, maxHr: session.maxHr, calories: session.calories, volume: session.volume }, completedSets: session.sets } : {}) })
+      if (options.conflictWith && phoneConflict()?.watchSid === sid) {
+        closeEvent.conflictWith = options.conflictWith
+        // The frozen close contains all completed rows, so a blocked old edit
+        // must not prevent the explicit save/discard choice reaching the phone.
+        closeEvent.dependsOn = []
+      }
       const summaryEvent = summaryEventOf(session, allocateEventIdentity(sid), latest, true)
       summaryEvent.protocolVersion = 3; summaryEvent.dependencyEvents = true; summaryEvent.dependsOn = [closeEvent.eventId]
       latest.pendingEdits = latest.pendingEdits.filter(e => e.eventId !== closeEvent.eventId)

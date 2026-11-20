@@ -5,6 +5,7 @@ import { applyWatchEvent, applyWatchEffort, startFromWatch, rememberClose } from
 import { resolveWatchTarget } from './watch-identity.js'
 import { pruneWatchClosed } from './watch-retention.js'
 import { finiteKcal, isSegmentAtLeast, workoutCaloriesOf } from './workout-calories.js'
+import { resolveWatchSave } from './watch-recovery.js'
 
 export function endedWatchSession(S, sid) {
   const saved = S.workouts?.find(w => w.watchSid === sid || String(w.start) === sid || w.watchSids?.includes(sid) || w.watchSegments?.[sid])
@@ -59,7 +60,10 @@ export function createWatchLifecycle({ getState, update, getTimer, sendEnded, se
       for (const close of Object.values(getState().watchClosed || {}).filter(c => !c.acknowledgedAt || c.sid === ev.sid)) send({ t: 'session_close', sid: close.sid,
         disposition: close.disposition, closedAt: close.closedAt, eventId: close.eventId })
       const snapshot = watchSnapshotOf(current, getTimer())
-      if (ev.sid && !ev.pendingStart && (!snapshot || snapshot.sid !== ev.sid)) sendEnded(endedWatchSession(current, ev.sid))
+      // A different active watch workout needs an explicit save/discard decision.
+      // Only known closed sessions (or a phone without any session) are ended here.
+      if (ev.sid && !ev.pendingStart && (!snapshot || snapshot.sid !== ev.sid) &&
+          (!snapshot || current.watchClosed?.[ev.sid] || current.workouts?.some(w => w.watchSid === ev.sid || String(w.start) === ev.sid || w.watchSids?.includes(ev.sid)))) sendEnded(endedWatchSession(current, ev.sid))
       if (snapshot) sendSync(snapshot)
       return true
     }
@@ -77,8 +81,11 @@ export function createWatchLifecycle({ getState, update, getTimer, sendEnded, se
           const key = ev.eventId || ev.sid + ':' + ev.closedAt
           if (!s.watchSaveDecisions?.[key]) s.watchPendingSaves[key] = ev
           if (!s.watchClosed?.[ev.sid]) rememberClose(s, ev)
+          // The user already chose Save in the watch conflict dialog. Save only
+          // that frozen workout; never finish, replace or pause the phone active.
+          if (ev.protocolVersion >= 3 && ev.conflictWith) resolveWatchSave(s, key, true)
         })
-        ack(); return true
+        ack(); if (ev.conflictWith) sync(); return true
       }
       if (prior) { ack(); return true }
       if (ev.disposition === 'saved') {
@@ -91,6 +98,7 @@ export function createWatchLifecycle({ getState, update, getTimer, sendEnded, se
       update(s => rememberClose(s, ev))
       if (same) stop()
       ack()
+      if (!same && ev.conflictWith) sync()
       return true
     }
     if (ev.t === 'pause') {

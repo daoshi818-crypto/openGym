@@ -17,7 +17,7 @@ import { wireHash, wireBytes, acceptWireChunk, expandWireDelta } from './sync-wi
 //    日志重建 outbox，而不是依赖打烊前是否调用过 sendEvent。
 import interconnect from '@blueos.bluexlink.connectionManager'
 import storage from '@blueos.storage.storage'
-import { loadState, buildSessionSummary, summaryEventOf, closeSession, save, stageSessionEvent, recoverLocalClose, commitWireSnapshot, reconcileCommittedSnapshot } from './session.js'
+import { loadState, buildSessionSummary, summaryEventOf, closeSession, save, stageSessionEvent, recoverLocalClose, commitWireSnapshot, reconcileCommittedSnapshot, phoneConflict, recordPhoneConflict, completePhoneConflict } from './session.js'
 import { allocateEventIdentity, rememberEventAt } from './event-id.js'
 import { pendingSummaries, pendingCloseEvents, pendingEntry, journalEntry, prepareClose, releaseCandidate, markPhase, markEntry, markDelivered } from './close-journal.js'
 import { WATCH_VERSION } from './version.js'
@@ -203,9 +203,10 @@ function sendHello() {
   rpcState().installationId ||= allocateEventIdentity('', 'link').installationId
   sendControl({
     t: 'hello',
+    linkEpoch: rpcState().linkEpoch || (rpcState().linkEpoch = Date.now().toString(36) + ':' + Math.random().toString(36).slice(2, 10)),
     installationId: rpcState().installationId,
     watchVersion: WATCH_VERSION, protocolVersion: 3, stableIds: true,
-    capabilities: { deviceSelection: true, planCatalogChunks: true, snapshotGenerations: true, narrowDependencies: true, causalFrontier: true, durableCommit: true, snapshotChunks: true, deltas: true, dependencyEvents: true, selectiveChunkAck: true, persistentTransfers: true, commandReceipts: true, watchEventChunks: true },
+    capabilities: { sessionConflict: true, inlineSnapshots: true, deviceSelection: true, planCatalogChunks: true, snapshotGenerations: true, narrowDependencies: true, causalFrontier: true, durableCommit: true, snapshotChunks: true, deltas: true, dependencyEvents: true, selectiveChunkAck: true, persistentTransfers: true, commandReceipts: true, watchEventChunks: true },
     receipts: true,
     sid: s.sid || '',
     rev: s.rev || 0,
@@ -220,9 +221,11 @@ function resumeConnection() {
   const r = rpcState()
   if (r.connected || !r.connect) return
   r.connected = true
+  r.lastPhoneAt = 0
   r.peerCapabilities = {} // Every connection must negotiate extension features again.
   r.nextProbeAt = 0; r.probeAttempts = 0
   r.connectionGeneration++; r.sending = false; cancelAppTimeout(r.sendingTimer)
+  r.linkEpoch = ''
   r.outbox.forEach(e => { e.sent = false; if (!e.lastSendFailed) e.nextAttemptAt = 0 })
   trace('connection_resumed')
   r.handlers.onState?.(true)
@@ -286,6 +289,16 @@ export function replayPendingEvents() {
   }
   step()
 }
+
+export async function resumePhoneConflict() {
+  const result = await completePhoneConflict()
+  if (result.resolved) {
+    rpcState().handlers.onConflictResolved?.()
+    sendControl({ t: 'sync_request', reason: 'watch_conflict_closed' })
+  }
+  return result
+}
+export function canResolvePhoneConflict() { return rpcState().peerProtocol >= 3 && rpcState().peerCapabilities?.sessionConflict === true }
 
 function flush() {
   if (runtime().destroyed || rpcState().stopped) return
@@ -519,9 +532,11 @@ export function startServer(h) {
   // 页面模块共享 application runtime；当前页面只接管 UI 回调。
   callbacks.onOpen = () => {
     rpcState().connected = true
+    rpcState().lastPhoneAt = 0
     rpcState().peerCapabilities = {}
     trace('connection_open')
     rpcState().connectionGeneration++; rpcState().sending = false; cancelAppTimeout(rpcState().sendingTimer)
+    rpcState().linkEpoch = ''
     initialize()
     rpcState().nextSendAt = 0
     rpcState().outbox.forEach(e => { e.sent = false; if (!e.lastSendFailed) e.nextAttemptAt = 0 })
@@ -559,11 +574,12 @@ export function startServer(h) {
     if (target) { const { targetInstallationId, ...body } = msg; msg = body }
     // 能收到有效业务包就是连接已恢复的证据，不依赖遗漏的 onOpen。
     if (!rpcState().connected) resumeConnection()
+    rpcState().lastPhoneAt = Date.now()
     if (msg.t === 'link_probe') { sendControl({ t: 'link_probe_ack', requestId: msg.requestId, installationId: rpcState().installationId, sourceInstallationId: rpcState().installationId }); return }
     if (msg.t === 'link_discover') { sendHello(); return }
     if (msg.t === 'watch_log_request') { sendControl(diagnosticLogPage(msg, WATCH_VERSION)); return }
     if (!['watch_diagnostics_request', 'watch_log_request'].includes(msg.t)) recordDiagnostic('rpc_receive', { type: msg.t, sid: msg.sid, eventId: msg.eventId, status: msg.status, rev: msg.commitRev })
-    if (msg.t === 'hello_ack') { rpcState().peerProtocol = msg.protocolVersion >= 3 ? 3 : 2; rpcState().peerCapabilities = msg.capabilities || {}; replayPendingEvents(); flush(); return }
+    if (msg.t === 'hello_ack') { rpcState().peerProtocol = msg.protocolVersion >= 3 ? 3 : 2; rpcState().peerCapabilities = msg.capabilities || {}; serial(resumePhoneConflict); replayPendingEvents(); flush(); return }
     if (msg.t === 'watch_diagnostics_request') {
       const snapshot = { t: 'watch_diagnostics', watchVersion: WATCH_VERSION,
         sid: String(loadState().sid || '').slice(0, 80),
@@ -658,6 +674,10 @@ export function startServer(h) {
           }
         })
         if (!saved.ok) return
+        // A conflict choice is complete only after this exact phone decision
+        // and all local close recovery writes have succeeded.
+        const resolution = await resumePhoneConflict()
+        if (!resolution.ok) { rpcState().handlers.onError?.({ code: 'conflict_close_storage' }); return }
         for (const event of affected) {
           const journal = journalEntry(event.sid)
           if (journal && (event.t === 'session_close' || event.t === 'summary')) {
@@ -685,7 +705,7 @@ export function startServer(h) {
       }, 'catalogQueue')
       return
     }
-    if (msg.transferId?.startsWith('p:') && ['sync_begin', 'sync_chunk', 'sync_resume', 'sync_cancel'].includes(msg.t)) {
+    if (msg.transferId?.startsWith('p:') && ['sync_begin', 'sync_chunk', 'sync_resume', 'sync_cancel', 'sync_inline'].includes(msg.t)) {
       const caps = rpcState().peerCapabilities || {}
       if (!caps.selectiveChunkAck || !caps.persistentTransfers) return
       serial(async () => {
@@ -694,13 +714,14 @@ export function startServer(h) {
           write: async (key, value) => (await writeStoredAtomic(key, () => value)).ok },
           async (message, meta) => {
             const result = await commitWireSnapshot(message, meta)
+            if (result.ok && result.status === 'conflict' && phoneConflict()) r.handlers.onConflict?.(phoneConflict())
             if (result.ok) {
               // Only update the page after the session+applied marker is durable.
               const snapshot = loadState().syncBase
-              if (snapshot) { try { r.handlers.onSync?.(snapshot, { persisted: true }) } catch (error) { trace('page_sync_error', snapshot, error) } }
+              if (snapshot && result.status !== 'conflict') { try { r.handlers.onSync?.(snapshot, { persisted: true }) } catch (error) { trace('page_sync_error', snapshot, error) } }
             }
             return result
-          }, () => Date.now(), { fenced: () => rpcState().peerCapabilities?.snapshotGenerations === true })
+          }, () => Date.now(), { fenced: () => rpcState().peerCapabilities?.snapshotGenerations === true, inline: () => rpcState().peerCapabilities?.inlineSnapshots === true })
         for (const reply of await r.persistentReceiver.receive(msg)) sendControl(reply)
       })
       return
@@ -734,7 +755,9 @@ export function startServer(h) {
     if (msg.t === 'watch_start_ack') {
       const s = loadState()
       if ((rpcState().peerProtocol || 0) < 3 && msg.status === 'started' && msg.eventId) serial(() => acceptLegacyAck(msg.eventId))
-      if (rpcState().handlers.onStartAck) rpcState().handlers.onStartAck(msg)
+      if (msg.status === 'conflict' && msg.snapshot) {
+        serial(async () => { const result = await recordPhoneConflict(msg.snapshot); if (result.ok && phoneConflict()) rpcState().handlers.onConflict?.(phoneConflict()) })
+      } else if (rpcState().handlers.onStartAck) rpcState().handlers.onStartAck(msg)
       return
     }
     if (msg.t === 'session_close') {
@@ -766,9 +789,19 @@ export function startServer(h) {
       return
     }
     if (msg.t === 'plan' || msg.t === 'sync') {
+      if (!Array.isArray(msg.exercises) || !msg.exercises.length) {
+        sendControl({ t: msg.t + '_ack', sid: msg.sid, status: 'rejected', reason: 'empty_exercises' })
+        return
+      }
       const active = loadState()
-      if (active.active && active.sid !== msg.sid) {
-        sendControl({ t: msg.t + '_ack', sid: msg.sid, status: 'conflict', activeSid: active.sid })
+      if (active.active && active.sid !== msg.sid || phoneConflict()) {
+        const incoming = msg
+        serial(async () => {
+          const result = await recordPhoneConflict(incoming)
+          if (result.ok && phoneConflict()) rpcState().handlers.onConflict?.(phoneConflict())
+          sendControl({ t: incoming.t + '_ack', sid: incoming.sid, wireHash: incoming.wireHash || '', commitRev: incoming.commitRev || 0,
+            status: result.ok ? 'conflict' : 'storage_failed', activeSid: active.sid })
+        })
         return
       }
       const closed = readStored('closed_sessions') || []
@@ -921,6 +954,7 @@ export function sendControl(obj) {
 export function pendingCount() { initialize(); return rpcState().outbox.length }
 export function persistenceStatus() { return { pending: rpcState().writeBusy || rpcState().writeDirty, failed: rpcState().persistFailed } }
 export function isConnected() { return rpcState().connected }
+export function isPhoneConnected() { const r = rpcState(); return !!r.connected && !!r.lastPhoneAt && Date.now() - r.lastPhoneAt < 15000 }
 export function synchronizationStatus() {
   initialize()
   const conflicts = readStored('sync_conflicts') || []

@@ -90,6 +90,29 @@ export function persistentReceiver(store, apply, now = () => Date.now(), options
           progress.delete(msg.transferId)
           return [receipt('sync_cancel_ack', msg)]
         }
+        if (msg.t === 'sync_inline') {
+          if (!(typeof options.inline === 'function' ? options.inline() : options.inline) || !valid(msg)) throw new Error('inline_not_negotiated')
+          const text = JSON.stringify(msg.snapshot)
+          if (wireBytes(text) > 4500 || wireBytes(text) !== msg.bytes || wireHash(text) !== msg.hash) throw new Error('transfer_checksum')
+          if (job && signature(job.meta) !== signature(msg)) throw new Error('transfer_mismatch')
+          if (job?.applied) return [receipt('sync_applied', job.meta, { status: job.status || 'applied' })]
+          if (!(options.types || ['sync', 'sync_delta']).includes(msg.snapshot?.t) || msg.snapshot.sid !== msg.sid || msg.snapshot.commitRev !== msg.revision) throw new Error('transfer_snapshot')
+          if (msg.fence === true) {
+            if (!(typeof options.fenced === 'function' ? options.fenced() : options.fenced) || msg.full !== true || msg.snapshot.t !== (namespace === 'catalog' ? 'plan_catalog' : 'sync')) throw new Error('fence_not_negotiated')
+            state.fence = { generation: msg.generation, transferId: msg.transferId }
+            state.jobs = state.jobs.filter(j => j.meta.generation >= msg.generation)
+          }
+          const { t, snapshot, ...meta } = msg
+          const outcome = await apply(snapshot, meta)
+          if (!outcome?.ok) throw new Error(outcome?.error || 'snapshot_apply')
+          state.jobs = state.jobs.filter(j => j !== job)
+          const slot = [0, 1].find(s => !state.jobs.some(j => j.slot === s && !j.applied))
+          if (slot == null) throw new Error('transfer_capacity')
+          state.jobs = state.jobs.filter(j => j.slot !== slot)
+          state.jobs.push({ slot, meta, at: now(), applied: true, status: outcome.status || 'applied' })
+          await put(store, key, state)
+          return [receipt('sync_applied', meta, { status: outcome.status || 'applied' })]
+        }
         if (msg.t === 'sync_begin') {
           if (!valid(msg)) throw new Error('invalid_transfer')
           if (msg.fence === true) {
@@ -176,6 +199,10 @@ export function persistentSender(store, onApplied = () => {}, now = () => Date.n
       if (state.active?.meta.sid === snapshot.sid && snapshot.commitRev < state.active.meta.revision) return false
       const job = prepare(snapshot, ++state.generation, !state.active)
       if (!state.active) state.active = job
+      else if (fenced() && state.active.meta.sid !== snapshot.sid && snapshot.t === fullType) {
+        // A new workout supersedes only obsolete projection bytes, never events.
+        state.active = job; state.queued = null
+      }
       else state.queued = job // Never cancel an in-flight same-revision generation on every clock tick.
       await put(store, key, state); return true
     }),
@@ -192,6 +219,8 @@ export function persistentSender(store, onApplied = () => {}, now = () => Date.n
       }
       let message
       if (job.cancelReason) message = receipt('sync_cancel', job.meta, { reason: job.cancelReason })
+      else if (!job.begun && (typeof options.inline === 'function' ? options.inline() : options.inline) && wireBytes(JSON.stringify(job.snapshot)) <= 4500)
+        message = { ...job.meta, t: 'sync_inline', snapshot: job.snapshot }
       else if (!job.begun) message = { ...job.meta, t: 'sync_begin' }
       else {
         const i = job.chunks.findIndex((_, i) => !job.acknowledged.includes(i))
@@ -211,7 +240,7 @@ export function persistentSender(store, onApplied = () => {}, now = () => Date.n
       } else if (msg.t === 'sync_chunk_ack') {
         if (!Number.isInteger(msg.index) || msg.index < 0 || msg.index >= job.chunks.length) return false
         if (!job.acknowledged.includes(msg.index)) job.acknowledged.push(msg.index)
-      } else if (msg.t === 'sync_applied' && ['applied', 'retained'].includes(msg.status)) {
+      } else if (msg.t === 'sync_applied' && ['applied', 'retained', 'conflict'].includes(msg.status)) {
         // Retention is durable receipt of an older snapshot, NOT a Delta base.
         if (msg.status === 'applied') await onApplied(copy(job.authoritativeSnapshot || job.snapshot), copy(job.meta))
         else if (options.onRetained) await options.onRetained(copy(job.snapshot))

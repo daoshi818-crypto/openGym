@@ -94,7 +94,7 @@ export default {
       router.replace({ uri: '/Workout' })
       return { status: 'applied', page: 'Summary', exercises: msg.exercises.length }
     }
-    startServer({ onPlan: next, onSync: next })
+    startServer({ onPlan: next, onSync: next, onConflict: () => router.replace({ uri: '/Index' }) })
   },
 
   // “完成”只返回首页：不结算、不发事件、不重复关闭。

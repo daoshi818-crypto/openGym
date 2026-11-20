@@ -19,3 +19,13 @@ it('rejects malformed identity and tolerates unavailable preference storage', ()
   registry.discover('watch-one'); expect(registry.select('watch-one')).toBe(true)
   expect(registry.accepts('')).toBe(false)
 })
+
+it('keeps only the current installation after a verified route without guessing from model names', () => {
+  const r = createWatchDevices({ getItem: () => null, setItem() {} })
+  for (const id of ['old', 'other', 'new']) r.discover(id, { name: 'WATCH GT' })
+  expect(r.read().devices).toHaveLength(3)
+  expect(r.useCurrent('invented')).toBe(false)
+  expect(r.useCurrent('new')).toBe(true)
+  expect(r.read()).toMatchObject({ selectedId: 'new', devices: [{ id: 'new' }] })
+  expect(r.read().devices).toHaveLength(1)
+})

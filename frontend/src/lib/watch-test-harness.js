@@ -11,7 +11,7 @@ import { zoneView, muscleView } from '../../../watch-app/src/lib/official-metric
 import { numberDraft, changeNumber, applyNumberDraft, keypadPress } from '../../../watch-app/src/lib/number-draft.js'
 
 // Real page imports, not stubs: keep VM tests in sync with the shipped page modules.
-export const watchInteractionDeps = { numberDraft, changeNumber, applyNumberDraft, keypadPress, zoneView, muscleView, replayPendingEvents: () => {}, commitPageAction, rotationStep, valueStep, captureRow, rowTarget, setDotWindow, createSetDotPicker }
+export const watchInteractionDeps = { numberDraft, changeNumber, applyNumberDraft, keypadPress, zoneView, muscleView, isPhoneConnected: () => false, replayPendingEvents: () => {}, commitPageAction, rotationStep, valueStep, captureRow, rowTarget, setDotWindow, createSetDotPicker }
 
 export const watchSource = path => readFileSync(new URL('../../../watch-app/src/' + path, import.meta.url), 'utf8')
 export const stripImports = code => code
@@ -21,6 +21,13 @@ export const stripImports = code => code
   .replace(/^export function /gm, 'function ')
 
 export function loadWatchModule(name, ctx, names) {
+  // Older isolated RPC fixtures replace the session surface; real session
+  // fixtures overwrite these defaults with the shipped durable functions.
+  if (name === 'rpc') {
+    ctx.phoneConflict ||= () => null
+    ctx.completePhoneConflict ||= async () => ({ ok: true, resolved: false })
+    ctx.recordPhoneConflict ||= async () => ({ ok: false, error: 'no_session' })
+  }
   if (name === 'rpc' && !ctx.allocateEventIdentity) loadWatchModule('event-id', ctx, ['allocateEventIdentity', 'rememberEventAt'])
   if (['rpc', 'session'].includes(name) && !ctx.compactStartEvent) {
     if (!ctx.wireBytes) loadWatchModule('sync-wire', ctx, ['wireHash', 'wireBytes', 'acceptWireChunk', 'expandWireDelta'])
@@ -38,7 +45,7 @@ export function loadWatchModule(name, ctx, names) {
   if (name === 'close-journal') names = [...new Set([...names, 'pendingCloseEvents', 'markEntry'])]
   if (name === 'rpc' && !ctx.pendingCloseEvents) ctx.pendingCloseEvents = () => [] // Legacy isolated transport fixtures.
   if (name === 'session' && !ctx.wireHash) loadWatchModule('sync-wire', ctx, ['wireHash', 'expandWireDelta'])
-  if (name === 'session') names = [...new Set([...names, 'readSessionHr', 'commitSessionAction', 'stageSessionEvent', 'commitLocalClose', 'commitWireSnapshot', 'commitSessionStart', 'recoverLocalClose', 'reconcileCommittedSnapshot'])]
+  if (name === 'session') names = [...new Set([...names, 'readSessionHr', 'commitSessionAction', 'stageSessionEvent', 'commitLocalClose', 'commitWireSnapshot', 'commitSessionStart', 'recoverLocalClose', 'reconcileCommittedSnapshot', 'phoneConflict', 'recordPhoneConflict', 'completePhoneConflict'])]
   const body = stripImports(watchSource('lib/' + name + '.js'))
   // Each module gets its own function scope, like a real ES module: the flattened global
   // would otherwise let one module's top-level `save`/`loadState` overwrite another's.

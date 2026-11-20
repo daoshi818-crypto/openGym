@@ -11,7 +11,7 @@ beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-19T12:
 afterEach(() => vi.useRealTimers())
 const drain = async () => { for (let i = 0; i < 220; i++) await Promise.resolve() }
 function home() {
-  const ctx = { Date, setTimeout, clearTimeout, WATCH_VERSION: 'test', loadState: () => ({}), storage: { getSync: () => null },
+  const ctx = { Date, setTimeout, clearTimeout, setInterval, clearInterval, WATCH_VERSION: 'test', loadState: () => ({}), storage: { getSync: () => null },
     startServer() {}, router: {}, bindRuntime() {} }
   const source = stripImports(watchSource('Index/index.ux').match(/<script>([\s\S]*?)<\/script>/)[1])
   runInNewContext(source.replace('export default', 'this.page ='), ctx)

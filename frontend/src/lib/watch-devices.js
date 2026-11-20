@@ -24,5 +24,11 @@ export function createWatchDevices(storage = globalThis.localStorage) {
       selectedId = id; save(); return true
     },
     accepts(id) { return validId(id) && selectedId === id },
+    useCurrent(id) {
+      const current = devices.find(d => d.id === id)
+      if (!current) return false
+      selectedId = id; devices = [current]; save(); return true
+    },
+
   }
 }

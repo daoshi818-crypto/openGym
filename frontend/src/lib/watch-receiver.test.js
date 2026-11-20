@@ -34,7 +34,7 @@ function connection() {
 }
 function page(path, deps) {
   const script = source(path).match(/<script>([\s\S]*?)<\/script>/)[1]
-  const context = { ...watchInteractionDeps, replayPendingEvents() {}, setTimeout: () => 1, clearTimeout() {}, console, WATCH_VERSION: 'test-watch', applyEdit, applyRest, restOf, applyFocus, persistenceStatus: () => ({}), storageStatus: () => ({}), synchronizationStatus: () => ({}),
+  const context = { ...watchInteractionDeps, phoneConflict: () => null, setInterval: () => 1, clearInterval() {}, replayPendingEvents() {}, setTimeout: () => 1, clearTimeout() {}, console, WATCH_VERSION: 'test-watch', applyEdit, applyRest, restOf, applyFocus, persistenceStatus: () => ({}), storageStatus: () => ({}), synchronizationStatus: () => ({}),
     effortScaleOf, effortValueOf, effortKindOf, stepEffortValue, effortMeaning, effortSummaryText, formatEffort,
     storage: { getSync: () => null, set() {} }, replacePlan() {}, ...deps }
   runInNewContext(script.replace(imports, '').replace('export default', 'this.page ='), context)
@@ -491,6 +491,7 @@ describe('watch direct workout entry', () => {
   it('preserves conflict confirmation and rejects a different active session', async () => {
     const sessions = session()
     sessions.startSession({ sid: 'local', exercises: plan.exercises })
+    await sessions.recordPhoneConflict(plan)
     const { index, router } = home(sessions, { conflict: JSON.stringify(plan) })
     index.onReady()
     expect(index.onPlan(plan).status).toBe('conflict')
@@ -958,16 +959,14 @@ describe('watch business message boundary', () => {
   it('applies plan and authoritative rows on Workout and reports a different-session rejection', async () => {
     const sessions = session()
     sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises }, null)
-    const c = connection(), rpc = transport(c, { loadState: sessions.loadState })
+    const c = connection(), rpc = transport(c, { loadState: sessions.loadState, recordPhoneConflict: sessions.recordPhoneConflict, phoneConflict: sessions.phoneConflict })
     const workout = page('Workout/index.ux', { ...sessions, startServer: rpc.startServer,
-      router: { push: vi.fn() }, startSessionHr() {}, stopSessionHr() {}, startHr() {}, stopHr() {}, restOver() {},
+      router: { push: vi.fn(), replace: vi.fn() }, startSessionHr() {}, stopSessionHr() {}, startHr() {}, stopHr() {}, restOver() {},
       setInterval: () => 1, clearInterval() {}, pendingCount: () => 0, isConnected: () => true })
     workout.onInit()
     c.onMessage({ data: { ...plan, exercises: [{ ...plan.exercises[0], name: 'Bench' }] } })
     expect(workout.exName).toBe('Bench')
     expect(c.sent.at(-1)).toMatchObject({ t: 'plan_ack', status: 'applied', page: 'Workout' })
-    c.onMessage({ data: { ...plan, sid: 'other' } })
-    expect(c.sent.at(-1)).toMatchObject({ status: 'conflict', activeSid: 'today' })
     c.onMessage({ data: JSON.stringify({ msg: JSON.stringify({ ...plan, t: 'sync', rev: 42,
       rows: [[{ w: '75', r: '6', done: false }]] }) }) })
     expect(workout.weightVal).toBe('75 kg')
@@ -979,6 +978,9 @@ describe('watch business message boundary', () => {
     expect(sessions.loadState().restUntil).toBeLessThanOrEqual(Date.now() + 30000)
     workout.onShow()
     expect(sessions.loadState().workout.rows[0][0].w).toBe('75')
+    c.onMessage({ data: { ...plan, sid: 'other' } })
+    await new Promise(r => setTimeout(r, 300))
+    expect(c.sent.at(-1)).toMatchObject({ status: 'conflict', activeSid: 'today' })
   })
 
   it('reports the same watch version that is declared in the installable manifest', async () => {

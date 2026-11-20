@@ -25,11 +25,11 @@ describe('watch lifecycle outside the training route', () => {
     expect(st.workouts[0].calories).toBe(122)
     expect(app.sendAck).toHaveBeenLastCalledWith(10, undefined)
   })
-  it('closes a missing/discarded session without affecting another active workout', () => {
+  it('retains an unknown watch workout for a save/discard decision without affecting the active phone workout', () => {
     const st = { workouts: [], active: { start: 2000, entries: [], name: 'New' } }
     const app = lifecycle(st)
     app.receive({ t: 'hello', sid: '1000' })
-    expect(app.sendEnded).toHaveBeenCalledWith(expect.objectContaining({ sid: '1000' }))
+    expect(app.sendEnded).not.toHaveBeenCalled()
     expect(app.sendSync).toHaveBeenCalledWith(expect.objectContaining({ sid: '2000' }))
   })
   it('records energy before finishing from the watch and ignores duplicate finish after it closed', () => {

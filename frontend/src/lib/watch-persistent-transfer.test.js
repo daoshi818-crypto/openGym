@@ -8,6 +8,38 @@ function disk() {
 }
 const snapshot = (rev = 1, data = 'x'.repeat(19500)) => ({ t: 'sync', protocolVersion: 3, sid: 's', commitRev: rev, data })
 
+it('negotiates one-message durable small snapshots and retains the job on storage failure or lost ACK', async () => {
+  const txDisk = disk(), rxDisk = disk(), applied = [], options = { inline: true, fenced: true }
+  let time = 1000
+  const tx = persistentSender(txDisk, m => applied.push(m), () => time, null, null, options)
+  const apply = async () => ({ ok: true })
+  let rx = persistentReceiver(rxDisk, apply, () => time, options)
+  await tx.enqueue(snapshot(1, '训练'.repeat(200)))
+  const message = await tx.next()
+  expect(message.t).toBe('sync_inline')
+  rxDisk.fail(true)
+  expect((await rx.receive(message))[0]).toMatchObject({ t: 'sync_error', reason: 'transfer_storage' })
+  expect(await tx.wakeIn()).toBe(2000)
+  rxDisk.fail(false)
+  expect((await rx.receive(message))[0].t).toBe('sync_applied')
+  rx = persistentReceiver(rxDisk, apply, () => time, options)
+  const duplicate = (await rx.receive(message))[0]
+  await tx.receipt(duplicate)
+  expect(applied).toHaveLength(1); expect(await tx.wakeIn()).toBeNull()
+  expect([...rxDisk.map.keys()]).toEqual(['sync_rx_v1'])
+  const oldRx = persistentReceiver(disk(), apply)
+  expect((await oldRx.receive(message))[0]).toMatchObject({ t: 'sync_error', reason: 'inline_not_negotiated' })
+})
+
+it('immediately supersedes an obsolete session projection with a new full session, retaining generation fencing', async () => {
+  const store = disk(), tx = persistentSender(store, () => {}, () => 1000, null, null, { fenced: true })
+  await tx.enqueue(snapshot()); const old = await tx.next()
+  await tx.enqueue({ ...snapshot(1), sid: 'new' })
+  const next = await tx.next()
+  expect(next.sid).toBe('new'); expect(next.generation).toBeGreaterThan(old.generation)
+  expect(next).toMatchObject({ t: 'sync_begin', fence: true, full: true })
+})
+
 it.each([5, 17, 65])('receives %i chunks with linear durable reads and no payload cache', async count => {
   const store = disk(), original = store.read; let reads = 0, applies = 0
   store.read = async key => { reads++; return original(key) }

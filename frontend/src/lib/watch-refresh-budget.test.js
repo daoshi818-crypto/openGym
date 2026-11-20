@@ -22,7 +22,7 @@ function setup() {
   const router = { push: vi.fn(), replace: vi.fn() }
   Object.assign(ctx, {
     readSessionHr: readHr, calories: kcal, pendingCount: pending,
-    startServer() {}, sendEvent() {}, isConnected: () => true,
+    startServer() {}, sendEvent() {}, isConnected: () => true, isPhoneConnected: () => true,
     persistenceStatus: () => failed, synchronizationStatus: () => ({}),
     startSessionHr() {}, stopSessionHr() {}, restOver: vi.fn(), tick() {},
     setTimeout, clearTimeout, setInterval, clearInterval, router, brightness: {},

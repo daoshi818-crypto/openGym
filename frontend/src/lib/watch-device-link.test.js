@@ -29,7 +29,7 @@ beforeEach(async () => {
 })
 afterEach(async () => { await link.disconnectWatch(); vi.useRealTimers(); vi.unstubAllGlobals() })
 
-it('requires an explicit concrete choice and rejects a different watch without acknowledging its training event', async () => {
+it('requires current-route proof before following a different installation or accepting its training event', async () => {
   hello('watch-one')
   expect(link.watchConnection()).toMatchObject({ selectedId: '', selectionRequired: true, appConnected: false })
   expect(messages()).not.toContainEqual(expect.objectContaining({ t: 'hello_ack' }))
@@ -40,9 +40,9 @@ it('requires an explicit concrete choice and rejects a different watch without a
   hello('watch-two')
   native.callbacks.watchEvent({ t: 'set', sourceInstallationId: 'watch-two', installationId: 'watch-two', eventId: 'two:1' })
   expect(event).not.toHaveBeenCalled()
-  expect(link.watchConnection()).toMatchObject({ selectedId: 'watch-one', peerId: 'watch-two', differentDevice: true, appConnected: false })
+  expect(link.watchConnection()).toMatchObject({ selectedId: 'watch-one', peerId: 'watch-one', differentDevice: false, appConnected: false })
   expect(await link.sendToWatch({ t: 'ack', eventId: 'two:1' })).toBe(false)
-  expect(messages()).toEqual([]); off()
+  expect(messages().every(m => m.t === 'link_probe')).toBe(true); off()
 })
 
 it('first selection is allowed with a waiting phone training plan, and source/request must both match a fresh probe', async () => {
@@ -70,6 +70,70 @@ it('first selection is allowed with a waiting phone training plan, and source/re
   off()
 })
 
+it('automatically follows only a freshly challenged Health route after reinstall and isolates old inboxes', async () => {
+  const active = { start: 1, entries: [] }, receive = vi.fn(() => true)
+  const off = link.bindWatchLifecycle(receive, { getState: () => ({ active }) })
+  native.callbacks.watchEvent({ t: 'watch_start', sourceInstallationId: 'old', eventId: 'stale-start' })
+  expect(receive).not.toHaveBeenCalled()
+  hello('old'); await drain()
+  let probe = messages().findLast(m => m.t === 'link_probe')
+  native.callbacks.watchEvent({ t: 'link_probe_ack', requestId: probe.requestId, sourceInstallationId: 'old' }); await drain()
+  expect(link.watchConnection()).toMatchObject({ selectedId: 'old', appConnected: true })
+  hello('new'); await drain()
+  probe = messages().findLast(m => m.t === 'link_probe')
+  expect(probe.targetInstallationId).toBe('new')
+  native.callbacks.watchEvent({ t: 'link_probe_ack', requestId: probe.requestId, sourceInstallationId: 'wrong' }); await drain()
+  expect(link.watchConnection().selectedId).toBe('old')
+  native.callbacks.watchEvent({ t: 'link_probe_ack', requestId: probe.requestId, sourceInstallationId: 'new' }); await drain()
+  expect(link.watchConnection()).toMatchObject({ selectedId: 'new', peerId: 'new', appConnected: true })
+  expect(link.watchConnection().devices.map(d => d.id)).toEqual(['new'])
+  receive.mockClear()
+  native.callbacks.watchEvent({ t: 'set', eventId: 'old:1', sourceInstallationId: 'old' })
+  expect(receive).not.toHaveBeenCalled()
+  await link.drainWatchInbox()
+  expect(native.drainInbox).toHaveBeenLastCalledWith({ deviceId: 'new' }); off()
+})
+
+it('replays the current installation inbox after reconnect negotiation, preserving pre-hello isolation', async () => {
+  const receive = vi.fn(() => true)
+  const off = link.bindWatchLifecycle(receive, { getState: () => ({}) })
+  hello('one'); await drain()
+  const probe = messages().findLast(m => m.t === 'link_probe')
+  native.callbacks.watchEvent({ t: 'link_probe_ack', requestId: probe.requestId, sourceInstallationId: 'one' }); await drain()
+  await vi.advanceTimersByTimeAsync(100)
+  native.callbacks.watchState({ state: 'disconnected', connected: false })
+  receive.mockClear()
+  const event = { t: 'set', sourceInstallationId: 'one', eventId: 'one:cached', _inboxId: 'cached' }
+  native.drainInbox.mockResolvedValue({ events: [event] })
+  await link.drainWatchInbox()
+  expect(receive).not.toHaveBeenCalled()
+  native.callbacks.watchState({ state: 'connected', connected: true })
+  hello('one'); await drain(); receive.mockClear()
+  await vi.advanceTimersByTimeAsync(100)
+  expect(receive).toHaveBeenCalledWith(event)
+  off()
+})
+
+it('probes the selected app immediately even if Health device metadata never answers', async () => {
+  hello('one'); await link.selectWatchDevice('one'); hello('one'); await drain()
+  native.getDeviceInfo.mockImplementation(() => new Promise(() => {}))
+  const probe = link.probeWatchConnection(); await drain()
+  const request = messages().findLast(m => m.t === 'link_probe')
+  expect(request).toBeTruthy()
+  native.callbacks.watchEvent({ t: 'link_probe_ack', requestId: request.requestId, sourceInstallationId: 'one' })
+  expect(await probe).toBe(true)
+})
+
+it('never adopts a candidate from an expired challenge or an ACK received after disconnect', async () => {
+  hello('candidate'); await drain()
+  const probe = messages().findLast(m => m.t === 'link_probe')
+  native.callbacks.watchEvent({ t: 'link_probe_ack', requestId: 'old', sourceInstallationId: 'candidate' }); await drain()
+  expect(link.watchConnection().appConnected).toBe(false)
+  native.callbacks.watchState({ state: 'disconnected', connected: false })
+  native.callbacks.watchEvent({ t: 'link_probe_ack', requestId: probe.requestId, sourceInstallationId: 'candidate' }); await drain()
+  expect(link.watchConnection()).toMatchObject({ selectedId: '', appConnected: false })
+})
+
 it('streams the complete catalog on its own durable channel and reports synced only after watch apply succeeds', async () => {
   hello('watch-one'); await link.selectWatchDevice('watch-one'); hello('watch-one'); await drain()
   const disk = new Map(), applied = [], options = { channel: 'catalog', types: ['plan_catalog'] }
@@ -95,8 +159,8 @@ it('streams the complete catalog on its own durable channel and reports synced o
   expect(applied).toHaveLength(1)
   expect(applied[0].plans.map(p => p.id)).toEqual(['a', 'b'])
   expect(link.watchCatalogStatus()).toMatchObject({ phase: 'synced', count: 2, date: '2026-11-19' })
-  const sentCount = messages().length
+  const sentCount = messages().filter(m => m.t !== 'link_probe').length
   expect(await link.pushWatchCatalog(catalog)).toBe(true)
   await vi.advanceTimersByTimeAsync(1000)
-  expect(messages()).toHaveLength(sentCount)
+  expect(messages().filter(m => m.t !== 'link_probe')).toHaveLength(sentCount)
 })

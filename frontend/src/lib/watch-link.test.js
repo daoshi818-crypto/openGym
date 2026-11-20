@@ -280,9 +280,9 @@ describe('watch connection state', () => {
     await link.pushPlanToWatch({ name: 'Today', exercises: [] }, 's')
     const sending = link.pushSyncToWatch({ sid: 's', exercises: [], rows: [] })
     expect(native.sendPlan).not.toHaveBeenCalled()
-    expect(native.sendEvent).not.toHaveBeenCalled()
+    expect(native.sendEvent.mock.calls.map(([m]) => JSON.parse(m.json)).filter(m => m.t !== 'link_discover')).toHaveLength(0)
     release(); await sending
-    expect(native.sendEvent).toHaveBeenCalledOnce()
+    expect(native.sendEvent.mock.calls.map(([m]) => JSON.parse(m.json)).filter(m => m.t !== 'link_discover')).toHaveLength(1)
   })
 
   it('negotiates deltas only after a verified watch baseline and falls back for old watches', async () => {
@@ -583,6 +583,30 @@ it('confirms atomic bootstrap only after an exact applied persistent snapshot re
     expect((await link.getWatchDiagnostics()).planDelivery).toBe('applied')
     expect(native.sendPlan).not.toHaveBeenCalled()
   } finally { unbind() }
+})
+
+it('does not restart an acknowledged transfer begin on repeated discovery in the same connection epoch', async () => {
+  vi.useFakeTimers()
+  native.sendEvent.mockResolvedValue({ ok: true })
+  let saved = null
+  native.loadSyncTransfer.mockImplementation(async () => ({ json: JSON.stringify(saved) }))
+  native.saveSyncTransfer.mockImplementation(async ({ json }) => { saved = JSON.parse(json); return { ok: true } })
+  const hello = { t: 'hello', linkEpoch: 'connection-one', protocolVersion: 3,
+    capabilities: { durableCommit: true, snapshotChunks: true, selectiveChunkAck: true, persistentTransfers: true } }
+  await link.connectWatch()
+  const off = link.bindWatchLifecycle(() => true)
+  native.events.watchEvent(hello); await vi.advanceTimersByTimeAsync(0)
+  await link.pushSyncToWatch({ sid: 'session', workout: '训练', commitRev: 1, exercises: [], rows: [], large: 'x'.repeat(9000) })
+  await vi.advanceTimersByTimeAsync(0)
+  native.events.watchEvent({ ...saved.active.meta, t: 'sync_begin_ack', received: [0, 1] })
+  await vi.advanceTimersByTimeAsync(0)
+  expect(saved.active.begun).toBe(true)
+  const id = saved.active.meta.transferId
+  native.events.watchEvent(hello); await vi.advanceTimersByTimeAsync(0)
+  expect(saved.active.begun).toBe(true)
+  expect(saved.active.acknowledged).toEqual([0, 1])
+  expect(saved.active.meta.transferId).toBe(id)
+  off()
 })
 
 

@@ -72,14 +72,13 @@ describe('watch controls in integrations', () => {
     await openSheet()
     expect(exportButton()).toBeTruthy()
   })
-  it('offers a concrete known device and syncs the entire catalog instead of one optional plan', async () => {
+  it('shows actual app connection and syncs the full catalog without displaying historical installations as devices', async () => {
     useStore.getState().S.routines = [{ id: 'plan-a', name: 'Strength A' }]
     mocks.connection = { devices: [{ id: 'watch-one', name: 'WATCH GT' }, { id: 'watch-two', name: 'WATCH GT' }], selectedId: 'watch-one', sdkConnected: true, appConnected: false }
     await openSheet()
-    expect(host.textContent).toContain('目标手表应用：未确认连接')
-    expect(host.textContent).toContain('watch-two')
-    await act(async () => [...host.querySelectorAll('button')].find(e => e.textContent === '选择').click())
-    expect(selectWatchDevice).toHaveBeenCalledWith('watch-two')
+    expect(host.textContent).toContain('手表连接：通道已连接，等待手表应用确认')
+    expect(host.textContent).not.toContain('watch-two')
+    expect([...host.querySelectorAll('button')].some(e => e.textContent === '选择')).toBe(false)
     await act(async () => [...host.querySelectorAll('button')].find(e => e.textContent === '同步全部训练计划').click())
     expect(pushWatchCatalog).toHaveBeenCalledWith(expect.objectContaining({ t: 'plan_catalog', plans: [{ id: 'plan-a', name: 'Strength A' }] }), true)
   })

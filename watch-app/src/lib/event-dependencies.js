@@ -72,6 +72,9 @@ export function selectReadyEvent(outbox, durable, decisions, now, extended) {
   return outbox.find((entry, index) => {
     if (!eligible(entry)) return false
     const msg = entry.msg
+    // Explicit conflict closure is self-contained and journaled, independent of
+    // a rejected watch-start or a failed old row. Older events remain retained.
+    if (msg.t === 'session_close' && msg.protocolVersion >= 3 && msg.conflictWith && msg.dependencyEvents === true && msg.dependsOn?.length === 0) return true
     // A legacy prefix must drain in its original order before extension events overtake it.
     if (!msg.dependencyEvents) return index === 0
     if (outbox.slice(0, index).some(e => !e.msg.dependencyEvents || eventsOverlap(e.msg, msg))) return false

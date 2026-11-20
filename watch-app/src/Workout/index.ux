@@ -19,7 +19,7 @@ import {
   formatEffort,
 } from '../lib/effort-scale.js'
 import { startSessionHr, stopSessionHr, tick, restOver } from '../lib/sensors.js'
-import { startServer, sendEvent, replayPendingEvents, sendControl, pendingCount, isConnected, persistenceStatus, synchronizationStatus, transportDiagnostics } from '../lib/rpc.js'
+import { startServer, sendEvent, replayPendingEvents, sendControl, pendingCount, isConnected, isPhoneConnected, persistenceStatus, synchronizationStatus, transportDiagnostics } from '../lib/rpc.js'
 import { storageStatus } from '../lib/persistence.js'
 import { applyEdit, applyFocus, applyRest, restOf } from '../lib/protocol.js'
 import { lastTimeView } from '../lib/watch-last-time.js'
@@ -335,9 +335,7 @@ const pageDefinition = {
       onSync: (msg, options) => handle('onSyncUpdate', msg, options),
       onRest: (msg) => handle('onRemoteRest', msg),
       onPause: (msg) => handle('onRemotePause', msg),
-      onStartAck: msg => {
-        if (msg.status === 'conflict') { this.syncLabel = '手机已有训练'; router.replace({ uri: '/Index', params: { conflict: JSON.stringify(msg.snapshot) } }) }
-      },
+      onConflict: () => { this.syncLabel = '存在冲突训练'; router.replace({ uri: '/Index' }) },
       onSet: (msg) => handle('onRemoteSet', msg),
       onUnset: (msg) => handle('onRemoteUnset', msg),
       onEffort: (msg) => handle('onRemoteEffort', msg),
@@ -1668,9 +1666,10 @@ const pageDefinition = {
     if (!force && this.syncSecond === second) return
     this.syncSecond = second
     const failed = persistenceStatus().failed || storageStatus().failed
-    const n = pendingCount(), sync = synchronizationStatus(), connected = isConnected()
+    const n = pendingCount(), sync = synchronizationStatus(), connected = isPhoneConnected()
     const syncWarning = !!(failed || sync.phonePending > 0 || n > 0 || !connected)
-    const syncLabel = failed ? '存储失败，请保留应用' : sync.phonePending > 0 ? '手机待处理 ' + sync.phonePending + ' 条' : n > 0 ? '待上传 ' + n + ' 条' : connected ? (sync.lastCommitAt ? '已同步' : '已连接') : '离线记录'
+    const linkLabel = connected ? '手机已连接' : '手机未连接'
+    const syncLabel = failed ? '存储失败，请保留应用' : sync.phonePending > 0 ? linkLabel + ' · 待确认 ' + sync.phonePending + ' 条' : n > 0 ? linkLabel + ' · 待上传 ' + n + ' 条' : connected ? linkLabel : linkLabel + ' · 离线记录'
     if (this.syncWarning !== syncWarning) this.syncWarning = syncWarning
     if (this.syncLabel !== syncLabel) this.syncLabel = syncLabel
   },
