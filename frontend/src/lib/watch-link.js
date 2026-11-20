@@ -333,6 +333,9 @@ let listenerError = ''
 function verifyCurrentPeer(hello, source) {
   if (currentPeerProof?.source === source) return
   currentPeerProof?.finish(false)
+  // A late keepalive from the previous installation must not prune the newly
+  // discovered candidate or restore a stale connected indication during proof.
+  connectionProbe?.finish(false)
   lastVerifiedAt = 0; identifiedPeer = true; emitConnection()
   let resolve
   const proof = { source, epoch: selectionEpoch,

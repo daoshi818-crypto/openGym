@@ -94,6 +94,22 @@ it('automatically follows only a freshly challenged Health route after reinstall
   expect(native.drainInbox).toHaveBeenLastCalledWith({ deviceId: 'new' }); off()
 })
 
+it('ignores an old installation keepalive while challenging the newly discovered current route', async () => {
+  hello('old'); await drain()
+  let request = messages().findLast(m => m.t === 'link_probe')
+  native.callbacks.watchEvent({ t: 'link_probe_ack', requestId: request.requestId, sourceInstallationId: 'old' }); await drain()
+  const oldProbe = link.probeWatchConnection(); await drain()
+  const oldRequest = messages().findLast(m => m.t === 'link_probe')
+  hello('new'); await drain()
+  request = messages().findLast(m => m.t === 'link_probe')
+  expect(request.targetInstallationId).toBe('new')
+  native.callbacks.watchEvent({ t: 'link_probe_ack', requestId: oldRequest.requestId, sourceInstallationId: 'old' }); await drain()
+  expect(link.watchConnection().appConnected).toBe(false)
+  native.callbacks.watchEvent({ t: 'link_probe_ack', requestId: request.requestId, sourceInstallationId: 'new' }); await drain()
+  expect(await oldProbe).toBe(false)
+  expect(link.watchConnection()).toMatchObject({ selectedId: 'new', peerId: 'new', appConnected: true })
+})
+
 it('replays the current installation inbox after reconnect negotiation, preserving pre-hello isolation', async () => {
   const receive = vi.fn(() => true)
   const off = link.bindWatchLifecycle(receive, { getState: () => ({}) })
