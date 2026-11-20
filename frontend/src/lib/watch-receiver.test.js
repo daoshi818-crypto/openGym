@@ -183,7 +183,8 @@ describe('watch completed sets and rest clock', () => {
     vi.advanceTimersByTime(1001)
     await workout.saveEnd()
     expect(sessions.loadState().active).toBe(false)
-    expect(sendEvent.mock.calls.findLast(([m]) => m.t === 'session_close')[0]).toMatchObject({ t: 'session_close', disposition: 'saved' })
+    // Saving completes locally; the App replays the durable close after navigation.
+    expect(sessions.journalEntry(plan.sid).closeEvent).toMatchObject({ t: 'session_close', disposition: 'saved' })
   })
 
   it('prompts once for restored or synced completion and re-arms after undo', async () => {

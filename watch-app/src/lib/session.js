@@ -187,9 +187,12 @@ export function save(state) {
 // The operation and stable pending intentions enter the SAME candidate document.
 // No candidate is published, sent, or rolled back over a newer value before storage confirms it.
 export async function commitSessionAction(sid, action) {
+  // Reject new work once closing starts, but retain FIFO work already queued
+  // ahead of the close transaction. The durable intent is the transform guard.
+  if (runtime().closingSid === sid) return { ok: false, error: 'session_closing' }
   let output
   const result = await writeStoredAtomic(K_STATE, latest => {
-    if (runtime().closingSid === sid || latest?.closeIntent || !latest?.active || latest.sid !== sid) throw new Error('session_changed')
+    if (latest?.closeIntent || !latest?.active || latest.sid !== sid) throw new Error('session_changed')
     const candidate = JSON.parse(JSON.stringify(latest))
     candidate.hr = latestHr(candidate)
     runtime().sessionDraft = candidate

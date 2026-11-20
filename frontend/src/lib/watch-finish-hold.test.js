@@ -19,7 +19,7 @@ function setup({ rest = false } = {}) {
   })
   loadWatchModule('event-id', c, ['allocateEventIdentity', 'rememberEventAt'])
   loadWatchModule('close-journal', c, ['prepareClose', 'releaseCandidate', 'pendingSummaries', 'pendingEntry', 'journalEntry', 'markPhase', 'markDelivered'])
-  loadWatchModule('session', c, ['loadState', 'startSession', 'save', 'nextUndone', 'calories', 'addRestTime'])
+  loadWatchModule('session', c, ['loadState', 'startSession', 'save', 'toggleSet', 'nextUndone', 'calories', 'addRestTime'])
   const s = c.startSession({ sid: 'hold', name: '推部训练', protocolVersion: 3, exercises: [
     { entryInstanceId: 'bench', name: '哑铃推肩', sets: 3, reps: 10, weight: 12, restSec: 90 },
   ] })
@@ -60,6 +60,102 @@ it('a full hold saves once offline and navigates only after the durable local cl
   expect(c.loadState().active).toBe(false)
   expect(router.replace).toHaveBeenCalledExactlyOnceWith({ uri: '/Summary' })
   expect(p.finishProgress).toBe('0%'); expect(p.holdingFinish).toBe(false)
+})
+it('duplicate touch starts during one uninterrupted hold cannot restart its deadline', async () => {
+  const { p, c, router } = setup()
+  down(p); p.startFinishHold()
+  await vi.advanceTimersByTimeAsync(400); p.startFinishHold()
+  await vi.advanceTimersByTimeAsync(400); p.startFinishHold()
+  await vi.advanceTimersByTimeAsync(300)
+  expect(c.loadState().active).toBe(false)
+  expect(router.replace).toHaveBeenCalledExactlyOnceWith({ uri: '/Summary' })
+})
+it('the progress callback also completes a valid hold if its one-shot deadline callback is lost', async () => {
+  const { p, c, router } = setup()
+  c.setTimeout = (fn, ms) => ms === 1000 ? 0 : setTimeout(fn, ms)
+  down(p); p.startFinishHold(); await vi.advanceTimersByTimeAsync(1200)
+  expect(c.loadState().active).toBe(false)
+  expect(p.holdingFinish).toBe(false); expect(p.finishProgress).toBe('0%')
+  expect(router.replace).toHaveBeenCalledExactlyOnceWith({ uri: '/Summary' })
+})
+it('a hold waits behind an already committing group instead of silently dropping the save request', async () => {
+  const { p, c, router, storage } = setup(), write = storage.set
+  let release
+  storage.set = item => { if (item.key === 'session_state' && !release) release = () => write(item); else write(item) }
+  const group = p.onComplete()
+  expect(p.localCommitPending).toBe(true)
+  down(p); p.startFinishHold(); await vi.advanceTimersByTimeAsync(1100)
+  expect(p.closeSaving).toBe(true)
+  release(); await group; await vi.advanceTimersByTimeAsync(100)
+  expect(c.loadState().active).toBe(false)
+  expect(c.journalEntry('hold').closeEvent.completedSets).toHaveLength(1)
+  expect(router.replace).toHaveBeenCalledExactlyOnceWith({ uri: '/Summary' })
+})
+it('a transport failure cannot strand a workout page after the local close was already saved', async () => {
+  const { p, c, router } = setup()
+  c.sendEvent.mockImplementation(() => { throw Error('native send unavailable') })
+  c.replayPendingEvents = vi.fn(() => { throw Error('native send unavailable') })
+  await p.saveEnd()
+  expect(c.loadState().active).toBe(false)
+  expect(c.journalEntry('hold').closeEvent.disposition).toBe('saved')
+  expect(router.replace).toHaveBeenCalledExactlyOnceWith({ uri: '/Summary' })
+  expect(p.closeError).toBe('')
+  expect(c.replayPendingEvents).not.toHaveBeenCalled()
+  await vi.advanceTimersByTimeAsync(100)
+  expect(c.replayPendingEvents).toHaveBeenCalledOnce()
+})
+it.each(['watch_close_journal_v1', 'closed_sessions', 'summary_last', 'clear'])('keeps the frozen close immutable and retryable after %s fails', async key => {
+  const { p, c, router, storage } = setup({ rest: true }), write = storage.set
+  storage.set = item => item.key === key || key === 'clear' && item.key === 'session_state' && !item.value.active ? item.fail() : write(item)
+  p.closeMode = 'complete'; p.allFinished = true; p.completionIgnoreUntil = 0
+  await p.saveEnd()
+  expect(p.closeSaving).toBe(false); expect(router.replace).not.toHaveBeenCalled()
+  const frozen = c.readStored('session_state').closeIntent
+  expect(frozen.close.disposition).toBe('saved')
+  expect(p.closeFrozen).toBe(true)
+  expect(p.stateOf().closeIntent).toEqual(frozen)
+  p.askAbandon(); p.cancelClose(); await p.onPause(); await p.nudgeRest(15)
+  await vi.advanceTimersByTimeAsync(95000); p.tickClock(true)
+  expect(c.readStored('session_state').closeIntent).toEqual(frozen)
+  expect(p.closeMode).toBe('complete')
+  storage.set = write
+  down(p); p.startFinishHold(); await vi.advanceTimersByTimeAsync(1100)
+  expect(c.loadState().active).toBe(false)
+  expect(c.journalEntry('hold').closeEvent).toEqual(frozen.close.closeEvent)
+  expect(router.replace).toHaveBeenCalledExactlyOnceWith({ uri: '/Summary' })
+})
+it('a frozen partial workout offers the existing end retry without claiming all groups are completed', async () => {
+  const { p, c, storage } = setup(), write = storage.set
+  storage.set = item => item.key === 'summary_last' ? item.fail() : write(item)
+  await p.saveEnd()
+  expect(c.loadState().closeIntent).toBeTruthy()
+  expect(p.closeMode).toBe('end'); expect(p.allFinished).toBe(false)
+})
+it('a lost storage callback releases the save lock and permits retry with the same close identity', async () => {
+  const { p, c, router, storage } = setup(), write = storage.set
+  let late
+  storage.set = item => { if (item.key === 'watch_close_journal_v1') late = item; else write(item) }
+  const save = p.saveEnd()
+  await vi.advanceTimersByTimeAsync(5100); await save
+  expect(p.closeSaving).toBe(false)
+  const frozen = c.readStored('session_state').closeIntent
+  storage.set = write
+  await p.saveEnd()
+  late.success(); await vi.advanceTimersByTimeAsync(100)
+  expect(c.journalEntry('hold').closeEvent).toEqual(frozen.close.closeEvent)
+  expect(c.loadState().active).toBe(false)
+  expect(router.replace).toHaveBeenCalledExactlyOnceWith({ uri: '/Summary' })
+})
+it('connection wording stays on the home screen while training only reports pending work or failures', () => {
+  const { p, c } = setup()
+  c.isPhoneConnected = () => false
+  p.tickSyncStatus(true)
+  expect(p.syncLabel).toBe(''); expect(p.syncWarning).toBe(false)
+  c.pendingCount = () => 3; p.tickSyncStatus(true)
+  expect(p.syncLabel).toBe('待上传 3 条')
+  expect(watchSource('Workout/index.ux')).not.toMatch(/手机已连接|手机未连接/)
+  expect(watchSource('Index/index.ux')).toMatch(/手机已连接/)
+  expect(watchSource('Index/index.ux')).toMatch(/手机未连接/)
 })
 it.each(['touchCancel','touchEnd'])('a root %s releases a partial hold even if the child callback was lost', async cancel => {
   const { p, c, router } = setup()

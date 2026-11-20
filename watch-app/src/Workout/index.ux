@@ -1,6 +1,7 @@
 <script>
 import { commitPageAction } from '../lib/local-action.js'
 import { bindRuntime, runtime } from '../lib/runtime.js'
+import { appTimeout } from '../lib/app-timers.js'
 import { recordDiagnostic, flushDiagnosticLog } from '../lib/diagnostic-log.js'
 // Source: openGym v1.4.5 Screens.kt / Components.kt / Theme.kt, square branch.
 // BlueOS design pixels use 1.6 px per source dp/sp; no new visual system.
@@ -19,7 +20,7 @@ import {
   formatEffort,
 } from '../lib/effort-scale.js'
 import { startSessionHr, stopSessionHr, tick, restOver } from '../lib/sensors.js'
-import { startServer, sendEvent, replayPendingEvents, sendControl, pendingCount, isConnected, isPhoneConnected, persistenceStatus, synchronizationStatus, transportDiagnostics } from '../lib/rpc.js'
+import { startServer, sendEvent, replayPendingEvents, sendControl, pendingCount, persistenceStatus, synchronizationStatus, transportDiagnostics } from '../lib/rpc.js'
 import { storageStatus } from '../lib/persistence.js'
 import { applyEdit, applyFocus, applyRest, restOf } from '../lib/protocol.js'
 import { lastTimeView } from '../lib/watch-last-time.js'
@@ -93,12 +94,11 @@ const pageDefinition = {
     doneTotal: '0/0', nextOfficial: '', hrNumber: '--', hrAverage: '--', hrMaximum: '--', hrMinimum: '--',
     zoneRows: [], hasAge: false, muscleRows: [], muscleMore: 0, muscleEmpty: '还没有组',
     restPercent: '100%', restWarn: false, holdingFinish: false, finishProgress: '0%',
-    closeMode: '', closeError: '', closeSaving: false,
+    closeMode: '', closeError: '', closeSaving: false, closeFrozen: false,
     paused: false,
     pauseLabel: '暂停训练',
     // 视觉：数值与单位分开，单位弱一级
     weightNum: '—', weightSuffix: 'kg', repsNum: '—', repsSuffix: '次',
-    statusLead: '已连接',
     // 本组强度登记（同页覆盖层）
     effortOn: false,
     effortScale: 'none',            // 手机设置：'rpe' | 'rir' | 'none'
@@ -158,6 +158,8 @@ const pageDefinition = {
 
     this.bindRpc()
 
+    if (this.freezeCloseView()) return
+
     // 保存的游标就是当前组；nextUndone 仅用于完成后找下一组。
     this.allFinished = s.workout.rows.every(rows => rows.every(row => row.done))
 
@@ -187,6 +189,7 @@ const pageDefinition = {
       this.profile = latest.profile || null
     }
     if (this.stateOf()) this.bindRpc()
+    if (this.freezeCloseView()) return
     // 熄屏时系统可能暂停 JS 定时器，回到页面先按绝对截止时间校准。
     this.reconcileRestClock()
     // 与输入页通过持久化状态交接，使用当前连接的可靠事件队列发送。
@@ -218,6 +221,7 @@ const pageDefinition = {
     }, 0)
   },
   onRotation(ev) {
+    if (this.closeSaving || this.stateOf()?.closeIntent) return
     ev = ev?.detail && typeof ev.detail === 'object' ? ev.detail : ev
     if (!ev || this.visible === false || ev.state === 3) return
     if (this.keypadOn) {
@@ -245,6 +249,7 @@ const pageDefinition = {
     else return this.adjustSelectedField(rotationStep(ev))
   },
   onBackPress() {
+    if (this.closeSaving || this.stateOf()?.closeIntent) return true
     this.cancelFinishHold()
     if (this.keypadOn) { this.closeNumberKeypad(); return true }
     if (this.diagnosticOn) { this.closeDiagnostics(); return true }
@@ -269,7 +274,7 @@ const pageDefinition = {
     this.autoFocusIgnoreUntil = 0
     this.navPending = false
   },
-  interactionBlocked(allowSetPick) { return !!this.touchAxis || Date.now() < (this.trailingTapBlockedUntil || 0) || Date.now() < (this.autoFocusIgnoreUntil || 0) || allowSetPick !== true && !!this.setDotPicker?.pending() },
+  interactionBlocked(allowSetPick, allowCloseRetry) { return !!this.closeSaving || !allowCloseRetry && !!this.stateOf()?.closeIntent || !!this.touchAxis || Date.now() < (this.trailingTapBlockedUntil || 0) || Date.now() < (this.autoFocusIgnoreUntil || 0) || allowSetPick !== true && !!this.setDotPicker?.pending() },
   openExercises(fromGesture) {
     if (this.navPending) return
     if (fromGesture !== true && this.interactionBlocked()) return
@@ -292,7 +297,7 @@ const pageDefinition = {
     if (this.stateOf() && this.stateOf().sid !== latest.sid) {
       this.cancelRestNudge()
       this.resetInteraction()
-      this.closeMode = ''; this.effortOn = false; this.menuOn = false
+      this.closeMode = ''; this.closeFrozen = false; this.effortOn = false; this.menuOn = false
       this.finishOn = false; this.lastOpen = false; this.leaveChoice = false
       this.diagnosticOn = false; this.pageIndex = 1; this.selectedField = null; this.inputNotice = ''
       this.effortTarget = null; this.effortDraft = null; this.effortBaseVersion = 0
@@ -319,6 +324,7 @@ const pageDefinition = {
         this.stateOf(this.withRestPreview(latest))
       }
       const msg = args[0], s = this.stateOf()
+      if (s?.closeIntent && method !== 'onRemoteEnded') return { status: 'retained', reason: 'session_closing' }
       if (msg?.entryInstanceId && ['set','unset','weight','reps','add_set','remove_set','focus','effort'].includes(msg.t)) {
         const ex = s.workout.exercises.findIndex(e => e.entryInstanceId === msg.entryInstanceId)
         if (ex < 0) return
@@ -1044,7 +1050,7 @@ const pageDefinition = {
 
   applyRestNudge(deltaSec) {
     const s = this.stateOf()
-    if (!s || !s.active || !s.restUntil || !Number.isFinite(deltaSec)) return
+    if (this.closeSaving || s?.closeIntent || !s || !s.active || !s.restUntil || !Number.isFinite(deltaSec)) return
     if (!this.restCrownDirty) this.restCrownBase = { restId: s.restId, restVersion: s.restVersion }
     this.restInputGeneration = (this.restInputGeneration || 0) + 1
     const now = Date.now()
@@ -1338,6 +1344,7 @@ const pageDefinition = {
     this.weightUnit = this.stateOf()?.weightUnit || 'kg'
     const s = this.stateOf()
     if (!s || !s.workout) return
+    if (this.freezeCloseView()) return
     this.reconcileRestClock()
     if (this.dotPreview) {
       this.autoFocusSid = s.sid
@@ -1534,21 +1541,28 @@ const pageDefinition = {
     if (this.effortOn) { this.effortDraft = item.value; return this.confirmEffort() }
   },
   startFinishHold(event) {
+    // Duplicate native starts for the same contact must not postpone completion.
+    if (this.holdingFinish) return
     // Child touchstart bubbles before the root resets the previous swipe guard.
     if (event && event.touches && event.touches.length) this.touchStart(event)
-    if (this.closeSaving || this.visible === false || this.closeMode === 'abandon' || this.interactionBlocked()) return
+    if (this.closeSaving || this.visible === false || this.closeMode === 'abandon' || this.interactionBlocked(false, true)) return
     this.cancelFinishHold()
     this.holdingFinish = true; this.finishHoldAt = Date.now()
+    const epoch = this.finishHoldEpoch = (this.finishHoldEpoch || 0) + 1
     // Completion owns a deadline, independently of paint/progress callbacks.
     this.finishDeadlineTimer = setTimeout(() => {
+      if (this.finishHoldEpoch !== epoch || !this.holdingFinish || this.visible === false) return
       this.finishDeadlineTimer = null
-      if (!this.holdingFinish || this.visible === false) return
       this.cancelFinishHold()
       this.saveEnd()
     }, 1000)
     this.finishHoldTimer = setInterval(() => {
+      if (this.finishHoldEpoch !== epoch || !this.holdingFinish || this.visible === false) return
       const percent = Math.max(0, Math.min(100, Math.floor((Date.now() - this.finishHoldAt) / 10)))
-      this.finishProgress = String(percent) + '%'
+      // Paint is also a deadline fallback when a native one-shot callback is lost.
+      if (percent >= 100) { this.endFinishHold(); return }
+      const progress = String(percent) + '%'
+      if (this.finishProgress !== progress) this.finishProgress = progress
     }, 100)
   },
   endFinishHold() {
@@ -1557,6 +1571,7 @@ const pageDefinition = {
     if (complete) return this.saveEnd()
   },
   cancelFinishHold() {
+    this.finishHoldEpoch = (this.finishHoldEpoch || 0) + 1
     if (this.finishHoldTimer != null) clearInterval(this.finishHoldTimer)
     if (this.finishDeadlineTimer != null) clearTimeout(this.finishDeadlineTimer)
     this.finishDeadlineTimer = null
@@ -1602,7 +1617,7 @@ const pageDefinition = {
   },
 
   tickClock(force) {
-    if (this.visible === false) return
+    if (this.visible === false || this.closeSaving || this.stateOf()?.closeIntent) return
     // 评分层先判目标是否还有效：会话被结束/组被撤销时 this.stateOf() 可能已经变成 blank。
     if (this.effortOn) {
       if (!this.effortTargetValid()) { this.effortOn = false; this.effortNotice = '目标组已变化，已停止编辑' }
@@ -1666,10 +1681,9 @@ const pageDefinition = {
     if (!force && this.syncSecond === second) return
     this.syncSecond = second
     const failed = persistenceStatus().failed || storageStatus().failed
-    const n = pendingCount(), sync = synchronizationStatus(), connected = isPhoneConnected()
-    const syncWarning = !!(failed || sync.phonePending > 0 || n > 0 || !connected)
-    const linkLabel = connected ? '手机已连接' : '手机未连接'
-    const syncLabel = failed ? '存储失败，请保留应用' : sync.phonePending > 0 ? linkLabel + ' · 待确认 ' + sync.phonePending + ' 条' : n > 0 ? linkLabel + ' · 待上传 ' + n + ' 条' : connected ? linkLabel : linkLabel + ' · 离线记录'
+    const n = pendingCount(), sync = synchronizationStatus()
+    const syncWarning = !!(failed || sync.phonePending > 0 || n > 0)
+    const syncLabel = failed ? '存储失败，请保留应用' : sync.phonePending > 0 ? '待确认 ' + sync.phonePending + ' 条' : n > 0 ? '待上传 ' + n + ' 条' : ''
     if (this.syncWarning !== syncWarning) this.syncWarning = syncWarning
     if (this.syncLabel !== syncLabel) this.syncLabel = syncLabel
   },
@@ -1729,9 +1743,10 @@ const pageDefinition = {
     this.refresh()
     }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
   },
-  askEnd() { this.cancelFinishHold(); this.closeError = ''; this.finishOn = false; this.closeMode = 'end' },
-  askAbandon() { this.cancelFinishHold(); this.closeError = ''; this.finishOn = false; this.closeMode = 'abandon' },
+  askEnd() { if (this.closeSaving || this.stateOf()?.closeIntent) return; this.cancelFinishHold(); this.closeError = ''; this.finishOn = false; this.closeMode = 'end' },
+  askAbandon() { if (this.closeSaving || this.stateOf()?.closeIntent) return; this.cancelFinishHold(); this.closeError = ''; this.finishOn = false; this.closeMode = 'abandon' },
   cancelClose() {
+    if (this.closeSaving || this.stateOf()?.closeIntent) return
     this.cancelFinishHold(); this.closeError = ''
     if (this.closeMode === 'complete') {
       if (Date.now() < this.completionIgnoreUntil) return
@@ -1748,24 +1763,48 @@ const pageDefinition = {
   },
   discardEnd() { return this.onEnd('discarded') },
   abandonEnd() { return this.onEnd('abandoned') },
+  freezeCloseView() {
+    const intent = this.stateOf()?.closeIntent
+    if (!intent) return false
+    this.closeFrozen = true
+    this.cancelFinishHold(); this.cancelRestNudge()
+    this.setRestScreenLock(false); this.stopHrCapture()
+    if (this.timer) clearInterval(this.timer)
+    if (this.hrFlush) clearInterval(this.hrFlush)
+    this.timer = null; this.hrFlush = null
+    this.closeMode = intent.close.disposition === 'saved' ? (this.allFinished ? 'complete' : 'end') : 'abandon'
+    this.completionIgnoreUntil = 0
+    this.syncWarning = true
+    if (!this.closeError) this.closeError = '训练记录已保留，请重试完成保存'
+    return true
+  },
   async onEnd(reason, notifyPhone = true) {
     this.logInteraction('local_end', { status: typeof reason === 'string' ? reason : 'manual' }, true)
     if (typeof reason !== 'string') reason = 'manual'
-    if (this.localCommitPending || this.closeSaving || !this.stateOf()?.active) return
+    if (this.closeSaving || !this.stateOf()?.active) return
+    const sid = this.stateOf().sid
     this.cancelFinishHold(); this.closeError = ''
     this.cancelSetDotPick()
     this.closeSaving = true
     try {
       if ((await this.flushRestNudge()) === false) { this.syncWarning = true; this.closeError = '休息调整未保存，请重试'; this.syncLabel = this.closeError; return }
-      const result = await commitLocalClose(this.stateOf().sid, reason)
-      if (!result.ok) { this.syncWarning = true; this.closeError = '存储失败，未结束，请重试'; this.syncLabel = this.closeError; return }
+      // The per-session storage queue already orders this after an in-flight set.
+      const result = await commitLocalClose(sid, reason)
+      const latest = loadState()
+      if (latest.sid === sid || !latest.active) this.stateOf(latest)
+      if (!result.ok) {
+        const frozen = this.freezeCloseView()
+        this.syncWarning = true; this.closeError = frozen ? '训练记录已保留，存储收尾未完成，请重试' : '存储失败，未结束，请重试'; this.syncLabel = this.closeError; return
+      }
+      // The close journal is the recovery source. Upload must not keep a saved
+      // workout on this page or turn a transport error into a save failure.
+      try { appTimeout(() => { try { replayPendingEvents() } catch (_) {} }, 1) } catch (_) {}
+      if (this.visible === false) return
+      if (result.pendingRecovery) { this.freezeCloseView(); this.closeError = '训练记录已保留，存储收尾未完成，请重试'; return }
       this.cancelRestNudge(); this.setRestScreenLock(false); this.stopHrCapture()
-      for (const event of [...(result.entry.pendingEvents || []), result.entry.closeEvent]) sendEvent(event)
-      if (result.entry.delivery === 'pending') sendEvent(result.entry.summaryEvent)
-      this.stateOf(loadState())
       if (this.timer) clearInterval(this.timer)
       if (this.hrFlush) clearInterval(this.hrFlush)
-      router.replace({ uri: reason === 'saved' ? '/Summary' : '/Index' })
+      router.replace({ uri: result.entry.disposition === 'saved' ? '/Summary' : '/Index' })
     } catch (_) { this.syncWarning = true; this.closeError = '存储失败，未结束，请重试'; this.syncLabel = this.closeError }
     finally { this.closeSaving = false }
   },
@@ -1780,7 +1819,7 @@ export default pageDefinition
     <div class="screen overview-screen" show="{{ pageIndex === 0 }}">
       <list class="overview-scroll"><list-item type="overview-title" class="overview-head"><text class="overview-name">{{ finishName }}</text><text class="quiet">{{ doneTotal }} 组</text></list-item>
         <list-item type="exercise" class="overview-row {{ item.current ? 'overview-current' : '' }}" for="{{ item in overviewRows }}" tid="key" onclick="jumpOverview(item)"><div class="exercise-mark"><image class="mark-icon" src="/common/icons/wear-play-accent.svg" if="{{ item.current }}" /><image class="mark-icon" src="/common/icons/wear-check.svg" if="{{ !item.current && item.finished }}" /></div><div class="overview-copy"><text class="overview-ex {{ item.finished ? 'muted' : '' }}">{{ item.name }}</text><text class="overview-count">{{ item.count }}</text></div></list-item>
-        <list-item type="overview-actions" class="overview-actions"><text class="quiet sync-line">{{ closeError || syncLabel }}</text><div class="hold-finish"><image class="button-icon" src="/common/icons/wear-flag.svg" /><text class="button-word">{{ closeSaving ? '正在保存…' : '按住以结束' }}</text><div class="hold-fill" style="width: {{ finishProgress }};"><div class="hold-ink-label"><image class="button-icon" src="/common/icons/wear-flag-ink.svg" /><text class="button-word ink">{{ closeSaving ? '正在保存…' : '按住以结束' }}</text></div></div><div class="hold-touch" ontouchstart="startFinishHold" ontouchend="endFinishHold" ontouchcancel="cancelFinishHold"></div></div><input class="row-button danger" type="button" value="放弃训练" onclick="askAbandon" /></list-item>
+        <list-item type="overview-actions" class="overview-actions"><text class="quiet sync-line" if="{{ closeError || syncLabel }}">{{ closeError || syncLabel }}</text><div class="hold-finish"><image class="button-icon" src="/common/icons/wear-flag.svg" /><text class="button-word">{{ closeSaving ? '正在保存…' : '按住以结束' }}</text><div class="hold-fill" style="width: {{ finishProgress }};"><div class="hold-ink-label"><image class="button-icon" src="/common/icons/wear-flag-ink.svg" /><text class="button-word ink">{{ closeSaving ? '正在保存…' : '按住以结束' }}</text></div></div><div class="hold-touch" ontouchstart="startFinishHold" ontouchend="endFinishHold" ontouchcancel="cancelFinishHold"></div></div><input class="row-button danger" type="button" value="放弃训练" onclick="askAbandon" /></list-item>
       </list>
     </div>
     <div class="screen live-screen" show="{{ pageIndex === 1 }}">
@@ -1805,7 +1844,7 @@ export default pageDefinition
     </div>
   </div>
   <div class="page-dots" if="{{ !closeMode && !effortOn && !lastOpen && !diagnosticOn && !keypadOn }}"><div class="pager-dot {{ pageIndex === 0 ? 'pager-current' : '' }}"></div><div class="pager-dot {{ pageIndex === 1 ? 'pager-current' : '' }}"></div><div class="pager-dot {{ pageIndex === 2 ? 'pager-current' : '' }}"></div></div>
-  <div class="overlay" if="{{ closeMode && !effortOn }}"><list class="modal-scroll"><list-item type="confirm" class="modal-content"><div class="done-mark" if="{{ closeMode === 'complete' }}"><image class="done-icon" src="/common/icons/wear-check-ink.svg" /></div><text class="confirm-title">{{ closeMode === 'complete' ? '所有组已完成' : closeMode === 'abandon' ? '放弃训练？' : '结束训练？' }}</text><text class="quiet confirm-note">{{ closeError || confirmRemain }}</text><input class="row-button" type="button" if="{{ closeMode === 'complete' && effortEntryOn }}" value="{{ effortEntryText }}" onclick="openEffort" /><input class="row-button danger" type="button" if="{{ closeMode === 'abandon' }}" value="放弃训练" onclick="abandonEnd" /><input class="primary-input" type="button" if="{{ closeMode === 'end' }}" value="结束并保存" onclick="saveEnd" /><div class="hold-finish" if="{{ closeMode === 'complete' }}"><image class="button-icon" src="/common/icons/wear-flag.svg" /><text class="button-word">{{ closeSaving ? '正在保存…' : '按住以结束' }}</text><div class="hold-fill" style="width: {{ finishProgress }};"><div class="hold-ink-label modal-ink-label"><image class="button-icon" src="/common/icons/wear-flag-ink.svg" /><text class="button-word ink">{{ closeSaving ? '正在保存…' : '按住以结束' }}</text></div></div><div class="hold-touch" ontouchstart="startFinishHold" ontouchend="endFinishHold" ontouchcancel="cancelFinishHold"></div></div><input class="row-button" type="button" value="继续训练" onclick="cancelClose" /></list-item></list></div>
+  <div class="overlay" if="{{ closeMode && !effortOn }}"><list class="modal-scroll"><list-item type="confirm" class="modal-content"><div class="done-mark" if="{{ closeMode === 'complete' }}"><image class="done-icon" src="/common/icons/wear-check-ink.svg" /></div><text class="confirm-title">{{ closeMode === 'complete' ? '所有组已完成' : closeMode === 'abandon' ? '放弃训练？' : '结束训练？' }}</text><text class="quiet confirm-note">{{ closeError || confirmRemain }}</text><input class="row-button" type="button" if="{{ closeMode === 'complete' && effortEntryOn && !closeFrozen }}" disabled="{{ closeSaving }}" value="{{ effortEntryText }}" onclick="openEffort" /><input class="row-button danger" type="button" if="{{ closeMode === 'abandon' }}" value="放弃训练" onclick="abandonEnd" /><input class="primary-input" type="button" if="{{ closeMode === 'end' }}" value="结束并保存" onclick="saveEnd" /><div class="hold-finish" if="{{ closeMode === 'complete' }}"><image class="button-icon" src="/common/icons/wear-flag.svg" /><text class="button-word">{{ closeSaving ? '正在保存…' : '按住以结束' }}</text><div class="hold-fill" style="width: {{ finishProgress }};"><div class="hold-ink-label modal-ink-label"><image class="button-icon" src="/common/icons/wear-flag-ink.svg" /><text class="button-word ink">{{ closeSaving ? '正在保存…' : '按住以结束' }}</text></div></div><div class="hold-touch" ontouchstart="startFinishHold" ontouchend="endFinishHold" ontouchcancel="cancelFinishHold"></div></div><input class="row-button" type="button" if="{{ !closeFrozen }}" disabled="{{ closeSaving }}" value="继续训练" onclick="cancelClose" /></list-item></list></div>
   <div class="overlay" if="{{ lastOpen && !closeMode }}"><list class="modal-scroll" id="history" touch-focusable="true"><list-item type="last-title" class="modal-content"><text class="confirm-title">{{ lastTitle }}</text><text class="quiet">{{ lastMeta }}</text></list-item><list-item type="last-row" class="history-row" for="{{ r in lastRows }}" tid="key"><text class="history-no">{{ r.no }}</text><text class="history-value">{{ r.label }}</text></list-item><list-item type="last-back" class="modal-content"><input class="row-button" type="button" value="继续训练" onclick="closeLast" /></list-item></list></div>
   <div class="overlay" if="{{ effortOn && !diagnosticOn }}"><list class="modal-scroll"><list-item type="effort" class="modal-content"><text class="quiet">{{ effortRestLabel }}</text><text class="confirm-title">这组有多吃力？</text><text class="quiet">{{ effortTargetLabel }}</text><text class="quiet">{{ effortScaleLabel }}</text><div class="effort-pick"><input class="edge-button" type="button" value="−" onclick="effortMinus" /><text class="effort-value">{{ effortDraftLabel }}</text><input class="edge-button" type="button" value="+" onclick="effortPlus" /></div><text class="quiet effort-description">{{ effortNotice || effortMeaning || effortHint }}</text><input class="primary-input" type="button" value="保存" onclick="confirmEffort" /><input class="row-button" type="button" value="取消" onclick="closeEffort" /><input class="row-button danger" type="button" if="{{ effortHasSaved }}" value="清除评分" onclick="clearEffort" /></list-item></list></div>
   <div class="overlay" if="{{ diagnosticOn }}"><list class="modal-scroll"><list-item type="diagnostic" class="modal-content"><text class="confirm-title">{{ diagnosticTitle }}</text><text class="diagnostic-text">{{ diagnosticText }}</text><input class="row-button" type="button" value="下一页" onclick="nextDiagnostic" /><input class="row-button" type="button" value="返回" onclick="closeDiagnostics" /></list-item></list></div>

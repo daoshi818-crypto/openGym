@@ -146,6 +146,43 @@ describe('watch backlog fairness and durable replay', () => {
 })
 
 describe('application lifetime transport', () => {
+  it('replays a close created after transport initialization in batches after the page is destroyed', async () => {
+    vi.useFakeTimers()
+    const h = device(0, new Map([['rpc_outbox', []]]), true), c = h.ctx
+    h.connection.onOpen()
+    loadWatchModule('event-id', c, ['allocateEventIdentity', 'rememberEventAt'])
+    loadWatchModule('close-journal', c, ['prepareClose', 'journalEntry', 'pendingSummaries', 'pendingEntry'])
+    loadWatchModule('session', c, ['startSession', 'loadState', 'save'])
+    c.startSession({ sid: 's', name: 'Bench', protocolVersion: 3, exercises: [{ name: 'Bench', sets: 1, reps: 8, weight: 50 }] })
+    for (let i=0;i<7;i++) await c.commitSessionAction('s', s => c.stageSessionEvent(s, { t: 'weight', sid: 's', ex: 0, set: 1, weight: 50+i, eventId: 'new-'+i, at: i+1 }))
+    const closed = await c.commitLocalClose('s', 'saved')
+    expect(closed.ok).toBe(true); expect(c.loadState().active).toBe(false)
+    c.replayPendingEvents()
+    expect(c.pendingCount()).toBe(2)
+    h.pageTimers.destroy()
+    await vi.advanceTimersByTimeAsync(1000)
+    const queued = h.shared.rpc.outbox.map(e=>e.msg)
+    expect(queued).toHaveLength(9)
+    expect(queued.slice(0,7).map(e=>e.eventId)).toEqual(Array.from({length:7},(_,i)=>'new-'+i))
+    expect(queued[7]).toEqual(closed.entry.closeEvent)
+    expect(queued[8]).toEqual(closed.entry.summaryEvent)
+    expect(h.shared.rpc.replaying).toBe(false)
+    c.replayPendingEvents(); await vi.advanceTimersByTimeAsync(1000)
+    expect(c.pendingCount()).toBe(9)
+  })
+  it('stops rapid replay retries when a full outbox accepts no events and retains the journal', () => {
+    vi.useFakeTimers()
+    const h = device(4096), errors = [], pending = Array.from({length:8},(_,i)=>({ t:'weight',sid:'s',eventId:'close-edit-'+i,dependencyEvents:true,dependsOn:[],at:5000+i }))
+    h.ctx.pendingCloseEvents = () => structuredClone(pending)
+    h.ctx.startServer({ onError: e=>errors.push(e) })
+    h.ctx.replayPendingEvents()
+    expect(h.shared.rpc.replaying).toBe(false)
+    const attempts = errors.length
+    vi.advanceTimersByTime(3000)
+    expect(errors).toHaveLength(attempts)
+    expect(h.ctx.pendingCount()).toBe(4096)
+    expect(h.ctx.pendingCloseEvents()).toEqual(pending)
+  })
   it('continues draining and replaying after the initiating page is destroyed', () => {
     vi.useFakeTimers()
     const h = device(40, new Map([['rpc_outbox', []]]), true)

@@ -264,8 +264,8 @@ function scheduleFlush(delay = SEND_GAP_MS) {
   r.flushTimer = appTimeout(() => { r.flushTimer = null; flush() }, Math.max(1, at - Date.now()))
 }
 
-// Keypad edits are already durable in session_state. Recover only edits not yet in the
-// outbox, two per UI turn. Re-read between batches so receipts/closed sessions win.
+// Session edits and close journals are already durable. Replay two per UI turn,
+// including closes created while this App transport was already initialized.
 export function replayPendingEvents() {
   if (runtime().destroyed || rpcState().stopped) return
   const r = rpcState()
@@ -277,9 +277,18 @@ export function replayPendingEvents() {
     r.replayTimer = null
     try {
       const queued = new Set(r.outbox.map(e => e.msg.eventId))
-      const missing = (loadState().pendingEdits || []).filter(e => e.committedRev == null && !queued.has(e.eventId))
-      for (const event of missing.slice(0, REPLAY_BATCH)) sendEvent(event)
-      if (missing.length > REPLAY_BATCH) r.replayTimer = appTimeout(step, SEND_GAP_MS)
+      const decisions = readStored('event_decisions') || {}, seen = new Set()
+      const candidates = [...(loadState().pendingEdits || []), ...pendingCloseEvents(),
+        ...pendingSummaries().map(e => e.summaryEvent)]
+      const missing = candidates.filter(e => {
+        if (e.committedRev != null || decisions[e.eventId] || queued.has(e.eventId) || seen.has(e.eventId)) return false
+        seen.add(e.eventId); return true
+      })
+      let accepted = 0
+      for (const event of missing.slice(0, REPLAY_BATCH)) if (sendEvent(event)) accepted++
+      // Capacity/storage failures retain the journal. Let the normal transport
+      // retry/receipt wake replay instead of spinning every 120ms without progress.
+      if (missing.length > REPLAY_BATCH && accepted > 0) r.replayTimer = appTimeout(step, SEND_GAP_MS)
       else r.replaying = false
     } catch (error) {
       // Leave durable session edits intact and allow the next UI replay to retry.
@@ -304,7 +313,10 @@ function flush() {
   if (runtime().destroyed || rpcState().stopped) return
   initialize()
   const decisions = readStored('event_decisions') || {}
-  for (const event of pendingCloseEvents()) if (!decisions[event.eventId] && !rpcState().outbox.some(e => e.msg.eventId === event.eventId)) enqueue(event)
+  // A normal send/ACK turn must not clone the active workout just to discover
+  // that its already queued edits are present. Only missing journals wake replay.
+  const missing = event => !decisions[event.eventId] && !rpcState().outbox.some(e => e.msg.eventId === event.eventId)
+  if (!rpcState().replaying && (pendingCloseEvents().some(missing) || pendingSummaries().some(e => missing(e.summaryEvent)))) replayPendingEvents()
   const expired = runtime().expiredEvents || []
   if (expired.length) { runtime().expiredEvents = []; for (const event of expired) sendEvent(event) }
   retryStorage()

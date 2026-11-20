@@ -16,6 +16,22 @@ function start(h) { return h.c.startSession({ sid: 's', name: 'Bench', protocolV
 const intent = (c, s, id = 'edit') => c.stageSessionEvent(s, { t: 'weight', sid: 's', eventId: id, ex: 0, set: 1, weight: '65', at: 100 })
 const drain = async () => { for (let i=0;i<30;i++) await Promise.resolve() }
 afterEach(() => vi.useRealTimers())
+it('orders actions queued before close ahead of freezing and refuses actions submitted after close', async () => {
+  const h = boot(); start(h)
+  const write = h.storage.set; let release
+  h.storage.set = item => { if (item.key === 'session_state' && !release) release = () => write(item); else write(item) }
+  const first = h.c.commitSessionAction('s', s => { s.workout.rows[0][0].w = '65'; intent(h.c,s,'before-1') })
+  const queued = h.c.commitSessionAction('s', s => { s.workout.rows[0][0].done = true; intent(h.c,s,'before-2') })
+  const close = h.c.commitLocalClose('s','saved')
+  const rejected = h.c.commitSessionAction('s', s => { s.workout.rows[0][0].w = '999'; intent(h.c,s,'after') })
+  release()
+  expect((await first).ok).toBe(true); expect((await queued).ok).toBe(true)
+  expect((await rejected).ok).toBe(false); expect((await close).ok).toBe(true)
+  const entry = h.c.journalEntry('s')
+  expect(entry.closeEvent.completedSets).toHaveLength(1)
+  expect(entry.pendingEvents.map(e=>e.eventId)).toEqual(['before-1','before-2'])
+  expect(entry.closeEvent.workout.rows[0][0].w).toBe('65')
+})
 it('does not publish success UI or Outbox before disk, then replays the same frozen intention after restart', async () => {
   const h = boot(); start(h)
   const writes = [], original = h.storage.set
