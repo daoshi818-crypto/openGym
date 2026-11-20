@@ -131,6 +131,34 @@ it('a frozen partial workout offers the existing end retry without claiming all 
   expect(c.loadState().closeIntent).toBeTruthy()
   expect(p.closeMode).toBe('end'); expect(p.allFinished).toBe(false)
 })
+it('a retry enters results if App recovery already completed the frozen close behind the page', async () => {
+  const { p, c, router, storage } = setup(), write = storage.set
+  storage.set = item => item.key === 'summary_last' ? item.fail() : write(item)
+  await p.saveEnd()
+  expect(p.closeFrozen).toBe(true)
+  const closeEvent = c.readStored('session_state').closeIntent.close.closeEvent
+  storage.set = write
+  expect((await c.recoverLocalClose()).ok).toBe(true)
+  expect(c.loadState().active).toBe(false)
+  await p.saveEnd()
+  expect(router.replace).toHaveBeenCalledExactlyOnceWith({ uri: '/Summary' })
+  expect(p.closeError).toBe('')
+  expect(c.journalEntry('hold').closeEvent).toEqual(closeEvent)
+})
+it.each(['tombstone', 'journal', 'summary'])('does not treat unrelated %s evidence as a recovered successful save', async missing => {
+  const { p, c, router, storage } = setup(), write = storage.set
+  storage.set = item => item.key === 'summary_last' ? item.fail() : write(item)
+  await p.saveEnd(); storage.set = write
+  await c.recoverLocalClose()
+  if (missing === 'tombstone') c.writeStored('closed_sessions', [])
+  if (missing === 'summary') c.writeStored('summary_last', { sid: 'another' })
+  if (missing === 'journal') {
+    const journal = c.readStored('watch_close_journal_v1'); journal.entries.hold.closeEvent.eventId = 'another'
+    c.writeStored('watch_close_journal_v1', journal)
+  }
+  await p.saveEnd()
+  expect(router.replace).not.toHaveBeenCalled()
+})
 it('a lost storage callback releases the save lock and permits retry with the same close identity', async () => {
   const { p, c, router, storage } = setup(), write = storage.set
   let late

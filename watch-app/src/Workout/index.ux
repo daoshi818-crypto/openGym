@@ -21,7 +21,8 @@ import {
 } from '../lib/effort-scale.js'
 import { startSessionHr, stopSessionHr, tick, restOver } from '../lib/sensors.js'
 import { startServer, sendEvent, replayPendingEvents, sendControl, pendingCount, persistenceStatus, synchronizationStatus, transportDiagnostics } from '../lib/rpc.js'
-import { storageStatus } from '../lib/persistence.js'
+import { storageStatus, readStored } from '../lib/persistence.js'
+import { journalEntry } from '../lib/close-journal.js'
 import { applyEdit, applyFocus, applyRest, restOf } from '../lib/protocol.js'
 import { lastTimeView } from '../lib/watch-last-time.js'
 import { zoneView, muscleView } from '../lib/official-metrics.js'
@@ -1789,8 +1790,16 @@ const pageDefinition = {
     try {
       if ((await this.flushRestNudge()) === false) { this.syncWarning = true; this.closeError = '休息调整未保存，请重试'; this.syncLabel = this.closeError; return }
       // The per-session storage queue already orders this after an in-flight set.
-      const result = await commitLocalClose(sid, reason)
+      let result = await commitLocalClose(sid, reason)
       const latest = loadState()
+      // App recovery may have finished this exact frozen close while the old
+      // Page was displaying retry. Reconcile durable evidence, never close again.
+      const intent = this.stateOf()?.closeIntent
+      if (!result.ok && intent && !latest.active && (readStored('closed_sessions') || []).includes(sid)) {
+        const entry = journalEntry(sid)
+        if (entry?.localClose && entry.closeEvent?.eventId === intent.close.eventId &&
+            (entry.disposition !== 'saved' || readStored('summary_last')?.sid === sid)) result = { ok: true, entry }
+      }
       if (latest.sid === sid || !latest.active) this.stateOf(latest)
       if (!result.ok) {
         const frozen = this.freezeCloseView()
