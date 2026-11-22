@@ -522,6 +522,10 @@ export function startServer(h) {
   rpcState().stopped = false
   rpcState().stop = stopServer
   if (h) rpcState().handlers = h
+  const subscriber = rpcState()
+  // Destroyed Pages must release their UI closures without closing App transport.
+  // An older Page cannot detach a newer subscriber installed during navigation.
+  const detach = () => { if (h && subscriber.handlers === h) subscriber.handlers = {} }
   if (!rpcState().retryTimer) rpcState().retryTimer = appInterval(flush, 4000)
   if (!rpcState().connect) {
     initialize()
@@ -531,13 +535,13 @@ export function startServer(h) {
       rpcState().connect = null
       trace('connection_exception', {}, e)
       if (rpcState().handlers.onError) rpcState().handlers.onError({ code: 1000, data: String(e) })
-      return
+      return detach
     }
   }
 
   // Page changes only replace subscribers. Rebinding/hello here restarted full sync
   // on every onShow even when the connection was already active.
-  if (rpcState().boundConnection === rpcState().connect) return
+  if (rpcState().boundConnection === rpcState().connect) return detach
   rpcState().boundConnection = rpcState().connect
   const connection = rpcState().connect, owner = rpcState(), callbacks = {}
   const binding = {}; owner.callbackBinding = binding
@@ -864,6 +868,7 @@ export function startServer(h) {
 
   if (rpcState().connected) sendHello()
   else probeConnection()
+  return detach
 }
 
 export function stopServer() {

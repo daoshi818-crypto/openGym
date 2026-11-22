@@ -31,6 +31,9 @@ function disposeStorage() {
 const WRITE_TIMEOUT_MS = 5000
 const later = (fn, ms) => { try { return appTimeout(fn, ms) } catch { return null } }
 const cancel = t => { try { if (t != null) cancelAppTimeout(t) } catch { /* 无定时器 */ } }
+function notifyCommitted(key, value) {
+  if (key === 'session_state') { try { runtime().trainingRuntime?.observe(value) } catch {} }
+}
 
 // Project before cloning: clock ticks must not copy rows, snapshots and pending events.
 // Both full reads and projections remain detached from the mutable shared cache.
@@ -164,6 +167,7 @@ function atomicDrain(key, state, q) {
       }
       state.values[key] = published
       delete state.errors[key]
+      notifyCommitted(key, value)
     } else state.errors[key] = 'write_failed'
     job.resolve({ ok, value: ok ? clone(value) : null })
     drain(key, state, q)
@@ -192,6 +196,7 @@ function drain(key, state, q) {
     if (ok) {
       delete state.errors[key]
       q.confirmed = Math.max(q.confirmed || 0, revision)
+      notifyCommitted(key, value)
       settle(q, true)
       drain(key, state, q)
     } else {

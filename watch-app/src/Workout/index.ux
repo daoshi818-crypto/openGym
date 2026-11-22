@@ -337,7 +337,8 @@ const pageDefinition = {
       }
       return this[method](...args)
     }
-    startServer({
+    const rpcOwner = this.sessionModel || this
+    rpcOwner.rpcDetach = startServer({
       onPlan: (msg) => handle('onPlanUpdate', msg),
       onSync: (msg, options) => handle('onSyncUpdate', msg, options),
       onRest: (msg) => handle('onRemoteRest', msg),
@@ -373,6 +374,9 @@ const pageDefinition = {
   },
 
   onDestroy() {
+    const rpcOwner = this.sessionModel || this
+    if (typeof rpcOwner.rpcDetach === 'function') rpcOwner.rpcDetach()
+    rpcOwner.rpcDetach = null
     if (this.crownFocusTimer != null) clearTimeout(this.crownFocusTimer)
     this.crownFocusTimer = null
     this.cancelFinishHold()
@@ -389,6 +393,8 @@ const pageDefinition = {
   },
 
   setRestScreenLock(keepOn) {
+    // App owns the foreground training policy across all workout pages.
+    if (runtime().trainingRuntime) { runtime().trainingRuntime.syncScreen(); return }
     if (!this.displayReady) return
     keepOn = !!keepOn
     if (this.screenLocked === keepOn) return

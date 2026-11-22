@@ -13,6 +13,7 @@ import {
 } from '../lib/summary-view.js'
 
 export default {
+  staticData: { rpcModel: { detach: null } },
   data: {
     blocks: [], summaryName: '', durationLabel: '', setsLabel: '', volumeText: '', volumeUnit: '', heartText: '', caloriesText: '',
     syncLabel: '',
@@ -70,7 +71,7 @@ export default {
     if (!this.timer) this.timer = setInterval(() => this.tick(), 1000)
   },
   onHide() { if (this.timer) clearInterval(this.timer); this.timer = null },
-  onDestroy() { this.onHide() },
+  onDestroy() { this.onHide(); const owner = this.rpcModel || this; if (typeof owner.rpcDetach === 'function') owner.rpcDetach(); owner.rpcDetach = null },
   tick() {
     const d = new Date()
     const clock = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0')
@@ -94,7 +95,8 @@ export default {
       router.replace({ uri: '/Workout' })
       return { status: 'applied', page: 'Summary', exercises: msg.exercises.length }
     }
-    startServer({ onPlan: next, onSync: next, onConflict: () => router.replace({ uri: '/Index' }) })
+    const rpcOwner = this.rpcModel || this
+    rpcOwner.rpcDetach = startServer({ onPlan: next, onSync: next, onConflict: () => router.replace({ uri: '/Index' }) })
   },
 
   // “完成”只返回首页：不结算、不发事件、不重复关闭。

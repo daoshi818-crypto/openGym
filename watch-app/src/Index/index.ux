@@ -28,7 +28,7 @@ export default {
   onReady() { this.ready = true; this.enterWorkout() },
   onShow() { this.visible = true; this.readLocal(); this.bindRpc(); this.startLinkStatus(); this.enterWorkout(); this.checkDay() },
   onHide() { this.visible = false; this.navigating = false; clearTimeout(this.dayTimer); this.dayTimer = null; clearInterval(this.linkTimer); this.linkTimer = null },
-  onDestroy() { this.visible = false; clearTimeout(this.dayTimer); clearInterval(this.linkTimer); if (this.catalogModel) this.catalogModel.current = null },
+  onDestroy() { this.visible = false; clearTimeout(this.dayTimer); clearInterval(this.linkTimer); const owner = this.catalogModel || this; if (typeof owner.rpcDetach === 'function') owner.rpcDetach(); owner.rpcDetach = null; if (this.catalogModel) this.catalogModel.current = null },
   startLinkStatus() { clearInterval(this.linkTimer); this.updatePhoneLink(); this.linkTimer = setInterval(() => this.updatePhoneLink(), 2000) },
   updatePhoneLink() { const label = isPhoneConnected() ? '手机已连接' : '手机未连接'; if (this.phoneLinkLabel !== label) this.phoneLinkLabel = label },
   onBackPress() { return !!this.conflict },
@@ -65,7 +65,8 @@ export default {
     this.needSync = !catalog && !this.plans.length && !s.active
   },
   bindRpc() {
-    startServer({
+    const rpcOwner = this.catalogModel || this
+    rpcOwner.rpcDetach = startServer({
       onCatalog: msg => { this.onCatalog(msg); if (!this.canResume) this.status = this.hasToday || this.plans.length ? '选择训练计划' : '今日暂无计划' },
       onPlan: msg => this.onPlan(msg), onSync: (msg, options) => this.onSync(msg, options),
       onConflict: () => { this.readLocal(); this.conflictHint = this.conflictWaiting ? '正在处理手表训练，等待手机确认…' : '手机训练将继续，请保存或放弃手表训练。' },

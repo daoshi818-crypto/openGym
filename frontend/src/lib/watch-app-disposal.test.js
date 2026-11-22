@@ -10,6 +10,8 @@ function appHarness() {
   const h = watchPersistence(), definition = { openGymRuntime: h.shared }
   const log = vi.fn(), stopped = vi.fn()
   Object.assign(h.ctx, { bindRuntime() {}, WATCH_VERSION: 'test', recordDiagnostic: log,
+    createTrainingRuntime: () => ({ start() {}, dispose() {} }),
+    brightness: {}, schedule: {},
     flushDiagnosticLog() {}, console: { log() {} } })
   runInNewContext(stripImports(watchSource('app.ux').match(/<script>([\s\S]*?)<\/script>/)[1]).replace('export default', 'globalThis.app ='), h.ctx)
   const app = h.ctx.app
@@ -86,4 +88,16 @@ it('does not reopen native storage through late diagnostics or page event replay
   vi.advanceTimersByTime(30000)
   expect(reads).not.toHaveBeenCalled()
   expect(writes).not.toHaveBeenCalled()
+})
+it('releases a destroyed Page subscriber without closing App transport or detaching a newer Page',()=>{
+  const h=appHarness(), old=vi.fn(), current=vi.fn(), sent=[]
+  const connection={close:vi.fn(),send:({data,success})=>{sent.push(data);success?.()},getReadyState:({success})=>success({status:0})}
+  Object.assign(h.ctx,{interconnect:{instance:()=>connection},loadState:()=>({active:false}),pendingSummaries:()=>[],pendingEntry:()=>null,journalEntry:()=>null,rememberEventAt(){}})
+  loadWatchModule('rpc',h.ctx,['startServer'])
+  const detachOld=h.ctx.startServer({onState:old}),detachCurrent=h.ctx.startServer({onState:current})
+  detachOld();connection.onOpen()
+  expect(old).not.toHaveBeenCalled();expect(current).toHaveBeenCalledWith(true)
+  current.mockClear();detachCurrent();connection.onClose()
+  expect(current).not.toHaveBeenCalled();expect(connection.close).not.toHaveBeenCalled()
+  h.app.onDestroy.call({$def:h.definition})
 })

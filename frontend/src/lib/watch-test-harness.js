@@ -99,6 +99,9 @@ export function watchSdkTimers() {
 export function startWatchApp(shared) {
   const timers = watchTimerOwner(), definition = { openGymRuntime: shared }
   const ctx = { ...timers, console: { log() {} }, runtime: () => shared,
+    createTrainingRuntime: () => ({ start() {}, dispose() {} }),
+    brightness: {}, schedule: {},
+    recordDiagnostic() {}, flushDiagnosticLog() {},
     bindRuntime: owner => { if (owner !== definition) throw new Error('wrong runtime owner') } }
   const source = watchSource('app.ux').match(/<script>([\s\S]*?)<\/script>/)[1]
   runInNewContext(stripImports(source).replace('export default', 'this.app ='), ctx)

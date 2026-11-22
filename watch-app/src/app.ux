@@ -2,6 +2,13 @@
 import { bindRuntime, runtime } from './lib/runtime.js'
 import { recordDiagnostic, flushDiagnosticLog } from './lib/diagnostic-log.js'
 import { WATCH_VERSION } from './lib/version.js'
+import brightness from '@blueos.hardware.display.brightness'
+import schedule from '@blueos.app.appmanager.schedule'
+import { createTrainingRuntime } from './lib/training-runtime.js'
+import { readStored, writeStoredAtomic } from './lib/persistence.js'
+import { loadState, flushHr } from './lib/session.js'
+import { startSessionHr } from './lib/sensors.js'
+import { startServer, replayPendingEvents } from './lib/rpc.js'
 export default {
   onCreate() {
     bindRuntime(this.$def || this)
@@ -28,12 +35,36 @@ export default {
     }
     console.log('opengym 启动')
     try { recordDiagnostic('app_start', { version: WATCH_VERSION }); flushDiagnosticLog() } catch { /* Diagnostics are optional. */ }
+    const jobKey = 'training_background_job_v1'
+    r.trainingRuntime = createTrainingRuntime({ brightness, schedule,
+      // Full read only at lifecycle/checkpoint boundaries, so six-hour expiry
+      // and durable close recovery also apply when no Page clock is running.
+      isDestroyed: () => !!r.destroyed, readState: () => loadState(),
+      readJob: () => readStored(jobKey), writeJob: async value => (await writeStoredAtomic(jobKey, () => value)).ok,
+      setTimeout: r.timers.setTimeout, clearTimeout: r.timers.clearTimeout,
+      record: recordDiagnostic, checkpoint: () => flushHr(),
+      restore: () => { startServer(); startSessionHr(); replayPendingEvents() },
+    })
+    r.trainingRuntime.start()
+  },
+  onShow() {
+    runtime().trainingRuntime?.show()
+    try { recordDiagnostic('app_show', { sid: loadState('hr').sid }); flushDiagnosticLog() } catch {}
+  },
+  onHide() {
+    runtime().trainingRuntime?.hide()
+    try { recordDiagnostic('app_hide', { sid: loadState('hr').sid }); flushDiagnosticLog() } catch {}
+  },
+  onTrainingMaintenance(params) { return runtime().trainingRuntime?.run(params) },
+  onError(error) {
+    try { recordDiagnostic('app_error', { code: error?.code, detail: String(error?.message || error || '').slice(0, 80) }); flushDiagnosticLog() } catch {}
   },
   onDestroy() {
     try { recordDiagnostic('app_destroy'); flushDiagnosticLog() } catch { /* Best effort only. */ }
     const app = this.$def || this
     const r = app.openGymRuntime
     if (!r) return
+    try { r.trainingRuntime?.dispose() } catch {}
     try { r.rpc?.stop?.() } catch { /* The SDK may already be closed. */ }
     try { r.hrCapture?.stop() } catch { /* Continue releasing other owners. */ }
     r.destroyed = true
@@ -44,6 +75,7 @@ export default {
     delete r.diagnosticLog
     delete r.persistence
     delete r.hrCapture
+    delete r.trainingRuntime
   },
 }
 </script>
