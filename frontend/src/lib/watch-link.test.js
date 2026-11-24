@@ -473,6 +473,27 @@ describe('paged persistent watch diagnostic retrieval', () => {
     expect(lifecycle).not.toHaveBeenCalled(); expect(sync).not.toHaveBeenCalled(); expect(event).not.toHaveBeenCalled()
     expect(native.sendPlan).not.toHaveBeenCalled(); expect(native.connect).not.toHaveBeenCalled()
   })
+  it('accepts the expanded 128-event journal and retains diagnostic metadata', async () => {
+    const result = link.requestWatchLog()
+    const events = []
+    for (let offset = 0; offset < 65;) {
+      await drain()
+      const request = JSON.parse(native.sendEvent.mock.calls.at(-1)[0].json)
+      const count = Math.min(12, 65 - offset)
+      const pageEvents = Array.from({ length: count }, (_, index) => ({ stage: 'diagnostic', at: offset + index,
+        phase: 'maintenance', attempts: 3, sampleCount: 9, active: true }))
+      native.events.watchEvent({ t: 'watch_log', requestId: request.requestId, offset, status: 'ok', boot: 'boot-test',
+        total: 65, nextOffset: offset + count, events: pageEvents })
+      events.push(...pageEvents)
+      offset += count
+    }
+    await drain()
+    const log = await result
+    expect(log.status).toBe('received')
+    expect(log.total).toBe(65)
+    expect(log.events[0]).toMatchObject({ stage: 'diagnostic', phase: 'maintenance', attempts: 3, sampleCount: 9, active: true })
+    expect(events).toHaveLength(65)
+  })
   it('marks retention counts unknown for older watch journals', async () => {
     const result = link.requestWatchLog()
     await drain()

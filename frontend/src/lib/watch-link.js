@@ -758,7 +758,7 @@ async function readWatchLog() {
       })
     }
     if (!reply) return { status: events.length ? 'partial' : 'timeout', events, collectedAt: Date.now() }
-    if (reply.status !== 'ok' || !Array.isArray(reply.events) || !Number.isSafeInteger(reply.total) || reply.total < 0 || reply.total > 64 ||
+    if (reply.status !== 'ok' || !Array.isArray(reply.events) || !Number.isSafeInteger(reply.total) || reply.total < 0 || reply.total > 128 ||
         !Number.isSafeInteger(reply.nextOffset) || reply.nextOffset !== offset + reply.events.length || reply.nextOffset > reply.total ||
         reply.events.length > 12 || reply.nextOffset === offset && offset < reply.total ||
         header && (header.boot !== reply.boot || header.total !== reply.total))
@@ -771,7 +771,7 @@ async function readWatchLog() {
     for (const e of reply.events) {
       if (!e || typeof e !== 'object') return { status: 'invalid_reply', events }
       const clean = {}
-      for (const key of ['at', 'stage', 'boot', 'count', 'firstAt', 'sid', 'eventId', 'entryInstanceId', 'setId', 'type', 'code', 'detail', 'version', 'status', 'ex', 'set', 'rev', 'pending', 'rest', 'paused', 'ok', 'duration', 'bytes']) {
+      for (const key of ['at', 'stage', 'boot', 'count', 'firstAt', 'sid', 'eventId', 'entryInstanceId', 'setId', 'type', 'code', 'detail', 'version', 'status', 'phase', 'page', 'kind', 'reason', 'ex', 'set', 'rev', 'pending', 'rest', 'paused', 'ok', 'restUntil', 'restVersion', 'restId', 'attempts', 'receivedAt', 'nextAttemptAt', 'durable', 'readyState', 'connectionGeneration', 'headEventId', 'crownDirty', 'dotPending', 'duration', 'actionDuration', 'sampleCount', 'sessionAt', 'bytes', 'active', 'storageFailed', 'unflushed']) {
         const value = e[key]
         if (typeof value === 'string') clean[key] = value.slice(0, 80)
         else if (typeof value === 'boolean' || typeof value === 'number' && Number.isFinite(value)) clean[key] = value
