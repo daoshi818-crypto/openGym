@@ -26,6 +26,7 @@ import { journalEntry } from '../lib/close-journal.js'
 import { applyEdit, applyFocus, applyRest, restOf } from '../lib/protocol.js'
 import { lastTimeView } from '../lib/watch-last-time.js'
 import { zoneView, muscleView } from '../lib/official-metrics.js'
+import { summarizeWorkoutRows } from '../lib/workout-summary.js'
 
 const pageDefinition = {
   // Native reactiveMap retains proxies until Page destruction. Business documents
@@ -725,6 +726,10 @@ const pageDefinition = {
   logInteraction(stage, extra = {}, flush = false) {
     try {
       const s = this.stateOf() || {}
+      const owner = this.sessionModel || this
+      if (stage === 'local_commit_begin') owner.refreshProbeAt = Date.now()
+      else if (stage === 'local_commit_busy' || stage === 'local_commit_failed' || stage === 'local_commit_exception' ||
+          stage === 'page_show' || stage === 'page_hide' || stage === 'page_destroy') owner.refreshProbeAt = 0
       recordDiagnostic(stage, { sid: s.sid, ex: s.exIdx, set: s.setIdx, rev: s.commitRev || 0,
         pending: !!this.localCommitPending, rest: !!this.isRest, paused: !!this.paused, ...extra })
       if (flush) flushDiagnosticLog()
@@ -1347,6 +1352,24 @@ const pageDefinition = {
   },
 
   refresh() {
+    // BlueOS advises pausing background UI updates to avoid a growing render queue.
+    // onShow reloads persisted state and performs the deferred refresh.
+    if (this.visible === false) { this.needsRefresh = true; return }
+    this.needsRefresh = false
+    const startedAt = Date.now()
+    const owner = this.sessionModel || this
+    const actionAt = owner.refreshProbeAt || 0
+    try { return this.refreshView() }
+    finally {
+      const endedAt = Date.now(), state = this.stateOf() || {}
+      const data = { sid: state.sid || '', active: !!state.active, duration: Math.max(0, endedAt - startedAt) }
+      if (actionAt > 0 && endedAt - actionAt <= 30000) data.actionDuration = Math.max(0, endedAt - actionAt)
+      if (owner.refreshProbeAt === actionAt) owner.refreshProbeAt = 0
+      try { recordDiagnostic('workout_refresh', data) } catch { /* Diagnostics must never block a refresh. */ }
+    }
+  },
+
+  refreshView() {
     this.stateOf(this.withDotPreview(this.stateOf()))
     this.weightUnit = this.stateOf()?.weightUnit || 'kg'
     const s = this.stateOf()
@@ -1387,24 +1410,13 @@ const pageDefinition = {
     // 完成后游标已前进；休息提示优先展示当前待做组，避免跳过一组。
     const next = row && !row.done ? { exIdx: s.exIdx, setIdx: s.setIdx } : nextUndone(s)
     this.nextExIdx = next ? next.exIdx : -1
-    const totalSets = s.workout.rows.reduce((n, r) => n + r.length, 0)
-    const doneSets = s.workout.rows.reduce((n, r) => n + r.filter(x => x.done).length, 0)
+    // This refresh runs after most watch interactions. Summarize all set-derived
+    // labels in one pass so larger workouts do not trigger repeated row scans.
+    const { totalSets, doneSets, completedVolume, completed } = summarizeWorkoutRows(s.workout)
     this.checkCompletion(totalSets, doneSets)
     this.setProgressLabel = '完成 ' + doneSets + ' / 剩余 ' + Math.max(0, totalSets - doneSets) + ' 组'
-    let completedVolume = 0
-    s.workout.rows.forEach((rows, exIdx) => {
-      if (this.isTimed(s.workout.exercises[exIdx])) return
-      rows.forEach(r => {
-        const weight = parseFloat(r.w), reps = parseFloat(r.r)
-        if (r.done && Number.isFinite(weight) && Number.isFinite(reps)) completedVolume += weight * reps
-      })
-    })
     this.volumeLabel = this.formatVolume(completedVolume)
     this.restProgLabel = '完成 ' + doneSets + '/' + totalSets + ' 组'
-    let completed = null
-    s.workout.rows.forEach((rows, exIdx) => rows.forEach((r, setIdx) => {
-      if (r.done && (!completed || r.at > completed.at)) completed = { exIdx, setIdx, at: r.at || 0 }
-    }))
     this.restExerciseName = completed
       ? s.workout.exercises[completed.exIdx].name
       : this.exName

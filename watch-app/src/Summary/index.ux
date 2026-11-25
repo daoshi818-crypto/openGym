@@ -6,7 +6,7 @@ import storage from '@blueos.storage.storage'
 import router from '@blueos.app.appmanager.router'
 import { startServer, pendingCount, isConnected } from '../lib/rpc.js'
 import { startSession, applySync } from '../lib/session.js'
-import { journalEntry } from '../lib/close-journal.js'
+import { journalDelivery } from '../lib/close-journal.js'
 import {
   summaryDurationLabel, summaryMinutesOf, summaryNameLabel, summarySetsLabel,
   summaryVolumeOf, summaryHeartOf, summaryCaloriesOf, summarySyncLabel,
@@ -34,6 +34,7 @@ export default {
       this.summary = s && typeof s === 'object' ? s : null
     } catch (e) { this.summary = null }
     // 同步文案必须匹配本总结自己的 sid：旧摘要没有 sid 就只能保守显示待确认。
+    this.phoneExecuted = this.summary?.executionProtocol === 4
     this.sid = this.summary ? (this.summary.sid || this.summary.id || '') : ''
     this.blocks = this.buildBlocks()
     this.summaryName = summaryNameLabel(this.summary)
@@ -81,10 +82,10 @@ export default {
   updateSync() {
     // 只读关闭日志的送达状态：不调用 markDelivered，也不把 session_close_ack 当汇总确认，
     // 更不会为了“显示已上传”去清空 outbox 或关闭日志。
+    if (this.phoneExecuted) { if (this.syncLabel !== '训练已在手表结束') this.syncLabel = '训练已在手表结束'; return }
     let delivered = false
     try {
-      const entry = this.sid ? journalEntry(this.sid) : null
-      delivered = !!(entry && entry.delivery === 'delivered')
+      delivered = this.sid ? journalDelivery(this.sid) === 'delivered' : false
     } catch (e) { delivered = false }
     this.syncLabel = summarySyncLabel({ delivered, pending: pendingCount(), connected: isConnected() })
   },
@@ -96,7 +97,7 @@ export default {
       return { status: 'applied', page: 'Summary', exercises: msg.exercises.length }
     }
     const rpcOwner = this.rpcModel || this
-    rpcOwner.rpcDetach = startServer({ onPlan: next, onSync: next, onConflict: () => router.replace({ uri: '/Index' }) })
+    rpcOwner.rpcDetach = startServer({ onPhoneStart: () => router.replace({ uri: '/Workout' }), onPlan: next, onSync: next, onConflict: () => router.replace({ uri: '/Index' }) })
   },
 
   // “完成”只返回首页：不结算、不发事件、不重复关闭。

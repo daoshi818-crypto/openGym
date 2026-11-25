@@ -20,6 +20,12 @@ export function journalEntry(sid) {
   return sid ? readJournal().entries[sid] || null : null
 }
 
+export function journalDelivery(sid) {
+  if (!sid) return null
+  const journal = readStored(CLOSE_JOURNAL_KEY, { entries: { [sid]: { delivery: true } } })
+  return journal?.entries?.[sid]?.delivery || null
+}
+
 /** 尚未送达手机的冻结汇总（重启后要重建 outbox 的那批）。
  *  候选（candidate）不在这里：手机还没说“这场已保存”，不能自己把它变成历史。 */
 export function pendingSummaries() {
@@ -56,7 +62,7 @@ export async function prepareClose(close, summaryEvent, delivery = 'pending') {
       // A pre-extension frozen candidate keeps its summary identity. Add the new
       // close prerequisite without changing any already-frozen business payload.
       if (close.closeEvent && !entries[sid].closeEvent) Object.assign(entries[sid], { closeEvent: close.closeEvent,
-        pendingEvents: close.pendingEvents || [], localClose: true, closeCommitted: false, delivery })
+        pendingEvents: close.pendingEvents || [], parkedEvents: close.parkedEvents || [], localClose: true, closeCommitted: false, delivery })
       return
     }
     const terminal = Object.values(entries).filter(e => ['delivered', 'discarded'].includes(e.delivery) && (!e.localClose || e.closeCommitted)).sort((a,b) => a.closedAt - b.closedAt)
@@ -65,7 +71,7 @@ export async function prepareClose(close, summaryEvent, delivery = 'pending') {
     entries[sid] = {
       sid, closeEventId: close.eventId || '', disposition: close.disposition || 'saved',
       closedAt: close.closedAt || Date.now(), phase: 'prepared', summaryEvent, delivery, lastError: null,
-      ...(close.closeEvent ? { closeEvent: close.closeEvent, pendingEvents: close.pendingEvents || [], localClose: true, closeCommitted: false } : {}),
+      ...(close.closeEvent ? { closeEvent: close.closeEvent, pendingEvents: close.pendingEvents || [], parkedEvents: close.parkedEvents || [], localClose: true, closeCommitted: false } : {}),
     }
   })
   return journal?.entries[sid] || null

@@ -1,0 +1,39 @@
+name: WATCH GT device test
+on:
+  push:
+    branches: [device-test/v4-20261125]
+permissions:
+  contents: read
+jobs:
+  pair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Verify signed BlueOS square build
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p pair
+          version=$(node -p "require('./watch-app/src/manifest.json').versionName")
+          file="watch-app/releases/opengym-watch-$version.rpk"
+          node .github/scripts/verify-watch-packages.cjs
+          node watch-app/scripts/test-device-v4.mjs
+          cp "$file" "$file.sha256" pair/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: watch-gt-signed-${{ github.sha }}
+          path: pair/
+          if-no-files-found: error
+          retention-days: 14
