@@ -105,6 +105,18 @@ describe('current phone workout watch handoff', () => {
     expect(native.openWatchApp).not.toHaveBeenCalled()
     expect(starts()).toEqual([])
   })
+  it('resumes a foreground workout after a background interruption before any start was sent', async () => {
+    let complete
+    native.openWatchApp.mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
+    update(makeWorkout()); await settle()
+    foreground(false); await settle()
+    complete({ ok: true }); await settle()
+    expect(native.openWatchApp).toHaveBeenCalledTimes(1)
+    expect(starts()).toEqual([])
+    foreground(true); await settle(); await hello(); snapshot(); await settle()
+    expect(native.openWatchApp).toHaveBeenCalledTimes(2)
+    expect(starts()).toHaveLength(1)
+  })
   it('cancels a queued launch on stop and ignores a late launch completion or watch idle', async () => {
     let complete
     native.openWatchApp.mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
@@ -115,6 +127,33 @@ describe('current phone workout watch handoff', () => {
     complete({ ok: true }); await settle(); await hello(); snapshot(); await settle()
     expect(starts()).toEqual([])
     expect(handoff.currentWorkoutWatchStatus().phase).toBe('idle')
+  })
+  it('invalidates a start already queued in the native bridge when the phone workout stops', async () => {
+    let complete
+    native.sendEvent.mockImplementation(({ json }) => JSON.parse(json).t === 'START_SESSION'
+      ? new Promise(resolve => { complete = resolve }) : Promise.resolve({ ok: true }))
+    update(makeWorkout()); await settle(); await hello(); snapshot(); await settle()
+    const [start] = starts()
+    const [input] = native.sendEvent.mock.calls.find(([arg]) => JSON.parse(arg.json).t === 'START_SESSION')
+    expect(input.workoutStartToken).toBe(start.requestId)
+    update(null); await settle()
+    expect(native.cancelWorkoutStart).toHaveBeenCalledWith({ token: start.requestId })
+    complete({ ok: true })
+    emit({ t: 'SESSION_ACCEPTED', protocolVersion: 4, requestId: start.requestId, sid: start.sid, status: 'accepted' })
+    await settle(); snapshot(); await settle()
+    expect(handoff.currentWorkoutWatchStatus().phase).toBe('idle')
+    expect(starts()).toHaveLength(1)
+  })
+  it('ignores an SDK connection result that arrives after explicit disconnect', async () => {
+    online(false)
+    let complete
+    native.connect.mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
+    const reconnect = link.connectWatch(); update(makeWorkout()); await settle()
+    await link.disconnectWatch()
+    complete({ connected: true }); expect(await reconnect).toBe(false)
+    online(true); await settle()
+    expect(native.openWatchApp).not.toHaveBeenCalled()
+    expect(link.watchConnection().sdkConnected).toBe(false)
   })
   it('offers explicit retry after failure, rejects a legacy hello and does not overwrite another watch session', async () => {
     native.openWatchApp.mockResolvedValueOnce({ ok: false })

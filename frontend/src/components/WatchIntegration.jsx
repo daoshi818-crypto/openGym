@@ -148,7 +148,7 @@ export function WatchPairSheet({ close }) {
   return <>
     <h3>{t('Connect watch')}</h3>
     <p className="muted small">
-      请先在 vivo 运动健康中绑定并连接手表，再打开该手表上的 OpenGym。
+      请先在 vivo 运动健康中绑定并连接手表。首次连接时，请在手表上打开 OpenGym。
     </p>
     <p className="muted small" role="status">手表连接：{connection.appConnected ? '已确认连接' : connection.sdkConnected ? '通道已连接，等待手表应用确认' : '未连接'}
       {connection.appConnected && connection.lastVerifiedAt > 0 && ` · 最近确认 ${new Date(connection.lastVerifiedAt).toLocaleTimeString()}`}

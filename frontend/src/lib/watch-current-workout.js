@@ -18,7 +18,8 @@ const currentPhoneSid = state => {
 // A launch is an untargeted SDK wake; a v4 start is separate and only follows proof of
 // the pinned installation and its fresh idle snapshot. No background or durable queue owns a start.
 export function createCurrentWorkoutWatchHandoff({ getState, getConnection, getSnapshot, launch, start, publish }) {
-  let foreground = false, disposed = false, sid = '', phase = 'idle', attempted = false, startAttempted = false, sawDisconnect = false, attempt = null
+  let foreground = false, disposed = false, sid = '', phase = 'idle', attempt = null
+  let attempted = false, startAttempted = false, sawDisconnect = false, resumePreStart = false
   const report = (next, reason) => {
     if (phase !== next || reason) { phase = next; publish({ phase, reason }) }
   }
@@ -49,12 +50,12 @@ export function createCurrentWorkoutWatchHandoff({ getState, getConnection, getS
     const nextSid = currentPhoneSid(getState())
     if (sid !== nextSid) {
       stop()
-      sid = nextSid; attempted = false; startAttempted = false; sawDisconnect = false
+      sid = nextSid; attempted = false; startAttempted = false; sawDisconnect = false; resumePreStart = false
       report(sid ? 'waiting' : 'idle')
     }
     if (!sid) return
     const link = getConnection()
-    if (link.sdkOffline && attempted && !startAttempted && ['failed', 'handshake', 'launching'].includes(phase)) sawDisconnect = true
+    if (link.sdkOffline && attempted && !startAttempted && ['failed', 'handshake', 'launching', 'starting'].includes(phase)) sawDisconnect = true
     if (attempt && (!route(link) || link.selectedId !== attempt.device)) { fail(attempt, 'disconnected'); return }
     if (!foreground) return
     if (sawDisconnect && route(link)) { sawDisconnect = false; attempted = false }
@@ -100,8 +101,15 @@ export function createCurrentWorkoutWatchHandoff({ getState, getConnection, getS
   return {
     refresh,
     setForeground(next) {
+      if (foreground === next) return
       foreground = next
-      if (!next && attempt) fail(attempt, 'background')
+      if (!next && attempt) {
+        resumePreStart = !startAttempted
+        fail(attempt, 'background')
+      } else if (next && resumePreStart) {
+        attempted = false
+        resumePreStart = false
+      }
       refresh()
     },
     retry() {
