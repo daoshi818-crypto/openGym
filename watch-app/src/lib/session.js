@@ -197,9 +197,9 @@ export async function commitSessionAction(sid, action) {
   // ahead of the close transaction. The durable intent is the transform guard.
   if (runtime().closingSid === sid) return { ok: false, error: 'session_closing' }
   let output, liveEvents
-  const result = await writeStoredAtomic(K_STATE, latest => {
-    if (latest?.closeIntent || !latest?.active || latest.sid !== sid) throw new Error('session_changed')
-    const candidate = JSON.parse(JSON.stringify(latest))
+  const result = await writeStoredAtomic(K_STATE, candidate => {
+    // Atomic storage passes a detached copy; use it as the transaction draft.
+    if (candidate?.closeIntent || !candidate?.active || candidate.sid !== sid) throw new Error('session_changed')
     candidate.hr = latestHr(candidate)
     runtime().sessionDraft = candidate
     try { runtime().stagedLive = liveEvents = []; output = action(candidate) }

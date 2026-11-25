@@ -1,9 +1,9 @@
 {
   "square": {
     "target": "watch-square",
-    "version": "0.6.41-test.3",
-    "versionCode": 58,
-    "file": "opengym-watch-0.6.41-test.3.rpk",
+    "version": "0.6.41-test.4",
+    "versionCode": 59,
+    "file": "opengym-watch-0.6.41-test.4.rpk",
     "status": "current"
   },
   "round": {

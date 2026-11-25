@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { expect, it } from 'vitest'
 import { maxHeartRate, heartZone, zoneView, muscleView } from '../../../watch-app/src/lib/official-metrics.js'
-import { watchPlanOf, watchSnapshotOf, watchCatalogOf, watchProfileOf } from './watch-workout.js'
+import { watchPlanOf, watchSnapshotOf, watchProfileOf } from './watch-workout.js'
 import { MUSCLES } from './muscles.js'
 import { EXDB } from './exercises.js'
 
@@ -32,15 +32,14 @@ it('counts completed working sets per muscle, sorts shares, and keeps all rows i
   expect(view.rows.map(r=>[r.key,r.value,r.name])).toEqual([['deltoids','2','肩部'],['chest','1.4','胸部'],['triceps','0.5','肱三头肌']])
   expect(muscleView({exercises:[{}],rows:[[{done:true}]]}).rows).toEqual([])
 })
-it('transmits real muscle weights and valid birth years through active plans, snapshots and catalogs', () => {
+it('transmits real muscle weights and valid birth years in active plans and snapshots', () => {
   const ex=EXDB.find(e=>e.tg && e.eq!=='body weight'), S={unit:'kg',birthYear:1996,restSec:60,bodyweight:[],
-    routines:[{id:'r',name:'推',ex:[{id:ex.id,sets:2,reps:8,weight:20}]}],watchPlanIds:['r'],
     active:{start:1,name:'推',entries:[{id:ex.id,sets:[{w:20,r:8}]}]}}
   const plan=watchPlanOf(S), muscles=plan.workout.exercises[0].muscles
   expect(Object.keys(muscles).length).toBeGreaterThan(0)
   expect(Object.keys(muscles).every(k=>MUSCLES.includes(k))).toBe(true)
   expect(watchSnapshotOf(S,null).exercises[0].muscles).toEqual(muscles)
-  expect(watchCatalogOf(S).plans[0].exercises[0].muscles).toEqual(muscles)
+  expect(watchSnapshotOf(S,null).profile.birthYear).toBe(1996)
   expect(plan.profile.birthYear).toBe(1996)
   expect(watchProfileOf({...S,birthYear:2025}).birthYear).toBeUndefined()
 })

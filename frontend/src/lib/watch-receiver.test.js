@@ -501,14 +501,16 @@ describe('watch direct workout entry', () => {
     expect(router.replace).not.toHaveBeenCalled()
   })
 
-  it('keeps cached plans idle and does not navigate a hidden home page', async () => {
+  it('stays idle and waits until the hidden home page is visible to open a phone workout', async () => {
     const sessions = session(), { index, router } = home(sessions)
     index.onReady()
-    index.onCatalog({ plans: [{ id: 'p', name: 'Plan', exercises: plan.exercises }] })
+    expect(index.canResume).toBe(false)
     expect(sessions.loadState().active).toBe(false)
     index.onHide()
     index.onPlan(plan)
     expect(router.replace).not.toHaveBeenCalled()
+    index.onShow()
+    expect(router.replace).toHaveBeenCalledExactlyOnceWith({ uri: '/Workout' })
   })
 })
 

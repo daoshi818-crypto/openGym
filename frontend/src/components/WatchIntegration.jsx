@@ -1,12 +1,9 @@
-import { useEffect, useState, useMemo } from 'react'
-import { useStore } from '../store/useStore.js'
+import { useEffect, useState } from 'react'
 import { useUI } from '../store/useUI.js'
 import { t } from '../lib/i18n.js'
 import { MOBILE, isAndroid, shareExport, onAppActive } from '../lib/mobile.js'
-import { watchAvailable, watchState, onWatchState, connectWatch, disconnectWatch, openWatchApp, getWatchDeviceInfo, watchDevice, watchLastError, getWatchLogs, getWatchDiagnostics, requestWatchDiagnostics, onWatchCommitStatus, watchConnection, onWatchConnection, discoverWatchDevices, probeWatchConnection, openWatchHealth, watchCatalogStatus, onWatchCatalogStatus, pushWatchCatalog } from '../lib/watch-link.js'
+import { watchAvailable, watchState, onWatchState, connectWatch, disconnectWatch, openWatchApp, getWatchDeviceInfo, watchDevice, watchLastError, getWatchLogs, getWatchDiagnostics, requestWatchDiagnostics, onWatchCommitStatus, watchConnection, onWatchConnection, discoverWatchDevices, probeWatchConnection, openWatchHealth } from '../lib/watch-link.js'
 import { collectWatchDiagnosticReport } from '../lib/watch-diagnostic-export.js'
-import { watchCatalogOf } from '../lib/watch-workout.js'
-import { todayISO } from '../lib/format.js'
 import { Row, Button } from './ui.jsx'
 
 export default function WatchIntegration() {
@@ -46,7 +43,6 @@ export default function WatchIntegration() {
 }
 
 export function WatchPairSheet({ close }) {
-  const S = useStore(s => s.S)
   const [status, setStatus] = useState(() => watchState())
   const [delivery, setDelivery] = useState({ phase: 'idle', pending: 0 })
   useEffect(() => onWatchCommitStatus(setDelivery), [])
@@ -60,15 +56,12 @@ export function WatchPairSheet({ close }) {
   const [launchResult, setLaunchResult] = useState('')
   const [exportingLogs, setExportingLogs] = useState(false)
   const [connection, setConnection] = useState(watchConnection)
-  const [catalog, setCatalog] = useState(watchCatalogStatus)
   const [checking, setChecking] = useState(false)
-  const [sending, setSending] = useState(false)
-  const date = todayISO(), today = useMemo(() => watchCatalogOf(S, date), [S, date])
 
   useEffect(() => {
     const off = onWatchState(setStatus)
-    const offConnection = onWatchConnection(setConnection), offCatalog = onWatchCatalogStatus(setCatalog)
-    return () => { off?.(); offConnection?.(); offCatalog?.() }
+    const offConnection = onWatchConnection(setConnection)
+    return () => { off?.(); offConnection?.() }
   }, [])
 
   useEffect(() => {
@@ -103,15 +96,6 @@ export function WatchPairSheet({ close }) {
       setInfo(watchDevice()); setConnection(watchConnection())
     } finally { setChecking(false) }
   }
-  const syncPlans = async () => {
-    if (sending) return
-    setSending(true); setError('')
-    try {
-      const ok = await pushWatchCatalog(watchCatalogOf(useStore.getState().S), true)
-      if (!ok) setError('目录已排队。请连接所选手表并确保两端均已更新；超出容量时不会截断计划。')
-    } finally { setSending(false) }
-  }
-
   const connect = async () => {
     setError('')
     setBusy(true)
@@ -169,13 +153,7 @@ export function WatchPairSheet({ close }) {
     <p className="muted small" role="status">手表连接：{connection.appConnected ? '已确认连接' : connection.sdkConnected ? '通道已连接，等待手表应用确认' : '未连接'}
       {connection.appConnected && connection.lastVerifiedAt > 0 && ` · 最近确认 ${new Date(connection.lastVerifiedAt).toLocaleTimeString()}`}
     </p>
-    <p className="muted small">今日计划：{today.todayPlan?.name || '今日暂无训练安排'}<br />全量计划：{today.plans.length} 个，自动推送到当前手表。</p>
-    <p className={catalog.phase === 'failed' ? 'small danger' : 'muted small'} role="status">
-      {catalog.phase === 'synced' ? `手表已保存全部 ${catalog.count} 个计划 · ${catalog.date}`
-        : catalog.phase === 'syncing' ? `正在同步全部 ${catalog.count} 个计划，等待手表保存确认`
-        : catalog.phase === 'queued' ? '计划已排队，手表应用确认连接后同步'
-        : catalog.phase === 'failed' ? `计划同步未完成：${catalog.error === 'catalog_too_large' ? '目录超过手表传输容量，未截断也未确认成功' : catalog.error}` : '计划尚未确认同步'}
-    </p>
+    <p className="muted small">手机开始训练后会自动打开已连接的手表应用，只发送本次训练。</p>
     {dev && connected && <div className="list" style={{ margin: '10px 0 14px' }}>
       <div className="item">
         <span className="lrow-m">
@@ -205,7 +183,6 @@ export function WatchPairSheet({ close }) {
     <div className="row" style={{ gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
       <Button variant="ghost" disabled={checking || busy} onClick={check}>{checking ? '正在确认连接…' : '刷新并确认连接'}</Button>
       <Button variant="ghost" onClick={async () => { if (!(await openWatchHealth())) setError('无法打开 vivo 运动健康，请手动打开后切换设备') }}>打开运动健康</Button>
-      <Button variant="ghost" disabled={sending || !connection.selectedId} onClick={syncPlans}>{sending ? '正在排队…' : '同步全部训练计划'}</Button>
       <Button variant="primary" disabled={busy || opening || status === 'connecting'} onClick={launch}>{opening ? t('Opening watch app…') : t('Open watch app')}</Button>
       {!connected && <Button variant="ghost" disabled={busy || opening || status === 'connecting'} onClick={connect}>{busy ? t('Connecting…') : t('Connect')}</Button>}
       {(connected || status === 'ready') && <Button variant="danger" disabled={busy || opening} onClick={async () => { await disconnectWatch(); close() }}>{t('Disconnect')}</Button>}

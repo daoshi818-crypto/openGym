@@ -717,7 +717,7 @@ const pageDefinition = {
       this.cancelSetDotPick()
       return state
     }
-    return { ...state, exIdx: found.exIdx, setIdx: found.setIdx }
+    return state.setIdx === found.setIdx ? state : { ...state, exIdx: found.exIdx, setIdx: found.setIdx }
   },
   cancelSetDotPick() {
     if (this.setDotPicker) this.setDotPicker.cancel()
@@ -747,16 +747,17 @@ const pageDefinition = {
     if (pressure) { this.inputNotice = '等待同步后再切换'; return this.logDotBlocked(target, pressure, 'commit') }
     return commitPageAction(this, function() {
     if (this.interactionBlocked(true) || this.isRest || this.paused || this.closeMode || this.effortOn || this.lastOpen || this.finishOn) return this.logDotBlocked(target, this.setDotBlockReason() || 'interaction', 'draft')
-    const s = loadState(), found = rowTarget(s, target)
-    if (!found || s.sid !== this.stateOf().sid || found.exIdx !== s.exIdx || s.pausedAt || s.restUntil || found.setIdx === s.setIdx) return this.logDotBlocked(target, !found ? 'stale_target' : s.sid !== this.stateOf().sid ? 'session_changed' : found.exIdx !== s.exIdx ? 'exercise_changed' : s.pausedAt ? 'paused_state' : s.restUntil ? 'rest_state' : 'current_set', 'draft')
+    const s = this.stateOf(), found = rowTarget(s, target)
+    if (!found || s.sid !== target.sid || found.exIdx !== s.exIdx || s.pausedAt || s.restUntil || found.setIdx === s.setIdx) return this.logDotBlocked(target, !found ? 'stale_target' : s.sid !== target.sid ? 'session_changed' : found.exIdx !== s.exIdx ? 'exercise_changed' : s.pausedAt ? 'paused_state' : s.restUntil ? 'rest_state' : 'current_set', 'draft')
     this.logInteraction('dot_focus_staged', { setId: target.setId, set: target.setIdx })
-    this.clearFieldSelection(); this.stateOf(s)
+    this.clearFieldSelection()
     this.autoFocusEx = found.exIdx; this.autoFocusSet = found.setIdx; this.autoFocusIgnoreUntil = 0
     s.exIdx = found.exIdx; s.setIdx = found.setIdx; s.focusAt = Date.now(); save(s)
     this.emitEvent({ t: 'focus', sid: s.sid, entryInstanceId: s.workout.exercises[s.exIdx].entryInstanceId,
       setId: found.row.setId, ex: s.exIdx, set: s.setIdx + 1, baseCommitRev: target.baseCommitRev, at: s.focusAt, source: 'watch' })
-    this.refresh()
-    }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
+    // Preserve any newer preview while this write completes. The batch performs
+    // the single reconciliation render when the last requested group settles.
+    }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition, previewState: (page, state) => page.withDotPreview(state) })
   },
 
   onComplete(expectedTarget) {
@@ -1191,10 +1192,10 @@ const pageDefinition = {
 
   // ---- 本组强度（RPE/RIR）----------------------------------------------------
   // 同页覆盖层：不新增页面，原计时器/RPC/心率 owner 全部继续运行，休息不会因为登记暂停或重置。
-  effortTargetRow() {
+  effortTargetRow(state) {
     const t = this.effortTarget
     if (!t) return null
-    const s = loadState()
+    const s = state || loadState()
     if (!s.active || s.sid !== t.sid || !s.workout) return null
     const exIdx = t.entryInstanceId
       ? s.workout.exercises.findIndex(ex => ex.entryInstanceId === t.entryInstanceId) : t.exIdx
@@ -1214,8 +1215,8 @@ const pageDefinition = {
     }))
     return best
   },
-  effortTargetValid() {
-    const found = this.effortTargetRow()
+  effortTargetValid(state) {
+    const found = this.effortTargetRow(state)
     return !!(found && (!this.effortOn || !this.effortTargetWasDone || found.row.done))
   },
   openEffort(fromOp) {
@@ -1370,9 +1371,9 @@ const pageDefinition = {
   },
 
   refreshView() {
-    this.stateOf(this.withDotPreview(this.stateOf()))
-    this.weightUnit = this.stateOf()?.weightUnit || 'kg'
-    const s = this.stateOf()
+    const current = this.stateOf(), s = this.withDotPreview(current)
+    if (s !== current) this.stateOf(s)
+    this.weightUnit = s?.weightUnit || 'kg'
     if (!s || !s.workout) return
     if (this.freezeCloseView()) return
     this.reconcileRestClock()
@@ -1447,7 +1448,7 @@ const pageDefinition = {
       }
     }
     this.effortEntryLabel = this.effortTarget ? '第' + this.effortTarget.setNo + '组强度' : '本组强度'
-    const target = this.effortTargetRow()
+    const target = this.effortTargetRow(s)
     const targetKind = target ? effortKindOf(target.row) : null
     const targetValue = target && targetKind ? effortValueOf(target.row, targetKind) : null
     // 普通页只显示评分，含义解释只在选择层出现；同步状态统一由顶部状态栏展示。
@@ -1457,7 +1458,7 @@ const pageDefinition = {
     this.effortNumber = targetValue != null ? formatEffort(targetValue) : '—'
     this.effortEntryOn = this.effortScale !== 'none' && !!target
     if (this.effortOn) {
-      if (!this.effortTargetValid()) { this.effortNotice = '目标组已变化，已停止编辑' ; this.effortOn = false }
+      if (!this.effortTargetValid(s)) { this.effortNotice = '目标组已变化，已停止编辑' ; this.effortOn = false }
       else if (this.stateOf().effortScale !== this.effortScaleAtOpen) this.effortStale = true
       this.refreshEffortRest()
     }
@@ -1488,7 +1489,7 @@ const pageDefinition = {
     this.lastEffortText = '末组 ' + scaleLabel + '  '
       + (lastDoneKind && lastDoneValue != null ? formatEffort(lastDoneValue) : '未填写')
 
-    this.updateOfficialViews()
+    this.updateOfficialViews(s, next)
     this.syncClockTimer()
     this.tickClock(true)
   },
@@ -1505,8 +1506,12 @@ const pageDefinition = {
       for (const key of Object.keys(row)) if (current[i][key] !== row[key]) current[i][key] = row[key]
     })
   },
-  updateOfficialViews() {
-    const s = this.stateOf()
+  updateOfficialViews(s = this.stateOf(), next) {
+    if (!s?.workout) return
+    if (next === undefined) {
+      const row = s.workout.rows[s.exIdx]?.[s.setIdx]
+      next = row && !row.done ? { exIdx: s.exIdx, setIdx: s.setIdx } : nextUndone(s)
+    }
     let done = 0, total = 0
     this.displayRows('overviewRows', s.workout.exercises.map((ex, i) => {
       const rows = s.workout.rows[i] || [], n = rows.filter(r => r.done).length
@@ -1515,8 +1520,6 @@ const pageDefinition = {
         current: i === s.exIdx, finished: rows.length > 0 && n === rows.length }
     }))
     this.doneTotal = done + '/' + total
-    const current = s.workout.rows[s.exIdx]?.[s.setIdx]
-    const next = current && !current.done ? { exIdx: s.exIdx, setIdx: s.setIdx } : nextUndone(s)
     this.nextOfficial = next ? s.workout.exercises[next.exIdx].name + '，第 ' + (next.setIdx + 1) + ' 组' : '所有组已完成'
     // Effort.chips / Og.effortColor: the exact four shortcuts from upstream.
     this.displayRows('effortChips', (this.effortScale === 'rpe' ? [10, 9, 8, 7] : [0, 1, 2, 3]).map((value, i) => ({
@@ -1736,7 +1739,10 @@ const pageDefinition = {
 
   emitEvent(ev) {
     sendEvent(ev)
-    const latest = loadState()
+    // The draft already owns staged events. Outside a transaction, read only
+    // the outstanding intentions, not another copy of the workout.
+    if (this.sessionActionDraft) return
+    const latest = loadState('replay')
     if (latest.sid === this.stateOf().sid) this.stateOf().pendingEdits = latest.pendingEdits || []
   },
   onPause() { return this.setPaused(!this.stateOf().pausedAt, Date.now(), true) },

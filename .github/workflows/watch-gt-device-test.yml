@@ -37,7 +37,7 @@ jobs:
         run: bash .github/scripts/ci-build.sh
       - name: Test phone receiving and routing
         working-directory: frontend
-        run: npx vitest run src/lib/watch-link.test.js src/lib/watch-v4-state.test.js src/lib/watch-commit.test.js src/lib/watch-phone-presence.test.js src/lib/watch-device-link.test.js src/lib/watch-session.test.js src/lib/watch-diagnostic-rpc.test.js --maxWorkers=2
+        run: npx vitest run src/lib/watch-link.test.js src/lib/watch-v4-state.test.js src/lib/watch-commit.test.js src/lib/watch-phone-presence.test.js src/lib/watch-device-link.test.js src/lib/watch-session.test.js src/lib/watch-diagnostic-rpc.test.js src/lib/watch-current-workout.test.js src/lib/watch-catalog-pages.test.js src/lib/watch-catalog-transfer.test.js src/views/Integrations.watch.test.jsx --maxWorkers=2
       - name: Collect both install packages
         run: |
           cp openGym.apk openGym.apk.sha256 pair/
@@ -48,3 +48,24 @@ jobs:
           path: pair/
           if-no-files-found: error
           retention-days: 14
+  publish_current_session_test:
+    needs: pair
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[gt-current-test4]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: opengym-gt-pair-${{ github.sha }}
+          path: pair
+      - name: Publish signed device test only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          (cd pair && sha256sum -c SHA256SUMS.txt)
+          test "$(node -p "require('./frontend/package.json').version")" = 1.6.39-gt.2
+          gh release create gt-current-test4-20261125 pair/openGym.apk pair/opengym-watch-0.6.41-test.4.rpk pair/SHA256SUMS.txt --target "$GITHUB_SHA" --prerelease --latest=false --title 'vivo WATCH GT 当前训练实机测试 · 手机 gt.2 / 手表 test.4' --notes-file .github/gt-current-test4.md

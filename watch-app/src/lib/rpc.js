@@ -184,25 +184,6 @@ function parseMessage(data) {
   return fail('envelope_depth_limit')
 }
 
-async function applyCatalog(msg) {
-  if (!Array.isArray(msg.plans) || !/^\d{4}-\d{2}-\d{2}$/.test(msg.date || '')) return { ok: false, error: 'invalid_catalog' }
-  if (msg.contentHash && (!Number.isSafeInteger(msg.at) || msg.at <= 0 || typeof msg.catalogId !== 'string')) return { ok: false, error: 'invalid_catalog' }
-  if (msg.contentHash) {
-    const { contentHash, ...body } = msg
-    if (wireHash(body) !== contentHash) return { ok: false, error: 'catalog_checksum' }
-  }
-  let status = 'applied'
-  const result = await writeStoredAtomic('plan_catalog', previous => {
-    if (previous?.at > msg.at) { status = 'retained'; return previous }
-    if (previous?.at === msg.at && previous.contentHash && previous.contentHash !== msg.contentHash) throw Error('catalog_conflict')
-    return msg
-  })
-  if (result.ok && status === 'applied') {
-    try { rpcState().handlers.onCatalog?.(msg) } catch (error) { trace('page_catalog_error', null, error) }
-  }
-  return { ok: result.ok, status, error: result.ok ? '' : 'transfer_storage' }
-}
-
 function sendHello() {
   const s = loadState('rpc')
   rpcState().installationId ||= allocateEventIdentity('', 'link').installationId
@@ -211,7 +192,7 @@ function sendHello() {
     linkEpoch: rpcState().linkEpoch || (rpcState().linkEpoch = Date.now().toString(36) + ':' + Math.random().toString(36).slice(2, 10)),
     installationId: rpcState().installationId,
     helloId: rpcState().linkEpoch, watchVersion: WATCH_VERSION, protocolVersion: 4, stableIds: true,
-    capabilities: { stateSnapshot: true, sessionConflict: true, inlineSnapshots: true, deviceSelection: true, planCatalogChunks: true, snapshotGenerations: true, narrowDependencies: true, causalFrontier: true, sessionPresence: true, durableCommit: true, snapshotChunks: true, deltas: true, dependencyEvents: true, selectiveChunkAck: true, persistentTransfers: true, commandReceipts: true, watchEventChunks: true },
+    capabilities: { stateSnapshot: true, sessionConflict: true, inlineSnapshots: true, deviceSelection: true, snapshotGenerations: true, narrowDependencies: true, causalFrontier: true, sessionPresence: true, durableCommit: true, snapshotChunks: true, deltas: true, dependencyEvents: true, selectiveChunkAck: true, persistentTransfers: true, commandReceipts: true, watchEventChunks: true },
     receipts: true,
     sid: s.sid || '',
     rev: s.rev || 0,
@@ -681,6 +662,9 @@ export function startServer(h) {
         reason: decoded.reason, decodePath: decoded.decodePath, layers: decoded.layers })
       return
     }
+    // Older phones can still send library traffic. Discard it before transport
+    // bookkeeping or creating a receiver for an unrelated workout.
+    if (msg.t === 'plan_catalog' || (typeof msg.transferId === 'string' && msg.transferId.startsWith('c:'))) return
     const target = msg.targetInstallationId
     if (target) rpcState().installationId ||= allocateEventIdentity('', 'link').installationId
     if (target && target !== rpcState().installationId) return
@@ -689,7 +673,7 @@ export function startServer(h) {
     // 能收到有效业务包就是连接已恢复的证据，不依赖遗漏的 onOpen。
     if (!rpcState().connected) resumeConnection()
     rpcState().lastPhoneAt = Date.now()
-    if (msg.t === 'sync_chunk' && rpcState().v4Ready && !msg.transferId?.startsWith('c:')) {
+    if (msg.t === 'sync_chunk' && rpcState().v4Ready) {
       if (!msg.transferId?.startsWith('start:')) return
       try { msg = acceptWireChunk(rpcState().transfers ||= {}, msg, Date.now()); if (msg?.t !== 'START_SESSION') return }
       catch (error) { trace('invalid_start_chunk', {}, error); return }
@@ -827,17 +811,6 @@ export function startServer(h) {
       })
       return
     }
-    if (msg.transferId?.startsWith('c:') && ['sync_begin', 'sync_chunk', 'sync_resume', 'sync_cancel'].includes(msg.t)) {
-      if (!rpcState().peerCapabilities?.planCatalogChunks) return
-      serial(async () => {
-        const r = rpcState()
-        r.catalogReceiver ||= persistentReceiver({ read: key => readStored(key),
-          write: async (key, value) => (await writeStoredAtomic(key, () => value)).ok },
-          applyCatalog, () => Date.now(), { channel: 'catalog', types: ['plan_catalog'], fenced: () => rpcState().peerCapabilities?.snapshotGenerations === true })
-        for (const reply of await r.catalogReceiver.receive(msg)) sendControl(reply)
-      }, 'catalogQueue')
-      return
-    }
     if (msg.transferId?.startsWith('p:') && ['sync_begin', 'sync_chunk', 'sync_resume', 'sync_cancel', 'sync_inline'].includes(msg.t)) {
       const caps = rpcState().peerCapabilities || {}
       if (!caps.selectiveChunkAck || !caps.persistentTransfers) return
@@ -876,13 +849,6 @@ export function startServer(h) {
       // Legacy exact ACK is the old protocol's durable business receipt, not received/code=0.
       // Never let a v2 ACK downgrade a v3 transaction, and never cumulatively clear IDs.
       if ((rpcState().peerProtocol || 0) < 3 && msg.eventId) serial(() => acceptLegacyAck(msg.eventId))
-      return
-    }
-    if (msg.t === 'plan_catalog') {
-      serial(async () => {
-        const result = await applyCatalog(msg)
-        sendControl({ t: 'plan_catalog_ack', at: msg.at, catalogId: msg.catalogId, contentHash: msg.contentHash, status: result.ok ? result.status : 'storage_failed' })
-      }, 'catalogQueue')
       return
     }
     if (msg.t === 'watch_start_ack') {

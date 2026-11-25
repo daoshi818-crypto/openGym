@@ -1,6 +1,6 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 
-import { watchCatalogOf } from './watch-workout.js'
+import { watchPlanOf } from './watch-workout.js'
 import { wireHash } from '../../../watch-app/src/lib/sync-wire.js'
 
 const native = vi.hoisted(() => ({
@@ -48,9 +48,9 @@ describe('watch app and plan delivery', () => {
     expect(hello.capabilities).toMatchObject({ narrowDependencies: false, snapshotGenerations: false })
   })
   it('preserves Last time and effort capabilities in the actual native plan payload', async () => {
-    const S = { unit: 'kg', effort: 'rir', routines: [{ id: 'back', name: 'Back', ex: [{ id: '0025', sets: 4, reps: 8 }] }], watchPlanIds: ['back'],
+    const S = { unit: 'kg', effort: 'rir', active: { start: 1, name: 'Back', routineIds: ['back'], entries: [{ id: '0025', rid: 'back', sets: [{ w: 45, r: 8 }], target: { sets: 4 } }] },
       workouts: [{ d: '2026-11-01', routineIds: ['back'], entries: [{ id: '0025', rid: 'back', target: { sets: 4 }, sets: [{ w: 42, r: 8, done: true }] }] }] }
-    const plan = watchCatalogOf(S).plans[0], lastTime = plan.exercises[0].lastTime
+    const active = watchPlanOf(S), plan = { ...active.workout, effortScale: active.effortScale, capabilities: active.capabilities }, lastTime = plan.exercises[0].lastTime
     expect(lastTime).toMatchObject({ date: '2026-11-01', weightUnit: 'kg', sourceRoutineId: 'back', rows: [{ label: '42×8' }] })
     await link.pushPlanToWatch(plan, 'back')
     const sent = JSON.parse(native.sendPlan.mock.calls[0][0].json)

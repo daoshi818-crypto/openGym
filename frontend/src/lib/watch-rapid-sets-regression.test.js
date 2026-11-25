@@ -167,12 +167,15 @@ it('retains the last tap during slow storage with only one write in flight', asy
 })
 
 it('renders the tapped group immediately while session storage takes two seconds', async () => {
-  vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const { ctx: p } = bluePage(h, true)
+  vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const { ctx: p, bound } = bluePage(h, true)
+  const refresh = vi.spyOn(bound, 'refresh')
   const s = h.c.loadState(); s.workout.rows[0][2].w = '77.5'; h.c.save(s)
   p.state = h.c.loadState(); p.refresh()
   const writes = [], original = h.storage.set
   h.storage.set = item => item.key === 'session_state' ? writes.push(item) : original(item)
+  refresh.mockClear()
   const picked = p.pickSetDot(p.setDots[2])
+  expect(refresh).toHaveBeenCalledTimes(1)
   expect(p.state.setIdx).toBe(2)
   expect(p.weightNum).toBe('77.5')
   expect(p.setDots.map(d => d.current)).toEqual([false, false, true, false, false])
@@ -180,6 +183,7 @@ it('renders the tapped group immediately while session storage takes two seconds
   await vi.advanceTimersByTimeAsync(2000)
   expect(writes).toHaveLength(1); expect(p.state.setIdx).toBe(2)
   original(writes.shift()); expect(await picked).toBe(true)
+  expect(refresh).toHaveBeenCalledTimes(2) // One preview and one final reconciliation.
   expect(h.c.loadState().setIdx).toBe(2)
 })
 

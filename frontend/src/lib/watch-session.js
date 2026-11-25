@@ -1,5 +1,5 @@
 import { watchSidOf } from './session-resume.js'
-import { watchSnapshotOf, watchCatalogOf } from './watch-workout.js'
+import { watchSnapshotOf } from './watch-workout.js'
 import { isWarmupRow } from './workout-model.js'
 import { applyWatchEvent, applyWatchEffort, startFromWatch, rememberClose } from './watch-events.js'
 import { resolveWatchTarget } from './watch-identity.js'
@@ -58,7 +58,6 @@ export function createWatchLifecycle({ getState, update, getTimer, sendEnded, se
     }
     if (ev.t === 'hello') {
       update(s => { pruneWatchClosed(s) })
-      send(watchCatalogOf(current))
       for (const close of Object.values(getState().watchClosed || {}).filter(c => !c.acknowledgedAt || c.sid === ev.sid)) send({ t: 'session_close', sid: close.sid,
         disposition: close.disposition, closedAt: close.closedAt, eventId: close.eventId })
       const snapshot = watchSnapshotOf(current, getTimer())

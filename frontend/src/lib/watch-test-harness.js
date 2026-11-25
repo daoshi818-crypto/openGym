@@ -30,7 +30,7 @@ export function loadWatchModule(name, ctx, names) {
     ctx.recordPhoneConflict ||= async () => ({ ok: false, error: 'no_session' })
   }
   if (name === 'rpc' && !ctx.allocateEventIdentity) loadWatchModule('event-id', ctx, ['allocateEventIdentity', 'rememberEventAt'])
-  if (name === 'rpc' && !ctx.isPhoneSessionLive) loadWatchModule('session-presence', ctx, ['isPhoneSessionLive', 'applyPhonePresence'])
+  if (name === 'rpc' && !ctx.isPhoneSessionLive) loadWatchModule('session-presence', ctx, ['isPhoneSessionLive', 'applyPhonePresence', 'confirmPhoneSession'])
   if (name === 'rpc' && !ctx.journalEntry) loadWatchModule('close-journal', ctx, ['journalEntry', 'pendingCloseEvents', 'pendingSummaries', 'pendingEntry', 'prepareClose', 'releaseCandidate', 'markPhase', 'markEntry', 'markDelivered'])
   if (['rpc', 'session'].includes(name) && !ctx.compactStartEvent) {
     if (!ctx.wireBytes) loadWatchModule('sync-wire', ctx, ['wireHash', 'wireBytes', 'acceptWireChunk', 'expandWireDelta'])

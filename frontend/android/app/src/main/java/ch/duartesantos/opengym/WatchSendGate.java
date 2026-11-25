@@ -2,6 +2,7 @@ package ch.duartesantos.opengym;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 /** One logical SDK request in flight across Native receipts, JS and metadata.
@@ -19,13 +20,19 @@ final class WatchSendGate<Q, R> {
     private int highBurst, mediumBurst;
     private final class Job {
         final Q request; final int priority; final Consumer<R> completion; final long epoch;
+        final BooleanSupplier valid;
         Object timeout; boolean done;
-        Job(Q request, int priority, Consumer<R> completion) { this.request=request; this.priority=priority; this.completion=completion; this.epoch=generation; }
+        Job(Q request, int priority, Consumer<R> completion, BooleanSupplier valid) {
+            this.request=request; this.priority=priority; this.completion=completion; this.valid=valid; this.epoch=generation;
+        }
     }
     WatchSendGate(Timer timer, Sender<Q, R> sender) { this.timer=timer; this.sender=sender; }
     synchronized boolean offer(Q request, int priority, Consumer<R> completion) {
+        return offer(request, priority, completion, () -> true);
+    }
+    synchronized boolean offer(Q request, int priority, Consumer<R> completion, BooleanSupplier valid) {
         if (priority < 0 || priority > 2 || pending.size() >= 128) { completion.accept(null); return false; }
-        pending.add(new Job(request, priority, completion)); pump(); return true;
+        pending.add(new Job(request, priority, completion, valid)); pump(); return true;
     }
     private void pump() {
         if (active != null || pending.isEmpty()) return;
@@ -36,6 +43,7 @@ final class WatchSendGate<Q, R> {
         for (Job job : pending) if (job.priority >= wanted && (chosen == null || job.priority < chosen.priority)) chosen = job;
         if (chosen == null) chosen = pending.get(0);
         pending.remove(chosen); active=chosen;
+        if (!chosen.valid.getAsBoolean()) { finish(chosen, null); return; }
         if (chosen.priority == 0) highBurst++; else highBurst=0;
         if (chosen.priority < 2) mediumBurst++; else mediumBurst=0;
         final Job job = chosen;

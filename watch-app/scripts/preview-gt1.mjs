@@ -37,8 +37,7 @@ function environment() {
   loadWatchModule('session', ctx, ['loadState', 'startSession', 'save', 'replacePlan', 'applySync', 'nextUndone', 'nextUndoneFrom', 'setRowValue', 'toggleSet', 'addSet', 'removeSet', 'addRestTime', 'calories', 'endSession', 'closeSession', 'buildSessionSummary', 'summaryEventOf', 'setEffort'])
   return { ctx, disk, storage }
 }
-const now = new Date(), catalogDate = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0')
-const plan = { id: 'p1', today: true, sid: 'preview', name: '推部训练', workout: '推部训练', effortScale: 'rpe', weightUnit: 'kg', exercises: [
+const plan = { id: 'p1', sid: 'preview', name: '推部训练', workout: '推部训练', effortScale: 'rpe', weightUnit: 'kg', exercises: [
   { entryInstanceId: 'bench', name: '杠铃卧推', sets: 4, weight: '62.5', reps: '8', rest: 90, lastTime: { date: '2026-11-02', weightUnit: 'kg', rows: [{label:'60 × 10'},{label:'60 × 8'},{label:'57.5 × 10'}] } },
   { entryInstanceId: 'fly', name: '上斜哑铃飞鸟', sets: 3, weight: '15', reps: '12', rest: 90 },
   { entryInstanceId: 'push', name: '坐姿哑铃肩上推举', sets: 3, weight: '20', reps: '10', rest: 90 },
@@ -73,9 +72,8 @@ function scene(id, name, p, title, bottom = false) {
   const css = watchSource(name + '/index.ux').match(/<style>([\s\S]*?)<\/style>/)[1]
   scenes.push({ id, name, state, template, css, title, bottom })
 }
-let env = environment(); env.disk.set('plan_catalog', { date: catalogDate, plans: [plan, {...plan, today: false, id: 'pull', name: '拉部训练'}, {...plan, today: false, id: 'legs', name: '腿部训练'}] })
-let p = page('Index', env); p.onInit({}); scene('01-home','Index',p,'开始训练')
-p = page('Index'); p.onInit({}); scene('02-empty','Index',p,'首次同步空态')
+let env = environment()
+let p = page('Index', env); p.onInit({}); scene('01-home','Index',p,'待机 · 请打开手机端的 OpenGym')
 scene('03-current','Workout',workout(),'当前组 · RPE')
 scene('04-no-history','Workout',workout(s => { delete s.workout.exercises[0].lastTime; s.effortScale = 'none' }),'无历史 · 无评分')
 p=workout(s => {s.workout.exercises[0].name='这是一个用于验证两行显示的很长的训练动作名称';s.workout.rows[0][2].w='99999';s.workout.rows[0][2].r='99999'}); scene('05-large','Workout',p,'长名称 · 五位数值')
@@ -97,17 +95,17 @@ scene('21-many-dots','Workout',workout(s=>{s.workout.rows[0]=Array.from({length:
 scene('22-timed-wide','Workout',workout(s=>{s.workout.exercises[0].reps='99999秒';s.workout.rows[0][2].r='99999';s.workout.rows[0][2].w='99999.999'}),'极值 · 单位不裁切')
 scene('23-rest-no-effort','Workout',workout(s=>{s.restUntil=Date.now()+90000;s.effortScale='none'}),'休息 · 关闭评分')
 env=environment();p=page('Summary',env);p.onInit();p.clockLabel='9:23';scene('24-summary-missing','Summary',p,'总结 · 无历史统计')
-env=environment();env.disk.set('plan_catalog',{date:catalogDate,plans:[plan]});env.disk.set('summary_last',{savedAt:Date.now()});p=page('Index',env);p.onInit({});scene('25-home-summary','Index',p,'首页 · 最近结果入口')
+env=environment();env.disk.set('summary_last',{savedAt:Date.now()});p=page('Index',env);p.onInit({});scene('25-home-summary','Index',p,'首页 · 最近结果入口')
 env=environment();env.ctx.startSession(clone(plan));p=page('Index',env);p.onInit({});scene('26-resume','Index',p,'恢复进行中训练')
 await env.ctx.recordPhoneConflict({...plan,sid:'phone-session'});p=page('Index',env);p.onInit({});scene('27-conflict','Index',p,'冲突 · 保存或放弃手表训练')
 p.conflictWaiting=true;p.conflictHint='正在处理手表训练，等待手机确认…';scene('81-conflict-waiting','Index',p,'冲突 · 等待手机持久确认')
 p.conflictWaiting=false;p.conflictHint='存储失败，手表训练仍保留，请重试。';scene('82-conflict-failed','Index',p,'冲突 · 存储失败与重试')
-env=environment();env.disk.set('plan_catalog',{date:catalogDate,plans:[plan]});p=page('Index',env);p.onInit({});p.phoneLinkLabel='手机已连接';p.status='今日计划已同步';scene('83-home-connected','Index',p,'首页 · 手机已确认连接')
+env=environment();p=page('Index',env);p.onInit({});p.phoneLinkLabel='手机已连接';scene('83-home-connected','Index',p,'首页 · 手机已确认连接')
 scene('28-paused','Workout',workout(s=>{s.pausedAt=Date.now()}),'暂停 · 禁止误完成')
 env=environment();env.ctx.startSession(clone(plan));p=page('ExerciseList',env);p.onInit();p.endOn=true;scene('29-exercise-end','ExerciseList',p,'动作列表 · 结束操作')
 env=environment();env.ctx.startSession(clone(plan));p=page('Workout',env);p.onInit({});p.selectField('r');p.selectField('r');scene('30-keyboard-reps','Workout',p,'次数键盘 · 完整一屏')
 p.keypadNotice='目标已变化，未保存';scene('31-keyboard-notice','Workout',p,'键盘 · 长动作名与过期提示')
-env=environment();env.disk.set('plan_catalog',{date:catalogDate,plans:[{...plan,name:'这是一个用于验证两行训练计划名称显示的推部训练计划'}]});env.disk.set('summary_last',{savedAt:Date.now()});p=page('Index',env);p.onInit({});scene('32-home-long','Index',p,'首页 · 长计划名与最近结果')
+env=environment();env.ctx.startSession({...clone(plan),name:'这是一个用于验证两行训练名称显示的推部训练计划'});env.disk.set('summary_last',{savedAt:Date.now()});p=page('Index',env);p.onInit({});scene('32-home-long','Index',p,'首页 · 长计划名与最近结果')
 p=workout();p.openFinish();scene('33-finish-bottom','Workout',p,'结束页 · 放弃入口',true)
 p=workout();p.openFinish();p.askAbandon();scene('34-abandon-confirm','Workout',p,'放弃训练 · 独立确认')
 p=workout(s=>{s.workout.rows[0][2].w='99999.999';s.workout.rows[0][2].r='99999'});p.pageIndex=2;p.syncLabel='正在同步训练记录，请保持连接';scene('35-operation-long','Workout',p,'操作页 · 长数值与同步状态')
@@ -145,9 +143,6 @@ p=workout(s=>{s.profile={birthYear:1996};s.hr={count:4,sum:552,max:169,min:112,l
 p=workout(s=>{s.workout.exercises[0].muscles={chest:1,triceps:.5,deltoids:.3}});p.pageIndex=2;p.metricKind='muscles';scene('59-official-muscles','Workout',p,'官方肌群 · 完成组权重计算')
 p=workout();p.pageIndex=2;p.metricKind='muscles';scene('60-muscles-no-metadata','Workout',p,'已有训练 · 缺肌肉元数据')
 p=workout();p.pageIndex=0;p.overviewRows=[];p.finishProgress='50%';scene('62-finish-progress','Workout',p,'按住结束 · 50% 填充')
-env=environment();env.disk.set('plan_catalog',{date:catalogDate,plans:[{...plan,today:false}]});p=page('Index',env);p.onInit({});scene('63-home-no-today','Index',p,'今日无安排 · 保留全部其他计划')
-env=environment();env.disk.set('plan_catalog',{date:catalogDate,plans:[]});p=page('Index',env);p.onInit({});scene('64-home-empty-synced','Index',p,'目录已同步 · 空计划')
-env=environment();env.disk.set('plan_catalog',{date:catalogDate,todayPlan:{...plan,id:'today:'+catalogDate,name:'推部训练 + 核心稳定训练',exercises:[...plan.exercises,...plan.exercises]},plans:[plan,{...plan,id:'legs',today:false,name:'腿部训练'}]});p=page('Index',env);p.onInit({});scene('65-home-combined','Index',p,'今日多计划 · 合并训练')
 p=workout(s=>{s.workout.exercises[0].name='哑铃推肩';s.startedAt=Date.now()-30000;s.restUntil=Date.now()+63000});scene('66-device-rest-rpe','Workout',p,'实拍反馈复现 · 1:03 / 未评 RPE')
 p=workout(s=>{s.restUntil=Date.now()+900000});scene('67-rest-max','Workout',p,'休息上限 · 15:00 / 未评 RPE')
 p=workout(s=>{s.restUntil=Date.now()+63000;s.workout.exercises[0].name=longNames[0];s.workout.rows[0][2].w='99999.999';s.workout.rows[0][2].r='99999'});scene('68-rest-wide-next','Workout',p,'休息 · 长动作名 / 极值重量次数 / 组号独立')

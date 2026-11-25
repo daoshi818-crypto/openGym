@@ -3,6 +3,7 @@ package ch.duartesantos.opengym;
 import org.junit.Test;
 import static org.junit.Assert.*;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 public class WatchSendGateTest {
@@ -45,6 +46,20 @@ public class WatchSendGateTest {
         assertEquals(Arrays.asList((String)null),h.results.get("old-active")); assertEquals(Arrays.asList((String)null),h.results.get("old-queued"));
         h.offer("new",1); h.done(0); assertFalse(h.results.containsKey("new")); h.done(1);
         assertEquals(Arrays.asList("ok"),h.results.get("new")); assertTrue(h.clock.tasks.isEmpty());
+    }
+    @Test public void foregroundGuardDropsAQueuedWorkoutWithoutBlockingOtherRequests() {
+        Harness h = new Harness();
+        AtomicBoolean current = new AtomicBoolean(true);
+        List<String> result = new ArrayList<>();
+        h.offer("active", 0);
+        h.gate.offer("workout-start", 0, result::add, current::get);
+        h.offer("ordinary", 1);
+        current.set(false);
+        h.done(0);
+        assertEquals(Arrays.asList("active", "ordinary"), h.starts);
+        assertEquals(Arrays.asList((String)null), result);
+        h.done(1);
+        assertTrue(h.clock.tasks.isEmpty());
     }
     @Test public void boundedOverflowReturnsFailureWithoutPretendingBusinessWasDelivered() {
         Harness h = new Harness(); h.offer("active",1);

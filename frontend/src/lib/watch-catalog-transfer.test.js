@@ -1,20 +1,10 @@
 // @vitest-environment node
 import { expect, it } from 'vitest'
 import { persistentSender, persistentReceiver } from '../../../watch-app/src/lib/persistent-transfer.js'
-import { watchCatalogOf } from './watch-workout.js'
 import { wireHash } from '../../../watch-app/src/lib/sync-wire.js'
 
 const disk = () => { const map = new Map(); return { map, read: async k => structuredClone(map.get(k)), write: async (k, v) => { map.set(k, structuredClone(v)); return true } } }
-it('publishes every routine, not just today or the legacy single choice, with ordered today ids', () => {
-  const routine = id => ({ id, name: id, ex: [{ id: '0025', sets: 3, reps: 8 }] })
-  const S = { routines: ['a', 'b', 'c'].map(routine), week: { 4: ['b', 'a'] }, dayPlan: {}, workouts: [], watchPlanIds: ['b'] }
-  const catalog = watchCatalogOf(S, '2026-11-19')
-  expect(catalog.plans.map(p => p.id)).toEqual(['a', 'b', 'c'])
-  expect(catalog.todayIds).toEqual(['b', 'a'])
-  expect(catalog.plans.find(p => p.id === 'c').today).toBe(false)
-})
-
-it('keeps catalog transfers separate from active-workout transfers and waits for durable apply', async () => {
+it('keeps explicitly configured legacy catalog transfers separate from active-workout transfers and waits for durable apply', async () => {
   const txDisk = disk(), rxDisk = disk(), applied = []
   const options = { channel: 'catalog', types: ['plan_catalog'] }
   const payload = { t: 'plan_catalog', sid: 'catalog', commitRev: 1, at: 1, date: '2026-11-19', catalogId: 'c1', plans: [{ name: '中文'.repeat(1500) }] }

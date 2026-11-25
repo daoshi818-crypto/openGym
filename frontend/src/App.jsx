@@ -9,7 +9,7 @@ import { HashRouter, Routes, Route, Navigate, useNavigate, useLocation, useNavig
 import { useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
 import { bindUI } from './components/ui.jsx'
-import { setWeightDecimals, todayISO } from './lib/format.js'
+import { setWeightDecimals } from './lib/format.js'
 import { accentValue, applyAccent } from './lib/accent.js'
 import { seasonAccent } from './lib/seasonal.js'
 import { setLang, useLang, baseLang } from './lib/i18n.js'
@@ -24,8 +24,8 @@ import { installViewportGuard } from './lib/viewport-guard.js'
 import { installChipDrag } from './lib/hchips.js'
 import { syncPushSubscription } from './lib/push.js'
 import { MOBILE, onAppActive, onAppForegroundChange } from './lib/mobile.js'
-import { pushPlanToWatch, clearWatchPlan, bindWatchLifecycle, pushEndedToWatch, pushSyncToWatch, pushAckToWatch, watchAvailable, connectWatch, onWatchConnection, watchSessionPresenceReady, pushPhoneSessionPresence, preparePhoneWatchPresence } from './lib/watch-link.js'
-import { watchPlanOf, watchCatalogOf, watchSnapshotOf } from './lib/watch-workout.js'
+import { bindWatchLifecycle, pushEndedToWatch, pushSyncToWatch, pushAckToWatch, watchAvailable, connectWatch, onWatchConnection, watchSessionPresenceReady, pushPhoneSessionPresence, preparePhoneWatchPresence } from './lib/watch-link.js'
+import { bindCurrentWorkoutWatchHandoff } from './lib/watch-current-workout.js'
 import { createPhoneWatchPresence } from './lib/watch-phone-presence.js'
 import { sendToWatch, pushRestToWatch } from './lib/watch-link.js'
 import { restContextOf, restContextWire } from './lib/rest-context.js'
@@ -89,18 +89,8 @@ function Shell() {
   const loc = useLocation()
   const navType = useNavigationType()
   const { S, user, ready } = useStore()
-  const langV = useLang()   // refresh watch exercise names when the language pack changes
+  const langV = useLang()
   const watchOn = isOn(S, 'watch')
-  const [watchDate, setWatchDate] = useState(todayISO)
-  useEffect(() => {
-    if (!MOBILE || !ready || !watchOn) return
-    const refresh = () => setWatchDate(todayISO())
-    const timer = setInterval(refresh, 60000)
-    const off = onAppActive(refresh)
-    document.addEventListener('visibilitychange', refresh)
-    return () => { clearInterval(timer); off?.(); document.removeEventListener('visibilitychange', refresh) }
-  }, [ready, watchOn])
-  const watchPlan = MOBILE && watchOn ? JSON.stringify(watchPlanOf(S)) : 'null'
   const watchForeground = useRef(false)
   const watchActiveSid = S.active && !S.active.editingWorkoutId ? watchSidOf(S.active) : ''
   // Presence is a short foreground lease. Each reactivation advances the persisted generation
@@ -116,10 +106,7 @@ function Shell() {
       isForeground: () => foreground,
       canSend: watchSessionPresenceReady,
       sendPresence: pushPhoneSessionPresence,
-      sendSnapshot: state => {
-        const snapshot = watchSnapshotOf(state, useUI.getState().timer)
-        return snapshot ? preparePhoneWatchPresence(snapshot) : false
-      },
+      sendSnapshot: state => preparePhoneWatchPresence(watchSidOf(state.active)),
     })
     const setForeground = active => {
       if (foreground === active) return
@@ -162,25 +149,25 @@ function Shell() {
     })
     const unbind = bindWatchLifecycle(receive, { getState: () => useStore.getState().S,
       update: fn => useStore.getState().update(fn), getTimer: () => useUI.getState().timer,
-      checkpoint: () => useStore.getState().checkpointWatchState() })
+      checkpoint: () => useStore.getState().checkpointWatchState(), currentWorkoutOnly: true })
     const offActive = onAppActive(() => { receive.retry(); drainWatchInbox() })
     watchAvailable().then(result => { if (result.available) connectWatch() })
     return () => { offActive?.(); unbind(); receive.dispose() }
   }, [ready, watchOn])
-  // 会话级生命周期：在设置页拉起手表时仍保留计划，结束/丢弃后才清除。
   useEffect(() => {
     if (!MOBILE || !ready || !watchOn) return
-    const plan = JSON.parse(watchPlan)
-    if (plan) pushPlanToWatch({ ...plan.workout, protocolVersion: plan.protocolVersion, weightUnit: plan.weightUnit, structureRevision: plan.structureRevision, sessionGeneration: plan.sessionGeneration, effortScale: plan.effortScale, capabilities: plan.capabilities }, plan.sid, plan.profile, { automatic: true })
-    else clearWatchPlan(undefined, S.active?.editingWorkoutId ? 'history_editor' : 'no_active_session')
-  }, [watchPlan, ready, watchOn])
-  const watchCatalog = useMemo(() => MOBILE && watchOn ? JSON.stringify({ ...watchCatalogOf(S, watchDate), at: 0 }) : 'null',
-    [watchOn, S.routines, S.week, S.dayPlan, S.queue, S.workouts, S.exWeights, S.exNotes, S.unit, S.birthYear, S.bodyweight, S.effort, S.showRir, S.restSec, S.startFrom, S.customEx, S.plates, S.dumbbells, S.dbLoad, S.loadKind, S.barWeights, watchDate, langV])
+    return bindCurrentWorkoutWatchHandoff({ getState: () => useStore.getState().S, getTimer: () => useUI.getState().timer,
+      subscribe: useStore.subscribe, subscribeForeground: update => {
+        let nativeActive = true
+        const visibility = () => update(nativeActive && document.visibilityState !== 'hidden')
+        document.addEventListener('visibilitychange', visibility)
+        const offNative = onAppForegroundChange(active => { nativeActive = active; visibility() })
+        visibility()
+        return () => { offNative?.(); document.removeEventListener('visibilitychange', visibility) }
+      } })
+  }, [ready, watchOn])
   const restTimer = useUI(s => s.timer)
   const restStop = useUI(s => s.restStop)
-  useEffect(() => {
-    if (MOBILE && ready && watchOn) sendToWatch({ ...JSON.parse(watchCatalog), at: Date.now() })
-  }, [watchCatalog, ready, watchOn])
   useEffect(() => {
     broadcastPhoneRest({ enabled: MOBILE && ready && watchOn, active: S.active, timer: restTimer, stopIntent: restStop,
       update: fn => useStore.getState().update(fn), send: pushRestToWatch })
