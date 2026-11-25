@@ -1,0 +1,30 @@
+name: Publish verified WATCH GT pair
+on:
+  push:
+    branches: [device-test/publish-gt-20261125]
+permissions:
+  actions: read
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download exact tested artifact and publish pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha=18f4cc37d8d44a10e6bf3e795d5b499b7f157744
+          run=45578284009
+          tag=gt-v4-test-20261125
+          test "$(gh run view "$run" --json headSha --jq .headSha)" = "$sha"
+          test "$(gh run view "$run" --json conclusion --jq .conclusion)" = success
+          gh run download "$run" --name "opengym-gt-pair-$sha" --dir pair
+          (cd pair && sha256sum --check SHA256SUMS.txt)
+          test "$(sha256sum pair/opengym-watch-0.6.41-test.3.rpk | cut -d' ' -f1)" = 3a82c2dd3498198e21bb1ab610a890384e63c18d205be5aeff875cda75429521
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" pair/openGym.apk pair/opengym-watch-0.6.41-test.3.rpk pair/SHA256SUMS.txt --target "$sha" --prerelease --latest=false --title 'vivo WATCH GT 配对实机测试 · Android 1.6.39-gt.1 / 手表 0.6.41-test.3' --notes-file .github/gt-v4-device-test-notes.md
+          fi
+          gh release view "$tag" --json url,isPrerelease,assets --jq '{url,isPrerelease,assets:[.assets[]|{name,size,digest}]}'
