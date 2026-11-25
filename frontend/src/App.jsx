@@ -23,9 +23,10 @@ import { useWakeLock } from './lib/wakelock.js'
 import { installViewportGuard } from './lib/viewport-guard.js'
 import { installChipDrag } from './lib/hchips.js'
 import { syncPushSubscription } from './lib/push.js'
-import { MOBILE, onAppActive } from './lib/mobile.js'
-import { pushPlanToWatch, clearWatchPlan, bindWatchLifecycle, pushEndedToWatch, pushSyncToWatch, pushAckToWatch, watchAvailable, connectWatch } from './lib/watch-link.js'
-import { watchPlanOf, watchCatalogOf } from './lib/watch-workout.js'
+import { MOBILE, onAppActive, onAppForegroundChange } from './lib/mobile.js'
+import { pushPlanToWatch, clearWatchPlan, bindWatchLifecycle, pushEndedToWatch, pushSyncToWatch, pushAckToWatch, watchAvailable, connectWatch, onWatchConnection, watchSessionPresenceReady, pushPhoneSessionPresence, preparePhoneWatchPresence } from './lib/watch-link.js'
+import { watchPlanOf, watchCatalogOf, watchSnapshotOf } from './lib/watch-workout.js'
+import { createPhoneWatchPresence } from './lib/watch-phone-presence.js'
 import { sendToWatch, pushRestToWatch } from './lib/watch-link.js'
 import { restContextOf, restContextWire } from './lib/rest-context.js'
 import { watchSidOf } from './lib/session-resume.js'
@@ -100,6 +101,49 @@ function Shell() {
     return () => { clearInterval(timer); off?.(); document.removeEventListener('visibilitychange', refresh) }
   }, [ready, watchOn])
   const watchPlan = MOBILE && watchOn ? JSON.stringify(watchPlanOf(S)) : 'null'
+  const watchForeground = useRef(false)
+  const watchActiveSid = S.active && !S.active.editingWorkoutId ? watchSidOf(S.active) : ''
+  // Presence is a short foreground lease. Each reactivation advances the persisted generation
+  // before the inbox receiver binds, so events queued by an earlier app activation are stale.
+  useEffect(() => {
+    if (!MOBILE || !ready || !watchOn) return
+    let nativeActive = true
+    let foreground = watchForeground.current = document.visibilityState !== 'hidden'
+    const presence = createPhoneWatchPresence({
+      getState: () => useStore.getState().S,
+      update: fn => useStore.getState().update(fn, true, { skipWatchStamp: true }),
+      checkpoint: () => useStore.getState().checkpointWatchState(),
+      isForeground: () => foreground,
+      canSend: watchSessionPresenceReady,
+      sendPresence: pushPhoneSessionPresence,
+      sendSnapshot: state => {
+        const snapshot = watchSnapshotOf(state, useUI.getState().timer)
+        return snapshot ? preparePhoneWatchPresence(snapshot) : false
+      },
+    })
+    const setForeground = active => {
+      if (foreground === active) return
+      foreground = watchForeground.current = active
+      if (active) presence.activate()
+      else presence.deactivate()
+    }
+    const visibility = () => setForeground(nativeActive && document.visibilityState !== 'hidden')
+    document.addEventListener('visibilitychange', visibility)
+    const offAppState = onAppForegroundChange(active => { nativeActive = active; visibility() })
+    if (foreground) presence.activate()
+    let connected = watchSessionPresenceReady()
+    const offConnection = onWatchConnection(() => {
+      const next = watchSessionPresenceReady()
+      if (foreground && next && !connected) presence.reassert()
+      connected = next
+    })
+    const timer = setInterval(() => { if (foreground) presence.heartbeat() }, 5000)
+    return () => {
+      clearInterval(timer); document.removeEventListener('visibilitychange', visibility)
+      watchForeground.current = false
+      offAppState?.(); offConnection?.(); presence.dispose()
+    }
+  }, [ready, watchOn, watchActiveSid])
   useEffect(() => {
     if (!MOBILE || !ready || !watchOn) return
     const receive = createDurableWatchLifecycle({
@@ -114,6 +158,7 @@ function Shell() {
       checkpoint: () => useStore.getState().checkpointWatchState(),
       transaction: run => useStore.getState().withWatchTransaction(run),
       holdOutbound: holdWatchOutbound, completeInbox: completeWatchInbox, status: setWatchCommitStatus,
+      presenceSupported: watchSessionPresenceReady, isForeground: () => watchForeground.current && document.visibilityState !== 'hidden',
     })
     const unbind = bindWatchLifecycle(receive, { getState: () => useStore.getState().S,
       update: fn => useStore.getState().update(fn), getTimer: () => useUI.getState().timer,
@@ -126,7 +171,7 @@ function Shell() {
   useEffect(() => {
     if (!MOBILE || !ready || !watchOn) return
     const plan = JSON.parse(watchPlan)
-    if (plan) pushPlanToWatch({ ...plan.workout, protocolVersion: plan.protocolVersion, weightUnit: plan.weightUnit, structureRevision: plan.structureRevision, effortScale: plan.effortScale, capabilities: plan.capabilities }, plan.sid, plan.profile, { automatic: true })
+    if (plan) pushPlanToWatch({ ...plan.workout, protocolVersion: plan.protocolVersion, weightUnit: plan.weightUnit, structureRevision: plan.structureRevision, sessionGeneration: plan.sessionGeneration, effortScale: plan.effortScale, capabilities: plan.capabilities }, plan.sid, plan.profile, { automatic: true })
     else clearWatchPlan(undefined, S.active?.editingWorkoutId ? 'history_editor' : 'no_active_session')
   }, [watchPlan, ready, watchOn])
   const watchCatalog = useMemo(() => MOBILE && watchOn ? JSON.stringify({ ...watchCatalogOf(S, watchDate), at: 0 }) : 'null',

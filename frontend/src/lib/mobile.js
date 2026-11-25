@@ -238,6 +238,18 @@ export function onAppActive(cb) {
   return () => { gone = true; remove(listener); listener = null }
 }
 
+// Reports both foreground and background transitions from Capacitor. The webview visibility
+// event remains a separate fallback for platforms that do not expose the App bridge.
+export function onAppForegroundChange(cb) {
+  if (!MOBILE) return
+  let gone = false, listener
+  const remove = handle => { try { Promise.resolve(handle?.remove()).catch(() => {}) } catch { /* bridge already closed */ } }
+  import('@capacitor/app').then(({ App }) =>
+    App.addListener('appStateChange', ({ isActive }) => { if (!gone) cb(!!isActive) })
+  ).then(handle => { if (gone) remove(handle); else listener = handle }).catch(() => {})
+  return () => { gone = true; remove(listener); listener = null }
+}
+
 // WKWebView can't do blob-URL downloads, so the backup goes out through the OS share sheet
 // (Files, AirDrop, mail, …) from a temp file instead.
 export async function shareExport(json, filename) {

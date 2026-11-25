@@ -1,6 +1,6 @@
 const KEY = 'opengym.watch.diagnostics.v1'
 const WATCH_KEY = 'opengym.watch.last-log.v1'
-const FIELDS = ['t', 'sid', 'eventId', 'entryInstanceId', 'setId', 'commitRev', 'baseCommitRev', 'status', 'phase', 'pending', 'code', 'ex', 'set', 'ok', 'bytes']
+const FIELDS = ['t', 'sid', 'eventId', 'entryInstanceId', 'setId', 'commitRev', 'baseCommitRev', 'status', 'phase', 'pending', 'code', 'ex', 'set', 'ok', 'bytes', 'duration', 'actionDuration', 'sampleCount', 'active', 'reason', 'page', 'kind']
 
 export function createWatchDiagnosticLog(storage = () => globalThis.localStorage) {
   let events = null, timer = null

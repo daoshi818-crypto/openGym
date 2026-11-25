@@ -33,6 +33,21 @@ describe('bounded independent watch diagnostic journal', () => {
     expect([...d.disk.keys()]).toEqual(['watch_diagnostic_log_v1'])
     expect(JSON.stringify(d.ctx.diagnosticLog())).not.toContain('private')
   })
+  it('retains bounded refresh timings and lifecycle context while coalescing bursts', async () => {
+    vi.useFakeTimers()
+    const d = watch(), set = vi.spyOn(d.storage, 'set')
+    for (let i = 0; i < 1000; i++) d.ctx.recordDiagnostic('workout_refresh', {
+      sid: 'session-' + i, active: true, sessionAt: 1234, duration: i % 7, actionDuration: i,
+    })
+    const log = d.ctx.diagnosticLog()
+    expect(log.events).toMatchObject([{ stage: 'workout_refresh', count: 1000, sid: 'session-999', active: true,
+      sessionAt: 1234, duration: 5, actionDuration: 999 }])
+    expect(set).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(set).toHaveBeenCalledOnce()
+    expect(d.disk.get('watch_diagnostic_log_v1').events).toMatchObject([{ stage: 'workout_refresh', count: 1000, actionDuration: 999 }])
+  })
+
   it('retains flushed pre-exit records across runtime restart without touching session storage', () => {
     vi.useFakeTimers()
     const d = watch()
@@ -62,12 +77,12 @@ describe('bounded independent watch diagnostic journal', () => {
       expect.objectContaining({ stage: 'dot_tap', setId: 'second' }),
       expect.objectContaining({ stage: 'dot_blocked', detail: 'rest' }),
     ]))
-    expect(log.events).toHaveLength(64)
-    expect(log.dropped).toBe(138)
+    expect(log.events).toHaveLength(128)
+    expect(log.dropped).toBe(74)
     expect(log.droppedInteractions).toBe(0)
-    expect(reopened.ctx.diagnosticLogPage({ requestId: 'kept', offset: 0 }, 'test')).toMatchObject({ dropped: 138, droppedInteractions: 0, total: 64 })
+    expect(reopened.ctx.diagnosticLogPage({ requestId: 'kept', offset: 0 }, 'test')).toMatchObject({ dropped: 74, droppedInteractions: 0, total: 128 })
     reopened.ctx.flushDiagnosticLog()
-    expect(watch(d.disk).ctx.diagnosticLog()).toMatchObject({ dropped: 138, droppedInteractions: 0 })
+    expect(watch(d.disk).ctx.diagnosticLog()).toMatchObject({ dropped: 74, droppedInteractions: 0 })
   })
   it('keeps recent interaction and transport evidence within the existing count and byte limits', () => {
     vi.useFakeTimers()
@@ -77,16 +92,16 @@ describe('bounded independent watch diagnostic journal', () => {
       d.ctx.recordDiagnostic('rpc_receive', { set: i })
     }
     let log = d.ctx.diagnosticLog()
-    expect(log.events.filter(e => e.stage === 'dot_tap').map(e => e.set)).toEqual(Array.from({ length: 32 }, (_, i) => 68 + i))
-    expect(log.events.filter(e => e.stage === 'rpc_receive').map(e => e.set)).toEqual(Array.from({ length: 32 }, (_, i) => 68 + i))
-    expect(log.droppedInteractions).toBe(68)
+    expect(log.events.filter(e => e.stage === 'dot_tap').map(e => e.set)).toEqual(Array.from({ length: 64 }, (_, i) => 36 + i))
+    expect(log.events.filter(e => e.stage === 'rpc_receive').map(e => e.set)).toEqual(Array.from({ length: 64 }, (_, i) => 36 + i))
+    expect(log.droppedInteractions).toBe(36)
     for (let i = 0; i < 100; i++) {
       d.ctx.recordDiagnostic('dot_blocked', { sid: long, eventId: long, detail: long, entryInstanceId: long })
       d.ctx.recordDiagnostic('send_success', { sid: long, eventId: long, detail: long, entryInstanceId: long })
     }
     log = d.ctx.diagnosticLog()
-    expect(log.events.length).toBeLessThanOrEqual(64)
-    expect(Buffer.byteLength(JSON.stringify(log.events))).toBeLessThanOrEqual(24000)
+    expect(log.events.length).toBeLessThanOrEqual(128)
+    expect(Buffer.byteLength(JSON.stringify(log.events))).toBeLessThanOrEqual(48000)
   })
   it('rate limits urgent tap checkpoints to one write per second', async () => {
     vi.useFakeTimers()
@@ -102,8 +117,8 @@ describe('bounded independent watch diagnostic journal', () => {
     const d = watch(), long = '\u6d4b'.repeat(80)
     for (let i = 0; i < 200; i++) d.ctx.recordDiagnostic('stage-' + i, { sid: long, eventId: long, detail: long, entryInstanceId: long })
     const log = d.ctx.diagnosticLog()
-    expect(log.events.length).toBeLessThanOrEqual(64)
-    expect(Buffer.byteLength(JSON.stringify(log.events))).toBeLessThanOrEqual(24000)
+    expect(log.events.length).toBeLessThanOrEqual(128)
+    expect(Buffer.byteLength(JSON.stringify(log.events))).toBeLessThanOrEqual(48000)
     let offset = 0, all = []
     do {
       const request = { requestId: 'probe', offset }, page = d.ctx.diagnosticLogPage(request, 'test')

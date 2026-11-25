@@ -250,7 +250,7 @@ function handleV4(msg) {
       const value = { t: 'STATE_SNAPSHOT', protocolVersion: 4, requestId: msg.requestId, sid: s.active ? s.sid : terminal?.sid || last || '', active: !!s.active,
         terminal, workout: s.workout?.name || '', exercises: ex ? [{ id: ex.id, entryInstanceId: ex.entryInstanceId, name: ex.name }] : [], rows: row ? [[row]] : [],
         exIdx: s.exIdx || 0, setIdx: s.setIdx || 0, startedAt: s.startedAt || 0, pausedAt: s.pausedAt || 0, pausedMs: s.pausedMs || 0,
-        restUntil: s.restUntil || 0, restTargetSec: s.restTargetSec || 0, rev: s.rev || 0, commitRev: s.commitRev || 0, structureRevision: s.structureRevision || null }
+        restUntil: s.restUntil || 0, restTargetSec: s.restTargetSec || 0, restLeftSec: s.restLeftSec || 0, rev: s.rev || 0, commitRev: s.commitRev || 0, structureRevision: s.structureRevision || null }
       sendControl({ ...value, wireHash: wireHash(value) })
     }); return true
   }

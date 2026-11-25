@@ -10,7 +10,7 @@ import { persistentSender } from '../../../watch-app/src/lib/persistent-transfer
 import { MOBILE, isAndroid } from './mobile.js'
 import { isWarmupRow } from './workout-model.js'
 import { splitWire, compactWire, canonicalWire, wireHash, wireBytes } from '../../../watch-app/src/lib/sync-wire.js'
-import { watchPlanOf, watchSnapshotOf } from './watch-workout.js'
+import { watchPlanOf, watchSnapshotOf, watchWorkoutDTOOf } from './watch-workout.js'
 
 let pluginP = null
 const watchPlugin = () => pluginP || (pluginP = (async () => {
@@ -42,14 +42,34 @@ const catalogListeners = new Set(), snapshotSenders = new Map(), catalogSenders 
 let selectionEpoch = 0
 export function watchConnection() {
   const preference = devices.read()
-  return { ...preference, peerId, sdkConnected: state === 'connected', lastVerifiedAt,
-    appConnected: state === 'connected' && !!lastVerifiedAt && Date.now() - lastVerifiedAt < 15000 && (!preference.selectedId || preference.selectedId === peerId),
+  const appConnected = state === 'connected' && !!lastVerifiedAt && Date.now() - lastVerifiedAt < 15000 && (!preference.selectedId || preference.selectedId === peerId)
+  return { ...preference, peerId, sdkConnected: state === 'connected', lastVerifiedAt, appConnected,
+    canStartWorkout: !!preference.selectedId && preference.selectedId === peerId && appConnected && syncProtocol === 4 &&
+      !!v4Current(v4Link) && v4Link.snapshot?.active === false && !v4Start,
     selectionRequired: identifiedPeer && !preference.selectedId,
     differentDevice: !!preference.selectedId && !!peerId && peerId !== preference.selectedId,
     catalogSupported }
 }
 function emitConnection() { for (const cb of connectionListeners) { try { cb(watchConnection()) } catch { /* subscriber */ } } }
 export function onWatchConnection(cb) { connectionListeners.add(cb); cb(watchConnection()); return () => connectionListeners.delete(cb) }
+export function watchSessionPresenceReady() {
+  const preference = devices.read()
+  const active = trainingStore?.getState()?.active
+  return MOBILE && peerNegotiated && sessionPresenceSupported && targetReady() &&
+    (syncProtocol !== 4 || v4MatchesSession(String(active?.watchSid || active?.start || ''))) &&
+    ['connected', 'ready'].includes(state) && (!preference.selectedId || preference.selectedId === peerId)
+}
+export function preparePhoneWatchPresence(snapshot) {
+  // v4 keeps the watch state on reconnect; the lease does not need a phone baseline.
+  return syncProtocol === 4 ? v4Current(v4Link) && v4MatchesSession(snapshot?.sid) : pushSyncToWatch(snapshot)
+}
+export function pushPhoneSessionPresence(message) {
+  if (!watchSessionPresenceReady() || message?.t !== 'session_presence' || !message.sid || !message.sessionGeneration) return Promise.resolve(false)
+  const active = trainingStore?.getState()?.active
+  if (message.active && (!active || String(active.watchSid || active.start) !== message.sid || active.editingWorkoutId ||
+      active.watchSessionGeneration !== message.sessionGeneration)) return Promise.resolve(false)
+  return sendWatchEvent(message)
+}
 export function watchCatalogStatus() { return { ...catalogStatus } }
 export function onWatchCatalogStatus(cb) { catalogListeners.add(cb); cb(watchCatalogStatus()); return () => catalogListeners.delete(cb) }
 function setCatalogStatus(patch) { catalogStatus = { ...catalogStatus, ...patch }; for (const cb of catalogListeners) { try { cb(watchCatalogStatus()) } catch { /* subscriber */ } } }
@@ -79,8 +99,125 @@ let lastPublishedPlan = null
 let onWatchLifecycle = () => false
 let trainingStore = null
 let peerNegotiated = false
+let sessionPresenceSupported = false
 let negotiationKey = ''
 let syncProtocol = 2
+let v4Link = null, v4Start = null
+const liveEdits = new Set(['weight', 'reps', 'set', 'unset', 'effort', 'rest', 'pause', 'focus', 'add_set', 'remove_set'])
+const legacySessionWire = obj => ['plan', 'sync', 'sync_delta', 'sync_inline'].includes(obj.t) ||
+  (obj.t.startsWith('sync_') && !/^(?:c:|start:)/.test(obj.transferId || ''))
+const v4MatchesSession = sid => !!sid && !!v4Link?.snapshot?.active && v4Link.snapshot.sid === sid
+function v4Current(link) {
+  return link && v4Link === link && peerNegotiated && targetReady() && ['ready', 'connected'].includes(state)
+}
+function resetV4() {
+  clearTimeout(v4Link?.timer); v4Link = null
+  if (v4Start) finishV4Plan(v4Start.plan, 'rejected', 'watch_disconnected')
+  if (pendingPlan?.v4Link) {
+    const plan = pendingPlan
+    pendingPlan = null
+    finishV4Plan(plan, 'rejected', 'watch_disconnected')
+  }
+}
+function refreshV4(link) {
+  if (!v4Current(link)) return
+  clearTimeout(link.timer)
+  link.id = 'state-' + Date.now().toString(36) + '-' + (++planSequence)
+  link.snapshot = null; link.tries = 0
+  emitConnection()
+  queryV4(link)
+}
+function queryV4(link, reason) {
+  if (!v4Current(link) || link.snapshot || link.tries >= 4) return
+  clearTimeout(link.timer)
+  link.tries++
+  void sendWatchEvent({ t: 'STATE_QUERY', protocolVersion: 4, requestId: link.id, ...(reason ? { reason } : {}) }, () => v4Current(link) && !link.snapshot)
+  link.timer = setTimeout(() => queryV4(link, 'snapshot_timeout'), 3000)
+  link.timer.unref?.()
+}
+function completeLinkInbox(ev) {
+  if (!ev._inboxId || claimedInboxIds.has(ev._inboxId)) return
+  claimedInboxIds.add(ev._inboxId)
+  void completeWatchInbox(ev._inboxId).catch(() => {})
+}
+function receiveV4Snapshot(ev) {
+  const link = v4Link
+  if (!v4Current(link) || link.snapshot || ev.protocolVersion !== 4 || ev.requestId !== link.id || typeof ev.active !== 'boolean') return
+  // The watch hashes its payload before adding installation routing; Capacitor adds its own envelope fields.
+  const { wireHash: hash, sourceInstallationId, _kind, _inboxId, ...value } = ev
+  if (wireHash(value) !== hash) { queryV4(link, 'snapshot_checksum'); return }
+  clearTimeout(link.timer)
+  link.snapshot = value
+  link.snapshotReceipt = { requestId: value.requestId, sid: value.sid, wireHash: hash }
+  onWatchLifecycle({ ...value, wireHash: hash, sourceInstallationId, _inboxId })
+  emitConnection()
+  if (pendingPlan) void flushPendingPlan()
+}
+function finishV4Plan(plan, status, reason = '') {
+  if (v4Start?.plan === plan) { clearTimeout(v4Start.timer); v4Start = null }
+  plan.delivery = status === 'applied' || status === 'retained' ? 'confirmed' : reason || status
+  if (reason) lastError = reason
+  const receipt = { t: 'SESSION_ACCEPTED', protocolVersion: 4, requestId: plan.planId, sid: plan.sid,
+    status, ...(reason ? { reason } : {}), receivedAt: Date.now() }
+  lastPlanReceipt = receipt
+  publishPlanReceipt(plan, receipt)
+  emitConnection()
+}
+function receiveV4Acceptance(ev) {
+  const attempt = v4Start
+  if (!attempt || !v4Current(attempt.link) || ev.protocolVersion !== 4 || ev.requestId !== attempt.plan.planId || ev.sid !== attempt.plan.sid) return
+  if (ev.status === 'accepted') {
+    attempt.link.snapshot = { ...attempt.link.snapshot, active: true, sid: ev.sid }
+    finishV4Plan(attempt.plan, 'applied')
+  } else if (ev.status === 'rejected') {
+    if (ev.reason === 'watch_active_session' || ev.reason === 'session_closed') refreshV4(attempt.link)
+    finishV4Plan(attempt.plan, 'rejected', ev.reason || 'watch_start_rejected')
+  } else return
+  if (pendingPlan) void flushPendingPlan()
+}
+async function startV4Plan(plan, link) {
+  const peek = link.snapshot
+  if (plan.v4Link !== link) { finishV4Plan(plan, 'rejected', 'watch_disconnected'); return }
+  if (peek.active) {
+    finishV4Plan(plan, 'rejected', 'watch_active_session')
+    return
+  }
+  if (!watchConnection().canStartWorkout) { finishV4Plan(plan, 'rejected', 'watch_not_verified'); return }
+  if (peek.terminal?.sid === plan.sid) { finishV4Plan(plan, 'rejected', 'session_closed'); return }
+  const current = trainingStore?.getState()
+  const snapshot = current && watchSnapshotOf(current, trainingStore.getTimer?.())
+  if (trainingStore && snapshot?.sid !== plan.sid) { finishV4Plan(plan, 'rejected', 'phone_session_changed'); return }
+  const workout = snapshot ? { ...snapshot, name: snapshot.workout } : plan.workout
+  const dto = watchWorkoutDTOOf({ ...workout, weightUnit: workout.weightUnit || plan.profile?.weightUnit }, plan.sid, plan.planId)
+  if (!dto) { finishV4Plan(plan, 'rejected', 'watch_start_dto_invalid'); return }
+  let frames
+  try { frames = splitWire(dto, 'start:' + dto.requestId) }
+  catch (e) { finishV4Plan(plan, 'rejected', e.message); return }
+  const attempt = { plan, link }
+  v4Start = attempt
+  // Once any start frame is sent, reconnect reconciles state instead of replaying the start.
+  plan.delivery = 'awaiting_receipt'
+  emitConnection()
+  attempt.timer = setTimeout(() => {
+    if (v4Start !== attempt) return
+    refreshV4(link)
+    finishV4Plan(plan, 'rejected', 'watch_start_timeout')
+    if (pendingPlan) void flushPendingPlan()
+  }, 10000)
+  attempt.timer.unref?.()
+  const currentAttempt = () => v4Start === attempt && !plan.cancelled && v4Current(link) && link.snapshot === peek &&
+    latestPlan?.sid === plan.sid && (!trainingStore || String(trainingStore.getState()?.active?.watchSid || trainingStore.getState()?.active?.start || '') === plan.sid)
+  for (const frame of frames) {
+    if (!currentAttempt()) return
+    if (!(await sendWatchEvent(frame, currentAttempt))) {
+      if (currentAttempt()) {
+        refreshV4(link)
+        finishV4Plan(plan, 'rejected', 'watch_start_transport')
+      }
+      return
+    }
+  }
+}
 let syncBase = null
 const sentSnapshots = new Map()
 const commandStates = createCommandStateCache()
@@ -143,12 +280,13 @@ function kickCatalog(delay = 0) {
   catalogTimer = setTimeout(pumpCatalog, delay); catalogTimer.unref?.()
 }
 async function pumpCatalog() {
+  if (syncProtocol === 4 && v4Link?.snapshot?.active) return
   if (catalogBusy || !catalogSupported || !targetReady() || state !== 'connected') return
   catalogBusy = true
   let delay = null
   try {
     // Active training and exact business receipts retain priority over the plan library.
-    if (commitStatus.pending || pendingPlan || planPushInFlight || pendingSync || persistentHasWork || outboundBarrier) { delay = 1000; return }
+    if (commitStatus.pending || pendingPlan || planPushInFlight || v4Start || (syncProtocol === 4 && !v4Link?.snapshot) || pendingSync || persistentHasWork || outboundBarrier) { delay = 1000; return }
     const epoch = selectionEpoch, sender = catalogSender(), message = await sender.next()
     if (message && epoch === selectionEpoch) await sendWatchEvent(message)
     delay = await sender.wakeIn()
@@ -232,7 +370,7 @@ function transmitSync(attempt) {
 let outboundBarrier = null
 let commitStatus = { phase: 'idle', pending: 0, error: '' }
 const commitListeners = new Set()
-export function hasPendingWatchWork() { return commitStatus.pending > 0 || commitStatus.phase === 'saving' || (!!pendingSync || persistentHasWork) || planPushInFlight || !!pendingPlan }
+export function hasPendingWatchWork() { return commitStatus.pending > 0 || commitStatus.phase === 'saving' || (!!pendingSync || persistentHasWork) || planPushInFlight || !!pendingPlan || !!v4Start }
 export function onWatchCommitStatus(cb) { commitListeners.add(cb); cb(commitStatus); return () => commitListeners.delete(cb) }
 export function holdWatchOutbound() {
   if (outboundBarrier) return () => {}
@@ -262,7 +400,7 @@ export async function drainWatchInbox() {
     if (!p?.WatchRpc.drainInbox) return
     const selectedId = devices.read().selectedId
     const batch = await p.WatchRpc.drainInbox(selectedId ? { deviceId: selectedId } : {})
-    for (const ev of batch?.events || []) onNativeWatchEvent(ev)
+    for (const ev of batch?.events || []) onNativeWatchEvent(ev, true)
   } catch (e) { listenerError = 'watch inbox: ' + (e?.message || String(e)) }
   finally { drainingInbox = false }
 }
@@ -393,7 +531,8 @@ function onNativeWatchState(ev) {
   if (typeof ev?.connected === 'boolean') device = { ...(device || {}), connected: ev.connected }
   setState(next === 'disconnected' ? 'off' : next, ev && ev.reason ? ev.reason : '')
   if (next === 'disconnected' || next === 'off' || next === 'error' || ev?.connected === false) {
-    peerNegotiated = false; catalogSupported = false; lastVerifiedAt = 0; peerId = ''; identifiedPeer = false
+    resetV4()
+    peerNegotiated = false; sessionPresenceSupported = false; catalogSupported = false; lastVerifiedAt = 0; peerId = ''; identifiedPeer = false
     persistentEnabled = false; snapshotGenerations = false; clearTimeout(persistentPumpTimer)
     connectionProbe?.finish(false); clearTimeout(catalogTimer)
     currentPeerProof?.finish(false)
@@ -401,15 +540,20 @@ function onNativeWatchState(ev) {
   }
   if (next === 'ready' || next === 'connected') {
     if (!peerNegotiated) Promise.resolve().then(requestCurrentDiscovery)
-    if (!pendingPlan && latestPlan) pendingPlan = latestPlan
+    if (!pendingPlan && latestPlan && syncProtocol < 4) pendingPlan = latestPlan
     Promise.resolve().then(flushPendingPlan)
   }
 }
 
-function onNativeWatchEvent(ev) {
+function onNativeWatchEvent(ev, fromInbox = false) {
   try {
     if (!ev) return
     const source = ev.sourceInstallationId || ev.installationId
+    if (fromInbox && ev.protocolVersion >= 4 && (ev.t === 'hello' || ev.phoneLed === true)) {
+      // The native inbox can outlive the RPC generation. Let the current route's query reconcile v4 progress.
+      completeLinkInbox(ev)
+      return
+    }
     if (!['hello', 'device', 'link_probe_ack'].includes(ev.t) && devices.read().selectedId && source !== devices.read().selectedId) return
     if (source && !['hello', 'device', 'link_probe_ack'].includes(ev.t) && (!peerNegotiated || !targetReady())) return
     if (ev.t === 'watch_log') {
@@ -426,7 +570,7 @@ function onNativeWatchEvent(ev) {
     if (ev.t === 'hello' && ev.capabilities?.deviceSelection === true && source) {
       if (!devices.discover(source, { ...(device || {}), watchVersion: ev.watchVersion })) return
       if (!devices.accepts(source)) { verifyCurrentPeer(ev, source); return }
-      if (peerId !== source) { connectionProbe?.finish(false); persistentEnabled = false; snapshotGenerations = false; peerNegotiated = false; catalogSupported = false }
+      if (peerId !== source) { connectionProbe?.finish(false); persistentEnabled = false; snapshotGenerations = false; peerNegotiated = false; catalogSupported = false; resetV4() }
       identifiedPeer = true; peerId = source
       emitConnection()
       if (!ev._routeConfirmed) Promise.resolve().then(probeWatchConnection)
@@ -437,6 +581,19 @@ function onNativeWatchEvent(ev) {
       return
     }
     if (ev.watchVersion) watchVersion = String(ev.watchVersion)
+    if (ev.t === 'STATE_SNAPSHOT') { receiveV4Snapshot(ev); return }
+    if (ev.t === 'SESSION_ACCEPTED') { receiveV4Acceptance(ev); return }
+    if (syncProtocol === 4 && ev.phoneLed === true && ev.protocolVersion >= 4 && (!v4Current(v4Link) || !v4MatchesSession(ev.sid))) {
+      completeLinkInbox(ev)
+      return
+    }
+    if (syncProtocol === 4 && ['plan_ack', 'sync_ack', 'sync_request'].includes(ev.t)) return
+    if (syncProtocol === 4 && (ev.t === 'watch_start' || (v4MatchesSession(ev.sid) &&
+        (ev.t === 'session_close_ack' || (ev.t === 'session_close' && ev.phoneLed === true && ev.protocolVersion === 4))))) {
+      // A watch start or close can change button availability without a transport reconnect.
+      const link = v4Link
+      queueMicrotask(() => refreshV4(link))
+    }
     if (['sync_begin_ack', 'sync_chunk_ack', 'sync_resume', 'sync_applied', 'sync_cancel_ack', 'unknown_transfer', 'sync_error'].includes(ev.t) && ev.transferId?.startsWith('c:')) {
       if (ev.t === 'sync_error' && catalogSupported) setCatalogStatus({ phase: 'failed', error: ev.reason || 'transfer_failed' })
       if (catalogSupported) catalogSender().receipt(ev).then(() => kickCatalog()).catch(e => setCatalogStatus({ phase: 'failed', error: e.message }))
@@ -447,29 +604,44 @@ function onNativeWatchEvent(ev) {
       return
     }
     if (ev.t === 'hello') {
-      const key = JSON.stringify([source || '', ev.linkEpoch || '', ev.protocolVersion, ev.capabilities])
+      const key = JSON.stringify([source || '', ev.linkEpoch || ev.helloId || '', ev.protocolVersion, ev.capabilities])
       const fresh = !peerNegotiated || negotiationKey !== key
+      const modern = ev.protocolVersion >= 4 && ev.capabilities?.stateSnapshot === true
+      if (modern && !fresh && syncProtocol === 4) { completeLinkInbox(ev); return }
+      resetV4()
       negotiationKey = key
       peerNegotiated = true
+      syncProtocol = modern ? 4 : ev.protocolVersion >= 3 && ev.capabilities?.durableCommit && ev.capabilities?.snapshotChunks ? 3 : 2
+      sessionPresenceSupported = ev.capabilities?.sessionPresence === true
       inlineSnapshots = ev.capabilities?.inlineSnapshots === true
       catalogSupported = ev.capabilities?.planCatalogChunks === true
       snapshotGenerations = ev.capabilities?.snapshotGenerations === true
       watchVersion = ev.watchVersion ? String(ev.watchVersion) : 'not_reported'
       watchReceiptsSupported = ev.receipts === true
-      persistentEnabled = ev.protocolVersion >= 3 && ev.capabilities?.durableCommit === true && ev.capabilities?.snapshotChunks === true && ev.capabilities?.selectiveChunkAck === true && ev.capabilities?.persistentTransfers === true
-      commandReceiptsEnabled = ev.protocolVersion >= 3 && ev.capabilities?.commandReceipts === true && ev.capabilities?.durableCommit === true
-      sendWatchEvent({ t: 'hello_ack', protocolVersion: 3, capabilities: { sessionConflict: true, inlineSnapshots, deviceSelection: ev.capabilities?.deviceSelection === true, planCatalogChunks: catalogSupported, snapshotGenerations, narrowDependencies: ev.capabilities?.narrowDependencies === true, causalFrontier: ev.capabilities?.causalFrontier === true, durableCommit: true, snapshotChunks: true, watchEventChunks: true, commandReceipts: commandReceiptsEnabled, dependencyEvents: ev.capabilities?.dependencyEvents === true, selectiveChunkAck: ev.capabilities?.selectiveChunkAck === true, persistentTransfers: ev.capabilities?.persistentTransfers === true } })
-      if (latestCatalog && catalogSupported) pushWatchCatalog(latestCatalog, true)
-      if (fresh && catalogSupported) catalogSender().resume().then(() => kickCatalog()).catch(e => setCatalogStatus({ phase: 'failed', error: e.message }))
+      persistentEnabled = !modern && ev.protocolVersion >= 3 && ev.capabilities?.durableCommit === true && ev.capabilities?.snapshotChunks === true && ev.capabilities?.selectiveChunkAck === true && ev.capabilities?.persistentTransfers === true
+      commandReceiptsEnabled = !modern && ev.protocolVersion >= 3 && ev.capabilities?.commandReceipts === true && ev.capabilities?.durableCommit === true
+      const helloAck = { t: 'hello_ack', protocolVersion: modern ? 4 : 3, capabilities: { stateSnapshot: modern, sessionConflict: true, inlineSnapshots: !modern && inlineSnapshots, deviceSelection: ev.capabilities?.deviceSelection === true, planCatalogChunks: catalogSupported, snapshotGenerations, narrowDependencies: ev.capabilities?.narrowDependencies === true, causalFrontier: ev.capabilities?.causalFrontier === true, durableCommit: true, snapshotChunks: !modern, watchEventChunks: true, commandReceipts: commandReceiptsEnabled, sessionPresence: true, dependencyEvents: ev.capabilities?.dependencyEvents === true, selectiveChunkAck: ev.capabilities?.selectiveChunkAck === true, persistentTransfers: !modern && ev.capabilities?.persistentTransfers === true } }
+      if (!modern) void sendWatchEvent(helloAck)
+      if (!modern && latestCatalog && catalogSupported) pushWatchCatalog(latestCatalog, true)
+      if (!modern && fresh && catalogSupported) catalogSender().resume().then(() => kickCatalog()).catch(e => setCatalogStatus({ phase: 'failed', error: e.message }))
       if (fresh && persistentEnabled) snapshotSender().resume().then(() => kickPersistent()).catch(error => { lastError = error.message; kickPersistent(6000) })
       else if (!persistentEnabled) clearTimeout(persistentPumpTimer)
-      syncProtocol = ev.protocolVersion >= 3 && ev.capabilities?.durableCommit && ev.capabilities?.snapshotChunks ? 3 : 2
       if (fresh) {
         syncBase = null; sentSnapshots.clear(); coveredCommandPlan = null
         clearTimeout(syncRetryTimer); pendingSync = null
         // Early native inbox delivery is held until the route has negotiated.
         // Replay it now even if the watch has no new live event to trigger work.
         scheduleInboxDrain()
+      }
+      if (modern) {
+        persistentHasWork = false
+        const link = v4Link = { id: 'state-' + Date.now().toString(36) + '-' + (++planSequence), tries: 0 }
+        if (pendingPlan?.delivery !== 'queued' || pendingPlan.automatic || pendingPlan.legacyShortcut) pendingPlan = null
+        // Advertise the selected-device envelope before querying. The snapshot hash excludes it.
+        void sendWatchEvent(helloAck, () => v4Current(link)).then(() => queryV4(link))
+        completeLinkInbox(ev)
+        emitConnection()
+        return
       }
       emitConnection()
     }
@@ -566,6 +738,7 @@ export async function connectWatch() {
 }
 
 export async function disconnectWatch() {
+  resetV4()
   lastDiscoveryAt = -Infinity
   currentPeerProof?.finish(false)
   clearInterval(keepaliveTimer); keepaliveTimer = null
@@ -629,6 +802,7 @@ export async function selectWatchDevice(id) {
   return resetWatchSelection()
 }
 async function resetWatchSelection(discover = true) {
+  resetV4()
   currentPeerProof?.finish(false)
   selectionEpoch++; connectionProbe?.finish(false)
   lastVerifiedAt = 0; syncBase = null; sentSnapshots.clear(); commandStates.clear?.()
@@ -706,7 +880,7 @@ export async function requestWatchDiagnostics() {
   })
   watchDiagnosticProbe = probe
   timer = setTimeout(() => probe.finish('timeout'), 2500)
-  Promise.resolve().then(() => p.WatchRpc.sendEvent({ json: JSON.stringify({ t: 'watch_diagnostics_request', requestId: id }) }))
+  Promise.resolve().then(() => p.WatchRpc.sendEvent({ json: JSON.stringify(routed({ t: 'watch_diagnostics_request', requestId: id })) }))
     .then(result => { if (!result?.ok) probe.finish('send_failed') }, () => probe.finish('send_failed'))
   return probe.promise
 }
@@ -724,6 +898,8 @@ export async function getWatchDiagnostics() {
       lastWatchTransport, watchDiagnosticRequest,
       commitStatus, connection: watchConnection(), catalogStatus: watchCatalogStatus(),
       syncProtocol, syncCommitRev: syncBase?.commitRev || 0,
+      ...(v4Link ? { stateQueryId: v4Link.id, stateQueryAttempts: v4Link.tries,
+        watchStateSnapshot: v4Link.snapshot ? { active: v4Link.snapshot.active, sid: v4Link.snapshot.sid, rev: v4Link.snapshot.rev } : null } : {}),
       lastPublishedPlan, lastPlanClear }
   } catch (e) {
     return { lastError: e && e.message ? e.message : String(e) }
@@ -753,7 +929,7 @@ async function readWatchLog() {
         } }
         watchLogProbe = probe
         timer = setTimeout(() => probe.finish(null), 2500)
-        Promise.resolve().then(() => p.WatchRpc.sendEvent({ json: JSON.stringify({ t: 'watch_log_request', requestId: id, offset }) }))
+        Promise.resolve().then(() => p.WatchRpc.sendEvent({ json: JSON.stringify(routed({ t: 'watch_log_request', requestId: id, offset })) }))
           .then(r => { if (!r?.ok) probe.finish(null) }, () => probe.finish(null))
       })
     }
@@ -791,10 +967,10 @@ async function readWatchLog() {
 // ---- 训练页 API：把今天的训练推给手表 ----
 
 /** 训练开始时调用一次；训练中途计划变了（加/删动作）再调一次，手表整包热替换。 */
-export async function pushPlanToWatch(workout, sid, profile = null, { automatic = false } = {}) {
-  if (!MOBILE || !workout) return
+export async function pushPlanToWatch(workout, sid, profile = null, { automatic = false, legacyShortcut = false } = {}) {
+  if (!MOBILE || !workout || syncProtocol === 4) return
   const planId = Date.now() + '-' + (++planSequence)
-  latestPlan = { workout, sid: String(sid || ''), profile, planId, automatic, delivery: 'queued', receipt: null }
+  latestPlan = { workout, sid: String(sid || ''), profile, planId, automatic, legacyShortcut, delivery: 'queued', receipt: null }
   lastPublishedPlan = { sid: latestPlan.sid, planId, exercises: workout.exercises?.length || 0, at: Date.now() }
   pendingPlan = latestPlan
   if (automatic && commandPlanCurrent(latestPlan) && coveredCommandPlan.key === planContentKey(workout, latestPlan.sid, profile)) {
@@ -810,8 +986,12 @@ export async function pushPlanToWatch(workout, sid, profile = null, { automatic 
 export function clearWatchPlan(sid, reason = 'no_active_session', endedAt = Date.now()) {
   if (sid && latestPlan?.sid !== sid) return
   if (!sid || pendingSync?.snapshot.sid === sid) { clearTimeout(syncRetryTimer); pendingSync = null }
+  if (v4Start && v4Start.plan.sid === latestPlan?.sid) {
+    v4Start.plan.cancelled = true
+    finishV4Plan(v4Start.plan, 'rejected', 'phone_session_changed')
+  }
   if (latestPlan) lastPlanClear = { sid: latestPlan.sid, planId: latestPlan.planId, reason, at: Date.now() }
-  if (latestPlan?.sid) pushEndedToWatch({ sid: latestPlan.sid, reason, endedAt })
+  if (syncProtocol !== 4 && latestPlan?.sid) pushEndedToWatch({ sid: latestPlan.sid, reason, endedAt })
   latestPlan = null
   pendingPlan = null
   coveredCommandPlan = null
@@ -823,7 +1003,8 @@ async function flushPendingPlan() {
   if (state !== 'ready' && state !== 'connected') return
   if (!targetReady()) return
   // A training session must start from a complete, negotiated phone baseline.
-  if (trainingStore && !peerNegotiated) return
+  if ((trainingStore || syncProtocol === 4) && !peerNegotiated) return
+  if (syncProtocol === 4 && (!v4Link?.snapshot || v4Start)) return
   // 在第一个 await 前占用发送位，ready/hello/新计划共用同一串行队列。
   planPushInFlight = true
   try {
@@ -840,6 +1021,14 @@ async function flushPendingPlan() {
         lastError = 'watch state save: ' + (error?.message || String(error))
         pendingPlan ||= next
         break
+      }
+      if (syncProtocol === 4) {
+        const link = v4Link
+        if (!v4Current(link) || !link.snapshot || v4Start) { pendingPlan ||= next; break }
+        if (next.cancelled || next.automatic || next.legacyShortcut || !next.v4Link) continue
+        await startV4Plan(next, link)
+        if (v4Start) break
+        continue
       }
       if (trainingStore && syncProtocol >= 3) {
         const snapshot = watchSnapshotOf(trainingStore.getState(), trainingStore.getTimer?.())
@@ -891,25 +1080,39 @@ async function flushPendingPlan() {
     }
   } finally {
     planPushInFlight = false
+    if (syncProtocol === 4 && pendingPlan && v4Link?.snapshot && !v4Start && !outboundBarrier) {
+      // A receipt can arrive while the SDK's send callback is still settling.
+      const next = pendingPlan
+      if (next !== latestPlan) pendingPlan = null
+      else if (next.delivery !== 'queued') pendingPlan = null
+    }
   }
 }
 
-async function sendWatchEvent(obj) {
-  if (!MOBILE || !obj) return false
+async function sendWatchEvent(obj, stillCurrent = () => true) {
+  if (!MOBILE || !obj || !stillCurrent()) return false
   if (obj.t === 'plan_catalog') return pushWatchCatalog(obj)
   if (!targetReady() && !['link_probe', 'link_discover'].includes(obj.t)) return false
   const epoch = selectionEpoch
   while (outboundBarrier && ['sync', 'sync_chunk', 'sync_delta', 'sync_begin', 'sync_inline'].includes(obj.t)) await outboundBarrier.promise
   const S = trainingStore?.getState(), A = S?.active
+  const modern = syncProtocol === 4, link = v4Link
+  const snapshotAck = obj.t === 'STATE_SNAPSHOT_ACK'
+  const currentSnapshotAck = () => modern && v4Current(link) && obj.requestId === link.id && obj.sid === link.snapshotReceipt?.sid && obj.wireHash === link.snapshotReceipt?.wireHash
+  if (snapshotAck && !currentSnapshotAck()) return false
+  const sessionMessage = liveEdits.has(obj.t) || ['ended', 'session_close', 'session_presence'].includes(obj.t)
+  const live = modern && sessionMessage
+  if (modern && (legacySessionWire(obj) || (live && (!v4Current(link) || !v4MatchesSession(obj.sid))))) return false
+  if (A?.watchPhoneSession && !['session_presence', 'START_SESSION', 'STATE_SNAPSHOT_ACK'].includes(obj.t) && obj.sid === String(A.watchSid || A.start)) obj = { ...obj, phoneSessionGeneration: A.watchSessionGeneration }
   if (A && obj.sid === String(A.watchSid || A.start) && Number.isInteger(obj.ex)) {
     const entry = A.entries[obj.ex], rows = entry?.sets.filter(r => !isWarmupRow(r)) || [], row = rows[obj.set - 1]
-    obj = { ...obj, protocolVersion: 2, entryInstanceId: entry?.entryInstanceId, setId: row?.setId,
+    obj = { ...obj, protocolVersion: modern ? 4 : 2, entryInstanceId: entry?.entryInstanceId, setId: row?.setId,
       weightUnit: S.unit || 'kg', structureRevision: A.structureRevision, at: obj.editAt || obj.at || Date.now() }
     if (['add_set','remove_set'].includes(obj.t)) obj.setIds = rows.map(r => r.setId)
     const field = obj.t === 'weight' ? 'weight' : obj.t === 'reps' ? 'reps' : ['set','unset'].includes(obj.t) ? 'done' : null
     if (field && row) trainingStore.update(s => { const a = s.active; if (!a || a.start !== A.start) return; a.watchVersions ||= {}; a.watchVersions[[entry.entryInstanceId || obj.ex, row.setId || obj.set, field].join(':')] = obj.at })
   }
-  if (syncProtocol >= 3 && trainingStore && obj.sid === String(A?.watchSid || A?.start) && ['weight', 'reps', 'set', 'unset', 'effort', 'rest', 'pause', 'focus', 'add_set', 'remove_set'].includes(obj.t)) {
+  if (syncProtocol === 3 && trainingStore && obj.sid === String(A?.watchSid || A?.start) && liveEdits.has(obj.t)) {
     const snapshot = watchSnapshotOf(trainingStore.getState(), trainingStore.getTimer?.())
     if (snapshot) return pushSyncToWatch(snapshot)
   }
@@ -917,8 +1120,12 @@ async function sendWatchEvent(obj) {
   const p = await watchPlugin()
   if (!p) return false
   try {
-    if (!obj.t.startsWith('sync') && !['link_probe', 'link_discover', 'hello_ack', 'ack', 'committed', 'received', 'effort_ack', 'event_rejected', 'watch_start_ack'].includes(obj.t)) await trainingStore?.checkpoint?.()
-    if (epoch !== selectionEpoch || !targetReady() && !['link_probe', 'link_discover'].includes(obj.t)) return false
+    if (!obj.t.startsWith('sync') && !['link_probe', 'link_discover', 'hello_ack', 'ack', 'committed', 'received', 'effort_ack', 'event_rejected', 'watch_start_ack', 'session_presence', 'STATE_QUERY', 'STATE_SNAPSHOT_ACK', 'START_SESSION'].includes(obj.t)) await trainingStore?.checkpoint?.()
+    if (epoch !== selectionEpoch || !stillCurrent() || !targetReady() && !['link_probe', 'link_discover'].includes(obj.t)) return false
+    if (sessionMessage && modern !== (syncProtocol === 4)) return false
+    if (syncProtocol === 4 && (legacySessionWire(obj) || (live && (!v4Current(link) || !v4MatchesSession(obj.sid))))) return false
+    if ((live && !v4Current(link)) || (snapshotAck && !currentSnapshotAck())) return false
+    if (live && liveEdits.has(obj.t)) obj = { ...obj, protocolVersion: 4 }
     const r = await p.WatchRpc.sendEvent({ json: JSON.stringify(routed(obj)) })
     phoneWatchLog.record('send_result', { ...obj, ok: !!r?.ok })
     if (r && !r.ok) lastError = r.data || 'send event failed'
@@ -996,7 +1203,39 @@ export async function pushAckToWatch(upto, eventId) {
   await sendWatchEvent({ t: 'ack', upto, eventId })
 }
 
+async function continueOnV4Watch(snapshot, onStatus) {
+  if (!watchConnection().canStartWorkout || !snapshot?.sid) {
+    onStatus(v4Link?.snapshot?.active ? '手表已有训练进行中' : '手表未确认，请检查连接')
+    return false
+  }
+  onStatus('请求已发，等待手表确认')
+  const plan = { workout: { ...snapshot, name: snapshot.workout }, sid: snapshot.sid, profile: snapshot.profile,
+    planId: Date.now() + '-' + (++planSequence), v4Link, automatic: false, delivery: 'queued', receipt: null }
+  latestPlan = pendingPlan = plan
+  lastPublishedPlan = { sid: plan.sid, planId: plan.planId, exercises: plan.workout.exercises?.length || 0, at: Date.now() }
+  const receipt = await new Promise(resolve => {
+    let timer
+    const listener = (current, ev) => { if (current === plan) settle(ev) }
+    const settle = ev => { receiptListeners.delete(listener); clearTimeout(timer); resolve(ev) }
+    receiptListeners.add(listener)
+    timer = setTimeout(() => {
+      plan.cancelled = true
+      if (pendingPlan === plan) pendingPlan = null
+      if (v4Start?.plan === plan) {
+        refreshV4(plan.v4Link)
+        finishV4Plan(plan, 'rejected', 'watch_start_timeout')
+      }
+      settle(null)
+    }, 10000)
+    void flushPendingPlan()
+  })
+  const accepted = receipt?.status === 'applied'
+  onStatus(accepted ? '手表已确认，可继续训练' : receipt?.reason === 'watch_active_session' ? '手表已有训练进行中' : '手表未确认，请检查连接')
+  return accepted
+}
+
 export async function continueOnWatch(snapshot, onStatus) {
+  if (syncProtocol === 4) return continueOnV4Watch(snapshot, onStatus)
   const available = await watchAvailable()
   if (!available.available) { onStatus('手表不可用：' + available.reason); return false }
   onStatus('正在连接手表')
@@ -1013,7 +1252,8 @@ export async function continueOnWatch(snapshot, onStatus) {
   const result = await openWatchApp()
   if (result.ok) {
     onStatus('请求已发，等待手表确认')
-    const publication = pushPlanToWatch({ name: snapshot.workout, exercises: snapshot.exercises }, snapshot.sid, snapshot.profile)
+    if (syncProtocol === 4) return continueOnV4Watch(snapshot, onStatus)
+    const publication = pushPlanToWatch({ name: snapshot.workout, exercises: snapshot.exercises }, snapshot.sid, snapshot.profile, { legacyShortcut: true })
     requestedPlan = latestPlan
     await publication
     if (!trainingStore) await pushSyncToWatch(snapshot)
@@ -1026,6 +1266,7 @@ export async function continueOnWatch(snapshot, onStatus) {
 /** 重连后的权威快照。snapshot 由训练页从活动会话生成。 */
 export async function pushSyncToWatch(snapshot) {
   if (!MOBILE || !snapshot) return false
+  if (syncProtocol === 4) return false
   if (syncProtocol < 3) return sendWatchEvent({ ...snapshot, t: 'sync' })
   // Hash and delta against an acknowledged phone baseline, never against optimistic watch edits.
   const next = canonicalWire(snapshot)

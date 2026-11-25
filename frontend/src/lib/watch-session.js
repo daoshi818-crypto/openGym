@@ -15,6 +15,8 @@ export function endedWatchSession(S, sid) {
 
 // Segment identity prevents an offline summary from ending a resumed training session.
 export function applyWatchSummary(S, ev) {
+  if (ev?.sid && (ev.phoneLed === true || S.watchClosed?.[ev.sid]?.phoneLedSession === true ||
+      (watchSidOf(S.active) === ev.sid && S.active?.watchPhoneSession === true))) return true
   const calories = finiteKcal(ev?.calories)
   if (!ev?.sid || calories == null) return false
   const active = S.active && watchSidOf(S.active) === ev.sid ? S.active : null
@@ -75,6 +77,16 @@ export function createWatchLifecycle({ getState, update, getTimer, sendEnded, se
       const prior = current.watchClosed?.[ev.sid]
       if (prior && prior.eventId === ev.eventId && ev.eventId) { ack(); return true }
       const same = watchSidOf(current.active) === ev.sid && !current.active?.editingWorkoutId
+      const phoneLed = current.active?.watchPhoneSession === true || (ev.phoneLed === true && current.active?.watchStarted !== true)
+      // A phone-led close is a durable intent scoped to this sid; its workout payload is not authoritative.
+      if (same && phoneLed) {
+        if (!ev.eventId || !['saved', 'discarded'].includes(ev.disposition)) return false
+        update(s => rememberClose(s, { ...ev, entries: undefined, phoneLedSession: true, sessionGeneration: s.active?.watchSessionGeneration }))
+        if (ev.disposition === 'saved') finish(ev.closedAt)
+        else update(s => { s.active = null })
+        stop(); ack(); return true
+      }
+      if (ev.phoneLed === true || prior?.phoneLedSession === true) { ack(); return true }
       if (ev.disposition === 'saved' && (!same || prior)) {
         update(s => {
           s.watchPendingSaves ||= {}

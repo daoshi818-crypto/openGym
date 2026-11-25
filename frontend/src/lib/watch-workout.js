@@ -41,12 +41,43 @@ export function watchPlanOf(S) {
   if (!A?.start || A.editingWorkoutId) return null
   const profile = watchProfileOf(S)
   return {
-    sid: watchSidOf(A), protocolVersion: 2, weightUnit: S.unit || 'kg', structureRevision: A.structureRevision,
+    sid: watchSidOf(A), ...(A.watchSessionGeneration ? { sessionGeneration: A.watchSessionGeneration } : {}),
+    protocolVersion: 2, weightUnit: S.unit || 'kg', structureRevision: A.structureRevision,
     // 强度量表跟随手机设置；手表只显示这一种，关闭（'none'）时隐藏入口。
     effortScale: effortOf(S), capabilities: { setEffort: EFFORT_CAPABILITY },
     profile,
     workout: { name: A.name, exercises: watchExercisesOf(S, A.entries, { sourceWorkout: A }) },
   }
+}
+
+/** Stable execution rows only; history, profiles and catalogs have their own transport. */
+export function watchWorkoutDTOOf(workout, sid, requestId) {
+  if (!sid || !requestId || !workout?.exercises?.length) return null
+  const id = value => typeof value === 'string' && value.length > 0 && value.length <= 128
+  const entries = new Set(), sets = new Set()
+  const exercises = workout.exercises.map((ex, i) => {
+    const rows = workout.rows?.[i] || []
+    const count = Math.min(100, rows.length || (Array.isArray(ex.sets) ? ex.sets.length : Number(ex.sets)) || ex.setIds?.length || 0)
+    if (!id(ex.entryInstanceId) || entries.has(ex.entryInstanceId) || !Number.isInteger(count) || count < 1) return null
+    entries.add(ex.entryInstanceId)
+    const workSets = Array.from({ length: count }, (_, j) => {
+      const row = rows[j] || (Array.isArray(ex.sets) ? ex.sets[j] : null) || {}
+      const setId = row.setId || ex.setIds?.[j]
+      if (!id(setId) || sets.has(setId)) return null
+      sets.add(setId)
+      return { setId, weight: row.w ?? row.weight ?? ex.weight ?? '', reps: String(row.r ?? row.reps ?? ex.reps ?? ''),
+        ...(row.done ? { done: true, at: row.at || 0 } : {}),
+        ...(row.rpe != null ? { rpe: row.rpe } : {}), ...(row.rir != null ? { rir: row.rir } : {}),
+        ...(row.effortVersion != null ? { effortVersion: row.effortVersion } : {}) }
+    })
+    return workSets.includes(null) ? null : { exerciseId: ex.id || ex.exerciseId || '', entryInstanceId: ex.entryInstanceId,
+      name: ex.name || '', restSec: Number(ex.restSec) || 60, sets: workSets }
+  })
+  if (exercises.includes(null)) return null
+  return { t: 'START_SESSION', protocolVersion: 4, requestId, sid, workout: workout.name || '', weightUnit: workout.weightUnit || 'kg',
+    structureRevision: workout.structureRevision || 0,
+    ...(workout.sessionGeneration ? { sessionGeneration: workout.sessionGeneration } : {}),
+    ...(workout.effortScale ? { effortScale: workout.effortScale } : {}), exercises }
 }
 
 export function watchSnapshotOf(S, timer, now = Date.now()) {
@@ -66,6 +97,7 @@ export function watchSnapshotOf(S, timer, now = Date.now()) {
     exIdx: ex, setIdx: A.watchFocus?.ex === ex ? A.watchFocus.set - 1 : first < 0 ? 0 : first,
     focusAt: Number(A.watchFocus?.at || A.watchFocusAt || 0),
     commitRev: A.syncRev || 0, sessionEpoch: watchSidOf(A),
+    ...(A.watchSessionGeneration ? { sessionGeneration: A.watchSessionGeneration } : {}),
     ackedEvents: A.watchEvents || [], pausedAt: A.pausedAt || 0, pausedMs: A.pausedMs || 0,
     pauseVersion: A.pauseVersion || 0, baseCalories: Object.entries(A.watchSegments || {}).filter(([id]) => id !== watchSidOf(A)).reduce((n, [, s]) => n + s.calories, 0),
     rest: timer ? { restId: timer.restId || String(timer.startedAt || timer.endsAt - timer.total * 1000),

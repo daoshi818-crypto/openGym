@@ -98,6 +98,18 @@ it('set dots select a completed row for undo without completing another row', as
   expect(p.state.pendingEdits.filter(e => e.t === 'unset')).toHaveLength(1)
 })
 
+it('records refresh and action-to-refresh durations without touching session persistence', () => {
+  vi.useFakeTimers(); vi.setSystemTime(1000000)
+  const h = boot(); h.c.startSession(plan()); h.c.recordDiagnostic = vi.fn()
+  const { ctx: p } = bluePage(h, true)
+  p.refresh()
+  expect(h.c.recordDiagnostic).toHaveBeenLastCalledWith('workout_refresh', expect.objectContaining({ sid: 's', active: true, duration: 0 }))
+  vi.setSystemTime(1000010); p.logInteraction('local_commit_begin')
+  vi.setSystemTime(1000045); p.refresh()
+  expect(h.c.recordDiagnostic).toHaveBeenLastCalledWith('workout_refresh', expect.objectContaining({ sid: 's', active: true, duration: 0, actionDuration: 35 }))
+  expect([...h.disk.keys()]).not.toContain('watch_diagnostic_log_v1')
+})
+
 it('keeps native dot array and row identities through refreshes and cursor changes', () => {
   vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const { ctx: p } = bluePage(h, true)
   p.refresh()
@@ -718,6 +730,7 @@ it('boots atomically from the full phone snapshot before the first completion', 
   vi.useFakeTimers(); const a = paired(false)
   // New peers receive the full snapshot, without first activating a bare plan.
   await a.sync({ ...watchSnapshotOf(a.S, null), t: 'sync', protocolVersion: 3 })
+  a.connection.onMessage({ t: 'session_presence', sid: 's', sessionGeneration: 1, active: true, sentAt: Date.now(), commitRev: a.S.active.syncRev })
   try {
     expect(await a.p.onComplete()).toBe(true)
     await a.pump()

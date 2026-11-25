@@ -9,9 +9,10 @@ import { rotationStep, valueStep } from '../../../watch-app/src/lib/value-step.j
 import { captureRow, rowTarget, setDotWindow, createSetDotPicker } from '../../../watch-app/src/lib/workout-interaction.js'
 import { zoneView, muscleView } from '../../../watch-app/src/lib/official-metrics.js'
 import { numberDraft, changeNumber, applyNumberDraft, keypadPress } from '../../../watch-app/src/lib/number-draft.js'
+import { summarizeWorkoutRows } from '../../../watch-app/src/lib/workout-summary.js'
 
 // Real page imports, not stubs: keep VM tests in sync with the shipped page modules.
-export const watchInteractionDeps = { numberDraft, changeNumber, applyNumberDraft, keypadPress, zoneView, muscleView, isPhoneConnected: () => false, replayPendingEvents: () => {}, commitPageAction, rotationStep, valueStep, captureRow, rowTarget, setDotWindow, createSetDotPicker }
+export const watchInteractionDeps = { numberDraft, changeNumber, applyNumberDraft, keypadPress, zoneView, muscleView, summarizeWorkoutRows, isPhoneConnected: () => false, replayPendingEvents: () => {}, commitPageAction, rotationStep, valueStep, captureRow, rowTarget, setDotWindow, createSetDotPicker }
 
 export const watchSource = path => readFileSync(new URL('../../../watch-app/src/' + path, import.meta.url), 'utf8')
 export const stripImports = code => code
@@ -29,11 +30,14 @@ export function loadWatchModule(name, ctx, names) {
     ctx.recordPhoneConflict ||= async () => ({ ok: false, error: 'no_session' })
   }
   if (name === 'rpc' && !ctx.allocateEventIdentity) loadWatchModule('event-id', ctx, ['allocateEventIdentity', 'rememberEventAt'])
+  if (name === 'rpc' && !ctx.isPhoneSessionLive) loadWatchModule('session-presence', ctx, ['isPhoneSessionLive', 'applyPhonePresence'])
+  if (name === 'rpc' && !ctx.journalEntry) loadWatchModule('close-journal', ctx, ['journalEntry', 'pendingCloseEvents', 'pendingSummaries', 'pendingEntry', 'prepareClose', 'releaseCandidate', 'markPhase', 'markEntry', 'markDelivered'])
   if (['rpc', 'session'].includes(name) && !ctx.compactStartEvent) {
     if (!ctx.wireBytes) loadWatchModule('sync-wire', ctx, ['wireHash', 'wireBytes', 'acceptWireChunk', 'expandWireDelta'])
     loadWatchModule('event-wire', ctx, ['compactStartEvent', 'createEventWire', 'nextEventFrame', 'EVENT_FRAME_BYTES'])
   }
   if (name === 'rpc' && !ctx.recordDiagnostic) loadWatchModule('diagnostic-log', ctx, ['recordDiagnostic', 'flushDiagnosticLog', 'diagnosticLog', 'diagnosticLogPage'])
+  if (name === 'diagnostic-log') ctx.WATCH_VERSION ||= 'test'
   if (name === 'diagnostic-log' && !ctx.appTimeout) loadWatchModule('app-timers', ctx, ['appTimeout', 'cancelAppTimeout', 'appInterval', 'cancelAppInterval'])
   if (name === 'diagnostic-log' && !ctx.wireBytes) loadWatchModule('sync-wire', ctx, ['wireHash', 'wireBytes', 'acceptWireChunk', 'expandWireDelta'])
   if (['rpc', 'persistence'].includes(name) && !ctx.appTimeout) loadWatchModule('app-timers', ctx, ['appTimeout', 'cancelAppTimeout', 'appInterval', 'cancelAppInterval'])

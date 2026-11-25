@@ -31,9 +31,20 @@ jobs:
           node .github/scripts/verify-watch-packages.cjs
           node watch-app/scripts/test-device-v4.mjs
           cp "$file" "$file.sha256" pair/
+      - name: Build and sign companion Android app
+        env:
+          OPENGYM_KS: ${{ secrets.OPENGYM_KS }}
+        run: bash .github/scripts/ci-build.sh
+      - name: Test phone receiving and routing
+        working-directory: frontend
+        run: npx vitest run src/lib/watch-link.test.js src/lib/watch-v4-state.test.js src/lib/watch-commit.test.js src/lib/watch-phone-presence.test.js src/lib/watch-device-link.test.js src/lib/watch-session.test.js src/lib/watch-diagnostic-rpc.test.js --maxWorkers=2
+      - name: Collect both install packages
+        run: |
+          cp openGym.apk openGym.apk.sha256 pair/
+          (cd pair && sha256sum *.rpk *.apk > SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
         with:
-          name: watch-gt-signed-${{ github.sha }}
+          name: opengym-gt-pair-${{ github.sha }}
           path: pair/
           if-no-files-found: error
           retention-days: 14

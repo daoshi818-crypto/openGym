@@ -49,6 +49,17 @@ describe('watch backlog fairness and durable replay', () => {
     expect(h.ctx.readStored('session_state').workout.rows).toEqual([1])
     expect(h.ctx.readStored('missing', ['sid'])).toBeNull()
   })
+  it('projects transport and replay identity without traversing workout rows', () => {
+    const h = watchPersistence()
+    loadWatchModule('session', h.ctx, ['loadState'])
+    h.ctx.readStored('cache-bootstrap')
+    const cached = { sid: 's', active: true, sessionOrigin: 'phone', phoneSession: { sid: 's' },
+      pendingEdits: [{ eventId: 'e' }], syncBase: { wireHash: 'hash', commitRev: 4 } }
+    Object.defineProperty(cached, 'workout', { enumerable: true, get() { throw new Error('workout cloned on transport hot path') } })
+    h.shared.persistence.values.session_state = cached
+    expect(h.ctx.loadState('rpc')).toMatchObject({ sid: 's', active: true, syncBase: { wireHash: 'hash', commitRev: 4 } })
+    expect(h.ctx.loadState('replay')).toMatchObject({ sid: 's', pendingEdits: [{ eventId: 'e' }] })
+  })
   it('does not read/rewrite the entire session when 40 already queued edits are replayed', () => {
     vi.useFakeTimers()
     const h = device()

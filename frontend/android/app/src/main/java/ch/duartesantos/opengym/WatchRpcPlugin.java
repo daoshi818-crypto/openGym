@@ -268,7 +268,10 @@ public class WatchRpcPlugin extends Plugin {
             lastRxType = data.optString("t", "unknown");
             log("RX business " + messageSummary(json));
             String type = data.optString("t", "");
-            if (java.util.Arrays.asList("hello", "watch_start", "session_close", "session_close_ack", "pause", "rest", "effort", "weight", "reps", "set", "unset", "add_set", "remove_set", "focus", "end", "summary").contains(type)) {
+            // A v4 phone-led edit has meaning only while the current phone and watch session is live.
+            // Late/undelivered edits are represented by the watch's compact state on reconnect.
+            boolean v4Live = data.optInt("protocolVersion", 0) >= 4 && data.optBoolean("phoneLed", false);
+            if (!v4Live && java.util.Arrays.asList("hello", "watch_start", "session_close", "session_close_ack", "pause", "rest", "effort", "weight", "reps", "set", "unset", "add_set", "remove_set", "focus", "end", "summary").contains(type)) {
                 try {
                     String identity = data.optString("eventId", "");
                     if (identity.isEmpty()) identity = json;

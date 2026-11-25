@@ -183,6 +183,20 @@ describe('Workout 休息页（官方 RestScreen 映射）', () => {
     expect(workout.restPctLabel).toBeUndefined()
   })
 
+  it('页面隐藏时跳过响应式刷新，重新显示后恢复刷新', async () => {
+    const { workout } = setup()
+    workout.visible = false
+    workout.weightNum = '保留值'
+    workout.stateOf().workout.rows[0][0].w = '72.5'
+    workout.refresh()
+    expect(workout.weightNum).toBe('保留值')
+    expect(workout.needsRefresh).toBe(true)
+
+    workout.visible = true
+    workout.refresh()
+    expect(workout.weightNum).toBe('72.5')
+    expect(workout.needsRefresh).toBe(false)
+  })
   it('休息结束后倒计时归零', async () => {
     const { workout } = setup()
     await workout.onCurrentSetAction()

@@ -117,7 +117,7 @@ export function startFromWatch(S, ev) {
   const sourceUnit = p.weightUnit || S.unit || 'kg'
   const entries = JSON.parse(JSON.stringify(p.entries))
   if (sourceUnit !== (S.unit || 'kg')) for (const e of entries) for (const row of e.sets) if (row.w != null) row.w = convertWatchWeight(row.w, sourceUnit, S.unit || 'kg')
-  S.active = { id: ev.sid, watchSid: ev.sid, start: Number(ev.startedAt) || Date.now(), d: todayISO(),
+  S.active = { id: ev.sid, watchSid: ev.sid, start: Number(ev.startedAt) || Date.now(), d: todayISO(), watchStarted: true,
     name: p.name, routineIds: Array.isArray(p.routineIds) && p.routineIds.length ? p.routineIds : [p.id], entries, cur: 0,
     workoutView: S.workoutView || 'cards' }
   ensureWatchIdentity(S.active)
@@ -127,6 +127,7 @@ export function startFromWatch(S, ev) {
 export function rememberClose(S, ev) {
   S.watchClosed = { ...S.watchClosed, [ev.sid]: { ...S.watchClosed?.[ev.sid], sid: ev.sid, disposition: ev.disposition,
     closedAt: ev.closedAt || Date.now(), eventId: ev.eventId || 'phone:' + ev.sid,
+    ...(ev.phoneLedSession ? { phoneLedSession: true, sessionGeneration: ev.sessionGeneration } : {}),
     ...(ev.entries ? { entries: JSON.parse(JSON.stringify(ev.entries)) } : {}),
     ...(ev.elapsedBeforeMs != null ? { elapsedBeforeMs: ev.elapsedBeforeMs } : {}) } }
 }
