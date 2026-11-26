@@ -49,8 +49,10 @@ describe('watch stable targets and step rules', () => {
     expect(valueStep('0.1', 'w', 1, 0.2)).toBe('0.3')
     expect(valueStep(0, 'r', -1)).toBe('0')
     expect(valueStep(99999, 'r', 1)).toBe('99999')
-    expect(rotationStep({ delta: 50 })).toBe(1)
+    expect(rotationStep({ delta: 50 })).toBe(5)
+    expect(rotationStep({ delta: -3 })).toBe(-3)
     expect(rotationStep({ delta: 1, state: 3 })).toBe(0)
+    expect(valueStep('10', 'r', 3)).toBe('13')
   })
 })
 describe('actual watch workout page wiring', () => {
@@ -78,6 +80,21 @@ describe('actual watch workout page wiring', () => {
   it('does not switch sets when no field is selected', async () => {
     const { page } = workout(); page.stepSet = vi.fn(); await page.onRotation({ delta: 1 })
     expect(page.stepSet).not.toHaveBeenCalled()
+  })
+  it('applies multi-notch crown deltas to the selected value', () => {
+    const { page } = workout()
+    page.editWeight(); page.onRotation({ delta: 3 })
+    expect(page.weightNum).toBe('1.5')
+    page.editReps(); page.onRotation({ delta: -2 })
+    expect(page.repsNum).toBe('6')
+  })
+  it('cycles pages once per horizontal swipe', () => {
+    const { page } = workout()
+    page.pageIndex = 2
+    page.touchStart({ touches: [{ clientX: 200, clientY: 200 }] })
+    page.touchMove({ touches: [{ clientX: 150, clientY: 200 }] })
+    page.touchEnd({ changedTouches: [{ clientX: 100, clientY: 200 }] })
+    expect(page.pageIndex).toBe(0)
   })
   it('keeps 400 crown steps local and opens the official keyboard on the same page', () => {
     const { page, ctx, s } = workout()

@@ -96,8 +96,9 @@ describe('v1.4.5 official square Wear UI contracts', () => {
     const {p,s}=training('none'), before=JSON.stringify(s.workout)
     const swipe = dx => { p.touchStart({touches:[{clientX:180,clientY:180}]}); p.touchEnd({changedTouches:[{clientX:180+dx,clientY:180}]}) }
     expect(p.pageIndex).toBe(1); swipe(100); expect(p.pageIndex).toBe(0)
-    swipe(-100); swipe(-100); expect(p.pageIndex).toBe(2); swipe(-100); expect(p.pageIndex).toBe(2)
-    swipe(-100); expect(p.pageIndex).toBe(2); expect(JSON.stringify(s.workout)).toBe(before)
+    swipe(-100); expect(p.pageIndex).toBe(1)
+    swipe(-100); expect(p.pageIndex).toBe(2)
+    swipe(-100); expect(p.pageIndex).toBe(0); expect(JSON.stringify(s.workout)).toBe(before)
     p.showCurrent(); expect(p.pageIndex).toBe(1)
   })
   it('conditionally exposes Pulse/Zones and returns to numbers when HR becomes available', () => {

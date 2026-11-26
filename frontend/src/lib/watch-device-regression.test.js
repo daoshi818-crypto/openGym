@@ -33,7 +33,7 @@ function setup() {
   const h = watchPersistence(), ctx = h.ctx
   Object.assign(ctx, watchInteractionDeps, effort, protocol, { Date, console, lastTimeView,
     setTimeout, clearTimeout, setInterval, clearInterval, startServer() {}, startSessionHr() {}, stopSessionHr() {},
-    tick() {}, restOver() {}, persistenceStatus: () => ({}), storageStatus: () => ({}), synchronizationStatus: () => ({}),
+    tick() {}, restOver() {}, crownTick() {}, persistenceStatus: () => ({}), storageStatus: () => ({}), synchronizationStatus: () => ({}),
     pendingCount: () => 0, isConnected: () => true, router: { replace() {}, push() {} }, brightness: {} })
   loadWatchModule('event-id', ctx, ['allocateEventIdentity', 'rememberEventAt'])
   loadWatchModule('session', ctx, ['startSession', 'loadState', 'save', 'setRowValue', 'nextUndone', 'calories', 'commitSessionAction', 'toggleSet', 'stageSessionEvent'])

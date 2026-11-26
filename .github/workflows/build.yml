@@ -73,11 +73,13 @@ jobs:
         run: node .github/scripts/verify-watch-packages.cjs
 
       - name: Publish release
+        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.APP_VERSION }}
+          target_commitish: ${{ github.sha }}
           name: openGym custom v${{ env.APP_VERSION }}
-          body_path: docs/dev/RELEASE_1_6_38.zh-CN.md
+          body_path: docs/dev/RELEASE_1_6_39.zh-CN.md
           files: |
             openGym.apk
             openGym.apk.sha256
@@ -89,6 +91,7 @@ jobs:
           make_latest: true
 
       - name: Publish update metadata with the release
+        if: github.ref == 'refs/heads/main'
         env:
           APP_VERSION: ${{ env.APP_VERSION }}
         run: |
@@ -111,6 +114,7 @@ jobs:
           fi
 
       - name: Purge jsDelivr update metadata
+        if: github.ref == 'refs/heads/main'
         run: |
           curl -fsS "https://purge.jsdelivr.net/gh/daoshi818-crypto/openGym@main/update.json" || true
           sleep 10

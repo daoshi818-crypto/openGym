@@ -91,6 +91,8 @@ describe('a date-only workout against a window edge', () => {
     // A window that opened at 06:00 local on the workout's own day.
     const opened = new Date('2026-09-22T06:00:00').getTime()
     expect(workoutAt({ d: iso })).toBeGreaterThan(opened)
-    expect(new Date(iso).getTime()).toBeLessThan(opened)   // what the hand-rolled copies computed
+    if (new Date(iso + 'T12:00:00').getTimezoneOffset() > 0) {
+      expect(new Date(iso).getTime()).toBeLessThan(opened)   // only west of UTC does UTC midnight cross this edge
+    }
   })
 })

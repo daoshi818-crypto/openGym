@@ -19,7 +19,7 @@ import {
   effortScaleOf, effortValueOf, effortKindOf, stepEffortValue, effortMeaning,
   formatEffort,
 } from '../lib/effort-scale.js'
-import { startSessionHr, stopSessionHr, tick, restOver } from '../lib/sensors.js'
+import { startSessionHr, stopSessionHr, tick, restOver, crownTick } from '../lib/sensors.js'
 import { startServer, sendEvent, replayPendingEvents, sendControl, pendingCount, persistenceStatus, synchronizationStatus, transportDiagnostics } from '../lib/rpc.js'
 import { storageStatus, readStored } from '../lib/persistence.js'
 import { journalEntry } from '../lib/close-journal.js'
@@ -230,24 +230,25 @@ const pageDefinition = {
       if (direction) {
         this.keypadBuffer = valueStep(this.keypadBuffer, this.keypadField, direction, this.weightStep)
         this.keypadValue = this.keypadBuffer; this.keypadReplace = false
+        crownTick()
       }
       return
     }
     this.logInteraction('crown_input', { detail: this.selectedField || (this.isRest ? 'rest' : 'page'), type: String(this.pageIndex) })
     if (this.pageIndex === 2 && !this.effortOn && !this.closeMode && !this.diagnosticOn) {
-      const direction = rotationStep(ev); if (direction) this.stepMetrics(direction); return
+      const direction = rotationStep(ev); if (direction) { this.stepMetrics(Math.sign(direction)); crownTick() }; return
     }
     if (this.diagnosticOn) return
     if (ev && this.effortOn && ev.state !== 3) {
       const d = rotationStep(ev)
-      if (d) this.effortMove(d > 0 ? 1 : -1)
+      if (d) { this.effortMove(d > 0 ? 1 : -1); crownTick() }
       return
     }
     if (!ev || this.visible === false || ev.state === 3 || this.menuOn || this.closeMode || this.pageIndex !== 1 || this.paused || this.lastOpen || this.finishOn) return
     const delta = rotationStep(ev)
     if (!delta) return
-    if (this.isRest || this.restCrownDirty) this.queueRestNudge(delta > 0 ? 5 : -5)
-    else return this.adjustSelectedField(rotationStep(ev))
+    if (this.isRest || this.restCrownDirty) { this.queueRestNudge(delta * 5); crownTick() }
+    else if (this.adjustSelectedField(delta)) crownTick()
   },
   onBackPress() {
     if (this.closeSaving || this.stateOf()?.closeIntent) return true
@@ -466,7 +467,9 @@ const pageDefinition = {
     const axis = axisAtRelease || (Math.abs(dx) > Math.abs(dy) ? 'x' : 'y')
     if (axis === 'x') {
       this.cancelFinishHold()
-      this.pageIndex = Math.max(0, Math.min(2, this.pageIndex + (dx < 0 ? 1 : -1)))
+      const fromPage = Math.max(0, Math.min(2, Number(this.pageIndex) || 0))
+      const direction = dx < 0 ? 1 : -1
+      this.pageIndex = (fromPage + direction + 3) % 3
       this.focusCrown()
     } else if (this.pageIndex === 2) this.stepMetrics(dy < 0 ? 1 : -1)
     // Vertical gestures belong to the visible native list; horizontal swipes navigate pages.
@@ -595,12 +598,14 @@ const pageDefinition = {
     if (!found || found.row.done || s.pausedAt || s.restUntil || this.fieldTarget.weightUnit !== (s.weightUnit || 'kg') || found.exIdx !== s.exIdx || found.setIdx !== s.setIdx) {
       this.clearFieldSelection(); this.inputNotice = '目标已变化，请重新选择'; return
     }
-    const draft = this.updateNumbers()
+    const draft = numberDraft(s, this.numberDraftOf())
+    this.numberDraftOf(draft)
     if (!draft) { this.clearFieldSelection(); return }
     const value = valueStep(draft[this.selectedField], this.selectedField, direction, this.weightStep)
     changeNumber(draft, this.selectedField, value)
     if (this.selectedField === 'w') this.weightNum = value
     else this.repsNum = value
+    return true
   },
   openNumberKeypad(field) {
     if (this.localCommitPending || this.interactionBlocked()) return

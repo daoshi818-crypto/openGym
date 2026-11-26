@@ -79,6 +79,15 @@ export function stopHr() {
   } catch (e) { /* 未订阅时忽略 */ }
 }
 
+// Explicit haptic for a crown input; rate-limit bursts without delaying input.
+let lastCrownVibrationAt = 0
+export function crownTick() {
+  const now = Date.now()
+  if (now - lastCrownVibrationAt < 45) return
+  lastCrownVibrationAt = now
+  try { vibrator.vibrate({ mode: 'short' }) } catch (e) { /* Haptics must not block workout input. */ }
+}
+
 // 记一组的轻反馈
 export function tick() {
   vibrator.vibrate({ mode: 'short' })
