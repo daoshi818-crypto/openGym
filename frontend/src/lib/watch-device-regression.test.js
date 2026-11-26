@@ -132,7 +132,9 @@ it('keeps keyboard draft objects out of the native proxy map and commits final v
   const s = ctx.loadState(), events = s.pendingEdits
   expect(s.workout.rows[0][0]).toMatchObject({ w: '80', r: '13', done: true })
   expect(events.filter(e => e.t === 'set')).toHaveLength(1)
-  expect(events.find(e => e.t === 'set')).toMatchObject({ weight: '80', reps: '13' })
+  expect(events.find(e => e.t === 'set').setId).toBeUndefined()
+  expect(events.find(e => e.t === 'set').weight).toBeUndefined()
+  expect(events.find(e => e.t === 'set').reps).toBeUndefined()
   expect(events.filter(e => ['weight','reps'].includes(e.t))).toHaveLength(0)
   expect(writes.mock.calls.filter(([v]) => v.key === 'session_state')).toHaveLength(1)
 })

@@ -340,7 +340,7 @@ function flush() {
     return
   }
   r.controlBurst = control ? (r.controlBurst || 0) + 1 : 0
-  const token = { generation: rpcState().connectionGeneration, eventId: next.msg.eventId }
+  const token = { generation: rpcState().connectionGeneration, eventId: next.msg.eventId, control: next }
   rpcState().sending = token
   if (!control) rpcState().nextSendAt = Date.now() + SEND_GAP_MS
   const release = () => { if (rpcState().sending !== token || token.generation !== rpcState().connectionGeneration) return false; cancelAppTimeout(rpcState().sendingTimer); rpcState().sending = false; return true }
@@ -564,12 +564,14 @@ export function startServer(h) {
   callbacks.onClose = () => {
     trace('connection_close')
     rpcState().connected = false
+    rpcState().controls = (rpcState().controls || []).filter(e => !e.liveKey)
     rpcState().connectionGeneration++; rpcState().sending = false; cancelAppTimeout(rpcState().sendingTimer)
     if (rpcState().handlers.onState) rpcState().handlers.onState(false)
   }
   callbacks.onError = (err) => {
     trace('connection_error', {}, err)
     rpcState().connected = false
+    rpcState().controls = (rpcState().controls || []).filter(e => !e.liveKey)
     rpcState().connectionGeneration++; rpcState().sending = false; cancelAppTimeout(rpcState().sendingTimer)
     if (rpcState().handlers.onState) rpcState().handlers.onState(false)
     if (rpcState().handlers.onError) rpcState().handlers.onError(err || {})
@@ -960,12 +962,27 @@ export function sendControl(obj) {
   const r = rpcState()
   if (!r.connected || !r.connect || !obj) return false
   const controls = r.controls ||= []
+  const liveKey = obj.liveValue ? [obj.sid, obj.entryInstanceId || obj.ex, obj.setId || obj.set, obj.t].join(':') : ''
+  if (liveKey) {
+    const existing = controls.find(e => e.liveKey === liveKey)
+    if (existing && r.sending?.control !== existing) {
+      existing.msg = JSON.parse(JSON.stringify(obj)); existing.key = JSON.stringify(existing.msg)
+      return true
+    }
+  }
   const key = JSON.stringify(obj)
   if (controls.some(e => e.key === key)) return true
   if (controls.length >= 64) { trace('control_queue_full', obj); return false }
-  controls.push({ key, msg: JSON.parse(key), nextAttemptAt: 0 })
+  controls.push({ key, liveKey, msg: JSON.parse(key), nextAttemptAt: 0 })
   flush()
   return true
+}
+
+/** Best-effort value update. A disconnected edit is intentionally discarded. */
+export function sendLiveValue(obj) {
+  if (!obj || !['weight', 'reps'].includes(obj.t) || !rpcState().connected) return false
+  const value = obj.t === 'weight' ? obj.weight : obj.reps
+  return sendControl({ ...obj, liveValue: true, at: Number(obj.at) || Date.now(), [obj.t]: value })
 }
 
 export function pendingCount() { initialize(); return rpcState().outbox.length }

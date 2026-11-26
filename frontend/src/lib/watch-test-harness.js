@@ -11,7 +11,7 @@ import { zoneView, muscleView } from '../../../watch-app/src/lib/official-metric
 import { numberDraft, changeNumber, applyNumberDraft, keypadPress } from '../../../watch-app/src/lib/number-draft.js'
 
 // Real page imports, not stubs: keep VM tests in sync with the shipped page modules.
-export const watchInteractionDeps = { numberDraft, changeNumber, applyNumberDraft, keypadPress, zoneView, muscleView, isPhoneConnected: () => false, replayPendingEvents: () => {}, crownTick: () => {}, commitPageAction, rotationStep, valueStep, captureRow, rowTarget, setDotWindow, createSetDotPicker }
+export const watchInteractionDeps = { numberDraft, changeNumber, applyNumberDraft, keypadPress, zoneView, muscleView, isPhoneConnected: () => false, replayPendingEvents: () => {}, sendLiveValue: () => false, crownTick: () => {}, commitPageAction, rotationStep, valueStep, captureRow, rowTarget, setDotWindow, createSetDotPicker }
 
 export const watchSource = path => readFileSync(new URL('../../../watch-app/src/' + path, import.meta.url), 'utf8')
 export const stripImports = code => code

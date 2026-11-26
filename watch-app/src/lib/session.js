@@ -497,14 +497,6 @@ export function setRowValue(state, exIdx, setIdx, field, value, notifyPhone = fa
   if (!row) return
   if (field === 'w') row.w = value === '' || value == null ? '' : value
   else if (field === 'r') row.r = value === '' || value == null ? '' : value
-  if (notifyPhone) {
-    // 输入页没有训练页的 RPC 实例。先与行数据一起落盘，返回后交给训练页的 outbox。
-    const edits = state.pendingEdits ||= []
-    const at = Math.max(now(), edits.length ? edits[edits.length - 1].at + 1 : 0)
-    stageSessionEvent(state, { ...eventIdentity(state, exIdx, setIdx), t: field === 'w' ? 'weight' : 'reps', sid: state.sid, ex: exIdx, set: setIdx + 1,
-      [field === 'w' ? 'weight' : 'reps']: row[field], at })
-    state.pendingEdits = edits
-  }
   save(state)
 }
 

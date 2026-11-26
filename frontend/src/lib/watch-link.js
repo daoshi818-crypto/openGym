@@ -909,7 +909,7 @@ async function sendWatchEvent(obj) {
     const field = obj.t === 'weight' ? 'weight' : obj.t === 'reps' ? 'reps' : ['set','unset'].includes(obj.t) ? 'done' : null
     if (field && row) trainingStore.update(s => { const a = s.active; if (!a || a.start !== A.start) return; a.watchVersions ||= {}; a.watchVersions[[entry.entryInstanceId || obj.ex, row.setId || obj.set, field].join(':')] = obj.at })
   }
-  if (syncProtocol >= 3 && trainingStore && obj.sid === String(A?.watchSid || A?.start) && ['weight', 'reps', 'set', 'unset', 'effort', 'rest', 'pause', 'focus', 'add_set', 'remove_set'].includes(obj.t)) {
+  if (syncProtocol >= 3 && trainingStore && obj.sid === String(A?.watchSid || A?.start) && !['weight', 'reps'].includes(obj.t) && ['weight', 'reps', 'set', 'unset', 'effort', 'rest', 'pause', 'focus', 'add_set', 'remove_set'].includes(obj.t)) {
     const snapshot = watchSnapshotOf(trainingStore.getState(), trainingStore.getTimer?.())
     if (snapshot) return pushSyncToWatch(snapshot)
   }
@@ -928,6 +928,34 @@ async function sendWatchEvent(obj) {
     lastError = e && e.message ? e.message : 'send event failed'
     return false
   }
+}
+
+const liveValueSends = new Map()
+function sendLiveValueToWatch(obj) {
+  if (!MOBILE || !obj?.sid || !targetReady()) return Promise.resolve(false)
+  const key = [obj.sid, obj.ex, obj.set, obj.t].join(':')
+  let item = liveValueSends.get(key)
+  if (!item) {
+    item = { latest: obj, running: false }
+    liveValueSends.set(key, item)
+  } else item.latest = obj
+  if (item.running) return Promise.resolve(true)
+  item.running = true
+  return (async () => {
+    let ok = true
+    try {
+      while (item.latest && targetReady()) {
+        const current = item.latest
+        item.latest = null
+        ok = await sendWatchEvent(current)
+        if (!ok) break
+      }
+      return ok
+    } finally {
+      item.running = false
+      if (!item.latest || !targetReady()) liveValueSends.delete(key)
+    }
+  })()
 }
 
 // ---- 实时同步：手机 → 手表 ----
@@ -951,13 +979,13 @@ export async function pushRestToWatch(sid, leftSec, timer = null) {
 /** 手机改了某组的重量（ex=动作下标，set=第几组，1 起）。 */
 export async function pushWeightToWatch(sid, ex, set, weight, editAt) {
   if (!MOBILE || !sid) return
-  await sendWatchEvent({ t: 'weight', sid, ex, set, weight: String(weight ?? ''), editAt })
+  await sendLiveValueToWatch({ t: 'weight', sid, ex, set, weight: String(weight ?? ''), editAt })
 }
 
 /** 手机改了某组的次数。 */
 export async function pushRepsToWatch(sid, ex, set, reps, editAt) {
   if (!MOBILE || !sid) return
-  await sendWatchEvent({ t: 'reps', sid, ex, set, reps: String(reps ?? ''), editAt })
+  await sendLiveValueToWatch({ t: 'reps', sid, ex, set, reps: String(reps ?? ''), editAt })
 }
 
 /** 手机上完成某组：手表端同步完成态。 */

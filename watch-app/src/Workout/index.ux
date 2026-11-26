@@ -20,7 +20,7 @@ import {
   formatEffort,
 } from '../lib/effort-scale.js'
 import { startSessionHr, stopSessionHr, tick, restOver, crownTick } from '../lib/sensors.js'
-import { startServer, sendEvent, replayPendingEvents, sendControl, pendingCount, persistenceStatus, synchronizationStatus, transportDiagnostics } from '../lib/rpc.js'
+import { startServer, sendEvent, sendLiveValue, replayPendingEvents, sendControl, pendingCount, persistenceStatus, synchronizationStatus, transportDiagnostics } from '../lib/rpc.js'
 import { storageStatus, readStored } from '../lib/persistence.js'
 import { journalEntry } from '../lib/close-journal.js'
 import { applyEdit, applyFocus, applyRest, restOf } from '../lib/protocol.js'
@@ -605,6 +605,10 @@ const pageDefinition = {
     changeNumber(draft, this.selectedField, value)
     if (this.selectedField === 'w') this.weightNum = value
     else this.repsNum = value
+    const target = draft.target
+    sendLiveValue({ t: this.selectedField === 'w' ? 'weight' : 'reps', sid: s.sid, ex: target.exIdx, set: target.setIdx + 1,
+      entryInstanceId: target.entryInstanceId, setId: target.setId, weightUnit: target.weightUnit,
+      [this.selectedField === 'w' ? 'weight' : 'reps']: value, at: Date.now(), source: 'watch' })
     return true
   },
   openNumberKeypad(field) {
@@ -627,6 +631,10 @@ const pageDefinition = {
     const expected = this.keypadDraftOf(), draft = this.updateNumbers()
     if (!this.keypadOn || draft !== expected || !draft) return
     if (!changeNumber(draft, this.keypadField, this.keypadBuffer)) { this.keypadNotice = '请输入有效数值'; return }
+    const target = draft.target, type = this.keypadField === 'w' ? 'weight' : 'reps'
+    sendLiveValue({ t: type, sid: target.sid, ex: target.exIdx, set: target.setIdx + 1,
+      entryInstanceId: target.entryInstanceId, setId: target.setId, weightUnit: target.weightUnit,
+      [type]: draft[this.keypadField], at: Date.now(), source: 'watch' })
     this.closeNumberKeypad(); this.updateNumbers()
   },
   numberKey1() { this.numberKey('1') },
@@ -785,7 +793,7 @@ const pageDefinition = {
       name: s.workout.exercises[exIdx]?.name || '', setNo: setIdx + 1 }
     this.restStartAt = Date.now()
     this.setRestScreenLock(!!s.restUntil)
-    this.emitEvent({ t: 'set', sid: s.sid, ex: exIdx, set: setIdx + 1, reps: row.r != null ? String(row.r) : '', weight: row.w != null ? String(row.w) : '', at: row.at, rest: restOf(s) })
+    this.emitEvent({ t: 'set', sid: s.sid, ex: exIdx, set: setIdx + 1, setId: row.setId, at: row.at, rest: restOf(s) })
     tick()
     const next = nextUndone(s)
     if (next) {
@@ -1833,7 +1841,7 @@ const pageDefinition = {
 export default pageDefinition
 </script>
 <template>
-<div class="page" id="training" touch-focusable="true" onrotation="onRotation" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
+<div class="page" id="training" touch-focusable="true" vibration-effectEnabled="false" onrotation="onRotation" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
   <div class="topbar" if="{{ !effortOn && !lastOpen && !diagnosticOn && !keypadOn }}"><text class="top-lead" if="{{ !syncWarning }}">{{ hrLabel }}</text><text class="sync-pill" if="{{ syncWarning }}">{{ syncLabel }}</text><text class="clock">{{ clockLabel }}</text></div>
   <div class="pager" if="{{ !closeMode && !effortOn && !lastOpen && !diagnosticOn && !keypadOn }}">
     <div class="screen overview-screen" show="{{ pageIndex === 0 }}">

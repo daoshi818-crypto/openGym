@@ -23,9 +23,9 @@ function transport(connection, extra = {}, shared = {}) {
   loadWatchModule('event-id', ctx, ['allocateEventIdentity', 'rememberEventAt'])
   loadWatchModule('close-journal', ctx, ['pendingSummaries', 'pendingEntry', 'journalEntry', 'prepareClose', 'releaseCandidate', 'markPhase', 'markDelivered'])
   // rpc.js is loaded last so its own handlers win; it needs the session/dep surface above.
-  loadWatchModule('rpc', ctx, ['startServer', 'sendControl', 'sendEvent', 'pendingCount', 'persistenceStatus', 'replayPendingEvents'])
-  const { startServer, sendControl, sendEvent, pendingCount, persistenceStatus, replayPendingEvents } = ctx
-  return { startServer, sendControl, sendEvent, pendingCount, persistenceStatus, replayPendingEvents, disk, sent: connection.sent }
+  loadWatchModule('rpc', ctx, ['startServer', 'sendControl', 'sendEvent', 'sendLiveValue', 'pendingCount', 'persistenceStatus', 'replayPendingEvents'])
+  const { startServer, sendControl, sendEvent, sendLiveValue, pendingCount, persistenceStatus, replayPendingEvents } = ctx
+  return { startServer, sendControl, sendEvent, sendLiveValue, pendingCount, persistenceStatus, replayPendingEvents, disk, sent: connection.sent }
 }
 function connection() {
   const sent = []
@@ -765,10 +765,11 @@ describe('watch business message boundary', () => {
       workout.saveNumberKeypad()
       expect(sessions.loadState().workout.rows[0][1].w).toBe('90')
       expect(field === 'w' ? workout.weightNum : workout.repsNum).toBe(value)
-      expect(c.sent.find(m => m.t === type && m.set === 1)).toBeUndefined()
+      expect(c.sent.find(m => m.t === type && m.liveValue)).toMatchObject({ [type]: value, set: 1 })
       await workout.onComplete()
       expect(sessions.loadState().workout.rows[0][0]).toMatchObject({ [field]: value, done: true })
-      expect(c.sent.find(m => m.t === 'set')).toMatchObject({ [type]: value, set: 1 })
+      expect(c.sent.find(m => m.t === 'set')).toMatchObject({ set: 1 })
+      expect(c.sent.find(m => m.t === type && m.liveValue)).toMatchObject({ [type]: value, set: 1 })
     })
 
   it('keeps the shown value when the inline keyboard is confirmed without typing', () => {
@@ -786,7 +787,8 @@ describe('watch business message boundary', () => {
     workout.editWeight(); workout.editWeight(); workout.numberKey8(); workout.numberKey0(); workout.saveNumberKeypad()
     for (let i = 0; i < 3; i++) c.onMessage({ data: { ...plan, t: 'sync', rows: [[{ w: '60', r: '8', done: false }]] } })
     expect(workout.weightNum).toBe('80')
-    expect(c.sent.filter(m => m.t === 'weight')).toHaveLength(0)
+    expect(c.sent.filter(m => m.t === 'weight' && m.liveValue)).toHaveLength(1)
+    expect(c.sent.find(m => m.t === 'weight' && m.liveValue)).toMatchObject({ weight: '80', set: 1 })
   })
 
   it('retries unacknowledged edits after reconnecting instead of leaving them permanently sent', async () => {

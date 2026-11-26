@@ -83,7 +83,7 @@ export function stopHr() {
 let lastCrownVibrationAt = 0
 export function crownTick() {
   const now = Date.now()
-  if (now - lastCrownVibrationAt < 45) return
+  if (now - lastCrownVibrationAt < 100) return
   lastCrownVibrationAt = now
   try { vibrator.vibrate({ mode: 'short' }) } catch (e) { /* Haptics must not block workout input. */ }
 }
