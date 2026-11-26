@@ -24,7 +24,7 @@ function trim(j) {
 }
 const fields = ['sid', 'eventId', 'entryInstanceId', 'setId', 'type', 'code', 'version', 'status', 'detail', 'phase', 'page',
   'kind', 'reason', 'pending', 'rest', 'paused', 'ok', 'ex', 'set', 'rev', 'restUntil', 'restVersion', 'restId', 'attempts', 'receivedAt', 'nextAttemptAt', 'durable', 'readyState',
-  'connectionGeneration', 'headEventId', 'crownDirty', 'dotPending', 'duration', 'bytes', 'active', 'actionDuration', 'sampleCount', 'sessionAt', 'storageFailed', 'unflushed']
+  'connectionGeneration', 'headEventId', 'crownDirty', 'dotPending', 'duration', 'bytes', 'active', 'actionDuration', 'summaryDuration', 'officialViewDuration', 'sampleCount', 'sessionAt', 'storageFailed', 'unflushed']
 const safeToken = value => typeof value === 'string' ? value.replace(/[^a-zA-Z0-9_.:-]/g, '').slice(0, 48) : value
 function journal() {
   const r = runtime()

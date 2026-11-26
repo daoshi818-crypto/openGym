@@ -43,7 +43,7 @@ export function watchPlanOf(S) {
   }
 }
 
-/** Stable execution rows only; history and profiles are not sent with the workout. */
+/** Stable execution rows plus the small context used by the watch metrics screen. */
 export function watchWorkoutDTOOf(workout, sid, requestId) {
   if (!sid || !requestId || !workout?.exercises?.length) return null
   const id = value => typeof value === 'string' && value.length > 0 && value.length <= 128
@@ -63,11 +63,16 @@ export function watchWorkoutDTOOf(workout, sid, requestId) {
         ...(row.rpe != null ? { rpe: row.rpe } : {}), ...(row.rir != null ? { rir: row.rir } : {}),
         ...(row.effortVersion != null ? { effortVersion: row.effortVersion } : {}) }
     })
+    const muscles = ex.muscles && typeof ex.muscles === 'object'
+      ? Object.fromEntries(Object.entries(ex.muscles).filter(([key, weight]) => /^[a-z][a-z0-9_-]{0,31}$/.test(key) && Number.isFinite(Number(weight)) && Number(weight) > 0))
+      : null
     return workSets.includes(null) ? null : { exerciseId: ex.id || ex.exerciseId || '', entryInstanceId: ex.entryInstanceId,
-      name: ex.name || '', restSec: Number(ex.restSec) || 60, sets: workSets }
+      name: ex.name || '', restSec: Number(ex.restSec) || 60, ...(muscles && Object.keys(muscles).length ? { muscles } : {}), sets: workSets }
   })
   if (exercises.includes(null)) return null
+  const birthYear = Number.isInteger(workout.profile?.birthYear) ? workout.profile.birthYear : null
   return { t: 'START_SESSION', protocolVersion: 4, requestId, sid, workout: workout.name || '', weightUnit: workout.weightUnit || 'kg',
+    ...(birthYear !== null ? { profile: { birthYear } } : {}),
     structureRevision: workout.structureRevision || 0,
     ...(workout.sessionGeneration ? { sessionGeneration: workout.sessionGeneration } : {}),
     ...(workout.effortScale ? { effortScale: workout.effortScale } : {}), exercises }

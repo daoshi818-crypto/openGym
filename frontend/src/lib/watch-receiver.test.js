@@ -32,6 +32,9 @@ function connection() {
   return { sent, send({ data, success }) { sent.push(data); success() },
     getReadyState({ success }) { success({ status: 1 }) } }
 }
+function acknowledgePeer(c, protocolVersion = 2) {
+  c.onMessage({ data: { t: 'hello_ack', protocolVersion } })
+}
 function page(path, deps) {
   const script = source(path).match(/<script>([\s\S]*?)<\/script>/)[1]
   const context = { ...watchInteractionDeps, phoneConflict: () => null, setInterval: () => 1, clearInterval() {}, replayPendingEvents() {}, setTimeout: () => 1, clearTimeout() {}, console, WATCH_VERSION: 'test-watch', applyEdit, applyRest, restOf, applyFocus, persistenceStatus: () => ({}), storageStatus: () => ({}), synchronizationStatus: () => ({}),
@@ -146,6 +149,51 @@ describe('watch completed sets and rest clock', () => {
     expect(writes.mock.calls.filter(([w]) => w.key === 'session_state')).toHaveLength(1)
     expect(sendControl).toHaveBeenCalledOnce()
     expect(sendControl.mock.calls[0][0]).toMatchObject({ t: 'rest', leftSec: 460 })
+  })
+
+  it('keeps crown edits responsive during a pending write and flushes only the latest value', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-19T12:00:00Z'))
+    const sessions = session(), connection = transport({ sent: [], send({ data, success }) { this.sent.push(data); success() }, getReadyState({ success }) { success({ status: 1 }) } })
+    sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+    const workout = training(sessions, connection, { Date, setTimeout, clearTimeout, setInterval, clearInterval })
+    workout.onInit(); workout.showCurrent(); workout.editReps()
+    const writes = [], originalSet = sessions.storage.set
+    sessions.storage.set = item => item.key === 'session_state' ? writes.push(item) : originalSet(item)
+
+    workout.onRotation({ delta: 1, state: 2 })
+    expect(workout.repsNum).toBe('9')
+    await vi.advanceTimersByTimeAsync(350)
+    expect(writes).toHaveLength(1)
+
+    workout.localCommitPending = true
+    workout.onRotation({ delta: 1, state: 2 })
+    expect(workout.repsNum).toBe('10')
+    workout.localCommitPending = false
+    await vi.advanceTimersByTimeAsync(350)
+    writes.shift().success()
+    await vi.waitFor(() => expect(writes).toHaveLength(1))
+    writes.shift().success()
+    await vi.waitFor(() => expect(sessions.loadState().workout.rows[0][0].r).toBe('10'))
+    expect(connection.sent.some(message => message.t === 'set')).toBe(false)
+  })
+
+  it('flushes a dirty crown draft on page hide without sending a set event', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-19T12:00:00Z'))
+    const sessions = session(), c = connection(), rpc = transport(c)
+    sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+    const workout = training(sessions, rpc, { Date, setTimeout, clearTimeout, setInterval, clearInterval })
+    workout.onInit(); workout.showCurrent(); workout.editReps()
+    const writes = vi.spyOn(sessions.storage, 'set')
+    workout.onRotation({ delta: 1, state: 2 })
+    workout.onRotation({ delta: 1, state: 2 })
+    expect(writes).not.toHaveBeenCalled()
+
+    await workout.onHide()
+    expect(writes.mock.calls.filter(([item]) => item.key === 'session_state')).toHaveLength(1)
+    expect(sessions.loadState().workout.rows[0][0].r).toBe('10')
+    expect(c.sent.some(message => message.t === 'set')).toBe(false)
   })
 
   it('keeps rest rendering at a display-sized cadence and batches a crown focus save', async () => {
@@ -631,6 +679,7 @@ describe('watch business message boundary', () => {
     sessions.save(state)
     const replace = vi.fn(), workout = training(sessions, rpc, { router: { replace } })
     workout.onInit()
+    acknowledgePeer(c)
     workout.hrDirty = true
     c.onMessage({ data: { t: 'ended', sid: plan.sid, endedAt: Date.now() - 300000, reason: 'finished' } })
     // The close is committed through the durable journal before the session is cleared.
@@ -645,6 +694,7 @@ describe('watch business message boundary', () => {
     expect(c.sent.at(-1)).toMatchObject({ t: 'plan_ack', status: 'closed' })
     expect(sessions.loadState().active).toBe(false)
     c.onClose(); c.onOpen()
+    acknowledgePeer(c)
     await new Promise(r => setTimeout(r, 300))
     expect(c.sent.filter(m => m.t === 'summary')).toHaveLength(2)
   })
@@ -761,6 +811,7 @@ describe('watch business message boundary', () => {
       sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
       const rpc = transport(c, { loadState: sessions.loadState })
       const workout = training(sessions, rpc); workout.onInit()
+      acknowledgePeer(c)
       workout.selectField(field); workout.selectField(field)
       const changed = sessions.loadState(); sessions.setRowValue(changed, 0, 1, 'w', '90')
       for (const key of value) workout.numberKey(key)
@@ -794,13 +845,16 @@ describe('watch business message boundary', () => {
   it('retries unacknowledged edits after reconnecting instead of leaving them permanently sent', async () => {
     const c = connection(), rpc = transport(c)
     rpc.startServer({})
+    acknowledgePeer(c)
     rpc.sendEvent({ t: 'weight', sid: plan.sid, ex: 0, set: 1, weight: '80', at: 100 })
     c.onClose(); c.onOpen()
+    acknowledgePeer(c)
     await new Promise(r => setTimeout(r, 300))
     expect(c.sent.filter(m => m.t === 'weight')).toHaveLength(2)
     c.onMessage({ data: { t: 'ack', eventId: c.sent.find(m => m.t === 'weight').eventId, upto: 100 } })
     await new Promise(r => setTimeout(r, 0))
     c.onClose(); c.onOpen()
+    acknowledgePeer(c)
     await new Promise(r => setTimeout(r, 300))
     expect(c.sent.filter(m => m.t === 'weight')).toHaveLength(2)
   })

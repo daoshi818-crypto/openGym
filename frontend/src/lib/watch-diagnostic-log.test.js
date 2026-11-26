@@ -38,14 +38,16 @@ describe('bounded independent watch diagnostic journal', () => {
     const d = watch(), set = vi.spyOn(d.storage, 'set')
     for (let i = 0; i < 1000; i++) d.ctx.recordDiagnostic('workout_refresh', {
       sid: 'session-' + i, active: true, sessionAt: 1234, duration: i % 7, actionDuration: i,
+      summaryDuration: 2, officialViewDuration: 3,
     })
     const log = d.ctx.diagnosticLog()
     expect(log.events).toMatchObject([{ stage: 'workout_refresh', count: 1000, sid: 'session-999', active: true,
-      sessionAt: 1234, duration: 5, actionDuration: 999 }])
+      sessionAt: 1234, duration: 5, actionDuration: 999, summaryDuration: 2, officialViewDuration: 3 }])
     expect(set).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(1000)
     expect(set).toHaveBeenCalledOnce()
-    expect(d.disk.get('watch_diagnostic_log_v1').events).toMatchObject([{ stage: 'workout_refresh', count: 1000, actionDuration: 999 }])
+    expect(d.disk.get('watch_diagnostic_log_v1').events).toMatchObject([{ stage: 'workout_refresh', count: 1000,
+      actionDuration: 999, summaryDuration: 2, officialViewDuration: 3 }])
   })
 
   it('retains flushed pre-exit records across runtime restart without touching session storage', () => {

@@ -153,7 +153,7 @@ export function WatchPairSheet({ close }) {
     <p className="muted small" role="status">手表连接：{connection.appConnected ? '已确认连接' : connection.sdkConnected ? '通道已连接，等待手表应用确认' : '未连接'}
       {connection.appConnected && connection.lastVerifiedAt > 0 && ` · 最近确认 ${new Date(connection.lastVerifiedAt).toLocaleTimeString()}`}
     </p>
-    <p className="muted small">手机开始训练后会自动打开已连接的手表应用，只发送本次训练。</p>
+    <p className="muted small">手机不会自动打开手表应用。训练中可点训练页的手表按钮启动并同步；手表应用主动打开时，也会同步手机当前训练和已完成组。</p>
     {dev && connected && <div className="list" style={{ margin: '10px 0 14px' }}>
       <div className="item">
         <span className="lrow-m">

@@ -81,13 +81,15 @@ describe('Last time is resolved for the active workout', () => {
     const entries = buildSessionEntries(S, A)
     const active = { start: 9, name: 'Current', routineIds: [A.id], entries }
     ensureWatchIdentity(active)
-    const snapshot = watchSnapshotOf({ ...S, active }, null, 1000)
+    const snapshot = watchSnapshotOf({ ...S, birthYear: 1990, active }, null, 1000)
+    snapshot.exercises[0].muscles = { chest: 0.75, shoulder: 0.25 }
     expect(snapshot.exercises[0].lastTime.date).toBe('2026-01-01')
     const dto = watchWorkoutDTOOf({ ...snapshot, name: snapshot.workout }, snapshot.sid, 'start-current')
-    expect(dto).toMatchObject({ t: 'START_SESSION', sid: '9', workout: 'Current', exercises: [{ entryInstanceId: entries[0].entryInstanceId }] })
+    expect(dto).toMatchObject({ t: 'START_SESSION', sid: '9', workout: 'Current', profile: { birthYear: 1990 },
+      exercises: [{ entryInstanceId: entries[0].entryInstanceId, muscles: { chest: 0.75, shoulder: 0.25 } }] })
     expect(dto.exercises[0].sets.map(row => row.setId)).toEqual(entries[0].sets.map(row => row.setId))
     expect(dto.exercises[0]).not.toHaveProperty('lastTime')
-    expect(dto).not.toHaveProperty('profile')
+    expect(dto.profile).toEqual({ birthYear: 1990 })
     expect(dto).not.toHaveProperty('plans')
   })
 

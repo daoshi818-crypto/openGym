@@ -31,7 +31,7 @@ import { summarizeWorkoutRows } from '../lib/workout-summary.js'
 const pageDefinition = {
   // Native reactiveMap retains proxies until Page destruction. Business documents
   // must stay in staticData; only the small display projection belongs in data.
-  staticData: { sessionModel: { current: null, restFlush: null, numberDraft: null, keypadDraft: null, touchPoints: { start: { x: 0, y: 0 }, last: { x: 0, y: 0 } } } },
+  staticData: { sessionModel: { current: null, restFlush: null, numberDraft: null, numberFlush: null, numberTimer: null, numberGeneration: 0, keypadDraft: null, touchPoints: { start: { x: 0, y: 0 }, last: { x: 0, y: 0 } } } },
   stateOf(value) {
     // Detached transaction drafts (and legacy page callers) own their state.
     if (this.sessionActionDraft || !this.sessionModel) {
@@ -52,6 +52,21 @@ const pageDefinition = {
     const owner = this.sessionModel || this
     if (arguments.length) owner.numberDraft = value
     return owner.numberDraft
+  },
+  numberFlushOf(value) {
+    const owner = this.sessionModel || this
+    if (arguments.length) owner.numberFlush = value
+    return owner.numberFlush
+  },
+  numberTimerOf(value) {
+    const owner = this.sessionModel || this
+    if (arguments.length) owner.numberTimer = value
+    return owner.numberTimer
+  },
+  numberGenerationOf(value) {
+    const owner = this.sessionModel || this
+    if (arguments.length) owner.numberGeneration = value
+    return owner.numberGeneration || 0
   },
   keypadDraftOf(value) {
     const owner = this.sessionModel || this
@@ -367,7 +382,7 @@ const pageDefinition = {
     this.touchCancel()
     this.trailingTapBlockedUntil = 0
     this.visible = false
-    const pending = this.flushRestNudge()
+    const pending = Promise.all([this.flushRestNudge(), this.flushNumberDraft()])
     this.setRestScreenLock(false)
     if (this.timer) clearInterval(this.timer)
     this.timer = null
@@ -375,6 +390,7 @@ const pageDefinition = {
   },
 
   onDestroy() {
+    this.flushNumberDraft()
     const rpcOwner = this.sessionModel || this
     if (typeof rpcOwner.rpcDetach === 'function') rpcOwner.rpcDetach()
     rpcOwner.rpcDetach = null
@@ -520,6 +536,7 @@ const pageDefinition = {
 
   stepSet(dir) {
     if (this.setDotPicker?.pending()) return false
+    if (this.numberDraftDirty()) return this.flushNumberDraft().then(ok => ok ? this.stepSet(dir) : false)
     return commitPageAction(this, function() {
     const s = this.stateOf()
     if (!s.workout || !s.workout.rows.length) return
@@ -544,6 +561,7 @@ const pageDefinition = {
 
   stepExercise(dir) {
     if (this.setDotPicker?.pending()) return false
+    if (this.numberDraftDirty()) return this.flushNumberDraft().then(ok => ok ? this.stepExercise(dir) : false)
     return commitPageAction(this, function() {
     const s = this.stateOf()
     if (!s.workout || !s.workout.exercises.length) return
@@ -565,6 +583,66 @@ const pageDefinition = {
   onNextSet() { this.stepSet(1) },
 
   clearFieldSelection() { this.selectedField = null; this.fieldTarget = null },
+  numberDraftDirty() {
+    const draft = this.numberDraftOf()
+    return !!(draft && (draft.dirtyW || draft.dirtyR))
+  },
+  scheduleNumberDraftFlush() {
+    const old = this.numberTimerOf()
+    if (old != null) clearTimeout(old)
+    this.numberTimerOf(setTimeout(() => {
+      this.numberTimerOf(null)
+      this.flushNumberDraft()
+    }, 350))
+  },
+  async flushNumberDraft() {
+    const timer = this.numberTimerOf()
+    if (timer != null) clearTimeout(timer)
+    this.numberTimerOf(null)
+    for (;;) {
+      const pending = this.numberFlushOf()
+      if (pending) {
+        const ok = await pending
+        if (!ok) return false
+        continue
+      }
+      const draft = this.numberDraftOf()
+      if (!draft || !draft.dirtyW && !draft.dirtyR) return true
+      const snapshot = { ...draft, target: { ...draft.target } }
+      const generation = this.numberGenerationOf()
+      const sid = snapshot.target.sid
+      const operation = commitSessionAction(sid, state => {
+        const found = rowTarget(state, snapshot.target)
+        if (!found || found.row.done) return 'superseded'
+        applyNumberDraft(state, snapshot)
+        return 'saved'
+      })
+      this.numberFlushOf(operation)
+      let result
+      try { result = await operation }
+      catch (error) {
+        this.syncWarning = true
+        this.syncLabel = 'Weight or reps could not be saved; retry'
+        return false
+      }
+      finally { if (this.numberFlushOf() === operation) this.numberFlushOf(null) }
+      if (!result?.ok) {
+        this.syncWarning = true
+        this.syncLabel = 'Weight or reps could not be saved; retry'
+        return false
+      }
+      const latest = loadState()
+      if (latest.sid !== sid || !latest.active) return true
+      if (generation === this.numberGenerationOf()) {
+        const current = this.numberDraftOf()
+        if (current && current.target.setId === snapshot.target.setId) {
+          current.dirtyW = false; current.dirtyR = false
+        }
+        this.stateOf(latest)
+        return true
+      }
+    }
+  },
   flushPendingRowEdits() {
     // Reuse the original durable identities. RPC owns deduplication and ACK removal.
     replayPendingEvents()
@@ -591,7 +669,7 @@ const pageDefinition = {
   adjustSelectedField(direction) {
     // A stray crown callback must not clone and persist an unchanged session.
     if (!direction || !this.selectedField || !this.fieldTarget || this.interactionBlocked()) return
-    if (this.localCommitPending || this.keypadOn) return
+    if (this.numberEditLocked || this.keypadOn) return
     const s = this.stateOf(), found = rowTarget(s, this.fieldTarget)
     if (!found || found.row.done || s.pausedAt || s.restUntil || this.fieldTarget.weightUnit !== (s.weightUnit || 'kg') || found.exIdx !== s.exIdx || found.setIdx !== s.setIdx) {
       this.clearFieldSelection(); this.inputNotice = '目标已变化，请重新选择'; return
@@ -600,6 +678,8 @@ const pageDefinition = {
     if (!draft) { this.clearFieldSelection(); return }
     const value = valueStep(draft[this.selectedField], this.selectedField, direction, this.weightStep)
     changeNumber(draft, this.selectedField, value)
+    this.numberGenerationOf(this.numberGenerationOf() + 1)
+    this.scheduleNumberDraftFlush()
     if (this.selectedField === 'w') this.weightNum = value
     else this.repsNum = value
   },
@@ -623,6 +703,8 @@ const pageDefinition = {
     const expected = this.keypadDraftOf(), draft = this.updateNumbers()
     if (!this.keypadOn || draft !== expected || !draft) return
     if (!changeNumber(draft, this.keypadField, this.keypadBuffer)) { this.keypadNotice = '请输入有效数值'; return }
+    this.numberGenerationOf(this.numberGenerationOf() + 1)
+    this.scheduleNumberDraftFlush()
     this.closeNumberKeypad(); this.updateNumbers()
   },
   numberKey1() { this.numberKey('1') },
@@ -736,6 +818,7 @@ const pageDefinition = {
     } catch { /* A diagnostic must never fail an interaction. */ }
   },
   commitSetDot(target) {
+    if (this.numberDraftDirty()) return this.flushNumberDraft().then(ok => ok ? this.commitSetDot(target) : false)
     this.logInteraction('dot_commit_begin', { setId: target?.setId, set: target?.setIdx })
     const reason = this.setDotBlockReason()
     if (reason) return this.logDotBlocked(target, reason, 'commit')
@@ -762,11 +845,23 @@ const pageDefinition = {
 
   onComplete(expectedTarget) {
     this.logInteraction('complete_tap')
-    if (this.keypadOn) return
+    if (this.keypadOn || this.numberEditLocked) return
+    const pending = this.numberFlushOf()
+    if (pending) {
+      this.numberEditLocked = true
+      return pending.then(ok => {
+        this.numberEditLocked = false
+        return ok ? this.onComplete(expectedTarget) : false
+      })
+    }
+    const timer = this.numberTimerOf()
+    if (timer != null) clearTimeout(timer)
+    this.numberTimerOf(null)
+    this.numberEditLocked = true
     const input = this.numberDraftOf()
     // Freeze only these bounded scalars; an arriving phone snapshot may reconcile the live draft.
     const numbers = input ? { ...input, target: { ...input.target } } : null
-    return commitPageAction(this, function() {
+    const completion = commitPageAction(this, function() {
     if (this.isRest || this.paused || this.closeMode || this.interactionBlocked() || Date.now() < (this.completionIgnoreUntil || 0)) return
     const s = this.stateOf()
     const expected = expectedTarget && rowTarget(s, expectedTarget)
@@ -796,6 +891,11 @@ const pageDefinition = {
     else this.allFinished = true
     this.refresh()
     }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
+    return Promise.resolve(completion).then(ok => {
+      this.numberEditLocked = false
+      if (!ok && this.numberDraftDirty()) this.scheduleNumberDraftFlush()
+      return ok
+    }, error => { this.numberEditLocked = false; throw error })
   },
 
   onUndo(expectedTarget) {
@@ -1360,17 +1460,18 @@ const pageDefinition = {
     const startedAt = Date.now()
     const owner = this.sessionModel || this
     const actionAt = owner.refreshProbeAt || 0
-    try { return this.refreshView() }
+    const data = {}
+    try { return this.refreshView(data) }
     finally {
       const endedAt = Date.now(), state = this.stateOf() || {}
-      const data = { sid: state.sid || '', active: !!state.active, duration: Math.max(0, endedAt - startedAt) }
+      data.sid = state.sid || ''; data.active = !!state.active; data.duration = Math.max(0, endedAt - startedAt)
       if (actionAt > 0 && endedAt - actionAt <= 30000) data.actionDuration = Math.max(0, endedAt - actionAt)
       if (owner.refreshProbeAt === actionAt) owner.refreshProbeAt = 0
       try { recordDiagnostic('workout_refresh', data) } catch { /* Diagnostics must never block a refresh. */ }
     }
   },
 
-  refreshView() {
+  refreshView(diagnostic = null) {
     const current = this.stateOf(), s = this.withDotPreview(current)
     if (s !== current) this.stateOf(s)
     this.weightUnit = s?.weightUnit || 'kg'
@@ -1413,7 +1514,9 @@ const pageDefinition = {
     this.nextExIdx = next ? next.exIdx : -1
     // This refresh runs after most watch interactions. Summarize all set-derived
     // labels in one pass so larger workouts do not trigger repeated row scans.
+    const summaryStartedAt = Date.now()
     const { totalSets, doneSets, completedVolume, completed } = summarizeWorkoutRows(s.workout)
+    if (diagnostic) diagnostic.summaryDuration = Math.max(0, Date.now() - summaryStartedAt)
     this.checkCompletion(totalSets, doneSets)
     this.setProgressLabel = '完成 ' + doneSets + ' / 剩余 ' + Math.max(0, totalSets - doneSets) + ' 组'
     this.volumeLabel = this.formatVolume(completedVolume)
@@ -1489,7 +1592,9 @@ const pageDefinition = {
     this.lastEffortText = '末组 ' + scaleLabel + '  '
       + (lastDoneKind && lastDoneValue != null ? formatEffort(lastDoneValue) : '未填写')
 
+    const officialViewsStartedAt = Date.now()
     this.updateOfficialViews(s, next)
+    if (diagnostic) diagnostic.officialViewDuration = Math.max(0, Date.now() - officialViewsStartedAt)
     this.syncClockTimer()
     this.tickClock(true)
   },
@@ -1846,7 +1951,7 @@ const pageDefinition = {
 export default pageDefinition
 </script>
 <template>
-<div class="page" id="training" touch-focusable="true" onrotation="onRotation" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
+<div class="page" id="training" touch-focusable="true" vibration-effectEnabled="true" onrotation="onRotation" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
   <div class="topbar" if="{{ !effortOn && !lastOpen && !diagnosticOn && !keypadOn }}"><text class="top-lead" if="{{ !syncWarning }}">{{ hrLabel }}</text><text class="sync-pill" if="{{ syncWarning }}">{{ syncLabel }}</text><text class="clock">{{ clockLabel }}</text></div>
   <div class="pager" if="{{ !closeMode && !effortOn && !lastOpen && !diagnosticOn && !keypadOn }}">
     <div class="screen overview-screen" show="{{ pageIndex === 0 }}">

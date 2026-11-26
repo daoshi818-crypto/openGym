@@ -915,7 +915,7 @@ describe('WATCH GT v4 selected route', () => {
     expect(start).toMatchObject({ protocolVersion: 4, targetInstallationId: id, sid: 'a', exercises: [
       { exerciseId: 'bench', entryInstanceId: 'e1', sets: [{ setId: 'r1', weight: 51, reps: '9', done: true, at: 42 }] },
     ] })
-    expect(start).not.toHaveProperty('profile')
+    expect(start).toHaveProperty('profile', { birthYear: 1990 })
     expect(start.exercises[0]).not.toHaveProperty('lastTime')
     expect(link.watchConnection().canStartWorkout).toBe(false)
     const accepted = { t: 'SESSION_ACCEPTED', protocolVersion: 4, requestId: start.requestId, sid: 'a', status: 'accepted', sourceInstallationId: id }

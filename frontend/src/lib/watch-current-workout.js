@@ -15,11 +15,12 @@ const currentPhoneSid = state => {
   return active?.watchStarted || active?.editingWorkoutId || state?.watchClosed?.[sid] ? '' : sid
 }
 
-// A launch is an untargeted SDK wake; a v4 start is separate and only follows proof of
-// the pinned installation and its fresh idle snapshot. No background or durable queue owns a start.
+// Phone-led starts require an explicit request. A watch app opened during an active phone
+// session is also a request, after the pinned installation and fresh idle snapshot are verified.
 export function createCurrentWorkoutWatchHandoff({ getState, getConnection, getSnapshot, launch, start, publish }) {
   let foreground = false, disposed = false, sid = '', phase = 'idle', attempt = null
-  let attempted = false, startAttempted = false, sawDisconnect = false, resumePreStart = false
+  let launchRequested = false, attempted = false, startAttempted = false, sawDisconnect = false, resumePreStart = false
+  let lastAppConnected = false, watchOpenedForSession = false
   const report = (next, reason) => {
     if (phase !== next || reason) { phase = next; publish({ phase, reason }) }
   }
@@ -47,25 +48,49 @@ export function createCurrentWorkoutWatchHandoff({ getState, getConnection, getS
   }
   function refresh() {
     if (disposed) return
+    const link = getConnection()
+    const appConnected = route(link) && link.appConnected && link.selectedId === link.peerId
     const nextSid = currentPhoneSid(getState())
     if (sid !== nextSid) {
       stop()
-      sid = nextSid; attempted = false; startAttempted = false; sawDisconnect = false; resumePreStart = false
+      sid = nextSid; launchRequested = false; attempted = false; startAttempted = false; sawDisconnect = false; resumePreStart = false
+      watchOpenedForSession = false
       report(sid ? 'waiting' : 'idle')
     }
+    if (sid && appConnected && !lastAppConnected) watchOpenedForSession = true
+    lastAppConnected = appConnected
     if (!sid) return
-    const link = getConnection()
-    if (link.sdkOffline && attempted && !startAttempted && ['failed', 'handshake', 'launching', 'starting'].includes(phase)) sawDisconnect = true
+    if (link.sdkOffline && launchRequested && attempted && !startAttempted && ['failed', 'handshake', 'launching', 'starting'].includes(phase)) sawDisconnect = true
     if (attempt && (!route(link) || link.selectedId !== attempt.device)) { fail(attempt, 'disconnected'); return }
     if (!foreground) return
-    if (sawDisconnect && route(link)) { sawDisconnect = false; attempted = false }
+    if (sawDisconnect && route(link)) { sawDisconnect = false; attempted = false; launchRequested = true }
     // Only the verified selected installation can reconcile an uncertain delivery.
     if (route(link) && link.appConnected && link.selectedId === link.peerId) {
       if (link.workoutSid === sid) { stop('synced'); return }
       if (link.terminalSid === sid) { stop('closed'); return }
-      if (link.workoutSid && (attempt || !attempted)) { attempted = true; stop('conflict'); return }
+      if (link.workoutSid) { launchRequested = false; attempted = true; stop('conflict'); return }
+      // Opening OpenGym on the watch is itself a request to continue the active phone
+      // session. The phone only wakes the app after an explicit training-page action.
+      if (link.canStartWorkout && !startAttempted && (launchRequested || watchOpenedForSession)) {
+        const token = attempt || { device: link.selectedId, abort: new AbortController(), launched: true, starting: false }
+        attempt = token; token.launched = true
+        if (token.starting) return
+        const snapshot = getSnapshot()
+        if (!snapshot || snapshot.sid !== sid) { fail(token, 'workout_changed'); return }
+        token.starting = true; startAttempted = true
+        report('starting')
+        Promise.resolve().then(() => current(token) && start(snapshot, token.abort.signal)).then(ok => {
+          if (ok) { launchRequested = false; settle(token, 'synced') }
+          else fail(token, 'unconfirmed')
+        }).catch(() => fail(token, 'unconfirmed'))
+        return
+      }
+      if (!attempt && !startAttempted) report('handshake')
+      return
     }
-    if (phase === 'synced' || phase === 'closed' || !route(link)) return
+    if (phase === 'synced' || phase === 'closed') return
+    if (!launchRequested) { report(route(link) ? 'ready' : 'waiting'); return }
+    if (!route(link)) return
     if (!attempt) {
       if (attempted) return
       attempted = true
@@ -84,19 +109,6 @@ export function createCurrentWorkoutWatchHandoff({ getState, getConnection, getS
     }
     const token = attempt
     if (!token.launched || token.starting || !link.canStartWorkout || link.selectedId !== link.peerId) return
-    const snapshot = getSnapshot()
-    if (!snapshot || snapshot.sid !== sid) { fail(token, 'workout_changed'); return }
-    token.starting = true
-    clearTimeout(token.timer)
-    report('starting')
-    Promise.resolve().then(() => {
-      if (!current(token)) return false
-      startAttempted = true
-      return start(snapshot, token.abort.signal)
-    }).then(ok => {
-      if (ok) settle(token, 'synced')
-      else fail(token, 'unconfirmed')
-    }).catch(() => fail(token, 'unconfirmed'))
   }
   return {
     refresh,
@@ -104,17 +116,17 @@ export function createCurrentWorkoutWatchHandoff({ getState, getConnection, getS
       if (foreground === next) return
       foreground = next
       if (!next && attempt) {
-        resumePreStart = !startAttempted
+        resumePreStart = launchRequested && !startAttempted
         fail(attempt, 'background')
       } else if (next && resumePreStart) {
-        attempted = false
+        attempted = false; launchRequested = true
         resumePreStart = false
       }
       refresh()
     },
     retry() {
-      if (!foreground || !sid || !['failed', 'conflict'].includes(phase)) return
-      attempted = false; sawDisconnect = false
+      if (!foreground || !sid || (startAttempted && phase !== 'failed') || !['ready', 'handshake', 'failed', 'conflict'].includes(phase)) return
+      launchRequested = true; attempted = false; startAttempted = false; sawDisconnect = false
       report('waiting')
       refresh()
     },
