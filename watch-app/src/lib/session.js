@@ -48,6 +48,8 @@ export async function completePhoneConflict() {
 
 const now = () => Date.now()
 const hrFields = ['sid', 'startedAt', 'segmentStartedAt', 'hr', 'active', 'pausedAt', 'closeIntent']
+const rpcFields = { sid: true, active: true, rev: true, commitRev: true, sessionOrigin: true, phoneSession: true, syncBase: ['wireHash', 'commitRev'], pendingStart: true }
+const replayFields = { sid: true, active: true, sessionOrigin: true, phoneSession: true, pendingEdits: true }
 function sameHrSession(a, b) {
   return !!a?.sid && a.sid === b?.sid && (a.segmentStartedAt || a.startedAt) === (b.segmentStartedAt || b.startedAt)
 }
@@ -99,6 +101,10 @@ export function readSessionHr(sid) {
 
 export function loadState(projection) {
   // Sensor callbacks need identity/lifecycle/HR only, never rows or the outbox.
+  if (projection === 'rpc' || projection === 'replay') {
+    const s = readStored(K_STATE, projection === 'rpc' ? rpcFields : replayFields)
+    return s || blankState()
+  }
   if (projection === 'hr') {
     const s = readStored(K_STATE, hrFields)
     if (!s) return blankState()
@@ -111,7 +117,7 @@ export function loadState(projection) {
     if (s?.expiredClose) queueExpired(s.expiredClose)
     if (s && typeof s === 'object' && s.workout) {
       s.hr = latestHr(s)
-      if (s.active && now() - (s.segmentStartedAt || s.startedAt) >= 21600000) {
+      if (s.active && s.protocolVersion !== 4 && now() - (s.segmentStartedAt || s.startedAt) >= 21600000) {
         expireSession(s)
         return blankState()
       }
@@ -190,18 +196,20 @@ export async function commitSessionAction(sid, action) {
   // Reject new work once closing starts, but retain FIFO work already queued
   // ahead of the close transaction. The durable intent is the transform guard.
   if (runtime().closingSid === sid) return { ok: false, error: 'session_closing' }
-  let output
-  const result = await writeStoredAtomic(K_STATE, latest => {
-    if (latest?.closeIntent || !latest?.active || latest.sid !== sid) throw new Error('session_changed')
-    const candidate = JSON.parse(JSON.stringify(latest))
+  let output, liveEvents
+  const result = await writeStoredAtomic(K_STATE, candidate => {
+    // Atomic storage passes a detached copy; use it as the transaction draft.
+    if (candidate?.closeIntent || !candidate?.active || candidate.sid !== sid) throw new Error('session_changed')
     candidate.hr = latestHr(candidate)
     runtime().sessionDraft = candidate
-    try { output = action(candidate) }
-    finally { runtime().sessionDraft = null }
-    candidate.rev = (candidate.rev || 0) + 1
+    try { runtime().stagedLive = liveEvents = []; output = action(candidate) }
+    finally { runtime().sessionDraft = null; runtime().stagedLive = null }
+    const liveRevision = runtime().rpc?.liveRevisionSid === candidate.sid ? runtime().rpc.liveRevision || 0 : 0
+    candidate.rev = Math.max(candidate.rev || 0, liveRevision) + 1
     return candidate
   })
   if (result.ok) {
+    for (const event of liveEvents || []) runtime().sendLiveEvent?.(event)
     result.value.hr = latestHr(result.value)
     reconcileHrCapture(readStored(K_STATE, hrFields))
   }
@@ -209,15 +217,40 @@ export async function commitSessionAction(sid, action) {
 }
 
 export function stageSessionEvent(state, event) {
+  // Mirrored phone sessions stay interactive offline, but their local-only edits
+  // never become a replay stream that could overwrite the phone after reconnect.
+  const phoneSession = state?.sessionOrigin === 'phone' && state?.phoneSession?.sid === state?.sid ? state.phoneSession : null
+  const presence = runtime().phoneSessionPresence, now = Date.now()
+  const live = phoneSession && presence?.active === true && presence.sid === phoneSession.sid &&
+    Number.isFinite(presence.lastSeenAt) && now >= presence.lastSeenAt && now - presence.lastSeenAt < 15000
+  if (phoneSession && state.protocolVersion === 4) {
+    if (event.t !== 'session_close' && (!live || !runtime().rpc?.v4Ready)) return { localOnly: true, sid: state.sid, t: event.t }
+    const identity = event.eventId ? {} : allocateEventIdentity(state.sid)
+    const body = event.t === 'session_close' ? { t: event.t, sid: state.sid, disposition: event.disposition, closedAt: event.closedAt } : event
+    const msg = { ...identity, ...eventIdentity(state, event.ex, event.set - 1), ...body, sid: state.sid,
+      source: 'watch', phoneLed: true, protocolVersion: 4,
+      rev: Math.max(state.rev || 0, runtime().rpc?.liveRevisionSid === state.sid ? runtime().rpc.liveRevision || 0 : 0) + 1,
+      phoneSessionGeneration: presence?.generation, liveGeneration: runtime().rpc?.connectionGeneration }
+    if (msg.t === 'add_set') msg.newSetIds = (state.workout.rows[msg.ex] || []).map(row => row.setId)
+    if (live && runtime().rpc?.v4Ready) runtime().stagedLive?.push(msg)
+    return msg
+  }
+  if (phoneSession && !live && event.t !== 'session_close')
+    return { ...event, sid: state.sid, source: 'watch', localOnly: true }
+  const localEvent = phoneSession && event.t === 'session_close'
+    ? { t: 'session_close', sid: state.sid, disposition: event.disposition, closedAt: event.closedAt, at: event.at, source: 'watch', phoneLed: true }
+    : event
   const existing = state.pendingEdits?.find(e => e.eventId && e.eventId === event.eventId)
   if (existing) return existing
   const pending = state.pendingEdits ||= []
   if (pending.length >= 256) throw new Error('pending_edits_full')
   const identity = event.eventId ? {} : allocateEventIdentity(event.sid)
   const ex = state.workout?.exercises?.[event.ex], row = state.workout?.rows?.[event.ex]?.[event.set - 1]
-  const msg = { ...identity, ...eventIdentity(state, event.ex, event.set - 1), ...event,
+  const msg = { ...identity, ...eventIdentity(state, localEvent.ex, localEvent.set - 1), ...localEvent,
     installationId: event.installationId || identity.installationId || runtime().eventClock?.installationId,
-    source: 'watch', protocolVersion: 3, dependencyEvents: true }
+    source: 'watch', protocolVersion: 3, dependencyEvents: true,
+    ...(phoneSession ? { phoneLed: true } : {}),
+    ...(phoneSession && live && localEvent.t !== 'session_close' ? { phoneSessionGeneration: presence.generation } : {}) }
   msg.entryInstanceId ||= ex?.entryInstanceId; msg.setId ||= row?.setId
   if (msg.t === 'add_set') msg.newSetIds = (state.workout.rows[msg.ex] || []).map(r => r.setId)
   const frontier = runtime().rpc?.peerCapabilities?.causalFrontier === true
@@ -225,7 +258,7 @@ export function stageSessionEvent(state, event) {
   // Freeze the negotiated footprint with this event. Old accepted dependencies
   // remain byte-identical when an endpoint upgrades or reconnects.
   if (runtime().rpc?.peerCapabilities?.narrowDependencies === true) msg.narrowDependencies = true
-  msg.dependsOn = dependenciesFor(msg, pending.filter(e => !e.sid || e.sid === state.sid), frontier)
+  msg.dependsOn = phoneSession && localEvent.t === 'session_close' ? [] : dependenciesFor(msg, pending.filter(e => !e.sid || e.sid === state.sid), frontier)
   pending.push(JSON.parse(JSON.stringify(msg)))
   return pending[pending.length - 1]
 }
@@ -246,6 +279,36 @@ export function startSession(workout, profile) {
   return s
 }
 
+// Never publish a successful start until the session and request identity are on disk.
+export async function commitPhoneStart(msg) {
+  const entries = new Set(), sets = new Set()
+  const id = v => typeof v === 'string' && v.length > 0 && v.length <= 128
+  if (!id(msg.sid) || !id(msg.requestId) || !Array.isArray(msg.exercises) || !msg.exercises.length || msg.exercises.some(ex => {
+    if (!id(ex?.entryInstanceId) || entries.has(ex.entryInstanceId) || !Array.isArray(ex.sets) || !ex.sets.length) return true
+    entries.add(ex.entryInstanceId)
+    return ex.sets.some(row => { if (!id(row?.setId) || sets.has(row.setId)) return true; sets.add(row.setId); return false })
+  })) return { status: 'rejected', reason: 'invalid_start_session' }
+  let status = 'accepted', reason = '', created = false
+  const result = await writeStoredAtomic(K_STATE, latest => {
+    if (latest?.active) {
+      if (latest.sid !== msg.sid || latest.startRequestId !== msg.requestId || latest.closeIntent) { status = 'rejected'; reason = 'watch_active_session' }
+      return latest
+    }
+    if ((readStored('closed_sessions') || []).includes(msg.sid)) { status = 'rejected'; reason = 'session_closed'; return latest || blankState() }
+    const exercises = msg.exercises.map(ex => { const { sets, exerciseId, ...spec } = ex; return { ...spec, id: exerciseId, name: ex.name || '', sets: sets.length,
+      setIds: sets.map(row => row.setId), reps: sets[0].reps ?? '', weight: sets[0].weight ?? '', restSec: ex.restSec ?? 60 } })
+    const rows = msg.exercises.map(ex => ex.sets.map(row => ({ setId: row.setId, w: row.weight ?? '', r: row.reps ?? '', done: !!row.done, at: row.at || 0, ...rowEffort(row) })))
+    runtime().buildingSession = true
+    try {
+      const state = startSession({ ...msg, name: msg.workout, exercises, rows }, msg.profile)
+      state.sessionOrigin = 'phone'; state.phoneSession = { sid: msg.sid, generation: msg.sessionGeneration || msg.sid }
+      state.startRequestId = msg.requestId; state.rev = 1; state.pendingStart = false; created = true
+      return state
+    } finally { runtime().buildingSession = false }
+  })
+  return result.ok ? { status, reason, created } : { status: 'rejected', reason: 'storage_failed' }
+}
+
 // New watch-start follows the same one-document commit boundary as row actions.
 export async function commitSessionStart(workout, profile) {
   return writeStoredAtomic(K_STATE, latest => {
@@ -256,7 +319,7 @@ export async function commitSessionStart(workout, profile) {
       // Build with existing business initializer without publishing its save.
       runtime().buildingSession = true
       const started = startSession(workout, profile)
-      Object.assign(candidate, started, { pendingStart: true, planId: workout.id })
+      Object.assign(candidate, started, { pendingStart: true, planId: workout.id, sessionOrigin: 'watch' })
       stageSessionEvent(candidate, compactStartEvent({ t: 'watch_start', sid: candidate.sid, startedAt: candidate.startedAt, planId: workout.id, plan: workout }))
       return candidate
     } finally { runtime().buildingSession = false; runtime().sessionDraft = null }
@@ -300,12 +363,17 @@ export async function commitWireSnapshot(message, meta) {
     else {
       // Never carry cursor/HR/rest/UI flags into a different training. Unresolved
       // old intentions remain available to the existing durable replay path.
+      const wasActive = latest.active && latest.sid === snapshot.sid
       const candidate = latest.sid === snapshot.sid ? JSON.parse(JSON.stringify(latest))
         : { ...blankState(), pendingEdits: JSON.parse(JSON.stringify(latest.pendingEdits || [])).map(e => e.sid ? e : { ...e, sid: latest.sid }) }
       runtime().sessionDraft = candidate
       try {
         if (!candidate.active) Object.assign(candidate, { active: true, sid: snapshot.sid, startedAt: snapshot.startedAt, workout: { exercises: [], rows: [] } })
         applySync(candidate, snapshot)
+        const watchLed = candidate.sessionOrigin === 'watch' || candidate.pendingStart === true
+        if (watchLed) { candidate.sessionOrigin = 'watch'; delete candidate.phoneSession }
+        else if (!wasActive) { candidate.sessionOrigin = 'phone'; candidate.phoneSession = { sid: snapshot.sid } }
+        else if (candidate.sessionOrigin === 'phone') candidate.phoneSession = { sid: snapshot.sid }
         latest = candidate
       } finally { runtime().sessionDraft = null }
     }
@@ -687,22 +755,30 @@ export async function commitLocalClose(sid, disposition, closedAt = now(), optio
         // must not prevent the explicit save/discard choice reaching the phone.
         closeEvent.dependsOn = []
       }
+      const phoneLed = latest.sessionOrigin === 'phone'
+      const pendingBeforeClose = (latest.pendingEdits || []).filter(e => e.eventId !== closeEvent.eventId && e.committedRev == null)
       const summaryEvent = summaryEventOf(session, allocateEventIdentity(sid), latest, true)
+      if (phoneLed) summaryEvent.phoneLed = true
       summaryEvent.protocolVersion = 3; summaryEvent.dependencyEvents = true; summaryEvent.dependsOn = [closeEvent.eventId]
-      latest.pendingEdits = latest.pendingEdits.filter(e => e.eventId !== closeEvent.eventId)
+      latest.pendingEdits = (latest.pendingEdits || []).filter(e => e.eventId !== closeEvent.eventId)
       latest.closeIntent = { close: { sid, disposition, closedAt, eventId: closeEvent.eventId, closeEvent,
-        pendingEvents: (latest.pendingEdits || []).filter(e => e.eventId !== closeEvent.eventId && e.committedRev == null) }, summaryEvent, session, summaryLast: { ...session, totalMinutes: Math.max(0, ((latest.pausedAt || session.endedAt) - latest.startedAt - (latest.pausedMs || 0)) / 60000), totalCalories: (latest.baseCalories || 0) + session.calories, sets: session.sets.length } }
+        pendingEvents: phoneLed ? [] : pendingBeforeClose, parkedEvents: phoneLed ? pendingBeforeClose : [] }, summaryEvent, session, summaryLast: { ...session, ...(latest.protocolVersion === 4 ? { executionProtocol: 4 } : {}), totalMinutes: Math.max(0, ((latest.pausedAt || session.endedAt) - latest.startedAt - (latest.pausedMs || 0)) / 60000), totalCalories: (latest.baseCalories || 0) + session.calories, sets: session.sets.length } }
       return latest
     })
     if (!frozen.ok) return frozen
     reconcileHrCapture(readStored(K_STATE, hrFields))
-    return finishLocalClose(frozen.value.closeIntent)
+    const result = await finishLocalClose(frozen.value.closeIntent)
+    if (result.ok && frozen.value.closeIntent.close.closeEvent?.protocolVersion === 4) runtime().sendLiveEvent?.(frozen.value.closeIntent.close.closeEvent)
+    return result
   } finally { runtime().closingSid = null }
 }
 
 async function finishLocalClose(intent) {
   const { close, summaryEvent, session } = intent
-  const entry = await prepareClose(close, summaryEvent, close.disposition === 'saved' ? 'pending' : 'candidate')
+  const v4 = close.closeEvent?.protocolVersion === 4 && close.closeEvent?.phoneLed
+  // v4 owns one durable terminal marker; no close journal can replay this event after reboot.
+  const entry = v4 ? (await writeStoredAtomic('phone_terminal_v4', () => ({ sid: close.sid, disposition: close.disposition, closedAt: close.closedAt }))).ok && { ...close, localClose: true }
+    : await prepareClose({ ...close, parkedEvents: close.parkedEvents || [] }, summaryEvent, close.disposition === 'saved' ? 'pending' : 'candidate')
   if (!entry?.closeEvent) return { ok: false, error: 'close_journal_storage' }
   // Once the journal is durable the UI may leave. A failed clear is recovered on boot.
   // Keep closeIntent until ALL recovery data is durable. Clearing first creates a

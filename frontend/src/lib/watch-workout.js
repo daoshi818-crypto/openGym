@@ -1,13 +1,8 @@
-import { ensureWatchIdentity } from './watch-identity.js'
-import { fingerprint } from '../../../api/coach/core/debrief-selection.js'
 import { isWarmupRow } from './workout-model.js'
 import { exOr } from './exercises.js'
 import { exerciseNameFor } from './i18n-core.js'
 import { watchSidOf, elapsedMsOf } from './session-resume.js'
-import { buildSessionEntries } from './session-start.js'
-import { deriveSessionName } from './session-merge.js'
-import { effectiveRoutineIds, effortOf, entryRoutineId } from './history.js'
-import { todayISO } from './format.js'
+import { effortOf, entryRoutineId } from './history.js'
 import { EFFORT_CAPABILITY } from '../../../watch-app/src/lib/effort-scale.js'
 import { watchLastTimeOf } from './watch-last-time.js'
 import { loadOf, MUSCLES } from './muscles.js'
@@ -15,9 +10,7 @@ import { loadOf, MUSCLES } from './muscles.js'
 /**
  * 活动条目只存 id；计划与重连快照必须和手机界面解析出相同名称。
  *
- * `routineId` / `sourceWorkout` 只用来解析「上次」该查哪个计划的历史：目录条目由
- * buildSessionEntries 产出、不带 rid，所以要显式给 routine.id；活动训练按
- * entryRoutineId 解析每条自己的来源（合并日里同一个动作可以属于两个计划）。
+ * 活动训练按 entryRoutineId 查每条记录的来源（合并日里同一个动作可以属于两个计划）。
  */
 export function watchExercisesOf(S, entries, { routineId = null, sourceWorkout = null } = {}) {
   return entries.map(e => {
@@ -41,12 +34,48 @@ export function watchPlanOf(S) {
   if (!A?.start || A.editingWorkoutId) return null
   const profile = watchProfileOf(S)
   return {
-    sid: watchSidOf(A), protocolVersion: 2, weightUnit: S.unit || 'kg', structureRevision: A.structureRevision,
+    sid: watchSidOf(A), ...(A.watchSessionGeneration ? { sessionGeneration: A.watchSessionGeneration } : {}),
+    protocolVersion: 2, weightUnit: S.unit || 'kg', structureRevision: A.structureRevision,
     // 强度量表跟随手机设置；手表只显示这一种，关闭（'none'）时隐藏入口。
     effortScale: effortOf(S), capabilities: { setEffort: EFFORT_CAPABILITY },
     profile,
     workout: { name: A.name, exercises: watchExercisesOf(S, A.entries, { sourceWorkout: A }) },
   }
+}
+
+/** Stable execution rows plus the small context used by the watch metrics screen. */
+export function watchWorkoutDTOOf(workout, sid, requestId) {
+  if (!sid || !requestId || !workout?.exercises?.length) return null
+  const id = value => typeof value === 'string' && value.length > 0 && value.length <= 128
+  const entries = new Set(), sets = new Set()
+  const exercises = workout.exercises.map((ex, i) => {
+    const rows = workout.rows?.[i] || []
+    const count = Math.min(100, rows.length || (Array.isArray(ex.sets) ? ex.sets.length : Number(ex.sets)) || ex.setIds?.length || 0)
+    if (!id(ex.entryInstanceId) || entries.has(ex.entryInstanceId) || !Number.isInteger(count) || count < 1) return null
+    entries.add(ex.entryInstanceId)
+    const workSets = Array.from({ length: count }, (_, j) => {
+      const row = rows[j] || (Array.isArray(ex.sets) ? ex.sets[j] : null) || {}
+      const setId = row.setId || ex.setIds?.[j]
+      if (!id(setId) || sets.has(setId)) return null
+      sets.add(setId)
+      return { setId, weight: row.w ?? row.weight ?? ex.weight ?? '', reps: String(row.r ?? row.reps ?? ex.reps ?? ''),
+        ...(row.done ? { done: true, at: row.at || 0 } : {}),
+        ...(row.rpe != null ? { rpe: row.rpe } : {}), ...(row.rir != null ? { rir: row.rir } : {}),
+        ...(row.effortVersion != null ? { effortVersion: row.effortVersion } : {}) }
+    })
+    const muscles = ex.muscles && typeof ex.muscles === 'object'
+      ? Object.fromEntries(Object.entries(ex.muscles).filter(([key, weight]) => /^[a-z][a-z0-9_-]{0,31}$/.test(key) && Number.isFinite(Number(weight)) && Number(weight) > 0))
+      : null
+    return workSets.includes(null) ? null : { exerciseId: ex.id || ex.exerciseId || '', entryInstanceId: ex.entryInstanceId,
+      name: ex.name || '', restSec: Number(ex.restSec) || 60, ...(muscles && Object.keys(muscles).length ? { muscles } : {}), sets: workSets }
+  })
+  if (exercises.includes(null)) return null
+  const birthYear = Number.isInteger(workout.profile?.birthYear) ? workout.profile.birthYear : null
+  return { t: 'START_SESSION', protocolVersion: 4, requestId, sid, workout: workout.name || '', weightUnit: workout.weightUnit || 'kg',
+    ...(birthYear !== null ? { profile: { birthYear } } : {}),
+    structureRevision: workout.structureRevision || 0,
+    ...(workout.sessionGeneration ? { sessionGeneration: workout.sessionGeneration } : {}),
+    ...(workout.effortScale ? { effortScale: workout.effortScale } : {}), exercises }
 }
 
 export function watchSnapshotOf(S, timer, now = Date.now()) {
@@ -66,6 +95,7 @@ export function watchSnapshotOf(S, timer, now = Date.now()) {
     exIdx: ex, setIdx: A.watchFocus?.ex === ex ? A.watchFocus.set - 1 : first < 0 ? 0 : first,
     focusAt: Number(A.watchFocus?.at || A.watchFocusAt || 0),
     commitRev: A.syncRev || 0, sessionEpoch: watchSidOf(A),
+    ...(A.watchSessionGeneration ? { sessionGeneration: A.watchSessionGeneration } : {}),
     ackedEvents: A.watchEvents || [], pausedAt: A.pausedAt || 0, pausedMs: A.pausedMs || 0,
     pauseVersion: A.pauseVersion || 0, baseCalories: Object.entries(A.watchSegments || {}).filter(([id]) => id !== watchSidOf(A)).reduce((n, [, s]) => n + s.calories, 0),
     rest: timer ? { restId: timer.restId || String(timer.startedAt || timer.endsAt - timer.total * 1000),
@@ -73,31 +103,6 @@ export function watchSnapshotOf(S, timer, now = Date.now()) {
       leftSec: timer.paused ? timer.left : timer.ready ? 0 : Math.max(0, Math.ceil((timer.endsAt - now) / 1000)),
       totalSec: timer.total, paused: !!timer.paused, seq: timer.seq || timer.startedAt || now } : { leftSec: 0, totalSec: 0, seq: A.restVersion || 0 },
     restUntil: timer && !timer.ready ? timer.endsAt : 0 }
-}
-
-export function watchCatalogOf(S, date = todayISO()) {
-  const today = effectiveRoutineIds({ ...S, routines: S.routines || [], dayPlan: S.dayPlan || {}, week: S.week || {}, workouts: S.workouts || [] }, date, date)
-  const ids = [...new Set((S.routines || []).map(r => r.id))]
-  const profile = watchProfileOf(S)
-  const plans = ids.map(id => {
-    const routine = S.routines?.find(r => r.id === id)
-    if (!routine) return null
-    const entries = buildSessionEntries(S, routine).map(e => ({ ...e, rid: routine.id }))
-    ensureWatchIdentity({ entries }, 'catalog:' + routine.id + ':' + fingerprint(routine.ex || []))
-    // Match the official session-start path: every entry retains its source routine.
-    const exercises = watchExercisesOf(S, entries, { routineId: routine.id })
-    return { protocolVersion: 2, weightUnit: S.unit || 'kg', effortScale: effortOf(S), capabilities: { setEffort: EFFORT_CAPABILITY },
-      id: routine.id, routineIds: [routine.id], name: routine.name, today: today.includes(id), available: exercises.length > 0,
-      exercises, entries, profile, rows: entries.map(e => e.sets.filter(r => !isWarmupRow(r)).map(r => ({ setId: r.setId, w: r.w ?? '', r: r.sec ?? r.r ?? '', done: false, at: 0 }))) }
-  }).filter(Boolean)
-  const todayPlans = today.map(id => plans.find(p => p.id === id)).filter(p => p?.available)
-  const todayPlan = todayPlans.length > 1 ? {
-    ...todayPlans[0], id: 'today:' + date, routineIds: todayPlans.map(p => p.id),
-    name: deriveSessionName(todayPlans.map(p => p.name)),
-    entries: todayPlans.flatMap(p => p.entries.map(e => ({ ...e, rid: p.id }))),
-    exercises: todayPlans.flatMap(p => p.exercises), rows: todayPlans.flatMap(p => p.rows),
-  } : todayPlans[0] || null
-  return { t: 'plan_catalog', date, at: Date.now(), todayIds: todayPlans.map(p => p.id), todayPlan, plans }
 }
 
 export function watchProfileOf(S) {

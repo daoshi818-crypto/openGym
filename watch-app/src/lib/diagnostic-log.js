@@ -2,33 +2,37 @@ import storage from '@blueos.storage.storage'
 import { runtime } from './runtime.js'
 import { appTimeout, cancelAppTimeout } from './app-timers.js'
 import { wireBytes } from './sync-wire.js'
+import { WATCH_VERSION } from './version.js'
 
 const KEY = 'watch_diagnostic_log_v1'
-const MAX_BYTES = 24000
+const MAX_EVENTS = 128
+const MAX_BYTES = 48000
 // Reserve evidence for user actions without increasing the journal or write budget.
-const ACTION_STAGE = /^(dot_|local_commit_|crown_input$|field_selected$|complete_tap$|page_(show|hide|destroy)$|interaction_reset$|remote_end$|local_end$)/
+const ACTION_STAGE = /^(dot_|local_commit_|workout_refresh$|crown_input$|field_selected$|complete_tap$|page_(show|hide|destroy)$|interaction_reset$|remote_end$|local_end$)/
 function interaction(e) { return ACTION_STAGE.test(e.stage) }
 function trim(j) {
-  while (j.events.length > 64 || j.bytes > MAX_BYTES) {
+  while (j.events.length > MAX_EVENTS || j.bytes > MAX_BYTES) {
     const actions = j.events.filter(interaction).length
     const transport = j.events.length - actions
-    const evictAction = actions > 32 && transport <= 32 || transport === 0
+    const reserve = Math.floor(MAX_EVENTS / 2)
+    const evictAction = actions > reserve && transport <= reserve || transport === 0
     const i = j.events.findIndex(e => interaction(e) === evictAction)
     const removed = j.events.splice(i, 1)[0]
     j.bytes -= j.sizes.splice(i, 1)[0]
     j.dropped++; if (interaction(removed)) j.droppedInteractions++
   }
 }
-const fields = ['sid', 'eventId', 'entryInstanceId', 'setId', 'type', 'code', 'detail', 'version', 'status',
-  'ex', 'set', 'rev', 'pending', 'rest', 'paused', 'ok', 'duration', 'bytes',
-  'restUntil', 'restVersion', 'restId', 'crownDirty', 'dotPending']
+const fields = ['sid', 'eventId', 'entryInstanceId', 'setId', 'type', 'code', 'version', 'status', 'detail', 'phase', 'page',
+  'kind', 'reason', 'pending', 'rest', 'paused', 'ok', 'ex', 'set', 'rev', 'restUntil', 'restVersion', 'restId', 'attempts', 'receivedAt', 'nextAttemptAt', 'durable', 'readyState',
+  'connectionGeneration', 'headEventId', 'crownDirty', 'dotPending', 'duration', 'bytes', 'active', 'actionDuration', 'summaryDuration', 'officialViewDuration', 'sampleCount', 'sessionAt', 'storageFailed', 'unflushed']
+const safeToken = value => typeof value === 'string' ? value.replace(/[^a-zA-Z0-9_.:-]/g, '').slice(0, 48) : value
 function journal() {
   const r = runtime()
   if (r.destroyed) throw new Error('app_destroyed')
   if (!r.diagnosticLog) {
     let saved
     try { saved = storage.getSync({ key: KEY }) } catch { /* Optional diagnostics only. */ }
-    const events = Array.isArray(saved?.events) ? saved.events.slice(-64).map(e => clean(e.stage, e, e.at)) : []
+    const events = Array.isArray(saved?.events) ? saved.events.slice(-MAX_EVENTS).map(e => clean(e.stage, e, e.at)) : []
     const sizes = events.map(e => wireBytes(JSON.stringify(e)) + 1)
     r.diagnosticLog = { events, sizes, bytes: sizes.reduce((n, size) => n + size, 2), serial: 0, persisted: 0, timer: null, writing: false, lastWriteAt: null,
       dropped: Number.isSafeInteger(saved?.dropped) && saved.dropped >= 0 ? saved.dropped : 0,
@@ -42,7 +46,7 @@ function clean(stage, data = {}, at = Date.now()) {
   for (const key of fields) {
     const v = data[key]
     if (typeof v === 'boolean' || typeof v === 'number' && Number.isFinite(v)) e[key] = v
-    else if (typeof v === 'string') e[key] = v.slice(0, 80)
+    else if (typeof v === 'string') e[key] = safeToken(v)
   }
   if (Number.isSafeInteger(data.count) && data.count > 0) e.count = data.count
   if (Number.isFinite(data.firstAt)) e.firstAt = data.firstAt
@@ -57,7 +61,7 @@ export function recordDiagnostic(stage, data = {}) {
   try {
     const j = journal(), e = { ...clean(stage, data), boot: j.boot }, last = j.events[j.events.length - 1]
     // A burst is one record with a count and its final target, not hundreds of allocations/writes.
-    if (last?.stage === e.stage && last.boot === e.boot && last.detail === e.detail && last.status === e.status && e.at - last.at < 250) {
+    if (last?.stage === e.stage && last.boot === e.boot && last.reason === e.reason && last.status === e.status && e.at - last.at < 250) {
       e.count = (last.count || 1) + 1; e.firstAt = last.firstAt || last.at
       j.bytes -= j.sizes.pop()
       j.events[j.events.length - 1] = e
@@ -95,7 +99,7 @@ export function flushDiagnosticLog() {
 export function diagnosticLog() {
   try {
     const j = journal()
-    return { version: 1, boot: j.boot, storageFailed: j.failed, dropped: j.dropped, droppedInteractions: j.droppedInteractions,
+    return { version: 1, watchVersion: WATCH_VERSION, boot: j.boot, storageFailed: j.failed, dropped: j.dropped, droppedInteractions: j.droppedInteractions,
       unflushed: j.serial !== j.persisted, events: j.events.map(e => ({ ...e })) }
   } catch { return { version: 1, storageFailed: true, events: [] } }
 }

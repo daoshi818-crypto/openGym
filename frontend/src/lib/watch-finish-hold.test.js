@@ -179,8 +179,10 @@ it('connection wording stays on the home screen while training only reports pend
   c.isPhoneConnected = () => false
   p.tickSyncStatus(true)
   expect(p.syncLabel).toBe(''); expect(p.syncWarning).toBe(false)
-  c.pendingCount = () => 3; p.tickSyncStatus(true)
+  c.pendingCount = () => 3; c.synchronizationStatus = () => ({ pending: 3, phonePending: 0 }); p.tickSyncStatus(true)
   expect(p.syncLabel).toBe('待上传 3 条')
+  c.synchronizationStatus = () => ({ pending: 0, phonePending: 0, historicalPending: 3 }); p.tickSyncStatus(true)
+  expect(p.syncLabel).toBe(''); expect(p.syncWarning).toBe(false)
   expect(watchSource('Workout/index.ux')).not.toMatch(/手机已连接|手机未连接/)
   expect(watchSource('Index/index.ux')).toMatch(/手机已连接/)
   expect(watchSource('Index/index.ux')).toMatch(/手机未连接/)

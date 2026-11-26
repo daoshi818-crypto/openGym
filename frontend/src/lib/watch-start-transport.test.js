@@ -1,20 +1,18 @@
-// Host regression: production Index/session/RPC and phone reducer, fake SDK/storage only.
+// Host regression: legacy session outbox, production RPC and phone reducer, fake SDK/storage only.
 // This does not establish Android process wake or BlueOS device behavior.
-import { runInNewContext } from 'node:vm'
 import { afterEach, expect, it, vi } from 'vitest'
-import { watchCatalogOf } from './watch-workout.js'
+import { legacyWatchWorkout } from './watch-legacy-start-fixture.js'
 import { createDurableWatchLifecycle } from './watch-commit.js'
 import { applyEdit, applyRest } from '../../../watch-app/src/lib/protocol.js'
 import { wireBytes, wireHash } from '../../../watch-app/src/lib/sync-wire.js'
-import { loadWatchModule, stripImports, watchPersistence, watchSource } from './watch-test-harness.js'
+import { loadWatchModule, watchPersistence } from './watch-test-harness.js'
 
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers() })
 
 function setup({ count = 1, limit = Infinity } = {}) {
   vi.useFakeTimers()
-  const S = { workouts: [], unit: 'kg', routines: [{ id: 'back', name: 'Back', prog: 'off', ex: [{ id: '0025', sets: 4, reps: 8, weight: 40 }] }], watchPlanIds: ['back'] }
+  const S = { workouts: [], unit: 'kg' }, legacy = legacyWatchWorkout(count)
   const h = watchPersistence(), sent = []
-  S.routines[0].ex = Array.from({ length: count }, (_, i) => ({ ...S.routines[0].ex[0], id: i % 2 ? '0025' : '0001' }))
   const delivered = [], fragments = new Map()
   const connection = { send: ({ data, success, fail }) => {
     sent.push(structuredClone(data))
@@ -29,24 +27,27 @@ function setup({ count = 1, limit = Infinity } = {}) {
   Object.assign(h.ctx, { applyEdit, applyRest, console: { info() {} }, WATCH_VERSION: 'test', router: { replace: vi.fn() }, interconnect: { instance: () => connection } })
   loadWatchModule('event-id', h.ctx, ['allocateEventIdentity', 'rememberEventAt'])
   loadWatchModule('close-journal', h.ctx, ['prepareClose', 'releaseCandidate', 'pendingSummaries', 'pendingEntry', 'journalEntry', 'markPhase', 'markDelivered'])
-  loadWatchModule('session', h.ctx, ['startSession', 'loadState', 'save', 'closeSession', 'buildSessionSummary', 'summaryEventOf'])
-  loadWatchModule('rpc', h.ctx, ['startServer', 'sendEvent', 'pendingCount', 'isConnected'])
-  runInNewContext(stripImports(watchSource('Index/index.ux').match(/<script>([\s\S]*?)<\/script>/)[1]).replace('export default', 'globalThis.page ='), h.ctx)
-  const page = h.ctx.page
-  Object.assign(page, page.data, { ready: true, visible: true })
-  page.onCatalog(watchCatalogOf(S)); page.bindRpc()
+  loadWatchModule('session', h.ctx, ['commitSessionStart', 'loadState', 'save', 'closeSession', 'buildSessionSummary', 'summaryEventOf'])
+  loadWatchModule('rpc', h.ctx, ['startServer', 'sendEvent', 'replayPendingEvents', 'pendingCount'])
+  h.ctx.startServer({})
+  // Simulate recovery of the previous version's durable queue without using the removed home screen.
+  const writeLegacyStart = async () => {
+    const result = await h.ctx.commitSessionStart(legacy, {})
+    if (result.ok) h.ctx.replayPendingEvents()
+    return result.ok
+  }
   const onStarted = vi.fn(), replies = []
   const receive = createDurableWatchLifecycle({ getState: () => S, update: fn => fn(S), getTimer: () => null,
     checkpoint: async () => {}, onStarted, send: msg => { replies.push(msg); connection.onMessage(msg) },
     sendAck: () => {}, sendSync: () => {}, sendEnded: () => {}, completeInbox: async () => {} })
-  return { ...h, S, sent, delivered, replies, connection, page, receive, onStarted }
+  return { ...h, S, sent, delivered, replies, connection, writeLegacyStart, receive, onStarted }
 }
 
 it('delivers a large start through a size-rejecting SDK without changing the durable event identity', async () => {
   const h = setup({ count: 8, limit: 3000 })
   h.connection.onOpen()
   h.connection.onMessage({ t: 'hello_ack', protocolVersion: 3, capabilities: { dependencyEvents: true, watchEventChunks: true } })
-  await h.page.onStart()
+  await h.writeLegacyStart()
   const frozen = structuredClone(h.disk.get('session_state').pendingEdits[0])
   await vi.advanceTimersByTimeAsync(3000)
   const event = h.delivered.find(e => e.t === 'watch_start')
@@ -76,7 +77,7 @@ it.each(['failure', 'reconnect'])('replays the whole large event after partial %
   h.connection.onOpen()
   const hello = { t: 'hello_ack', protocolVersion: 3, capabilities: { dependencyEvents: true, watchEventChunks: true, commandReceipts: true } }
   h.connection.onMessage(hello)
-  await h.page.onStart(); await vi.advanceTimersByTimeAsync(500)
+  await h.writeLegacyStart(); await vi.advanceTimersByTimeAsync(500)
   expect(h.delivered.some(e => e.t === 'watch_start')).toBe(false)
   expect(h.disk.get('rpc_outbox')).toHaveLength(1)
   // A new snapshot proof must not change an in-flight fragment checksum.
@@ -96,11 +97,11 @@ it.each(['failure', 'reconnect'])('replays the whole large event after partial %
   h.receive.dispose()
 })
 
-it('delivers the real Index start through durable RPC and consumes the exact phone commit', async () => {
+it('replays a previously queued start through durable RPC and consumes the exact phone commit', async () => {
   const h = setup()
   h.connection.onOpen()
   h.connection.onMessage({ t: 'hello_ack', protocolVersion: 3, capabilities: { dependencyEvents: true } })
-  await h.page.onStart()
+  await h.writeLegacyStart()
   await vi.advanceTimersByTimeAsync(500)
   const event = h.sent.find(e => e.t === 'watch_start')
   expect(event).toBeTruthy()
@@ -115,15 +116,17 @@ it('delivers the real Index start through durable RPC and consumes the exact pho
   h.receive.dispose()
 })
 
-it('starts after a first failed session write and does not send or navigate the failed candidate', async () => {
+it('does not replay an uncommitted legacy start and sends it after storage recovers', async () => {
   const h = setup(), write = h.storage.set
+  h.connection.onOpen()
+  h.connection.onMessage({ t: 'hello_ack', protocolVersion: 3, capabilities: { dependencyEvents: true } })
   let fail = true
   h.storage.set = args => { if (args.key === 'session_state' && fail) { fail = false; args.fail?.(); return } write(args) }
-  await h.page.onStart()
+  expect(await h.writeLegacyStart()).toBe(false)
   expect(h.ctx.loadState().active).toBe(false)
-  expect(h.ctx.router.replace).not.toHaveBeenCalled()
   expect(h.sent.some(e => e.t === 'watch_start')).toBe(false)
-  await h.page.onStart(); await vi.advanceTimersByTimeAsync(500)
+  expect(await h.writeLegacyStart()).toBe(true)
+  await vi.advanceTimersByTimeAsync(500)
   const event = h.sent.find(e => e.t === 'watch_start')
   expect(event).toBeTruthy()
   expect(h.receive(event)).toBe(true); await h.receive.idle()

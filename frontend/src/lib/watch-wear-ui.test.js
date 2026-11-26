@@ -8,7 +8,6 @@ import { runInNewContext } from 'node:vm'
 import { applyEdit, applyRest, restOf, applyFocus } from '../../../watch-app/src/lib/protocol.js'
 import { loadWatchModule, watchPersistence, watchInteractionDeps } from './watch-test-harness.js'
 import { effortScaleOf, effortValueOf, effortKindOf, stepEffortValue, effortMeaning, effortSummaryText, formatEffort } from '../../../watch-app/src/lib/effort-scale.js'
-import { todayISO } from './format.js'
 
 const source = path => readFileSync(new URL('../../../watch-app/src/' + path, import.meta.url), 'utf8')
 const imports = /^import[\s\S]*?from ['"][^'"]+['"]\r?$/gm
@@ -24,57 +23,39 @@ function page(path, deps) {
   return { ...context.page, ...context.page.data }
 }
 
-// ---- Index: 今日计划 / 快速开始 / 未同步提示 / 计划行预览 -------------------
+// ---- Index: idle phone prompt and continuation of already-stored workouts ----
 describe('Index 启动页（官方 IdleScreen 映射）', () => {
-  const indexPage = ({ catalog = null, active = null } = {}) => {
-    const store = { plan_catalog: catalog, summary_last: null, last_notice: null }
-    const callbacks = {}
+  const indexPage = (active = { active: false }) => {
+    const callbacks = {}, storage = { getSync: vi.fn(() => null) }
+    const router = { replace: vi.fn(), push: vi.fn() }
     const page_ = page('Index/index.ux', {
-      loadState: () => active || { active: false, workout: null, pendingStart: false },
-      storage: { getSync: ({ key }) => store[key] ?? null, set() {} },
-      startServer: cbs => Object.assign(callbacks, cbs),
-      startSession: vi.fn(), applySync: vi.fn(), closeSession: vi.fn(), save: vi.fn(), sendEvent: vi.fn(),
-      router: { replace: vi.fn(), push: vi.fn(), back: vi.fn() },
-      pendingCount: () => 0, isConnected: () => true,
+      loadState: () => active, storage, isPhoneConnected: () => false,
+      startServer: cbs => Object.assign(callbacks, cbs), router,
     })
     page_.onInit()
-    return { page: page_, callbacks, store }
+    return { page: page_, router, storage, callbacks }
   }
 
-  const plan = (id, name, n, today) => ({ id, name, today, exercises: Array.from({ length: n }, (_, i) => ({ name: name + ' 动作' + (i + 1) })) })
-
-  it('没有本地缓存也没有手机计划时提示去同步，而不是“今日暂无计划”', async () => {
-    const { page: p } = indexPage()
-    expect(p.plans).toEqual([])
-    expect(p.needSync).toBe(true)
+  it('待机显示手机提示、无计划列表，连接状态变化不会进入训练', () => {
+    const { page: p, router, storage, callbacks } = indexPage()
+    expect(source('Index/index.ux')).toContain('请打开手机端的 OpenGym')
+    expect(storage.getSync).not.toHaveBeenCalledWith({ key: 'plan_catalog' })
+    expect(callbacks).not.toHaveProperty('onCatalog')
+    expect(p.canResume).toBe(false)
+    p.onReady(); callbacks.onState(true)
+    expect(router.replace).not.toHaveBeenCalled()
   })
 
-  it('有手机计划时不再提示同步，并把今日计划排在“开始训练”上', async () => {
-    const { page: p, callbacks } = indexPage()
-    callbacks.onCatalog({ date: todayISO(), plans: [plan('p1', '推日', 5, true), plan('p2', '拉日', 2, false)] })
-    expect(p.needSync).toBe(false)
-    expect(p.startLabel).toBe('开始训练')
-    expect(p.selected.id).toBe('p1')
-    expect(p.hasToday).toBe(true)
-    expect(p.exerciseCount).toBe(5)
-    // Official home lists only other routines beneath the combined Today card.
-    expect(p.plans.map(p => p.id)).toEqual(['p2'])
-    expect(p.plans[0].preview).toBe('拉日 动作1、拉日 动作2')
-  })
-
-  it('只有缓存计划（没有今日）时用“快速开始”', async () => {
-    const { page: p, callbacks } = indexPage()
-    callbacks.onCatalog({ plans: [plan('p1', '推日', 3, false)] })
-    expect(p.startLabel).toBe('快速开始')
-    expect(p.selected.id).toBe('p1')
-  })
-
-  it('本地有活动训练时优先“继续当前训练”', async () => {
-    const active = { active: true, pendingStart: false, workout: { name: '推日', exercises: [{ name: '卧推' }] } }
-    const { page: p } = indexPage({ active })
+  it('本地有活动训练时离线也能恢复', () => {
+    const active = { active: true, pendingStart: true, workout: { name: '推日', exercises: [{ name: '卧推' }], rows: [[{}, {}]] } }
+    const { page: p, router } = indexPage(active)
     expect(p.canResume).toBe(true)
     expect(p.workoutName).toBe('推日')
     expect(p.exerciseCount).toBe(1)
+    expect(p.setCount).toBe(2)
+    expect(p.status).toBe('离线训练 · 待同步')
+    p.onReady()
+    expect(router.replace).toHaveBeenCalledExactlyOnceWith({ uri: '/Workout' })
   })
 })
 
@@ -183,6 +164,20 @@ describe('Workout 休息页（官方 RestScreen 映射）', () => {
     expect(workout.restPctLabel).toBeUndefined()
   })
 
+  it('页面隐藏时跳过响应式刷新，重新显示后恢复刷新', async () => {
+    const { workout } = setup()
+    workout.visible = false
+    workout.weightNum = '保留值'
+    workout.stateOf().workout.rows[0][0].w = '72.5'
+    workout.refresh()
+    expect(workout.weightNum).toBe('保留值')
+    expect(workout.needsRefresh).toBe(true)
+
+    workout.visible = true
+    workout.refresh()
+    expect(workout.weightNum).toBe('72.5')
+    expect(workout.needsRefresh).toBe(false)
+  })
   it('休息结束后倒计时归零', async () => {
     const { workout } = setup()
     await workout.onCurrentSetAction()

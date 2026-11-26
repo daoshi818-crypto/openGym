@@ -6,7 +6,11 @@ vi.mock('./watch-link.js', () => ({ requestWatchDiagnostics: vi.fn(), requestWat
 vi.mock('./watch-diagnostic-log.js', () => ({ phoneWatchLog: { snapshot: () => [{ stage: 'phone_commit' }], cachedWatch: () => ({ collectedAt: 123, events: [{ stage: 'old' }] }) } }))
 beforeEach(() => {
   requestWatchDiagnostics.mockResolvedValue(true)
-  requestWatchLog.mockResolvedValue({ status: 'received', events: [{ stage: 'dot_tap' }] })
+  requestWatchLog.mockResolvedValue({ status: 'received', events: [
+    { stage: 'dot_tap' },
+    { stage: 'workout_refresh', duration: 4, actionDuration: 45, active: true, sessionAt: 123 },
+    { stage: 'training_restore', detail: 'maintenance', boot: 'boot-a' },
+  ] })
   getWatchLogs.mockResolvedValue({ logs: 'SDK log' })
   getWatchDiagnostics.mockResolvedValue({ watchVersion: 'test' })
 })
@@ -14,7 +18,11 @@ describe('diagnostic report collection', () => {
   it('combines phone SDK, business, watch interaction and environment records', async () => {
     const report = await collectWatchDiagnosticReport()
     expect(report).toMatchObject({ formatVersion: 1, watchProbeReceived: true, cachedWatchLog: null,
-      watchLog: { events: [{ stage: 'dot_tap' }] }, nativeSdk: { logs: 'SDK log' }, phoneEvents: [{ stage: 'phone_commit' }] })
+      watchLog: { events: [
+        { stage: 'dot_tap' },
+        { stage: 'workout_refresh', duration: 4, actionDuration: 45, active: true, sessionAt: 123 },
+        { stage: 'training_restore', detail: 'maintenance', boot: 'boot-a' },
+      ] }, nativeSdk: { logs: 'SDK log' }, phoneEvents: [{ stage: 'phone_commit' }] })
     expect(report.exportedAt).toMatch(/^\d{4}-/)
     expect(report.limitations.join(' ')).toContain('not BlueOS system crash dumps')
   })

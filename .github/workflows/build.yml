@@ -79,7 +79,7 @@ jobs:
           tag_name: v${{ env.APP_VERSION }}
           target_commitish: ${{ github.sha }}
           name: openGym custom v${{ env.APP_VERSION }}
-          body_path: docs/dev/RELEASE_1_6_40.zh-CN.md
+          body_path: docs/dev/RELEASE_1_6_41.zh-CN.md
           files: |
             openGym.apk
             openGym.apk.sha256

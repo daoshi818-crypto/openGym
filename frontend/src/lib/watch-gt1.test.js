@@ -33,6 +33,9 @@ const tree = page => sourceTemplate(watchSource(page + '/index.ux'))
 const css = page => watchSource(page + '/index.ux').match(/<style>([\s\S]*?)<\/style>/)[1]
 afterEach(() => vi.useRealTimers())
 describe('v1.4.5 official square Wear UI contracts', () => {
+  it('enables native crown rotation vibration on the training surface', () => {
+    expect(watchSource('Workout/index.ux')).toContain('vibration-effectEnabled="true"')
+  })
   it.each(['Index','Workout','ExerciseList','Summary'])('%s keeps a full viewport', name => {
     expect(css(name)).toMatch(/\.page\s*\{[^}]*width: 100%;[^}]*height: 100%;/)
     expect(css(name)).toContain('background-color: #000000')

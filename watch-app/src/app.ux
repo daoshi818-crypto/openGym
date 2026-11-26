@@ -9,6 +9,13 @@ import { readStored, writeStoredAtomic } from './lib/persistence.js'
 import { loadState, flushHr } from './lib/session.js'
 import { startSessionHr } from './lib/sensors.js'
 import { startServer, replayPendingEvents } from './lib/rpc.js'
+
+function sessionDiagnosticContext() {
+  try {
+    const state = loadState('hr') || {}
+    return { active: !!state.active, paused: !!state.pausedAt, sid: state.sid || '', sessionAt: state.startedAt || state.sessionAt || 0 }
+  } catch { return { active: false } }
+}
 export default {
   onCreate() {
     bindRuntime(this.$def || this)
@@ -34,7 +41,7 @@ export default {
       },
     }
     console.log('opengym 启动')
-    try { recordDiagnostic('app_start', { version: WATCH_VERSION }); flushDiagnosticLog() } catch { /* Diagnostics are optional. */ }
+    try { recordDiagnostic('app_start', { version: WATCH_VERSION, ...sessionDiagnosticContext() }); flushDiagnosticLog() } catch { /* Diagnostics are optional. */ }
     const jobKey = 'training_background_job_v1'
     r.trainingRuntime = createTrainingRuntime({ brightness, schedule,
       // Full read only at lifecycle/checkpoint boundaries, so six-hour expiry
@@ -49,18 +56,18 @@ export default {
   },
   onShow() {
     runtime().trainingRuntime?.show()
-    try { recordDiagnostic('app_show', { sid: loadState('hr').sid }); flushDiagnosticLog() } catch {}
+    try { recordDiagnostic('app_show', sessionDiagnosticContext()); flushDiagnosticLog() } catch {}
   },
   onHide() {
     runtime().trainingRuntime?.hide()
-    try { recordDiagnostic('app_hide', { sid: loadState('hr').sid }); flushDiagnosticLog() } catch {}
+    try { recordDiagnostic('app_hide', sessionDiagnosticContext()); flushDiagnosticLog() } catch {}
   },
   onTrainingMaintenance(params) { return runtime().trainingRuntime?.run(params) },
   onError(error) {
-    try { recordDiagnostic('app_error', { code: error?.code, detail: String(error?.message || error || '').slice(0, 80) }); flushDiagnosticLog() } catch {}
+    try { recordDiagnostic('app_error', { code: error?.code, ...sessionDiagnosticContext() }); flushDiagnosticLog() } catch {}
   },
   onDestroy() {
-    try { recordDiagnostic('app_destroy'); flushDiagnosticLog() } catch { /* Best effort only. */ }
+    try { recordDiagnostic('app_destroy', sessionDiagnosticContext()); flushDiagnosticLog() } catch { /* Best effort only. */ }
     const app = this.$def || this
     const r = app.openGymRuntime
     if (!r) return

@@ -4,6 +4,8 @@ import { dependencyDecision, causalAncestor } from '../../../watch-app/src/lib/e
 import { watchConflict } from './watch-revision.js'
 import { watchSidOf } from './session-resume.js'
 import { wireBytes } from '../../../watch-app/src/lib/sync-wire.js'
+import { stalePhoneActivationEvent } from './watch-phone-presence.js'
+import { applyWatchV4Lifecycle, isWatchV4LifecycleEvent } from './watch-v4-state.js'
 
 const TYPES = new Set(['hello', 'watch_start', 'session_close', 'session_close_ack', 'pause', 'rest',
   'effort', 'weight', 'reps', 'set', 'unset', 'add_set', 'remove_set', 'focus', 'end', 'summary'])
@@ -15,7 +17,7 @@ const decisionOf = record => {
   const ack = record.replies?.find(r => r.kind === 'ack' && r.eventId)
   return ack ? { eventId: ack.eventId, sid: record.sid, status: 'applied' } : null
 }
-const keyOf = ev => JSON.stringify([ev.sid || '', ev.eventId || ev._inboxId || [ev.t, ev.ex, ev.set, ev.at]])
+const keyOf = ev => JSON.stringify([ev.sid || '', ev.eventId || ev._inboxId || (ev.t === 'STATE_SNAPSHOT' ? [ev.t, ev.requestId] : [ev.t, ev.ex, ev.set, ev.at])])
 
 // The bridge claims synchronously. Business work and its durable checkpoint run serially.
 // Reply delivery is a separate transport concern: the watch retries until it has the
@@ -31,6 +33,15 @@ export function createDurableWatchLifecycle(deps) {
       while (queue.length && !disposed) {
         const item = queue[0], ev = item.ev, key = keyOf(ev)
         try {
+          const modern = isWatchV4LifecycleEvent(ev)
+          if (modern && !item.replies) {
+            const transaction = deps.transaction || (run => run())
+            transaction(() => {
+              item.effects = applyWatchV4Lifecycle({ ...deps, update: fn => deps.update(fn, ev) }, ev)
+            }, ev)
+            item.replies = ev.t === 'STATE_SNAPSHOT' ? [{ kind: 'send', msg: { t: 'STATE_SNAPSHOT_ACK',
+              protocolVersion: 4, sid: ev.sid, requestId: ev.requestId, wireHash: ev.wireHash } }] : []
+          }
           if (!item.replies) {
             const prior = ev.t !== 'hello' && deps.getState().watchCommits?.[key]
             if (prior) item.replies = prior.replies
@@ -54,10 +65,16 @@ export function createDurableWatchLifecycle(deps) {
               })
               const byId = new Map(decisions.filter(Boolean).map(d => [d.eventId, d]))
               const lookup = id => byId.get(id)
-              const dependency = dependencyDecision(ev, lookup)
-              const conflict = dependency.status === 'ready' ? watchConflict(deps.getState(), ev,
+              const phoneClose = ev.t === 'session_close' && watchSidOf(deps.getState().active) === ev.sid &&
+                (deps.getState().active?.watchPhoneSession === true || (ev.phoneLed === true && deps.getState().active?.watchStarted !== true))
+              const phoneLedger = deps.getState().active?.watchPhoneSession === true || deps.getState().watchClosed?.[ev.sid]?.phoneLedSession === true
+              const staleActivation = phoneLedger && stalePhoneActivationEvent(deps.getState(), ev, !!deps.presenceSupported?.(), deps.isForeground?.() !== false)
+              const dependency = phoneClose || staleActivation ? { status: 'ready' } : dependencyDecision(ev, lookup)
+              const conflict = dependency.status === 'ready' && !phoneClose && !staleActivation ? watchConflict(deps.getState(), ev,
                 ev.causalFrontier === true ? id => causalAncestor(ev, id, lookup) : undefined) : null
-              if (dependency.status !== 'ready') {
+              if (staleActivation) {
+                replies.push({ kind: 'send', msg: { t: 'event_rejected', eventId: ev.eventId, sid: ev.sid, reason: 'stale_phone_activation' } })
+              } else if (dependency.status !== 'ready') {
                 replies.push({ kind: 'send', msg: { t: 'event_rejected', eventId: ev.eventId, reason: dependency.reason, parent: dependency.parent } })
               } else if (conflict) {
                 replies.push({ kind: 'send', msg: { t: 'event_rejected', eventId: ev.eventId, reason: 'concurrent_edit', detail: copy(conflict) } }, { kind: 'sync' })
@@ -140,7 +157,7 @@ export function createDurableWatchLifecycle(deps) {
               }
             }
           }
-          if (ev.t !== 'hello' && !deps.getState().watchCommits?.[key]) throw new Error('watch decision was not published')
+          if (!modern && ev.t !== 'hello' && !deps.getState().watchCommits?.[key]) throw new Error('watch decision was not published')
           status('saving')
           await deps.checkpoint()
           if (disposed) return
@@ -152,6 +169,15 @@ export function createDurableWatchLifecycle(deps) {
           // This cache callback cannot invalidate or block the persisted decision.
           for (const reply of item.replies) if (reply.msg?.t === 'committed' && reply.msg.state) {
             try { deps.commandStateCommitted?.(reply.msg.state) } catch { /* optimization only */ }
+          }
+          if (item.effects) {
+            const { rest, stop } = item.effects
+            if (rest || stop) {
+              try {
+                if (stop && !deps.getState().active) deps.stop?.()
+                else if (rest && watchSidOf(deps.getState().active) === ev.sid) deps.rest?.(rest)
+              } catch { /* A timer effect cannot invalidate the checkpoint. */ }
+            }
           }
           replying = true
           release?.(); release = null
@@ -188,7 +214,7 @@ export function createDurableWatchLifecycle(deps) {
     return running
   }
   function receive(ev) {
-    if (disposed || !TYPES.has(ev?.t)) return false
+    if (disposed || (!isWatchV4LifecycleEvent(ev) && !TYPES.has(ev?.t))) return false
     let item = queue.find(item => keyOf(item.ev) === keyOf(ev))
     if (!item) { item = { ev: copy(ev), inboxIds: new Set() }; queue.push(item) }
     if (ev._inboxId) item.inboxIds.add(ev._inboxId)

@@ -1,7 +1,7 @@
 import { it, expect } from 'vitest'
 import { ensureWatchIdentity, resolveWatchTarget } from './watch-identity.js'
 import { applyWatchEvent } from './watch-events.js'
-import { watchProfileOf, watchCatalogOf } from './watch-workout.js'
+import { watchProfileOf } from './watch-workout.js'
 import { copyRowAt } from './history.js'
 const state = () => ({ unit: 'kg', workouts: [], active: { start: 1, entries: [0,1].map(() => ({ id: '0001', sets: [{ w: 20, r: 10 }] })) } })
 it('routes offline updates by instance and set IDs after reordering the same exercise twice', () => {
@@ -21,7 +21,7 @@ it('allocates fresh copied set IDs and rejects old index-only edits after struct
   expect(a.sets[0].setId).toBe(old); expect(a.sets[1].setId).not.toBe(old)
   expect(applyWatchEvent(s, { sid: '1', t: 'weight', ex: 0, set: 1, weight: 99 })).toBe(false)
 })
-it('converts event-time weight units and normalizes body weight for online and offline plans', () => {
+it('converts event-time weight units and normalizes body weight for the active workout', () => {
   const s = state(); ensureWatchIdentity(s.active)
   const a = s.active.entries[0]
   expect(applyWatchEvent(s, { sid: '1', t: 'weight', ex: 0, set: 1, entryInstanceId: a.entryInstanceId, setId: a.sets[0].setId, weight: 100, weightUnit: 'lb', seq: 1 })).toBe(true)

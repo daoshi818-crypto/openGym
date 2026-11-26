@@ -65,6 +65,16 @@ describe('watch lifecycle outside the training route', () => {
     expect(snapshot.startedAt).toBe(1400000)
     expect(snapshot.segmentStartedAt).toBe(2000000)
   })
+  it('ignores watch summaries for active or closed phone-led sessions', () => {
+    const st = { workouts: [{ watchSid: 'phone-1', calories: 12 }], active: { start: 2000, watchSid: 'phone-1', watchPhoneSession: true, watchSessionGeneration: 3, entries: [] } }
+    const app = lifecycle(st)
+    expect(applyWatchSummary(st, { sid: 'phone-1', calories: 500 })).toBe(true)
+    st.watchClosed = { 'phone-1': { phoneLedSession: true, sessionGeneration: 3 } }
+    st.active = null
+    expect(applyWatchSummary(st, { sid: 'phone-1', calories: 600 })).toBe(true)
+    expect(st.workouts[0].calories).toBe(12)
+  })
+
   it('rejects malformed energy and does not overwrite newer summaries with old retries', () => {
     const st = { workouts: [history()] }
     expect(applyWatchSummary(st, { sid: '1000', calories: -1 })).toBe(false)

@@ -70,9 +70,10 @@ export function createTrainingRuntime(deps) {
     if (job && (job.sid !== state.sid || job.segment !== segment(state))) releaseJob()
     arm()
   }
-  function restore() {
+  function restore(reason) {
     if (!alive()) return
-    try { deps.restore() } catch { trace('training_restore_failed') }
+    trace('training_restore', { phase: reason, detail: reason, active: !!state.active, sid: state.sid, sessionAt: state.startedAt })
+    try { deps.restore() } catch { trace('training_restore_failed', { phase: reason, detail: reason }) }
   }
   function checkpoint() {
     if (!alive()) return Promise.resolve(false)
@@ -88,14 +89,14 @@ export function createTrainingRuntime(deps) {
     observe, syncScreen,
     start() {
       // A previous one-shot may still be registered after process recovery.
-      restore()
+      restore('start')
       const latest = readState()
       if (latest) {
         try { const previous = deps.readJob(); cancel(previous?.id); if (previous && !active(latest)) writeJob(null) } catch {}
         observe(latest)
       }
     },
-    show() { if (!alive()) return; foreground = true; restore(); observe(readState(), true) },
+    show() { if (!alive()) return; foreground = true; restore('show'); observe(readState(), true) },
     hide() { if (!alive()) return; foreground = false; syncScreen(); observe(readState(), true); return checkpoint() },
     async run(params) {
       if (!alive() || maintenance) return false
@@ -107,7 +108,13 @@ export function createTrainingRuntime(deps) {
       lastRunToken = params.token
       maintenance = true
       if (job) { clearWatchdog(job); job = null }
-      try { restore(); await checkpoint(); if (alive()) trace('training_checkpoint', { sid: latest.sid }); return true }
+      const startedAt = Date.now()
+      try {
+        restore('maintenance')
+        const ok = await checkpoint()
+        if (alive()) trace('training_checkpoint', { duration: Date.now() - startedAt, ok, sid: state.sid })
+        return true
+      }
       finally { maintenance = false; if (alive()) observe(readState(), true) }
     },
     dispose() {

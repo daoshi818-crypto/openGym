@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 
-import { watchCatalogOf } from './watch-workout.js'
+import { watchPlanOf } from './watch-workout.js'
+import { wireHash } from '../../../watch-app/src/lib/sync-wire.js'
 
 const native = vi.hoisted(() => ({
   events: {},
@@ -47,9 +48,9 @@ describe('watch app and plan delivery', () => {
     expect(hello.capabilities).toMatchObject({ narrowDependencies: false, snapshotGenerations: false })
   })
   it('preserves Last time and effort capabilities in the actual native plan payload', async () => {
-    const S = { unit: 'kg', effort: 'rir', routines: [{ id: 'back', name: 'Back', ex: [{ id: '0025', sets: 4, reps: 8 }] }], watchPlanIds: ['back'],
+    const S = { unit: 'kg', effort: 'rir', active: { start: 1, name: 'Back', routineIds: ['back'], entries: [{ id: '0025', rid: 'back', sets: [{ w: 45, r: 8 }], target: { sets: 4 } }] },
       workouts: [{ d: '2026-11-01', routineIds: ['back'], entries: [{ id: '0025', rid: 'back', target: { sets: 4 }, sets: [{ w: 42, r: 8, done: true }] }] }] }
-    const plan = watchCatalogOf(S).plans[0], lastTime = plan.exercises[0].lastTime
+    const active = watchPlanOf(S), plan = { ...active.workout, effortScale: active.effortScale, capabilities: active.capabilities }, lastTime = plan.exercises[0].lastTime
     expect(lastTime).toMatchObject({ date: '2026-11-01', weightUnit: 'kg', sourceRoutineId: 'back', rows: [{ label: '42×8' }] })
     await link.pushPlanToWatch(plan, 'back')
     const sent = JSON.parse(native.sendPlan.mock.calls[0][0].json)
@@ -364,6 +365,20 @@ describe('watch connection state', () => {
 
 describe('explicit watch transport diagnostics', () => {
   const drain = async () => { for (let i = 0; i < 25; i++) await Promise.resolve() }
+  async function selectPeer() {
+    await link.connectWatch()
+    const id = 'watch-selected'
+    native.events.watchEvent({ t: 'hello', installationId: id, sourceInstallationId: id,
+      protocolVersion: 3, capabilities: { deviceSelection: true } })
+    await drain()
+    const request = native.sendEvent.mock.calls.map(([arg]) => JSON.parse(arg.json)).findLast(msg => msg.t === 'link_probe')
+    expect(request).toBeTruthy()
+    native.events.watchEvent({ t: 'link_probe_ack', requestId: request.requestId,
+      installationId: id, sourceInstallationId: id })
+    await drain()
+    expect(link.watchConnection().selectedId).toBe(id)
+    return id
+  }
   async function probe() {
     const result = link.requestWatchDiagnostics()
     await drain()
@@ -373,6 +388,29 @@ describe('explicit watch transport diagnostics', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     native.sendEvent.mockReset().mockResolvedValue({ ok: true, code: 0 })
+  })
+
+  it('accepts live diagnostics and log pages through selected-device source filtering', async () => {
+    const installationId = await selectPeer()
+    const diagnostic = link.requestWatchDiagnostics()
+    await drain()
+    const diagnosticRequest = JSON.parse(native.sendEvent.mock.calls.at(-1)[0].json)
+    expect(diagnosticRequest.targetInstallationId).toBe(installationId)
+    native.events.watchEvent({ t: 'watch_diagnostics', requestId: diagnosticRequest.requestId, pending: 1 })
+    expect((await link.getWatchDiagnostics()).watchDiagnosticRequest.status).toBe('pending')
+    native.events.watchEvent({ t: 'watch_diagnostics', requestId: diagnosticRequest.requestId,
+      sourceInstallationId: installationId, pending: 1, events: [] })
+    expect(await diagnostic).toBe(true)
+
+    const logRequestPromise = link.requestWatchLog()
+    await drain()
+    const logRequest = JSON.parse(native.sendEvent.mock.calls.at(-1)[0].json)
+    expect(logRequest.targetInstallationId).toBe(installationId)
+    native.events.watchEvent({ t: 'watch_log', requestId: logRequest.requestId, offset: 0,
+      status: 'ok', total: 0, nextOffset: 0, events: [] })
+    native.events.watchEvent({ t: 'watch_log', requestId: logRequest.requestId, offset: 0,
+      sourceInstallationId: installationId, status: 'ok', watchVersion: 'test', boot: 'b', total: 0, nextOffset: 0, events: [] })
+    expect(await logRequestPromise).toMatchObject({ status: 'received', watchVersion: 'test', events: [] })
   })
 
   it('requires the matching reply and keeps diagnostic events out of training handlers', async () => {
@@ -828,5 +866,108 @@ describe('App automatic plan refresh after a durable command', () => {
       await publish(true)
       expect(messages().filter(m => m.t === 'sync' || m.t === 'sync_delta')).toHaveLength(2)
     } finally { receive.dispose(); unbind() }
+  })
+})
+
+
+describe('WATCH GT v4 selected route', () => {
+  const id = 'watch-gt-v4'
+  const hello = epoch => ({ t: 'hello', protocolVersion: 4, installationId: id, sourceInstallationId: id,
+    helloId: epoch, linkEpoch: epoch, capabilities: { deviceSelection: true, stateSnapshot: true, sessionPresence: true,
+      durableCommit: true, snapshotChunks: true, selectiveChunkAck: true, persistentTransfers: true } })
+  const sent = () => native.sendEvent.mock.calls.map(([arg]) => JSON.parse(arg.json))
+  const settle = async () => { for (let i = 0; i < 45; i++) await Promise.resolve() }
+  const query = () => sent().findLast(msg => msg.t === 'STATE_QUERY')
+  const state = (requestId, fields = {}, wire = {}) => {
+    const value = { t: 'STATE_SNAPSHOT', protocolVersion: 4, requestId, active: false, sid: '', rev: 0, ...fields }
+    native.events.watchEvent({ ...value, wireHash: wireHash(value), _kind: 'business', sourceInstallationId: id, ...wire })
+  }
+  const workout = { sid: 'a', workout: 'Push', weightUnit: 'kg', profile: { birthYear: 1990 }, exercises: [
+    { id: 'bench', name: 'Bench', entryInstanceId: 'e1', setIds: ['r1'], sets: 1, lastTime: { date: '2026-11-01' } },
+  ], rows: [[{ setId: 'r1', w: 51, r: 9, done: true, at: 42 }]] }
+  async function select() {
+    native.sendEvent.mockReset().mockResolvedValue({ ok: true })
+    await link.connectWatch()
+    native.events.watchEvent(hello('first'))
+    await settle()
+    const proof = sent().findLast(msg => msg.t === 'link_probe')
+    expect(proof.targetInstallationId).toBe(id)
+    native.events.watchEvent({ t: 'link_probe_ack', requestId: proof.requestId, sourceInstallationId: id })
+    await settle()
+    expect(query()).toMatchObject({ targetInstallationId: id })
+    expect(link.watchConnection()).toMatchObject({ appConnected: true, canStartWorkout: false })
+  }
+  it('waits for the current routed idle snapshot and exact acceptance before reporting success', async () => {
+    await select()
+    const request = query().requestId
+    state('stale')
+    state(request, {}, { sourceInstallationId: 'other' })
+    expect(link.watchConnection().canStartWorkout).toBe(false)
+    state(request, {}, { wireHash: 'bad' })
+    await settle()
+    expect(query()).toMatchObject({ requestId: request, reason: 'snapshot_checksum' })
+    state(request)
+    expect(link.watchConnection().canStartWorkout).toBe(true)
+    const report = vi.fn()
+    const pending = link.continueOnWatch(workout, report)
+    await settle()
+    const start = sent().find(msg => msg.t === 'START_SESSION')
+    expect(start).toMatchObject({ protocolVersion: 4, targetInstallationId: id, sid: 'a', exercises: [
+      { exerciseId: 'bench', entryInstanceId: 'e1', sets: [{ setId: 'r1', weight: 51, reps: '9', done: true, at: 42 }] },
+    ] })
+    expect(start).toHaveProperty('profile', { birthYear: 1990 })
+    expect(start.exercises[0]).not.toHaveProperty('lastTime')
+    expect(link.watchConnection().canStartWorkout).toBe(false)
+    const accepted = { t: 'SESSION_ACCEPTED', protocolVersion: 4, requestId: start.requestId, sid: 'a', status: 'accepted', sourceInstallationId: id }
+    native.events.watchEvent({ ...accepted, requestId: 'old-start' })
+    native.events.watchEvent({ ...accepted, sourceInstallationId: 'other' })
+    expect(report).not.toHaveBeenCalledWith('手表已确认，可继续训练')
+    native.events.watchEvent(accepted)
+    expect(await pending).toBe(true)
+    expect(report).toHaveBeenLastCalledWith('手表已确认，可继续训练')
+    expect(native.sendPlan).not.toHaveBeenCalled()
+  })
+  it('reconnects with compact watch state only, with no automatic start or offline edits', async () => {
+    const received = vi.fn(() => true)
+    link.bindWatchLifecycle(received)
+    await select()
+    state(query().requestId, { active: true, sid: 'a', rev: 9 })
+    expect(link.watchConnection().canStartWorkout).toBe(false)
+    await link.pushWeightToWatch('a', 0, 1, 71, 99)
+    expect(sent().find(msg => msg.t === 'weight')).toMatchObject({ protocolVersion: 4, weight: '71' })
+    native.events.watchState({ state: 'ready', connected: false })
+    await link.pushWeightToWatch('a', 0, 1, 72, 100)
+    await link.pushPlanToWatch(workout, 'a', null, { automatic: true })
+    const boundary = sent().length
+    native.events.watchState({ state: 'connected', connected: true })
+    native.events.watchEvent(hello('second'))
+    native.events.watchEvent(hello('second'))
+    await settle()
+    expect(await link.pushSyncToWatch(workout)).toBe(false)
+    const current = query()
+    state(current.requestId, { active: true, sid: 'a', rev: 11, exIdx: 2, setIdx: 3 })
+    expect(received).toHaveBeenLastCalledWith(expect.objectContaining({ t: 'STATE_SNAPSHOT', sid: 'a', exIdx: 2, setIdx: 3 }))
+    expect(sent().slice(boundary).filter(msg => ['START_SESSION', 'plan', 'sync', 'sync_chunk', 'weight'].includes(msg.t))).toHaveLength(0)
+    expect(sent().filter(msg => msg.t === 'weight')).toHaveLength(1)
+    expect(sent().slice(boundary).filter(msg => msg.t === 'STATE_QUERY')).toHaveLength(1)
+    expect(native.sendPlan).not.toHaveBeenCalled()
+  })
+  it('drops an in-flight explicit start on disconnect and ignores a late acceptance', async () => {
+    await select()
+    state(query().requestId)
+    const report = vi.fn()
+    const pending = link.continueOnWatch(workout, report)
+    await settle()
+    const start = sent().find(msg => msg.t === 'START_SESSION')
+    native.events.watchState({ state: 'ready', connected: false })
+    expect(await pending).toBe(false)
+    native.events.watchState({ state: 'connected', connected: true })
+    native.events.watchEvent(hello('reconnect'))
+    await settle()
+    native.events.watchEvent({ t: 'SESSION_ACCEPTED', protocolVersion: 4, requestId: start.requestId,
+      sid: start.sid, status: 'accepted', sourceInstallationId: id })
+    state(query().requestId, { active: true, sid: 'a', rev: 1 })
+    expect(report).not.toHaveBeenCalledWith('手表已确认，可继续训练')
+    expect(sent().filter(msg => msg.t === 'START_SESSION')).toHaveLength(1)
   })
 })

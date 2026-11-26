@@ -46,7 +46,7 @@ export async function commitPageAction(page, operation, deps) {
     const latest = deps.loadState()
     if (stateOf(page)?.sid !== sid || (wasVisible === true && page.visible === false) || latest.sid !== sid) return true
     for (const name of Object.keys(draft)) if (name !== 'flushPendingRowEdits' && name !== 'sessionActionDraft' && name !== 'state' && name !== 'refresh' && !deferred.includes(name)) page[name] = draft[name]
-    adoptState(page, latest)
+    adoptState(page, deps.previewState ? deps.previewState(page, latest) : latest)
     for (const effect of effects) effect()
     if (refresh) page.refresh()
     return true

@@ -171,3 +171,28 @@ it('quarantines a repeatable transactional v3 fault durably without success ACK 
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ eventId: 'independent', status: 'applied' }))
   } finally { receive.dispose() }
 })
+
+
+it('durably rejects edits from an older phone foreground generation', async () => {
+  const S = state()
+  S.active.watchSid = '1000'; S.active.watchPhoneSession = true; S.active.watchSessionGeneration = 2
+  const a = app(S, { presenceSupported: () => true })
+  a.receive({ ...event('stale-focus'), t: 'focus', sid: '1000', protocolVersion: 3, phoneSessionGeneration: 1 })
+  await a.receive.idle()
+  expect(a.deps.send).toHaveBeenCalledWith(expect.objectContaining({ eventId: 'stale-focus', status: 'rejected', detail: expect.objectContaining({ reason: 'stale_phone_activation' }) }))
+  expect(a.disk().active.watchFocus).toBeUndefined()
+  a.receive.dispose()
+})
+
+it('accepts a same-session phone-led close while stale and ignores its watch payload', async () => {
+  const a = app(undefined, { finish: vi.fn(() => { a.S.workouts.push({ calories: 7 }); a.S.active = null }) })
+  a.S.active.watchSid = '1000'; a.S.active.watchPhoneSession = true; a.S.active.watchSessionGeneration = 2
+  a.receive({ ...event('close'), t: 'session_close', sid: '1000', protocolVersion: 3, phoneSessionGeneration: 1, disposition: 'saved', calories: 999,
+    completedSets: [{ ex: 0, set: 1, weight: 999, reps: '99' }] })
+  await a.receive.idle()
+  expect(a.deps.finish).toHaveBeenCalledOnce()
+  expect(a.S.active).toBeNull()
+  expect(a.S.workouts).toEqual([{ calories: 7 }])
+  expect(a.S.watchClosed['1000']).toMatchObject({ phoneLedSession: true, eventId: 'close' })
+  a.receive.dispose()
+})

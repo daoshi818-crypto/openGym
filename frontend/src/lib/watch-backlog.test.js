@@ -28,6 +28,10 @@ function device(count = 40, disk = new Map(), lifecycle = false) {
   return { pageTimers, ctx, disk, shared, connection, sent, writes, save, loadState, edits }
 }
 const events = h => h.sent.filter(e => e.eventId)
+function openLegacy(h, protocolVersion = 3) {
+  h.connection.onOpen()
+  h.connection.onMessage({ t: 'hello_ack', protocolVersion, capabilities: { dependencyEvents: protocolVersion >= 3 } })
+}
 afterEach(() => vi.useRealTimers())
 describe('watch backlog fairness and durable replay', () => {
   it('reads only heart rate on clock ticks without traversing the workout or backlog', () => {
@@ -49,6 +53,17 @@ describe('watch backlog fairness and durable replay', () => {
     expect(h.ctx.readStored('session_state').workout.rows).toEqual([1])
     expect(h.ctx.readStored('missing', ['sid'])).toBeNull()
   })
+  it('projects transport and replay identity without traversing workout rows', () => {
+    const h = watchPersistence()
+    loadWatchModule('session', h.ctx, ['loadState'])
+    h.ctx.readStored('cache-bootstrap')
+    const cached = { sid: 's', active: true, sessionOrigin: 'phone', phoneSession: { sid: 's' },
+      pendingEdits: [{ eventId: 'e' }], syncBase: { wireHash: 'hash', commitRev: 4 } }
+    Object.defineProperty(cached, 'workout', { enumerable: true, get() { throw new Error('workout cloned on transport hot path') } })
+    h.shared.persistence.values.session_state = cached
+    expect(h.ctx.loadState('rpc')).toMatchObject({ sid: 's', active: true, syncBase: { wireHash: 'hash', commitRev: 4 } })
+    expect(h.ctx.loadState('replay')).toMatchObject({ sid: 's', pendingEdits: [{ eventId: 'e' }] })
+  })
   it('does not read/rewrite the entire session when 40 already queued edits are replayed', () => {
     vi.useFakeTimers()
     const h = device()
@@ -61,7 +76,7 @@ describe('watch backlog fairness and durable replay', () => {
   it('yields between sends instead of draining 40 records in one SDK callback stack', () => {
     vi.useFakeTimers()
     const h = device()
-    h.connection.onOpen()
+    openLegacy(h)
     expect(events(h).length).toBeLessThanOrEqual(1)
     expect(h.sent.some(e => e.t === 'hello')).toBe(true)
     vi.advanceTimersByTime(120)
@@ -71,6 +86,7 @@ describe('watch backlog fairness and durable replay', () => {
   it('recovers 40 keypad edits in bounded batches and ignores rapid replay requests', () => {
     vi.useFakeTimers()
     const h = device(40, new Map([['rpc_outbox', []]]))
+    openLegacy(h)
     h.ctx.replayPendingEvents()
     expect(h.ctx.pendingCount()).toBe(2)
     for (let i = 0; i < 20; i++) h.ctx.replayPendingEvents()
@@ -84,22 +100,25 @@ describe('watch backlog fairness and durable replay', () => {
   it('recovers from a failed session read without leaving replay permanently locked', () => {
     vi.useFakeTimers()
     const h = device(4, new Map([['rpc_outbox', []]]))
+    h.connection.onOpen()
     h.loadState.mockImplementationOnce(() => { throw new Error('temporary read error') })
+    h.connection.onMessage({ t: 'hello_ack', protocolVersion: 3, capabilities: { dependencyEvents: true } })
     h.ctx.replayPendingEvents()
-    expect(h.ctx.pendingCount()).toBe(0)
-    h.ctx.replayPendingEvents()
+    expect(h.ctx.pendingCount()).toBe(2)
     vi.advanceTimersByTime(120)
     expect(h.ctx.pendingCount()).toBe(4)
   })
   it('cancels batched replay on stop and resumes from durable edits on restart', () => {
     vi.useFakeTimers()
     const h = device(6, new Map([['rpc_outbox', []]]))
+    openLegacy(h)
     h.ctx.replayPendingEvents()
     expect(h.ctx.pendingCount()).toBe(2)
     h.ctx.stopServer()
     vi.advanceTimersByTime(1000)
     expect(h.ctx.pendingCount()).toBe(2)
     h.ctx.startServer({})
+    openLegacy(h)
     h.ctx.replayPendingEvents()
     vi.advanceTimersByTime(120)
     expect(h.ctx.pendingCount()).toBe(6)
@@ -107,8 +126,7 @@ describe('watch backlog fairness and durable replay', () => {
   it('keeps v3 commits ordered and retains every unacknowledged event after connection loss', () => {
     vi.useFakeTimers()
     const h = device()
-    h.shared.rpc.peerProtocol = 3
-    h.connection.onOpen()
+    openLegacy(h)
     vi.advanceTimersByTime(1000)
     expect(events(h).map(e => e.eventId)).toEqual(['event-0'])
     h.connection.onMessage({ t: 'received', sid: 's', eventId: 'event-0' })
@@ -117,13 +135,13 @@ describe('watch backlog fairness and durable replay', () => {
     vi.advanceTimersByTime(12000)
     expect(events(h).map(e => e.eventId)).toEqual(['event-0'])
     expect(h.disk.get('rpc_outbox')).toHaveLength(40)
-    h.connection.onOpen()
+    openLegacy(h)
     expect(events(h).at(-1).eventId).toBe('event-0')
   })
   it('spaces rapid clicks, commits exact IDs and recovers all records after restart', async () => {
     vi.useFakeTimers()
     const h = device()
-    h.connection.onOpen()
+    openLegacy(h, 2)
     const initiallySent = events(h).length
     for (let i = 0; i < 20; i++) h.ctx.sendEvent({ t: 'focus', sid: 's', eventId: 'tap-' + i, at: 100 + i })
     expect(events(h).length).toBe(initiallySent)
@@ -135,7 +153,7 @@ describe('watch backlog fairness and durable replay', () => {
     h.ctx.stopServer()
     const restored = device(0, h.disk)
     expect(restored.ctx.pendingCount()).toBe(59)
-    restored.connection.onOpen()
+    openLegacy(restored, 2)
     vi.advanceTimersByTime(10000)
     expect(new Set(events(restored).map(e => e.eventId)).size).toBe(59)
     for (const row of [...restored.disk.get('rpc_outbox')]) restored.connection.onMessage({ t: 'ack', eventId: row.msg.eventId })
@@ -149,7 +167,7 @@ describe('application lifetime transport', () => {
   it('replays a close created after transport initialization in batches after the page is destroyed', async () => {
     vi.useFakeTimers()
     const h = device(0, new Map([['rpc_outbox', []]]), true), c = h.ctx
-    h.connection.onOpen()
+    openLegacy(h)
     loadWatchModule('event-id', c, ['allocateEventIdentity', 'rememberEventAt'])
     loadWatchModule('close-journal', c, ['prepareClose', 'journalEntry', 'pendingSummaries', 'pendingEntry'])
     loadWatchModule('session', c, ['startSession', 'loadState', 'save'])
@@ -175,22 +193,28 @@ describe('application lifetime transport', () => {
     const h = device(4096), errors = [], pending = Array.from({length:8},(_,i)=>({ t:'weight',sid:'s',eventId:'close-edit-'+i,dependencyEvents:true,dependsOn:[],at:5000+i }))
     h.ctx.pendingCloseEvents = () => structuredClone(pending)
     h.ctx.startServer({ onError: e=>errors.push(e) })
+    openLegacy(h)
     h.ctx.replayPendingEvents()
     expect(h.shared.rpc.replaying).toBe(false)
-    const attempts = errors.length
+    expect(errors).toHaveLength(1)
     vi.advanceTimersByTime(3000)
-    expect(errors).toHaveLength(attempts)
+    expect(errors).toHaveLength(1)
     expect(h.ctx.pendingCount()).toBe(4096)
     expect(h.ctx.pendingCloseEvents()).toEqual(pending)
   })
-  it('continues draining and replaying after the initiating page is destroyed', () => {
+  it('continues draining after page destruction when legacy events receive exact acknowledgements', async () => {
     vi.useFakeTimers()
     const h = device(40, new Map([['rpc_outbox', []]]), true)
-    h.connection.onOpen()
+    h.connection.send = ({ data, success }) => {
+      h.sent.push(data)
+      success?.()
+      if (data.eventId) h.connection.onMessage({ t: 'ack', eventId: data.eventId })
+    }
+    openLegacy(h, 2)
     h.ctx.replayPendingEvents()
     h.pageTimers.destroy()
-    vi.advanceTimersByTime(3000)
-    expect(h.ctx.pendingCount()).toBe(40)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(h.ctx.pendingCount()).toBeLessThan(40)
     expect(events(h).length).toBeGreaterThan(2)
     expect(h.shared.rpc.replaying).toBe(false)
   })
@@ -198,7 +222,7 @@ describe('application lifetime transport', () => {
     vi.useFakeTimers()
     const h = device(1, new Map(), true)
     h.connection.send = ({ data, success }) => { h.sent.push(data); if (!data.eventId) success() }
-    h.connection.onOpen()
+    openLegacy(h)
     h.pageTimers.destroy()
     vi.advanceTimersByTime(6500)
     expect(events(h)).toHaveLength(1) // Timeout releases the gate, but must respect failure backoff.
@@ -209,7 +233,7 @@ describe('application lifetime transport', () => {
   it('does not send a new hello or rebind native callbacks just for a page change', () => {
     vi.useFakeTimers()
     const h = device(0)
-    h.connection.onOpen()
+    openLegacy(h)
     const callback = h.connection.onMessage
     const hellos = h.sent.filter(e => e.t === 'hello').length
     for (let i = 0; i < 20; i++) h.ctx.startServer({})

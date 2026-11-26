@@ -33,9 +33,11 @@ import java.security.MessageDigest;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -69,14 +71,38 @@ public class WatchRpcPlugin extends Plugin {
     private String inboxError = "";
     // App process owned, not React mounted. Handler posts also avoid recursive SDK callbacks.
     private final android.os.Handler sendHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    // Accessed on sendHandler, including SDK completions. Keeps queued starts from outliving their screen/session.
+    private final Set<String> cancelledWorkoutStarts = new LinkedHashSet<>();
     private final WatchSendGate<Request, Response> sendGate = new WatchSendGate<>(new WatchSendGate.Timer() {
         public Object after(long millis, Runnable action) { sendHandler.postDelayed(action, millis); return action; }
         public void cancel(Object token) { if (token instanceof Runnable) sendHandler.removeCallbacks((Runnable) token); }
-    }, (request, done) -> RpcClient.getInstance().callAsync(request, done::accept));
+    }, (request, done) -> RpcClient.getInstance().callAsync(request, response -> sendHandler.post(() -> done.accept(response))));
 
     private void sendRpc(Request request, Callback callback) { sendRpc(request, callback, 0); }
     private void sendRpc(Request request, Callback callback, int priority) {
-        sendHandler.post(() -> sendGate.offer(request, priority, callback::onResponse));
+        sendRpc(request, callback, priority, false, "");
+    }
+    private void sendRpc(Request request, Callback callback, int priority, boolean workout, String token) {
+        sendHandler.post(() -> sendGate.offer(request, priority, callback::onResponse,
+                () -> !workout || (isConnectedInternal() && getBridge().getApp().isActive() && !cancelledWorkoutStarts.contains(token))));
+    }
+    @PluginMethod
+    public void cancelWorkoutStart(PluginCall call) {
+        String token = call.getString("token", "");
+        sendHandler.post(() -> {
+            if (!token.isEmpty() && token.length() <= 96) {
+                cancelledWorkoutStarts.add(token);
+                if (cancelledWorkoutStarts.size() > 128) cancelledWorkoutStarts.remove(cancelledWorkoutStarts.iterator().next());
+            }
+            call.resolve();
+        });
+    }
+    private void workoutOffline(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("ok", false);
+        ret.put("code", -1);
+        ret.put("data", "watch_offline");
+        call.resolve(ret);
     }
     private static int messagePriority(String json) {
         try {
@@ -154,7 +180,7 @@ public class WatchRpcPlugin extends Plugin {
     private AtomicFile transferFile(PluginCall call) throws IOException {
         String channel = call.getString("channel", "sync");
         String deviceId = call.getString("deviceId", "");
-        if (!(channel.equals("sync") || channel.equals("catalog")) || !deviceId.matches("[a-zA-Z0-9:_-]{0,128}")) throw new IOException("invalid transfer owner");
+        if (!channel.equals("sync") || !deviceId.matches("[a-zA-Z0-9:_-]{0,128}")) throw new IOException("invalid transfer owner");
         // A fixed SHA-256 suffix avoids identity aliases and overlong filenames.
         StringBuilder encoded = new StringBuilder();
         try {
@@ -268,7 +294,10 @@ public class WatchRpcPlugin extends Plugin {
             lastRxType = data.optString("t", "unknown");
             log("RX business " + messageSummary(json));
             String type = data.optString("t", "");
-            if (java.util.Arrays.asList("hello", "watch_start", "session_close", "session_close_ack", "pause", "rest", "effort", "weight", "reps", "set", "unset", "add_set", "remove_set", "focus", "end", "summary").contains(type)) {
+            // A v4 phone-led edit has meaning only while the current phone and watch session is live.
+            // Late/undelivered edits are represented by the watch's compact state on reconnect.
+            boolean v4Live = data.optInt("protocolVersion", 0) >= 4 && data.optBoolean("phoneLed", false);
+            if (!v4Live && java.util.Arrays.asList("hello", "watch_start", "session_close", "session_close_ack", "pause", "rest", "effort", "weight", "reps", "set", "unset", "add_set", "remove_set", "focus", "end", "summary").contains(type)) {
                 try {
                     String identity = data.optString("eventId", "");
                     if (identity.isEmpty()) identity = json;
@@ -604,6 +633,8 @@ public class WatchRpcPlugin extends Plugin {
             call.reject("json required");
             return;
         }
+        String workoutToken = call.getString("workoutStartToken", "");
+        if (!workoutToken.isEmpty() && !isConnectedInternal()) { workoutOffline(call); return; }
         ensureInit(call, () -> {
             try {
                 String label = plan ? "plan" : "event";
@@ -635,7 +666,7 @@ public class WatchRpcPlugin extends Plugin {
                         ret.put("data", response.getData());
                         call.resolve(ret);
                     }
-                }, messagePriority(json));
+                }, messagePriority(json), !workoutToken.isEmpty(), workoutToken);
             } catch (Exception e) {
                 log("TX failed: " + e.getMessage());
                 call.reject((plan ? "send plan failed: " : "send event failed: ") + e.getMessage());
@@ -702,6 +733,9 @@ public class WatchRpcPlugin extends Plugin {
 
     @PluginMethod
     public void openWatchApp(PluginCall call) {
+        boolean requireOnline = Boolean.TRUE.equals(call.getBoolean("requireOnline", false));
+        String workoutToken = call.getString("workoutStartToken", "");
+        if (requireOnline && !isConnectedInternal()) { workoutOffline(call); return; }
         ensureInit(call, () -> {
             try {
                 // SDK 常量与参考应用一致，包名和路由来自本项目手表 manifest。
@@ -725,7 +759,7 @@ public class WatchRpcPlugin extends Plugin {
                     ret.put("watchPackage", WATCH_PACKAGE);
                     ret.put("router", WATCH_ROUTER);
                     call.resolve(ret);
-                });
+                }, 0, requireOnline, workoutToken);
             } catch (Exception e) {
                 lastLaunchCode = -1;
                 log("LAUNCH failed: " + e.getMessage());

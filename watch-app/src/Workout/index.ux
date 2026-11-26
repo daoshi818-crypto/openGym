@@ -20,17 +20,18 @@ import {
   formatEffort,
 } from '../lib/effort-scale.js'
 import { startSessionHr, stopSessionHr, tick, restOver, crownTick } from '../lib/sensors.js'
-import { startServer, sendEvent, sendLiveValue, replayPendingEvents, sendControl, pendingCount, persistenceStatus, synchronizationStatus, transportDiagnostics } from '../lib/rpc.js'
+import { startServer, sendEvent, sendLiveValue, canSendLiveEvent, replayPendingEvents, sendControl, pendingCount, persistenceStatus, synchronizationStatus, transportDiagnostics } from '../lib/rpc.js'
 import { storageStatus, readStored } from '../lib/persistence.js'
 import { journalEntry } from '../lib/close-journal.js'
 import { applyEdit, applyFocus, applyRest, restOf } from '../lib/protocol.js'
 import { lastTimeView } from '../lib/watch-last-time.js'
 import { zoneView, muscleView } from '../lib/official-metrics.js'
+import { summarizeWorkoutRows } from '../lib/workout-summary.js'
 
 const pageDefinition = {
   // Native reactiveMap retains proxies until Page destruction. Business documents
   // must stay in staticData; only the small display projection belongs in data.
-  staticData: { sessionModel: { current: null, restFlush: null, numberDraft: null, keypadDraft: null, touchPoints: { start: { x: 0, y: 0 }, last: { x: 0, y: 0 } } } },
+  staticData: { sessionModel: { current: null, restFlush: null, numberDraft: null, numberFlush: null, numberTimer: null, numberGeneration: 0, keypadDraft: null, touchPoints: { start: { x: 0, y: 0 }, last: { x: 0, y: 0 } } } },
   stateOf(value) {
     // Detached transaction drafts (and legacy page callers) own their state.
     if (this.sessionActionDraft || !this.sessionModel) {
@@ -51,6 +52,21 @@ const pageDefinition = {
     const owner = this.sessionModel || this
     if (arguments.length) owner.numberDraft = value
     return owner.numberDraft
+  },
+  numberFlushOf(value) {
+    const owner = this.sessionModel || this
+    if (arguments.length) owner.numberFlush = value
+    return owner.numberFlush
+  },
+  numberTimerOf(value) {
+    const owner = this.sessionModel || this
+    if (arguments.length) owner.numberTimer = value
+    return owner.numberTimer
+  },
+  numberGenerationOf(value) {
+    const owner = this.sessionModel || this
+    if (arguments.length) owner.numberGeneration = value
+    return owner.numberGeneration || 0
   },
   keypadDraftOf(value) {
     const owner = this.sessionModel || this
@@ -228,27 +244,28 @@ const pageDefinition = {
     if (this.keypadOn) {
       const direction = rotationStep(ev)
       if (direction) {
+        crownTick()
         this.keypadBuffer = valueStep(this.keypadBuffer, this.keypadField, direction, this.weightStep)
         this.keypadValue = this.keypadBuffer; this.keypadReplace = false
-        crownTick()
       }
       return
     }
     this.logInteraction('crown_input', { detail: this.selectedField || (this.isRest ? 'rest' : 'page'), type: String(this.pageIndex) })
     if (this.pageIndex === 2 && !this.effortOn && !this.closeMode && !this.diagnosticOn) {
-      const direction = rotationStep(ev); if (direction) { this.stepMetrics(Math.sign(direction)); crownTick() }; return
+      const direction = rotationStep(ev); if (direction) { crownTick(); this.stepMetrics(direction) } return
     }
     if (this.diagnosticOn) return
     if (ev && this.effortOn && ev.state !== 3) {
       const d = rotationStep(ev)
-      if (d) { this.effortMove(d > 0 ? 1 : -1); crownTick() }
+      if (d) { crownTick(); this.effortMove(d > 0 ? 1 : -1) }
       return
     }
     if (!ev || this.visible === false || ev.state === 3 || this.menuOn || this.closeMode || this.pageIndex !== 1 || this.paused || this.lastOpen || this.finishOn) return
     const delta = rotationStep(ev)
     if (!delta) return
-    if (this.isRest || this.restCrownDirty) { this.queueRestNudge(delta * 5); crownTick() }
-    else if (this.adjustSelectedField(delta)) crownTick()
+    crownTick()
+    if (this.isRest || this.restCrownDirty) this.queueRestNudge(delta > 0 ? 5 : -5)
+    else return this.adjustSelectedField(rotationStep(ev))
   },
   onBackPress() {
     if (this.closeSaving || this.stateOf()?.closeIntent) return true
@@ -354,7 +371,25 @@ const pageDefinition = {
       onRemoveSet: (msg) => handle('onRemoteRemoveSet', msg),
       onFocus: (msg) => handle('onRemoteFocus', msg),
       onEnded: () => this.onRemoteEnded(),
-      onError: () => { this.syncLabel = '连接异常' },
+      onError: (error) => {
+        this.syncWarning = true
+        const operation = error?.operation
+        if (error?.code === 'live_event_busy') {
+          this.syncLabel = operation === 'set' ? '同步繁忙，已阻止重复完成；请稍后重试' :
+            operation === 'unset' ? '同步繁忙，已阻止重复撤销；请稍后重试' :
+            operation === 'add_set' || operation === 'remove_set' ? '同步繁忙，已阻止重复调整组数；请稍后重试' : '同步繁忙，请稍后重试'
+        } else if (error?.code === 'live_event_send_failed') {
+          this.syncLabel = operation === 'set' ? '本组已保存在手表，手机同步未确认，可稍后核对' :
+            operation === 'unset' ? '撤销已保存在手表，手机同步未确认，可稍后核对' :
+            operation === 'add_set' || operation === 'remove_set' ? '组数已保存在手表，手机同步未确认，可稍后核对' :
+            operation === 'effort' ? '评分已保存在手表，手机同步未确认，可稍后核对' : '手表记录已保存，手机同步未确认，可稍后核对'
+        } else if (error?.code === 'live_state_send_failed') {
+          this.syncLabel = operation === 'weight' ? '重量已保存在手表，手机同步未确认，可稍后核对' :
+            operation === 'reps' ? '次数已保存在手表，手机同步未确认，可稍后核对' :
+            operation === 'focus' ? '当前组同步未确认，可稍后核对' :
+            operation === 'rest' || operation === 'pause' ? '训练状态同步未确认，可稍后核对' : '手表状态同步未确认，可稍后核对'
+        } else this.syncLabel = '连接异常'
+      },
     })
   },
 
@@ -367,7 +402,7 @@ const pageDefinition = {
     this.touchCancel()
     this.trailingTapBlockedUntil = 0
     this.visible = false
-    const pending = this.flushRestNudge()
+    const pending = Promise.all([this.flushRestNudge(), this.flushNumberDraft()])
     this.setRestScreenLock(false)
     if (this.timer) clearInterval(this.timer)
     this.timer = null
@@ -375,6 +410,7 @@ const pageDefinition = {
   },
 
   onDestroy() {
+    this.flushNumberDraft()
     const rpcOwner = this.sessionModel || this
     if (typeof rpcOwner.rpcDetach === 'function') rpcOwner.rpcDetach()
     rpcOwner.rpcDetach = null
@@ -467,9 +503,7 @@ const pageDefinition = {
     const axis = axisAtRelease || (Math.abs(dx) > Math.abs(dy) ? 'x' : 'y')
     if (axis === 'x') {
       this.cancelFinishHold()
-      const fromPage = Math.max(0, Math.min(2, Number(this.pageIndex) || 0))
-      const direction = dx < 0 ? 1 : -1
-      this.pageIndex = (fromPage + direction + 3) % 3
+      this.pageIndex = (this.pageIndex + (dx < 0 ? 1 : 2)) % 3
       this.focusCrown()
     } else if (this.pageIndex === 2) this.stepMetrics(dy < 0 ? 1 : -1)
     // Vertical gestures belong to the visible native list; horizontal swipes navigate pages.
@@ -488,6 +522,7 @@ const pageDefinition = {
   },
 
   onMenuAddSet() {
+    if (!this.canSendEventNow('add_set')) return false
     return commitPageAction(this, function() {
     const s = this.stateOf()
     this.weightUnit = s.weightUnit || 'kg'
@@ -503,6 +538,7 @@ const pageDefinition = {
   },
 
   onMenuRemoveSet() {
+    if (!this.canSendEventNow('remove_set')) return false
     return commitPageAction(this, function() {
     const s = this.stateOf()
     const ex = s.exIdx
@@ -522,6 +558,7 @@ const pageDefinition = {
 
   stepSet(dir) {
     if (this.setDotPicker?.pending()) return false
+    if (this.numberDraftDirty()) return this.flushNumberDraft().then(ok => ok ? this.stepSet(dir) : false)
     return commitPageAction(this, function() {
     const s = this.stateOf()
     if (!s.workout || !s.workout.rows.length) return
@@ -546,6 +583,7 @@ const pageDefinition = {
 
   stepExercise(dir) {
     if (this.setDotPicker?.pending()) return false
+    if (this.numberDraftDirty()) return this.flushNumberDraft().then(ok => ok ? this.stepExercise(dir) : false)
     return commitPageAction(this, function() {
     const s = this.stateOf()
     if (!s.workout || !s.workout.exercises.length) return
@@ -567,6 +605,77 @@ const pageDefinition = {
   onNextSet() { this.stepSet(1) },
 
   clearFieldSelection() { this.selectedField = null; this.fieldTarget = null },
+  numberDraftDirty() {
+    const draft = this.numberDraftOf()
+    return !!(draft && (draft.dirtyW || draft.dirtyR))
+  },
+  scheduleNumberDraftFlush() {
+    const old = this.numberTimerOf()
+    if (old != null) clearTimeout(old)
+    this.numberTimerOf(setTimeout(() => {
+      this.numberTimerOf(null)
+      this.flushNumberDraft()
+    }, 350))
+  },
+  async flushNumberDraft() {
+    const timer = this.numberTimerOf()
+    if (timer != null) clearTimeout(timer)
+    this.numberTimerOf(null)
+    for (;;) {
+      const pending = this.numberFlushOf()
+      if (pending) {
+        const ok = await pending
+        if (!ok) return false
+        continue
+      }
+      const draft = this.numberDraftOf()
+      if (!draft || !draft.dirtyW && !draft.dirtyR) return true
+      const snapshot = { ...draft, target: { ...draft.target } }
+      const generation = this.numberGenerationOf()
+      const sid = snapshot.target.sid
+      const operation = commitSessionAction(sid, state => {
+        const found = rowTarget(state, snapshot.target)
+        if (!found || found.row.done) return 'superseded'
+        applyNumberDraft(state, snapshot)
+        // Phone-led v4 edits become single-field live events only after local durability.
+        if (state.protocolVersion === 4 && state.sessionOrigin === 'phone') {
+          const target = snapshot.target, fields = []
+          if (snapshot.dirtyW) fields.push({ t: 'weight', weight: snapshot.w })
+          if (snapshot.dirtyR) fields.push({ t: 'reps', reps: snapshot.r })
+          for (const field of fields) {
+            const event = stageSessionEvent(state, { ...field, sid, ex: target.exIdx, set: target.setIdx + 1,
+              entryInstanceId: target.entryInstanceId, setId: target.setId, weightUnit: target.weightUnit, at: Date.now() })
+            if (event?.protocolVersion === 4) state.rev = Math.max(state.rev || 0, event.rev || 0)
+          }
+        }
+        return 'saved'
+      })
+      this.numberFlushOf(operation)
+      let result
+      try { result = await operation }
+      catch (error) {
+        this.syncWarning = true
+        this.syncLabel = 'Weight or reps could not be saved; retry'
+        return false
+      }
+      finally { if (this.numberFlushOf() === operation) this.numberFlushOf(null) }
+      if (!result?.ok) {
+        this.syncWarning = true
+        this.syncLabel = 'Weight or reps could not be saved; retry'
+        return false
+      }
+      const latest = loadState()
+      if (latest.sid !== sid || !latest.active) return true
+      if (generation === this.numberGenerationOf()) {
+        const current = this.numberDraftOf()
+        if (current && current.target.setId === snapshot.target.setId) {
+          current.dirtyW = false; current.dirtyR = false
+        }
+        this.stateOf(latest)
+        return true
+      }
+    }
+  },
   flushPendingRowEdits() {
     // Reuse the original durable identities. RPC owns deduplication and ACK removal.
     replayPendingEvents()
@@ -593,23 +702,23 @@ const pageDefinition = {
   adjustSelectedField(direction) {
     // A stray crown callback must not clone and persist an unchanged session.
     if (!direction || !this.selectedField || !this.fieldTarget || this.interactionBlocked()) return
-    if (this.localCommitPending || this.keypadOn) return
+    if (this.numberEditLocked || this.keypadOn) return
     const s = this.stateOf(), found = rowTarget(s, this.fieldTarget)
     if (!found || found.row.done || s.pausedAt || s.restUntil || this.fieldTarget.weightUnit !== (s.weightUnit || 'kg') || found.exIdx !== s.exIdx || found.setIdx !== s.setIdx) {
       this.clearFieldSelection(); this.inputNotice = '目标已变化，请重新选择'; return
     }
-    const draft = numberDraft(s, this.numberDraftOf())
-    this.numberDraftOf(draft)
+    const draft = this.updateNumbers()
     if (!draft) { this.clearFieldSelection(); return }
     const value = valueStep(draft[this.selectedField], this.selectedField, direction, this.weightStep)
     changeNumber(draft, this.selectedField, value)
+    this.numberGenerationOf(this.numberGenerationOf() + 1)
+    this.scheduleNumberDraftFlush()
     if (this.selectedField === 'w') this.weightNum = value
     else this.repsNum = value
-    const target = draft.target
-    sendLiveValue({ t: this.selectedField === 'w' ? 'weight' : 'reps', sid: s.sid, ex: target.exIdx, set: target.setIdx + 1,
+    const target = draft.target, type = this.selectedField === 'w' ? 'weight' : 'reps'
+    sendLiveValue({ t: type, sid: s.sid, ex: target.exIdx, set: target.setIdx + 1,
       entryInstanceId: target.entryInstanceId, setId: target.setId, weightUnit: target.weightUnit,
-      [this.selectedField === 'w' ? 'weight' : 'reps']: value, at: Date.now(), source: 'watch' })
-    return true
+      [type]: value, at: Date.now(), source: 'watch' })
   },
   openNumberKeypad(field) {
     if (this.localCommitPending || this.interactionBlocked()) return
@@ -631,6 +740,8 @@ const pageDefinition = {
     const expected = this.keypadDraftOf(), draft = this.updateNumbers()
     if (!this.keypadOn || draft !== expected || !draft) return
     if (!changeNumber(draft, this.keypadField, this.keypadBuffer)) { this.keypadNotice = '请输入有效数值'; return }
+    this.numberGenerationOf(this.numberGenerationOf() + 1)
+    this.scheduleNumberDraftFlush()
     const target = draft.target, type = this.keypadField === 'w' ? 'weight' : 'reps'
     sendLiveValue({ t: type, sid: target.sid, ex: target.exIdx, set: target.setIdx + 1,
       entryInstanceId: target.entryInstanceId, setId: target.setId, weightUnit: target.weightUnit,
@@ -729,7 +840,7 @@ const pageDefinition = {
       this.cancelSetDotPick()
       return state
     }
-    return { ...state, exIdx: found.exIdx, setIdx: found.setIdx }
+    return state.setIdx === found.setIdx ? state : { ...state, exIdx: found.exIdx, setIdx: found.setIdx }
   },
   cancelSetDotPick() {
     if (this.setDotPicker) this.setDotPicker.cancel()
@@ -738,12 +849,17 @@ const pageDefinition = {
   logInteraction(stage, extra = {}, flush = false) {
     try {
       const s = this.stateOf() || {}
+      const owner = this.sessionModel || this
+      if (stage === 'local_commit_begin') owner.refreshProbeAt = Date.now()
+      else if (stage === 'local_commit_busy' || stage === 'local_commit_failed' || stage === 'local_commit_exception' ||
+          stage === 'page_show' || stage === 'page_hide' || stage === 'page_destroy') owner.refreshProbeAt = 0
       recordDiagnostic(stage, { sid: s.sid, ex: s.exIdx, set: s.setIdx, rev: s.commitRev || 0,
         pending: !!this.localCommitPending, rest: !!this.isRest, paused: !!this.paused, ...extra })
       if (flush) flushDiagnosticLog()
     } catch { /* A diagnostic must never fail an interaction. */ }
   },
   commitSetDot(target) {
+    if (this.numberDraftDirty()) return this.flushNumberDraft().then(ok => ok ? this.commitSetDot(target) : false)
     this.logInteraction('dot_commit_begin', { setId: target?.setId, set: target?.setIdx })
     const reason = this.setDotBlockReason()
     if (reason) return this.logDotBlocked(target, reason, 'commit')
@@ -755,25 +871,39 @@ const pageDefinition = {
     if (pressure) { this.inputNotice = '等待同步后再切换'; return this.logDotBlocked(target, pressure, 'commit') }
     return commitPageAction(this, function() {
     if (this.interactionBlocked(true) || this.isRest || this.paused || this.closeMode || this.effortOn || this.lastOpen || this.finishOn) return this.logDotBlocked(target, this.setDotBlockReason() || 'interaction', 'draft')
-    const s = loadState(), found = rowTarget(s, target)
-    if (!found || s.sid !== this.stateOf().sid || found.exIdx !== s.exIdx || s.pausedAt || s.restUntil || found.setIdx === s.setIdx) return this.logDotBlocked(target, !found ? 'stale_target' : s.sid !== this.stateOf().sid ? 'session_changed' : found.exIdx !== s.exIdx ? 'exercise_changed' : s.pausedAt ? 'paused_state' : s.restUntil ? 'rest_state' : 'current_set', 'draft')
+    const s = this.stateOf(), found = rowTarget(s, target)
+    if (!found || s.sid !== target.sid || found.exIdx !== s.exIdx || s.pausedAt || s.restUntil || found.setIdx === s.setIdx) return this.logDotBlocked(target, !found ? 'stale_target' : s.sid !== target.sid ? 'session_changed' : found.exIdx !== s.exIdx ? 'exercise_changed' : s.pausedAt ? 'paused_state' : s.restUntil ? 'rest_state' : 'current_set', 'draft')
     this.logInteraction('dot_focus_staged', { setId: target.setId, set: target.setIdx })
-    this.clearFieldSelection(); this.stateOf(s)
+    this.clearFieldSelection()
     this.autoFocusEx = found.exIdx; this.autoFocusSet = found.setIdx; this.autoFocusIgnoreUntil = 0
     s.exIdx = found.exIdx; s.setIdx = found.setIdx; s.focusAt = Date.now(); save(s)
     this.emitEvent({ t: 'focus', sid: s.sid, entryInstanceId: s.workout.exercises[s.exIdx].entryInstanceId,
       setId: found.row.setId, ex: s.exIdx, set: s.setIdx + 1, baseCommitRev: target.baseCommitRev, at: s.focusAt, source: 'watch' })
-    this.refresh()
-    }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
+    // Preserve any newer preview while this write completes. The batch performs
+    // the single reconciliation render when the last requested group settles.
+    }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition, previewState: (page, state) => page.withDotPreview(state) })
   },
 
   onComplete(expectedTarget) {
     this.logInteraction('complete_tap')
-    if (this.keypadOn) return
+    if (!this.canSendEventNow('set')) return false
+    if (this.keypadOn || this.numberEditLocked) return
+    const pending = this.numberFlushOf()
+    if (pending) {
+      this.numberEditLocked = true
+      return pending.then(ok => {
+        this.numberEditLocked = false
+        return ok ? this.onComplete(expectedTarget) : false
+      })
+    }
+    const timer = this.numberTimerOf()
+    if (timer != null) clearTimeout(timer)
+    this.numberTimerOf(null)
+    this.numberEditLocked = true
     const input = this.numberDraftOf()
     // Freeze only these bounded scalars; an arriving phone snapshot may reconcile the live draft.
     const numbers = input ? { ...input, target: { ...input.target } } : null
-    return commitPageAction(this, function() {
+    const completion = commitPageAction(this, function() {
     if (this.isRest || this.paused || this.closeMode || this.interactionBlocked() || Date.now() < (this.completionIgnoreUntil || 0)) return
     const s = this.stateOf()
     const expected = expectedTarget && rowTarget(s, expectedTarget)
@@ -793,7 +923,7 @@ const pageDefinition = {
       name: s.workout.exercises[exIdx]?.name || '', setNo: setIdx + 1 }
     this.restStartAt = Date.now()
     this.setRestScreenLock(!!s.restUntil)
-    this.emitEvent({ t: 'set', sid: s.sid, ex: exIdx, set: setIdx + 1, setId: row.setId, at: row.at, rest: restOf(s) })
+    this.emitEvent({ t: 'set', sid: s.sid, ex: exIdx, set: setIdx + 1, at: row.at, rest: restOf(s) })
     tick()
     const next = nextUndone(s)
     if (next) {
@@ -803,9 +933,15 @@ const pageDefinition = {
     else this.allFinished = true
     this.refresh()
     }, { commitSessionAction, loadState, replayPendingEvents, pageDefinition })
+    return Promise.resolve(completion).then(ok => {
+      this.numberEditLocked = false
+      if (!ok && this.numberDraftDirty()) this.scheduleNumberDraftFlush()
+      return ok
+    }, error => { this.numberEditLocked = false; throw error })
   },
 
   onUndo(expectedTarget) {
+    if (!this.canSendEventNow('unset')) return false
     if (this.setDotPicker?.pending()) return false
     return commitPageAction(this, function() {
     const s = this.stateOf()
@@ -1199,10 +1335,10 @@ const pageDefinition = {
 
   // ---- 本组强度（RPE/RIR）----------------------------------------------------
   // 同页覆盖层：不新增页面，原计时器/RPC/心率 owner 全部继续运行，休息不会因为登记暂停或重置。
-  effortTargetRow() {
+  effortTargetRow(state) {
     const t = this.effortTarget
     if (!t) return null
-    const s = loadState()
+    const s = state || loadState()
     if (!s.active || s.sid !== t.sid || !s.workout) return null
     const exIdx = t.entryInstanceId
       ? s.workout.exercises.findIndex(ex => ex.entryInstanceId === t.entryInstanceId) : t.exIdx
@@ -1222,8 +1358,8 @@ const pageDefinition = {
     }))
     return best
   },
-  effortTargetValid() {
-    const found = this.effortTargetRow()
+  effortTargetValid(state) {
+    const found = this.effortTargetRow(state)
     return !!(found && (!this.effortOn || !this.effortTargetWasDone || found.row.done))
   },
   openEffort(fromOp) {
@@ -1360,9 +1496,28 @@ const pageDefinition = {
   },
 
   refresh() {
-    this.stateOf(this.withDotPreview(this.stateOf()))
-    this.weightUnit = this.stateOf()?.weightUnit || 'kg'
-    const s = this.stateOf()
+    // BlueOS advises pausing background UI updates to avoid a growing render queue.
+    // onShow reloads persisted state and performs the deferred refresh.
+    if (this.visible === false) { this.needsRefresh = true; return }
+    this.needsRefresh = false
+    const startedAt = Date.now()
+    const owner = this.sessionModel || this
+    const actionAt = owner.refreshProbeAt || 0
+    const data = {}
+    try { return this.refreshView(data) }
+    finally {
+      const endedAt = Date.now(), state = this.stateOf() || {}
+      data.sid = state.sid || ''; data.active = !!state.active; data.duration = Math.max(0, endedAt - startedAt)
+      if (actionAt > 0 && endedAt - actionAt <= 30000) data.actionDuration = Math.max(0, endedAt - actionAt)
+      if (owner.refreshProbeAt === actionAt) owner.refreshProbeAt = 0
+      try { recordDiagnostic('workout_refresh', data) } catch { /* Diagnostics must never block a refresh. */ }
+    }
+  },
+
+  refreshView(diagnostic = null) {
+    const current = this.stateOf(), s = this.withDotPreview(current)
+    if (s !== current) this.stateOf(s)
+    this.weightUnit = s?.weightUnit || 'kg'
     if (!s || !s.workout) return
     if (this.freezeCloseView()) return
     this.reconcileRestClock()
@@ -1400,24 +1555,15 @@ const pageDefinition = {
     // 完成后游标已前进；休息提示优先展示当前待做组，避免跳过一组。
     const next = row && !row.done ? { exIdx: s.exIdx, setIdx: s.setIdx } : nextUndone(s)
     this.nextExIdx = next ? next.exIdx : -1
-    const totalSets = s.workout.rows.reduce((n, r) => n + r.length, 0)
-    const doneSets = s.workout.rows.reduce((n, r) => n + r.filter(x => x.done).length, 0)
+    // This refresh runs after most watch interactions. Summarize all set-derived
+    // labels in one pass so larger workouts do not trigger repeated row scans.
+    const summaryStartedAt = Date.now()
+    const { totalSets, doneSets, completedVolume, completed } = summarizeWorkoutRows(s.workout)
+    if (diagnostic) diagnostic.summaryDuration = Math.max(0, Date.now() - summaryStartedAt)
     this.checkCompletion(totalSets, doneSets)
     this.setProgressLabel = '完成 ' + doneSets + ' / 剩余 ' + Math.max(0, totalSets - doneSets) + ' 组'
-    let completedVolume = 0
-    s.workout.rows.forEach((rows, exIdx) => {
-      if (this.isTimed(s.workout.exercises[exIdx])) return
-      rows.forEach(r => {
-        const weight = parseFloat(r.w), reps = parseFloat(r.r)
-        if (r.done && Number.isFinite(weight) && Number.isFinite(reps)) completedVolume += weight * reps
-      })
-    })
     this.volumeLabel = this.formatVolume(completedVolume)
     this.restProgLabel = '完成 ' + doneSets + '/' + totalSets + ' 组'
-    let completed = null
-    s.workout.rows.forEach((rows, exIdx) => rows.forEach((r, setIdx) => {
-      if (r.done && (!completed || r.at > completed.at)) completed = { exIdx, setIdx, at: r.at || 0 }
-    }))
     this.restExerciseName = completed
       ? s.workout.exercises[completed.exIdx].name
       : this.exName
@@ -1448,7 +1594,7 @@ const pageDefinition = {
       }
     }
     this.effortEntryLabel = this.effortTarget ? '第' + this.effortTarget.setNo + '组强度' : '本组强度'
-    const target = this.effortTargetRow()
+    const target = this.effortTargetRow(s)
     const targetKind = target ? effortKindOf(target.row) : null
     const targetValue = target && targetKind ? effortValueOf(target.row, targetKind) : null
     // 普通页只显示评分，含义解释只在选择层出现；同步状态统一由顶部状态栏展示。
@@ -1458,7 +1604,7 @@ const pageDefinition = {
     this.effortNumber = targetValue != null ? formatEffort(targetValue) : '—'
     this.effortEntryOn = this.effortScale !== 'none' && !!target
     if (this.effortOn) {
-      if (!this.effortTargetValid()) { this.effortNotice = '目标组已变化，已停止编辑' ; this.effortOn = false }
+      if (!this.effortTargetValid(s)) { this.effortNotice = '目标组已变化，已停止编辑' ; this.effortOn = false }
       else if (this.stateOf().effortScale !== this.effortScaleAtOpen) this.effortStale = true
       this.refreshEffortRest()
     }
@@ -1489,7 +1635,9 @@ const pageDefinition = {
     this.lastEffortText = '末组 ' + scaleLabel + '  '
       + (lastDoneKind && lastDoneValue != null ? formatEffort(lastDoneValue) : '未填写')
 
-    this.updateOfficialViews()
+    const officialViewsStartedAt = Date.now()
+    this.updateOfficialViews(s, next)
+    if (diagnostic) diagnostic.officialViewDuration = Math.max(0, Date.now() - officialViewsStartedAt)
     this.syncClockTimer()
     this.tickClock(true)
   },
@@ -1506,8 +1654,12 @@ const pageDefinition = {
       for (const key of Object.keys(row)) if (current[i][key] !== row[key]) current[i][key] = row[key]
     })
   },
-  updateOfficialViews() {
-    const s = this.stateOf()
+  updateOfficialViews(s = this.stateOf(), next) {
+    if (!s?.workout) return
+    if (next === undefined) {
+      const row = s.workout.rows[s.exIdx]?.[s.setIdx]
+      next = row && !row.done ? { exIdx: s.exIdx, setIdx: s.setIdx } : nextUndone(s)
+    }
     let done = 0, total = 0
     this.displayRows('overviewRows', s.workout.exercises.map((ex, i) => {
       const rows = s.workout.rows[i] || [], n = rows.filter(r => r.done).length
@@ -1516,8 +1668,6 @@ const pageDefinition = {
         current: i === s.exIdx, finished: rows.length > 0 && n === rows.length }
     }))
     this.doneTotal = done + '/' + total
-    const current = s.workout.rows[s.exIdx]?.[s.setIdx]
-    const next = current && !current.done ? { exIdx: s.exIdx, setIdx: s.setIdx } : nextUndone(s)
     this.nextOfficial = next ? s.workout.exercises[next.exIdx].name + '，第 ' + (next.setIdx + 1) + ' 组' : '所有组已完成'
     // Effort.chips / Og.effortColor: the exact four shortcuts from upstream.
     this.displayRows('effortChips', (this.effortScale === 'rpe' ? [10, 9, 8, 7] : [0, 1, 2, 3]).map((value, i) => ({
@@ -1701,7 +1851,7 @@ const pageDefinition = {
     if (!force && this.syncSecond === second) return
     this.syncSecond = second
     const failed = persistenceStatus().failed || storageStatus().failed
-    const n = pendingCount(), sync = synchronizationStatus()
+    const physicalQueue = pendingCount(), sync = synchronizationStatus(), n = sync.pending
     const syncWarning = !!(failed || sync.phonePending > 0 || n > 0)
     const syncLabel = failed ? '存储失败，请保留应用' : sync.phonePending > 0 ? '待确认 ' + sync.phonePending + ' 条' : n > 0 ? '待上传 ' + n + ' 条' : ''
     if (this.syncWarning !== syncWarning) this.syncWarning = syncWarning
@@ -1716,9 +1866,10 @@ const pageDefinition = {
   },
   renderDiagnostics() {
     const d = this.diagnosticSnapshot, head = d.head
+    const sync = synchronizationStatus(), physicalQueue = pendingCount()
     const events = d.events.slice().reverse(), pages = Math.max(1, Math.ceil(events.length / 2))
     this.diagnosticTitle = '同步诊断 ' + (this.diagnosticPage + 1) + '/' + pages
-    this.diagnosticText = '队列 ' + d.pending + ' / 手机待处理 ' + d.phonePending + '\n连接 ' + d.connected + ' / ready ' + d.readyState + ' / v' + d.peerProtocol +
+    this.diagnosticText = '待上传 ' + sync.pending + ' / 旧版留存 ' + (sync.historicalPending || 0) + ' / 手机待确认 ' + sync.phonePending + ' / 本地事件 ' + physicalQueue + '\n连接 ' + d.connected + ' / ready ' + d.readyState + ' / v' + d.peerProtocol +
       '\n队头 ' + (head ? head.type + ' / 尝试 ' + head.attempts : '无') + '\n' +
       events.slice(this.diagnosticPage * 2, this.diagnosticPage * 2 + 2).map(e => new Date(e.at).toISOString().slice(11, 19) + 'Z ' + e.stage + ' ' + e.type +
         (e.code ? '\ncode=' + e.code : '') + (e.detail ? '\n' + e.detail : '')).join('\n')
@@ -1737,8 +1888,19 @@ const pageDefinition = {
 
   emitEvent(ev) {
     sendEvent(ev)
-    const latest = loadState()
+    // The draft already owns staged events. Outside a transaction, read only
+    // the outstanding intentions, not another copy of the workout.
+    if (this.sessionActionDraft) return
+    const latest = loadState('replay')
     if (latest.sid === this.stateOf().sid) this.stateOf().pendingEdits = latest.pendingEdits || []
+  },
+  canSendEventNow(type) {
+    const sid = this.stateOf()?.sid
+    if (canSendLiveEvent({ t: type, sid })) return true
+    this.inputNotice = '同步繁忙，请稍后再操作'
+    this.syncWarning = true
+    this.syncLabel = '同步繁忙，请稍后再操作'
+    return false
   },
   onPause() { return this.setPaused(!this.stateOf().pausedAt, Date.now(), true) },
   onRemotePause(msg) {
@@ -1841,7 +2003,7 @@ const pageDefinition = {
 export default pageDefinition
 </script>
 <template>
-<div class="page" id="training" touch-focusable="true" vibration-effectEnabled="false" onrotation="onRotation" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
+<div class="page" id="training" touch-focusable="true" vibration-effectEnabled="true" rotation-sensitivity="1" onrotation="onRotation" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
   <div class="topbar" if="{{ !effortOn && !lastOpen && !diagnosticOn && !keypadOn }}"><text class="top-lead" if="{{ !syncWarning }}">{{ hrLabel }}</text><text class="sync-pill" if="{{ syncWarning }}">{{ syncLabel }}</text><text class="clock">{{ clockLabel }}</text></div>
   <div class="pager" if="{{ !closeMode && !effortOn && !lastOpen && !diagnosticOn && !keypadOn }}">
     <div class="screen overview-screen" show="{{ pageIndex === 0 }}">

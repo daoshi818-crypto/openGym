@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { DEF, useStore } from '../store/useStore.js'
-import { watchCatalogOf } from './watch-workout.js'
+import { legacyWatchWorkout } from './watch-legacy-start-fixture.js'
 import { createDurableWatchLifecycle } from './watch-commit.js'
 import { navToWorkout, setNav } from './nav.js'
 import * as link from './watch-link.js'
@@ -17,12 +17,12 @@ beforeEach(() => {
   native.connect.mockResolvedValue({ connected: true }); native.disconnect.mockResolvedValue({})
   native.sendEvent.mockResolvedValue({ ok: true }); native.drainInbox.mockResolvedValue({ events: [] }); native.completeInbox.mockResolvedValue({})
   const S = structuredClone(DEF)
-  S.active = null; S.routines = [{ id: 'back', name: 'Back', prog: 'off', ex: [{ id: '0025', sets: 4, reps: 8, weight: 40 }] }]; S.watchPlanIds = ['back']
+  S.active = null
   useStore.setState({ S, user: null })
 })
 afterEach(async () => { await link.disconnectWatch(); vi.clearAllTimers(); vi.useRealTimers(); setNav(() => {}) })
 
-it.each([false, true])('starts through bridge/store/router even when Inbox cleanup stalls (%s)', async stalledCleanup => {
+it.each([false, true])('replays a legacy start through bridge/store/router even when Inbox cleanup stalls (%s)', async stalledCleanup => {
   if (stalledCleanup) native.completeInbox.mockImplementationOnce(() => new Promise(() => {}))
   const nav = vi.fn(); setNav(nav)
   const receive = createDurableWatchLifecycle({ getState: () => useStore.getState().S,
@@ -33,7 +33,7 @@ it.each([false, true])('starts through bridge/store/router even when Inbox clean
   const unbind = link.bindWatchLifecycle(receive, { getState: () => useStore.getState().S })
   try {
     await link.connectWatch()
-    const plan = watchCatalogOf(useStore.getState().S).plans[0]
+    const plan = legacyWatchWorkout()
     const ev = { t: 'watch_start', protocolVersion: 3, eventId: 'start:one', sid: 'watch-start-one', startedAt: Date.now(), plan,
       dependencyEvents: true, dependsOn: [], _inboxId: 'native-start-one' }
     native.events.watchEvent(ev)
