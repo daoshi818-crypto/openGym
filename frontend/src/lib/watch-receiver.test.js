@@ -271,7 +271,7 @@ describe('watch completed sets and rest clock', () => {
     expect(router.push).not.toHaveBeenCalled()
     expect(sessions.loadState().active).toBe(true)
     expect(source('Workout/index.ux')).toContain('if="{{ closeMode && !effortOn }}"')
-    expect(source('Workout/index.ux')).toContain('value="继续训练" onclick="cancelClose"')
+    expect(source('Workout/index.ux')).toMatch(/value="[^"]*继续训练[^"]*" onclick="cancelClose"/)
   })
 
   it('does not complete the next set when a second click arrives during rest', async () => {

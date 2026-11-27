@@ -53,15 +53,11 @@ for(const page of Object.keys(manifest.router.pages)) {
     assert.ok(px('.set-lines','height')+px('.navrow','height')+px('.navrow','marginTop')<=px('.training-content','height'))
     assert.deepEqual(has('rrow').children.map(n=>n.events.click),['onRestMinus','onSkipRest','onRestPlus'])
     const row=tree.find(n=>n.repeat?.$exp==='overviewRows');assert.equal(row.attr.tid,'key')
-    for(const fill of tree.filter(n=>['hold-fill','time-fill'].includes(n.class)))assert.ok(fill.inlineStyle?.$width)
-    assert.ok(tree.some(n=>n.events?.touchstart==='startFinishHold' && n.events?.touchend==='endFinishHold'))
-    const holds=tree.filter(n=>n.class==='hold-finish')
-    assert.equal(holds.length,2)
-    for(const hold of holds) {
-      const hit=hold.children[hold.children.length-1]
-      assert.equal(hit.class,'hold-touch','Progress must stay below one stable full-button touch target')
-      assert.equal(hit.events.touchstart,'startFinishHold'); assert.equal(hit.events.touchcancel,'cancelFinishHold')
-    }
+    assert.ok(has('time-fill').inlineStyle?.$width)
+    assert.equal(tree.filter(n=>n.events?.click==='askEnd').length,2)
+    const dialog = nodes(has('modal-content'))
+    assert.equal(dialog.filter(n=>n.events?.click==='confirmEnd').length,1)
+    assert.equal(dialog.filter(n=>n.events?.click==='cancelClose').length,1)
     assert.ok(tree.some(n=>n.events?.click==='abandonEnd'))
 
     const keyboard=nodes(has('number-keypad'));const rows=keyboard.filter(n=>n.class==='num-key-row')

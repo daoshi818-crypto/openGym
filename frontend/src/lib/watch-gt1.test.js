@@ -135,13 +135,19 @@ describe('v1.4.5 official square Wear UI contracts', () => {
     expect(p.nextOfficial).toBe('划船，第 1 组')
     expect(nodes(tree('Workout')).some(n=>n.action==='openLastEffort')).toBe(false)
   })
-  it('holds Finish for one second, cancels early release, and clears the timer on hide', () => {
-    vi.useFakeTimers(); const {p,ctx}=training('none')
-    Object.assign(ctx,{setInterval,clearInterval,setTimeout,clearTimeout}); p.saveEnd=vi.fn()
-    p.startFinishHold(); vi.advanceTimersByTime(950); p.cancelFinishHold(); vi.advanceTimersByTime(1000)
+  it('opens end confirmation from Overview and ignores the opening tap on the new button', () => {
+    vi.useFakeTimers()
+    const { p } = training('none')
+    p.saveEnd = vi.fn()
+    p.openFinish()
+    expect(p.pageIndex).toBe(0)
+    p.askEnd()
+    expect(p.closeMode).toBe('end')
+    p.confirmEnd()
     expect(p.saveEnd).not.toHaveBeenCalled()
-    p.startFinishHold(); vi.advanceTimersByTime(1000); expect(p.saveEnd).toHaveBeenCalledTimes(1)
-    p.startFinishHold(); p.onHide(); expect(p.finishHoldTimer).toBeNull()
+    vi.advanceTimersByTime(300)
+    p.confirmEnd()
+    expect(p.saveEnd).toHaveBeenCalledOnce()
   })
   it('resolves Overview jumps inside an atomic transaction using entry identity', async () => {
     const {p,ctx}=training('none'); ctx.replayPendingEvents=()=>{}
