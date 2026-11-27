@@ -206,11 +206,15 @@ export function createDurableWatchLifecycle(deps) {
         } catch (error) {
           status('storage_failed', String(error?.message || error))
           clearTimeout(retryTimer)
-          retryTimer = setTimeout(() => { running = null; pump() }, 5000)
+          retryTimer = setTimeout(() => { retryTimer = null; pump() }, 5000)
           break
         }
       }
-    })().finally(() => { running = null })
+    })().finally(() => {
+      running = null
+      // A new arrival can see the old promise after its loop has drained.
+      if (!retryTimer) pump()
+    })
     return running
   }
   function receive(ev) {
@@ -220,12 +224,12 @@ export function createDurableWatchLifecycle(deps) {
     if (ev._inboxId) item.inboxIds.add(ev._inboxId)
     if (!replying) release ||= deps.holdOutbound?.()
     status('pending')
-    clearTimeout(retryTimer)
+    clearTimeout(retryTimer); retryTimer = null
     pump()
     return true
   }
   receive.idle = async () => { while (running) await running }
-  receive.retry = () => { clearTimeout(retryTimer); return pump() }
+  receive.retry = () => { clearTimeout(retryTimer); retryTimer = null; return pump() }
   receive.dispose = () => { disposed = true; clearTimeout(retryTimer); release?.() }
   return receive
 }

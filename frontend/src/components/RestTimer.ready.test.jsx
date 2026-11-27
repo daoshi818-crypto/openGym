@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import RestTimer from './RestTimer.jsx'
 import { useUI } from '../store/useUI.js'
 import { useStore } from '../store/useStore.js'
+import { broadcastPhoneRest } from '../lib/watch-rest-broadcast.js'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -50,6 +51,20 @@ describe('RestTimer Ready and overtime display', () => {
     expect(host.querySelector('#timer .t').textContent).toBe('Ready')
     act(() => host.querySelector('#timer .skip').click())
     expect(useUI.getState().timer).toBeNull()
+  })
+
+  it('broadcasts a phone rest stop when the user clicks Skip', () => {
+    const active = { start: 1, watchSid: 's' }
+    useStore.setState({ S: { ...useStore.getState().S, active } })
+    act(() => useUI.getState().startRest(90, 0))
+    mount()
+    act(() => host.querySelector('#timer .skip').click())
+
+    const { timer, restStop } = useUI.getState()
+    const send = vi.fn()
+    broadcastPhoneRest({ enabled: true, active, timer, stopIntent: restStop, update: vi.fn(), send })
+    expect(restStop).toMatchObject({ sid: 's', source: 'phone' })
+    expect(send).toHaveBeenCalledExactlyOnceWith('s', 0, null, restStop.seq)
   })
 
   it('shows a plus clock and an empty bar during opted-in overtime', () => {

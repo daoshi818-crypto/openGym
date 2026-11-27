@@ -10,5 +10,5 @@ export function broadcastPhoneRest({ enabled, active, timer, stopIntent, update,
   const version = timer?.seq || stopIntent?.seq
   if (!version) return
   update(s => { if (watchSidOf(s.active) === sid) s.active.restVersion = version })
-  send(sid, timer && !timer.ready ? timer.paused ? timer.left : Math.max(0, Math.ceil((timer.endsAt - Date.now()) / 1000)) : 0, timer)
+  send(sid, timer && !timer.ready ? timer.paused ? timer.left : Math.max(0, Math.ceil((timer.endsAt - Date.now()) / 1000)) : 0, timer, version)
 }

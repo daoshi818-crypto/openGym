@@ -1,5 +1,6 @@
 import { applyWatchEffort, applyWatchEvent, rememberClose } from './watch-events.js'
 import { resolveWatchTarget } from './watch-identity.js'
+import { watchFieldKey } from './watch-revision.js'
 import { watchSidOf } from './session-resume.js'
 import { isWarmupRow } from './workout-model.js'
 
@@ -81,6 +82,7 @@ function reconcileSnapshot(deps, ev, now) {
     const A = S.active
     A.watchV4Rev = ev.rev
     A.watchV4SnapshotRev = ev.rev
+    A.watchV4FieldRevs = {}
     // The arrays contain just the focused row. exIdx/setIdx are zero-based
     // absolute positions in the watch's plan, and cannot index those arrays.
     const ex = A.entries?.[ev.exIdx], row = ex?.sets.filter(r => !isWarmupRow(r))[ev.setIdx]
@@ -108,15 +110,20 @@ export function applyWatchV4Lifecycle(deps, ev, now = Date.now()) {
   const A = getState().active
   if (ev.phoneLed !== true || deps.isForeground?.() === false || !sameSession(A, ev.sid) ||
       watchTerminalOf(getState(), ev.sid) || !revision(ev.rev) || !validId(ev.eventId) ||
-      ev.rev <= (A.watchV4SnapshotRev ?? -1) || ev.rev < (A.watchV4Rev ?? -1) ||
+      ev.rev <= (A.watchV4SnapshotRev ?? -1) ||
       (ev.phoneSessionGeneration != null && ev.phoneSessionGeneration !== (A.watchSessionGeneration || ev.sid))) return {}
   const type = ev.t === 'SET_COMPLETED' ? 'set' : ev.t === 'SET_UNDONE' ? 'unset' : ev.t
-  if (type === 'session_close') return { stop: applyTerminal(deps, ev.sid, ev) }
+  if (type === 'session_close') return { stop: ev.rev >= (A.watchV4Rev ?? -1) && applyTerminal(deps, ev.sid, ev) }
   if ((A.watchEvents || []).includes(ev.eventId)) return {}
   let rest
   update(S => {
     const a = S.active
+    // Keep the prior session-wide floor when reopening state saved by an older app.
+    const revisions = a.watchV4FieldRevs ?? { legacy: a.watchV4Rev ?? -1 }
+    const fresh = field => ev.rev >= (revisions.legacy ?? -1) && ev.rev > (revisions[field] ?? -1)
+    let field = type
     if (type === 'pause') {
+      if (!fresh(field)) return
       const at = revision(ev.at) && ev.at ? ev.at : now
       if (typeof ev.paused !== 'boolean') return
       a.pauseVersion = (a.pauseVersion || 0) + 1
@@ -127,11 +134,17 @@ export function applyWatchV4Lifecycle(deps, ev, now = Date.now()) {
       }
       a.watchEvents = [...(a.watchEvents || []), ev.eventId].slice(-4000)
     } else if (type === 'rest') {
+      if (!fresh(field)) return
       rest = restState(S, ev, ev.sid, now)
       a.watchEvents = [...(a.watchEvents || []), ev.eventId].slice(-4000)
     } else {
       const target = targetOf(a, ev, type)
       if (!target) return
+      const key = name => watchFieldKey(target.entry, name === 'structure' ? null : target.row, name)
+      if (type === 'set' || type === 'unset') field = key('done')
+      else if (type === 'add_set' || type === 'remove_set') field = key('structure')
+      else if (type !== 'focus') field = key(type)
+      if (!fresh(field)) return
       const routed = { ...ev, t: type, ex: target.ex, set: target.set, entryInstanceId: target.entry.entryInstanceId,
         ...(target.row ? { setId: target.row.setId } : {}) }
       if (type === 'effort') {
@@ -143,11 +156,25 @@ export function applyWatchV4Lifecycle(deps, ev, now = Date.now()) {
       } else {
         // Undo changes completion only; inputs supplied by an old watch view
         // cannot overwrite the phone's measurements while undoing a group.
-        if (type === 'unset') { delete routed.weight; delete routed.reps }
+        // Older senders may also bundle measurements with a completion edge.
+        // Each measurement has its own clock, independent of the edge.
+        if (!['add_set', 'remove_set', 'focus'].includes(type)) {
+          if (type === 'unset' || !fresh(key('weight'))) delete routed.weight
+          if (type === 'unset' || !fresh(key('reps'))) delete routed.reps
+        }
         if (!applyWatchEvent(S, routed)) return
-        if (type === 'set' && ev.rest) rest = restState(S, ev.rest, ev.sid, now)
+        if (target.row && ['weight', 'reps', 'set'].includes(type)) {
+          if (routed.weight != null) revisions[key('weight')] = ev.rev
+          if (routed.reps != null) revisions[key('reps')] = ev.rev
+        }
+        if (type === 'set' && ev.rest && fresh('rest')) {
+          rest = restState(S, ev.rest, ev.sid, now)
+          revisions.rest = ev.rev
+        }
       }
     }
+    revisions[field] = ev.rev
+    a.watchV4FieldRevs = revisions
     a.watchV4Rev = Math.max(a.watchV4Rev ?? -1, ev.rev)
   })
   return { rest }

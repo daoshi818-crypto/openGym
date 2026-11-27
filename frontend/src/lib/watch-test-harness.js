@@ -12,7 +12,7 @@ import { numberDraft, changeNumber, applyNumberDraft, keypadPress } from '../../
 import { summarizeWorkoutRows } from '../../../watch-app/src/lib/workout-summary.js'
 
 // Real page imports, not stubs: keep VM tests in sync with the shipped page modules.
-export const watchInteractionDeps = { numberDraft, changeNumber, applyNumberDraft, keypadPress, zoneView, muscleView, summarizeWorkoutRows, isPhoneConnected: () => false, replayPendingEvents: () => {}, sendLiveValue: () => true, canSendLiveEvent: () => true, commitPageAction, rotationStep, valueStep, captureRow, rowTarget, setDotWindow, createSetDotPicker, crownTick: () => {} }
+export const watchInteractionDeps = { numberDraft, changeNumber, applyNumberDraft, keypadPress, zoneView, muscleView, summarizeWorkoutRows, isPhoneConnected: () => false, replayPendingEvents: () => {}, sendLiveValue: () => true, commitPageAction, rotationStep, valueStep, captureRow, rowTarget, setDotWindow, createSetDotPicker, crownTick: () => {} }
 
 export const watchSource = path => readFileSync(new URL('../../../watch-app/src/' + path, import.meta.url), 'utf8')
 export const stripImports = code => code

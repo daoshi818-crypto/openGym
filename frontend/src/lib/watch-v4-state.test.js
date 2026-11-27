@@ -77,6 +77,47 @@ describe('v4 phone session reconciliation', () => {
     expect(reboot.deps.send).not.toHaveBeenCalled()
   })
 
+  it('applies independent live fields and groups even when newer frames arrive first', async () => {
+    const S = state()
+    S.active.entries[0].sets[0].done = false
+    const a = rig(S)
+    await a.dispatch(snapshot())
+    await a.dispatch(live({ t: 'focus', eventId: 'focus', rev: 16 }))
+    await a.dispatch(live({ t: 'rest', eventId: 'rest', rev: 15, leftSec: 45 }))
+    await a.dispatch(live({ eventId: 'second', rev: 14 }))
+    await a.dispatch(live({ eventId: 'first', rev: 12, entryInstanceId: 'bench-1', setId: 'a1', weight: 62, reps: undefined }))
+    await a.dispatch(live({ t: 'reps', eventId: 'reps', rev: 11, entryInstanceId: 'bench-1', setId: 'a1', weight: undefined, reps: '9' }))
+    expect(a.disk().active.entries.map(e => e.sets[0])).toMatchObject([
+      { done: true, w: 62, r: '9' }, { done: true, w: 72, r: '7' },
+    ])
+    expect(a.disk().active.watchFocus).toMatchObject({ ex: 1, set: 1 })
+    expect(a.disk().watchRest.leftSec).toBe(45)
+  })
+
+  it('preserves newer values, completion state and rest against stale frames after reload', async () => {
+    const a = rig()
+    await a.dispatch(live({ t: 'weight', eventId: 'new-weight', rev: 17, weight: 78, reps: undefined }))
+    await a.dispatch(live({ t: 'unset', eventId: 'undo', rev: 16 }))
+    await a.dispatch(live({ t: 'rest', eventId: 'skip', rev: 15, leftSec: 0 }))
+    const b = rig(a.disk())
+    await b.dispatch(live({ t: 'weight', eventId: 'old-weight', rev: 14, weight: 50, reps: undefined }))
+    await b.dispatch(live({ t: 'rest', eventId: 'old-rest', rev: 13, leftSec: 45 }))
+    await b.dispatch(live({ eventId: 'old-completion', rev: 12 }))
+    expect(b.disk().active.entries[1].sets[0]).toMatchObject({ done: false, w: 78, r: '6' })
+    expect(b.disk().watchRest).toBeNull()
+    expect(b.deps.rest).not.toHaveBeenCalled()
+  })
+
+  it('merges a delayed completion edge without overwriting a newer bundled field or accepting an old snapshot', async () => {
+    const a = rig()
+    await a.dispatch(live({ t: 'weight', eventId: 'weight', rev: 15, weight: 78, reps: undefined }))
+    await a.dispatch(snapshot({ rev: 14, pausedAt: 100 }))
+    await a.dispatch(live({ eventId: 'completed', rev: 13, weight: 72, reps: '7' }))
+    expect(a.disk().active.entries[1].sets[0]).toMatchObject({ done: true, w: 78, r: '7' })
+    expect(a.disk().active.pausedAt).toBeUndefined()
+    expect(a.disk().active.watchV4Rev).toBe(15)
+  })
+
   it('settles a matching terminal against phone rows only and never resaves an already finished workout', async () => {
     const a = rig()
     await a.dispatch(snapshot())

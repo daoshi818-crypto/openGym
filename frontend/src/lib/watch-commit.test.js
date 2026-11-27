@@ -26,6 +26,19 @@ describe('durable watch commits', () => {
     expect(a.deps.completeInbox).toHaveBeenCalledWith('B')
     a.receive.dispose()
   })
+  it('commits an operation arriving after the queue drains and before the pump settles', async () => {
+    const a = app(undefined, { status: vi.fn(({ phase }) => {
+      if (phase === 'synced' && !a.deps.sendAck.mock.calls.some(([, id]) => id === 'B')) {
+        queueMicrotask(() => a.receive({ ...event('B'), t: 'unset', at: 21 }))
+      }
+    }) })
+    a.receive(event('A'))
+    await a.receive.idle()
+    expect(a.deps.sendAck.mock.calls.map(([, id]) => id)).toEqual(['A', 'B'])
+    expect(a.disk().active.entries[0].sets[0].done).toBe(false)
+    a.receive.dispose()
+  })
+
   it('does not hold outgoing replies behind an event arriving during the previous reply', async () => {
     let blocked = false, receive
     const a = app(undefined, { holdOutbound: () => { blocked = true; return () => { blocked = false } },

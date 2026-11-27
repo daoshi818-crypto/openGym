@@ -19,7 +19,7 @@ function setup({ rest = false, protocolVersion = 3, connection } = {}) {
   })
   loadWatchModule('event-id', c, ['allocateEventIdentity', 'rememberEventAt'])
   loadWatchModule('close-journal', c, ['prepareClose', 'releaseCandidate', 'pendingSummaries', 'pendingEntry', 'journalEntry', 'markPhase', 'markDelivered'])
-  loadWatchModule('session', c, ['loadState', 'startSession', 'save', 'toggleSet', 'nextUndone', 'calories', 'addRestTime'])
+  loadWatchModule('session', c, ['loadState', 'startSession', 'save', 'toggleSet', 'nextUndone', 'setEffort', 'calories', 'addRestTime'])
   const s = c.startSession({ sid: 'finish', name: '推部训练', protocolVersion, exercises: [
     { entryInstanceId: 'bench', name: '哑铃推肩', sets: 3, reps: 10, weight: 12, restSec: 90 },
   ] })
@@ -27,7 +27,7 @@ function setup({ rest = false, protocolVersion = 3, connection } = {}) {
   if (rest) { s.restUntil = Date.now() + 90000; s.restId = 'rest'; s.restVersion = Date.now(); s.restTargetSec = 90; c.save(s) }
   if (connection) {
     c.interconnect = { instance: () => connection }
-    loadWatchModule('rpc', c, ['startServer', 'sendControl', 'sendEvent', 'canSendLiveEvent', 'pendingCount', 'replayPendingEvents'])
+    loadWatchModule('rpc', c, ['startServer', 'sendControl', 'sendEvent', 'pendingCount', 'replayPendingEvents'])
   }
   runInNewContext(stripImports(watchSource('Workout/index.ux').match(/<script>([\s\S]*?)<\/script>/)[1]).replace('export default', 'this.definition ='), c)
   const definition = c.definition, data = structuredClone(definition.data), raw = structuredClone(definition.staticData), methods = {}, retained = new Map()
@@ -173,13 +173,14 @@ it('confirmed finish waits behind an already committing group', async () => {
   expect(c.journalEntry('finish').closeEvent.completedSets).toHaveLength(1)
   expect(router.replace).toHaveBeenCalledExactlyOnceWith({ uri: '/Summary' })
 })
-it('saves with a busy V4 event sender and reports the terminal after reconnect', async () => {
+it('submits the V4 close with a set callback outstanding and saves locally if the close fails', async () => {
   const sent = []
   let finishSendingSet
   const connection = {
-    send({ data, success }) {
+    send({ data, success, fail }) {
       sent.push(data)
       if (data.t === 'set' && data.phoneLed) finishSendingSet = vi.fn(success)
+      else if (data.t === 'session_close') fail(Error('native send unavailable'))
       else success()
     },
     getReadyState({ success }) { success({ status: 1 }) },
@@ -190,14 +191,15 @@ it('saves with a busy V4 event sender and reports the terminal after reconnect',
   await vi.advanceTimersByTimeAsync(20)
   await p.onComplete()
   expect(finishSendingSet).toBeDefined()
-  await vi.advanceTimersByTimeAsync(1000)
-  expect(c.canSendLiveEvent({ sid: 'finish', t: 'session_close' })).toBe(false)
 
+  await vi.advanceTimersByTimeAsync(1001)
   await openEndConfirmation(p)
   expect(p.closeMode).toBe('end')
   await p.confirmEnd()
   expect(finishSendingSet).not.toHaveBeenCalled()
-  expect(sent.some(message => message.t === 'session_close')).toBe(false)
+  expect(sent.filter(message => message.t === 'session_close')).toEqual([
+    expect.objectContaining({ phoneLed: true, protocolVersion: 4, sid: 'finish', disposition: 'saved' }),
+  ])
   expect(c.loadState().active).toBe(false)
   expect(c.readStored('summary_last')).toMatchObject({ sid: 'finish', sets: 1 })
   expect(router.replace).toHaveBeenCalledExactlyOnceWith({ uri: '/Summary' })
@@ -210,16 +212,36 @@ it('saves with a busy V4 event sender and reports the terminal after reconnect',
     t: 'STATE_SNAPSHOT', sid: 'finish', active: false, terminal: c.readStored('phone_terminal_v4'),
   })
   finishSendingSet()
+  expect(sent.filter(message => message.t === 'session_close')).toHaveLength(1)
 })
-it('keeps the effort draft open while another live event is in flight', async () => {
-  const { p, c } = setup({ protocolVersion: 4 })
-  c.canSendLiveEvent = vi.fn(() => false)
-  p.effortOn = true; p.effortDraft = 8
-  expect(await p.commitEffort(8)).toBe(false)
-  expect(c.canSendLiveEvent).toHaveBeenCalledWith({ sid: 'finish', t: 'effort' })
+it('saves effort locally and closes the draft when a V4 send fails', async () => {
+  const sent = []
+  const connection = {
+    send({ data, success, fail }) {
+      sent.push(data)
+      if (data.t === 'effort') fail(Error('native send unavailable'))
+      else success()
+    },
+    getReadyState({ success }) { success({ status: 1 }) },
+  }
+  const { p, c } = setup({ protocolVersion: 4, connection })
+  const state = c.loadState()
+  state.effortScale = 'rpe'
+  c.save(state)
+  p.stateOf(state)
+  connection.onOpen()
+  connection.onMessage({ data: { t: 'STATE_QUERY', protocolVersion: 4, requestId: 'before-effort' } })
+  await vi.advanceTimersByTimeAsync(20)
+
+  p.openEffort(false)
   expect(p.effortOn).toBe(true)
-  expect(p.effortDraft).toBe(8)
-  expect(p.effortNotice).toBe('同步繁忙，请稍后再操作')
+  p.effortDraft = 8
+  await p.confirmEffort()
+  expect(sent.filter(message => message.t === 'effort')).toEqual([
+    expect.objectContaining({ protocolVersion: 4, sid: 'finish', scale: 'rpe', value: 8 }),
+  ])
+  expect(c.loadState().workout.rows[0][0].rpe).toBe(8)
+  expect(p.effortOn).toBe(false)
 })
 it('a transport failure cannot strand a workout page after the local close was already saved', async () => {
   const { p, c, router } = setup()

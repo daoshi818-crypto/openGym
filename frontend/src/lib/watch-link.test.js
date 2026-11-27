@@ -2,6 +2,10 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 
 import { watchPlanOf } from './watch-workout.js'
 import { wireHash } from '../../../watch-app/src/lib/sync-wire.js'
+import { applyEdit, applyRest, restOf } from '../../../watch-app/src/lib/protocol.js'
+import { createDurableWatchLifecycle } from './watch-commit.js'
+import { broadcastPhoneRest } from './watch-rest-broadcast.js'
+import { loadWatchModule, watchPersistence } from './watch-test-harness.js'
 
 const native = vi.hoisted(() => ({
   events: {},
@@ -951,6 +955,123 @@ describe('WATCH GT v4 selected route', () => {
     expect(sent().filter(msg => msg.t === 'weight')).toHaveLength(1)
     expect(sent().slice(boundary).filter(msg => msg.t === 'STATE_QUERY')).toHaveLength(1)
     expect(native.sendPlan).not.toHaveBeenCalled()
+  })
+  it('applies compact live edits from the selected watch and sends the phone rest stop back', async () => {
+    vi.useFakeTimers({ now: new Date('2026-11-27T01:30:00Z') })
+    const first = { setId: 'r1', w: 51, r: '9', done: false }
+    const S = { unit: 'kg', workouts: [], active: { start: Date.now(), watchSid: 'a', watchPhoneSession: true,
+      watchSessionGeneration: 'a', entries: [{ entryInstanceId: 'e1', id: 'bench', sets: [first] }], cur: 0 } }
+    const update = mut => mut(S)
+    const rest = vi.fn()
+    const receive = createDurableWatchLifecycle({ getState: () => S, update, rest, send: link.sendToWatch,
+      isForeground: () => true, checkpoint: async () => {} })
+    const off = link.bindWatchLifecycle(receive, { getState: () => S, update, currentWorkoutOnly: true })
+    const { ctx: watch } = watchPersistence()
+    const frames = []
+    const heldCallbacks = []
+    const sdk = {
+      getReadyState: () => {},
+      send({ data, success }) {
+        const wire = JSON.parse(JSON.stringify(data))
+        frames.push(wire)
+        native.events.watchEvent({ ...wire, _kind: 'business' })
+        if (wire.t === 'weight' || wire.t === 'set') heldCallbacks.push(success)
+        else success()
+      },
+    }
+    Object.assign(watch, { interconnect: { instance: () => sdk }, applyEdit, applyRest })
+    loadWatchModule('session', watch, ['startSession', 'commitPhoneStart', 'loadState', 'save', 'toggleSet', 'setRowValue', 'addSet', 'removeSet'])
+    loadWatchModule('rpc', watch, ['startServer', 'stopServer', 'sendEvent', 'sendLiveValue', 'pendingCount'])
+    native.connect.mockResolvedValue({ connected: true })
+    native.sendEvent.mockReset().mockImplementation(async ({ json }) => {
+      sdk.onMessage(JSON.parse(json))
+      return { ok: true }
+    })
+    await link.connectWatch()
+    watch.startServer({ onRest: frame => {
+      const state = watch.loadState()
+      if (applyRest(state, frame)) watch.save(state)
+    } })
+    try {
+      sdk.onOpen()
+      await vi.advanceTimersByTimeAsync(200)
+      const deviceId = frames.find(frame => frame.t === 'hello').installationId
+      expect(link.watchConnection()).toMatchObject({ selectedId: deviceId, canStartWorkout: true })
+      const started = link.continueOnWatch({ ...workout, rows: [[first]] })
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(sent().find(frame => frame.t === 'START_SESSION')).toBeTruthy()
+      expect(frames.find(frame => frame.t === 'SESSION_ACCEPTED')).toMatchObject({ status: 'accepted' })
+      expect(await started).toBe(true)
+
+      expect(watch.sendLiveValue({ t: 'weight', sid: 'a', ex: 0, set: 1, entryInstanceId: 'e1', setId: 'r1', weight: 52 })).toBe(true)
+      expect(heldCallbacks).toHaveLength(1)
+      expect(watch.sendLiveValue({ t: 'reps', sid: 'a', ex: 0, set: 1, entryInstanceId: 'e1', setId: 'r1', reps: '11' })).toBe(true)
+      await receive.idle()
+      expect(S.active.entries[0].sets[0]).toMatchObject({ done: false, w: 52, r: '11' })
+      const complete = await watch.commitSessionAction('a', state => {
+        watch.setRowValue(state, 0, 0, 'w', '52')
+        watch.setRowValue(state, 0, 0, 'r', '11')
+        const row = watch.toggleSet(state, true)
+        watch.sendEvent({ t: 'set', sid: 'a', ex: 0, set: 1, at: row.at, weight: row.w, reps: row.r, rest: restOf(state) })
+        watch.sendEvent({ t: 'rest', sid: 'a', ...restOf(state) })
+      })
+      expect(complete.ok).toBe(true)
+      let addedId
+      const add = await watch.commitSessionAction('a', state => {
+        watch.addSet(state, 0)
+        addedId = state.workout.rows[0][1].setId
+        watch.sendEvent({ t: 'add_set', sid: 'a', ex: 0, set: 2, sets: 2 })
+      })
+      expect(add.ok).toBe(true)
+      await receive.idle()
+      expect(S.active.entries[0].sets.map(row => row.setId)).toEqual(['r1', addedId])
+      const remove = await watch.commitSessionAction('a', state => {
+        watch.removeSet(state, 0)
+        watch.sendEvent({ t: 'remove_set', sid: 'a', ex: 0, set: 2, sets: 1, removedSetIds: [addedId] })
+      })
+      expect(remove.ok).toBe(true)
+      expect(watch.loadState().workout.rows[0]).toEqual([expect.objectContaining({ done: true })])
+      expect(heldCallbacks).toHaveLength(2)
+      await receive.idle()
+      expect(S.active.entries[0].sets[0]).toMatchObject({ done: true, w: 52, r: '11' })
+      expect(rest).toHaveBeenLastCalledWith(expect.objectContaining({ sid: 'a', leftSec: 60 }))
+      expect(S.active.entries[0].sets.map(row => row.setId)).toEqual(['r1'])
+      const live = frames.filter(frame => ['weight', 'reps', 'set', 'rest', 'add_set', 'remove_set'].includes(frame.t))
+      expect(live.map(frame => frame.t)).toEqual(['weight', 'reps', 'set', 'rest', 'add_set', 'remove_set'])
+      expect(live.every(frame => frame.sourceInstallationId === deviceId)).toBe(true)
+      expect(live.find(frame => frame.t === 'add_set').newSetIds).toEqual([addedId])
+      expect(live.find(frame => frame.t === 'remove_set').removedSetIds).toEqual([addedId])
+      for (const completeSend of heldCallbacks.reverse()) completeSend()
+      expect(frames.find(frame => frame.t === 'set')).not.toHaveProperty('weight')
+      expect(frames.find(frame => frame.t === 'set')).not.toHaveProperty('reps')
+      expect(frames.find(frame => frame.t === 'set')).not.toHaveProperty('rest')
+
+      const stop = { sid: 'a', source: 'phone', seq: watch.loadState().restVersion + 1 }
+      broadcastPhoneRest({ enabled: true, active: S.active, timer: null, stopIntent: stop, update, send: link.pushRestToWatch })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(sent().findLast(frame => frame.t === 'rest')).toMatchObject({
+        targetInstallationId: deviceId, sid: 'a', leftSec: 0, endsAt: 0, seq: stop.seq,
+      })
+      expect(watch.loadState().restUntil).toBe(0)
+
+      broadcastPhoneRest({ enabled: true, active: S.active, timer: { sid: 'a', seq: stop.seq + 1,
+        endsAt: Date.now() + 60_000, total: 60 }, update, send: link.pushRestToWatch })
+      await vi.advanceTimersByTimeAsync(0)
+      const skip = await watch.commitSessionAction('a', state => {
+        state.restUntil = 0; state.restTargetSec = 0; state.restLeftSec = 0; state.restVersion++
+        watch.sendEvent({ t: 'rest', sid: 'a', ...restOf(state) })
+      })
+      expect(skip.ok).toBe(true)
+      await vi.advanceTimersByTimeAsync(200)
+      await receive.idle()
+      expect(rest).toHaveBeenLastCalledWith(expect.objectContaining({ sid: 'a', leftSec: 0 }))
+      expect(S.watchRest).toBeNull()
+      expect(watch.pendingCount()).toBe(0)
+    } finally {
+      watch.stopServer()
+      off()
+      receive.dispose()
+    }
   })
   it('drops an in-flight explicit start on disconnect and ignores a late acceptance', async () => {
     await select()

@@ -20,7 +20,7 @@ import {
   formatEffort,
 } from '../lib/effort-scale.js'
 import { startSessionHr, stopSessionHr, tick, restOver, crownTick } from '../lib/sensors.js'
-import { startServer, sendEvent, sendLiveValue, canSendLiveEvent, replayPendingEvents, sendControl, pendingCount, persistenceStatus, synchronizationStatus, transportDiagnostics } from '../lib/rpc.js'
+import { startServer, sendEvent, replayPendingEvents, sendControl, pendingCount, persistenceStatus, synchronizationStatus, transportDiagnostics } from '../lib/rpc.js'
 import { storageStatus, readStored } from '../lib/persistence.js'
 import { journalEntry } from '../lib/close-journal.js'
 import { applyEdit, applyFocus, applyRest, restOf } from '../lib/protocol.js'
@@ -390,11 +390,7 @@ const pageDefinition = {
       onError: (error) => {
         this.syncWarning = true
         const operation = error?.operation
-        if (error?.code === 'live_event_busy') {
-          this.syncLabel = operation === 'set' ? '同步繁忙，已阻止重复完成；请稍后重试' :
-            operation === 'unset' ? '同步繁忙，已阻止重复撤销；请稍后重试' :
-            operation === 'add_set' || operation === 'remove_set' ? '同步繁忙，已阻止重复调整组数；请稍后重试' : '同步繁忙，请稍后重试'
-        } else if (error?.code === 'live_event_send_failed') {
+        if (error?.code === 'live_event_send_failed') {
           this.syncLabel = operation === 'set' ? '本组已保存在手表，手机同步未确认，可稍后核对' :
             operation === 'unset' ? '撤销已保存在手表，手机同步未确认，可稍后核对' :
             operation === 'add_set' || operation === 'remove_set' ? '组数已保存在手表，手机同步未确认，可稍后核对' :
@@ -534,7 +530,7 @@ const pageDefinition = {
   },
 
   onMenuAddSet() {
-    if (!this.canSendEventNow('add_set')) return false
+    if (this.numberDraftDirty()) return this.flushNumberDraft().then(ok => ok ? this.onMenuAddSet() : false)
     return commitPageAction(this, function() {
     const s = this.stateOf()
     this.weightUnit = s.weightUnit || 'kg'
@@ -550,7 +546,7 @@ const pageDefinition = {
   },
 
   onMenuRemoveSet() {
-    if (!this.canSendEventNow('remove_set')) return false
+    if (this.numberDraftDirty()) return this.flushNumberDraft().then(ok => ok ? this.onMenuRemoveSet() : false)
     return commitPageAction(this, function() {
     const s = this.stateOf()
     const ex = s.exIdx
@@ -682,9 +678,9 @@ const pageDefinition = {
       const operation = commitSessionAction(sid, state => {
         if (numberDraft(state, snapshot) !== snapshot) return 'superseded'
         applyNumberDraft(state, snapshot)
-        // Phone-led v4 edits become single-field live events only after local durability.
         if (state.protocolVersion === 4 && state.sessionOrigin === 'phone') {
-          const target = snapshot.target, fields = []
+          const target = snapshot.target
+          const fields = []
           if (snapshot.dirtyW) fields.push({ t: 'weight', weight: snapshot.w })
           if (snapshot.dirtyR) fields.push({ t: 'reps', reps: snapshot.r })
           for (const field of fields) {
@@ -717,7 +713,7 @@ const pageDefinition = {
           // A long burst can still be stepping through display values after its idle save.
           const crown = this.numberCrownOf()
           if (crown?.shown === crown?.target) this.cancelNumberCrown()
-          current.dirtyW = false; current.dirtyR = false; current.crownEdited = false
+          current.dirtyW = false; current.dirtyR = false
         }
         this.stateOf(latest)
         this.updateNumbers()
@@ -771,7 +767,6 @@ const pageDefinition = {
       return
     }
     if (!changeNumber(draft, field, value)) return
-    draft.crownEdited = true
     this.numberGenerationOf(this.numberGenerationOf() + 1)
     // Keep one target and advance the display one increment at a time.
     if (!crown) {
@@ -810,10 +805,6 @@ const pageDefinition = {
     if (!changeNumber(draft, this.keypadField, this.keypadBuffer)) { this.keypadNotice = '请输入有效数值'; return }
     this.numberGenerationOf(this.numberGenerationOf() + 1)
     this.scheduleNumberDraftFlush()
-    const target = draft.target, type = this.keypadField === 'w' ? 'weight' : 'reps'
-    sendLiveValue({ t: type, sid: target.sid, ex: target.exIdx, set: target.setIdx + 1,
-      entryInstanceId: target.entryInstanceId, setId: target.setId, weightUnit: target.weightUnit,
-      [type]: draft[this.keypadField], at: Date.now(), source: 'watch' })
     this.closeNumberKeypad(); this.updateNumbers()
   },
   numberKey1() { this.numberKey('1') },
@@ -955,7 +946,6 @@ const pageDefinition = {
 
   onComplete(expectedTarget) {
     this.logInteraction('complete_tap')
-    if (!this.canSendEventNow('set')) return false
     if (this.keypadOn || this.numberEditLocked) return
     const pending = this.numberFlushOf()
     if (pending) {
@@ -967,7 +957,7 @@ const pageDefinition = {
     }
     this.finishNumberCrown()
     const state = this.stateOf(), input = this.numberDraftOf()
-    if (input?.crownEdited && state.protocolVersion === 4 && state.sessionOrigin === 'phone') {
+    if (this.numberDraftDirty() && state.protocolVersion === 4 && state.sessionOrigin === 'phone') {
       this.numberEditLocked = true
       return this.flushNumberDraft().then(ok => {
         this.numberEditLocked = false
@@ -1004,6 +994,7 @@ const pageDefinition = {
     // Legacy sessions carry the saved row values with the completion event.
     this.emitEvent({ t: 'set', sid: s.sid, ex: exIdx, set: setIdx + 1, at: row.at, rest: restOf(s),
       ...(phoneLedV4 ? {} : { weight: String(row.w ?? ''), reps: String(row.r ?? '') }) })
+    if (phoneLedV4) this.emitEvent({ t: 'rest', sid: s.sid, ...restOf(s) })
     tick()
     const next = nextUndone(s)
     if (next) {
@@ -1021,7 +1012,6 @@ const pageDefinition = {
   },
 
   onUndo(expectedTarget) {
-    if (!this.canSendEventNow('unset')) return false
     if (this.setDotPicker?.pending()) return false
     return commitPageAction(this, function() {
     const s = this.stateOf()
@@ -1529,7 +1519,6 @@ const pageDefinition = {
     return this.commitEffort(null)
   },
   commitEffort(value) {
-    if (!this.canSendEventNow('effort')) { this.effortNotice = this.syncLabel; return false }
     return commitPageAction(this, function() {
     const found = this.effortTargetRow()
     if (!this.effortTargetValid()) {
@@ -1942,14 +1931,6 @@ const pageDefinition = {
     if (this.sessionActionDraft) return
     const latest = loadState('replay')
     if (latest.sid === this.stateOf().sid) this.stateOf().pendingEdits = latest.pendingEdits || []
-  },
-  canSendEventNow(type) {
-    const sid = this.stateOf()?.sid
-    if (canSendLiveEvent({ t: type, sid })) return true
-    this.inputNotice = '同步繁忙，请稍后再操作'
-    this.syncWarning = true
-    this.syncLabel = '同步繁忙，请稍后再操作'
-    return false
   },
   onPause() { return this.setPaused(!this.stateOf().pausedAt, Date.now(), true) },
   onRemotePause(msg) {

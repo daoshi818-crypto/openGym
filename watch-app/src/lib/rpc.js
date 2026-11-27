@@ -35,6 +35,12 @@ const rpcState = () => runtime().rpc ||= { ...{"connect":null,"handlers":{},"con
 const isPhoneLedEvent = event => !!event?.phoneLed || journalEntry(event?.sid)?.closeEvent?.phoneLed === true
 
 
+// The phone uses this wire field to accept frames from the selected watch.
+function routeToPhone(r, data) {
+  if (!r.installationId || !(r.peerCapabilities?.deviceSelection || (data.protocolVersion === 4 && data.phoneLed === true))) return data
+  return { ...data, sourceInstallationId: r.installationId }
+}
+
 // Metadata only; the independent bounded journal never enters training storage/outbox.
 function trace(stage, msg = {}, error = null, code = null, meta = {}) {
   try {
@@ -215,9 +221,8 @@ function sendHello() {
 function resetPeer(r) {
   runtime().phoneSessionPresence = null
   r.peerProtocol = 0; r.v4Ready = false; r.controls = []; r.transfers = {}; r.lastPhoneAt = 0
-  r.liveLatest = Object.create(null)
-  cancelAppTimeout(r.liveEventTimer); r.liveEventTimer = null; r.liveEventSending = null
-  r.liveEventIds = []
+  for (const token of r.liveInFlight || []) cancelAppTimeout(token.timer)
+  r.liveInFlight?.clear()
 }
 
 const V4_EVENT_FIELDS = ['t', 'sid', 'eventId', 'rev', 'at', 'source', 'phoneLed', 'protocolVersion', 'phoneSessionGeneration']
@@ -447,7 +452,6 @@ function flush() {
   if (rpcState().persistFailed && !rpcState().writeBusy) persist()
   if (!rpcState().connected) { probeConnection(); return }
   if (!rpcState().connected || !rpcState().connect || rpcState().sending) return
-  if (rpcState().v4Ready && dispatchNextLiveLatest()) return
   if (!(rpcState().controls || []).some(e => Date.now() >= (e.nextAttemptAt || 0)) && Date.now() < (rpcState().nextSendAt || 0)) { scheduleFlush(rpcState().nextSendAt - Date.now()); return }
   const r = rpcState()
   if (r.v4Ready && !isPhoneSessionLive(runtime().phoneSessionPresence, runtime().phoneSessionPresence)) r.controls = (r.controls || []).filter(e => !e.live)
@@ -511,7 +515,7 @@ function flush() {
       const base = state.active && state.sid === next.msg.sid ? state.syncBase : null
       if (base?.wireHash) data = { ...data, appliedHash: base.wireHash, appliedRev: base.commitRev }
     }
-    if (r.peerCapabilities?.deviceSelection && r.installationId) data = { ...data, sourceInstallationId: r.installationId }
+    data = routeToPhone(r, data)
     const bytes = wireBytes(JSON.stringify(data))
     trace('send_attempt', next.msg, null, null, { bytes, attempts: next.attempts || 0, receivedAt: next.receivedAt || 0,
       nextAttemptAt: next.nextAttemptAt || 0, durable: rpcState().durable.has(next.msg.eventId) })
@@ -1134,13 +1138,7 @@ function freezeOwnClose(obj) {
 export function sendControl(obj) {
   const r = rpcState()
   if (!r.connected || !r.connect || !obj) return false
-  const live = obj.protocolVersion === 4 && obj.phoneLed === true
-  if (live) {
-    const latestKey = obj.t === 'focus' ? ['focus', obj.sid].join(':')
-      : ['weight', 'reps', 'rest', 'pause', 'row_value'].includes(obj.t)
-        ? [obj.t, obj.sid, obj.entryInstanceId || '', obj.setId || '', obj.field || ''].join(':') : ''
-    return sendV4LiveControl(obj, latestKey)
-  }
+  if (obj.protocolVersion === 4 && obj.phoneLed === true) return dispatchV4Live(r, obj)
   const controls = r.controls ||= []
   const key = JSON.stringify(obj)
   if (controls.some(e => e.key === key)) return true
@@ -1150,132 +1148,50 @@ export function sendControl(obj) {
   return true
 }
 
-const V4_LIVE_LATEST_KEYS = 32
-function liveControlReady(msg) {
-  const r = rpcState(), presence = runtime().phoneSessionPresence
-  return !!(r.connected && r.connect && r.v4Ready && msg?.protocolVersion === 4 && msg.phoneLed === true &&
-    msg.sid && isPhoneSessionLive({ sid: msg.sid }, presence))
-}
-function sendV4LiveControl(msg, latestKey) {
-  const r = rpcState()
-  if (!liveControlReady(msg)) return false
-  if (r.sending || r.liveEventSending) {
-    if (!latestKey) return dispatchV4LiveEvent(msg)
-    const pending = r.liveLatest ||= Object.create(null)
-    const existed = Object.prototype.hasOwnProperty.call(pending, latestKey)
-    if (!existed && Object.keys(pending).length >= V4_LIVE_LATEST_KEYS) {
-      const oldest = Object.keys(pending)[0]
-      if (oldest) delete pending[oldest]
-    }
-    pending[latestKey] = JSON.parse(JSON.stringify(msg))
-    return true
+const V4_LIVE_IN_FLIGHT_LIMIT = 8
+function dispatchV4Live(r, msg) {
+  const presence = runtime().phoneSessionPresence
+  if (!r.v4Ready || !isPhoneSessionLive(msg, presence) ||
+      msg.phoneSessionGeneration != null && msg.phoneSessionGeneration !== presence.generation) return false
+
+  const stateFrame = ['focus', 'weight', 'reps', 'rest', 'pause', 'row_value'].includes(msg.t)
+  const inFlight = r.liveInFlight ||= new Set()
+  const prefix = stateFrame ? 'live' : 'live_event'
+  const reportFailure = () => r.handlers.onError?.({
+    code: stateFrame ? 'live_state_send_failed' : 'live_event_send_failed',
+    sid: msg.sid, eventId: msg.eventId, operation: msg.t,
+  })
+  if (inFlight.size >= V4_LIVE_IN_FLIGHT_LIMIT) {
+    trace(prefix + '_send_fail', msg, null, 'in_flight_limit')
+    reportFailure()
+    return false
   }
-  if (!latestKey) return dispatchV4LiveEvent(msg)
-  return dispatchV4LiveControl(msg)
-}
-function stampV4LiveRevision(r, msg) {
+
   const state = loadState('rpc')
   const storedRev = state.sid === msg.sid ? Number(state.rev) || 0 : 0
   const liveRev = r.liveRevisionSid === msg.sid ? Number(r.liveRevision) || 0 : 0
   r.liveRevisionSid = msg.sid
   r.liveRevision = Math.max(storedRev, liveRev, Number(msg.rev) || 0) + 1
-  msg.rev = r.liveRevision
-}
-function dispatchV4LiveControl(msg) {
-  const r = rpcState()
-  if (!liveControlReady(msg) || r.sending) return false
-  stampV4LiveRevision(r, msg)
-  const token = { generation: r.connectionGeneration, control: null, live: true, type: msg.t, eventId: msg.eventId }
-  r.sending = token
-  const release = () => {
-    if (r.sending !== token || token.generation !== r.connectionGeneration) return false
-    cancelAppTimeout(r.sendingTimer); r.sendingTimer = null; r.sending = false
-    return true
+
+  const data = routeToPhone(r, { ...msg, rev: r.liveRevision })
+  const bytes = wireBytes(JSON.stringify(data))
+  const token = { timer: null }
+  inFlight.add(token)
+  const complete = (stage, error, code) => {
+    if (!inFlight.delete(token)) return
+    cancelAppTimeout(token.timer)
+    trace(prefix + '_send_' + stage, msg, error, code, { bytes })
+    if (stage !== 'success') reportFailure()
   }
-  const after = () => {
-    if (dispatchNextLiveLatest()) return
-    scheduleFlush()
-  }
-  const bytes = wireBytes(JSON.stringify(msg))
-  trace('live_send_attempt', msg, null, null, { bytes })
-  r.sendingTimer = appTimeout(() => {
-    if (!release()) return
-    trace('live_send_timeout', msg, null, null, { bytes })
-    r.handlers.onError?.({ code: 'live_state_send_failed', sid: msg.sid, operation: msg.t })
-    after()
-  }, 6000)
+  token.timer = appTimeout(() => complete('timeout'), 6000)
+  trace(prefix + '_send_attempt', msg, null, null, { bytes })
   try {
-    r.connect.send({ data: msg,
-      success: () => { if (!release()) return; trace('live_send_success', msg, null, null, { bytes }); after() },
-      fail: (error, code) => { if (!release()) return; trace('live_send_fail', msg, error, code, { bytes }); r.handlers.onError?.({ code: 'live_state_send_failed', sid: msg.sid, operation: msg.t }); after() }
-    })
+    r.connect.send({ data, success: () => complete('success'), fail: (error, code) => complete('fail', error, code) })
     return true
   } catch (error) {
-    if (release()) { trace('live_send_exception', msg, error); r.handlers.onError?.({ code: 'live_state_send_failed', sid: msg.sid, operation: msg.t }); after() }
+    complete('fail', error, 'exception')
     return false
   }
-}
-function dispatchV4LiveEvent(msg) {
-  const r = rpcState()
-  if (!liveControlReady(msg)) return false
-  if (msg.eventId && r.liveEventIds?.includes(msg.eventId)) return true
-  if (r.liveEventSending?.eventId && r.liveEventSending.eventId === msg.eventId) return true
-  if (r.liveEventSending) {
-    trace('live_event_rejected_busy', msg, null, null, { activeEventId: r.liveEventSending.eventId })
-    r.handlers.onError?.({ code: 'live_event_busy', sid: msg.sid, eventId: msg.eventId, operation: msg.t })
-    return false
-  }
-  stampV4LiveRevision(r, msg)
-  const token = { generation: r.connectionGeneration, eventId: msg.eventId || '' }
-  r.liveEventSending = token
-  const release = () => {
-    if (r.liveEventSending !== token || token.generation !== r.connectionGeneration) return false
-    cancelAppTimeout(r.liveEventTimer); r.liveEventTimer = null; r.liveEventSending = null
-    return true
-  }
-  const fail = (code, error) => {
-    if (!release()) return
-    trace('live_event_send_fail', msg, error, code)
-    r.handlers.onError?.({ code: 'live_event_send_failed', sid: msg.sid, eventId: msg.eventId, operation: msg.t })
-    if (!dispatchNextLiveLatest()) scheduleFlush()
-  }
-  const bytes = wireBytes(JSON.stringify(msg))
-  trace('live_event_send_attempt', msg, null, null, { bytes })
-  r.liveEventTimer = appTimeout(() => fail('timeout'), 6000)
-  try {
-    r.connect.send({ data: msg,
-      success: () => {
-        if (!release()) return
-        if (msg.eventId) {
-          r.liveEventIds ||= []
-          r.liveEventIds.push(msg.eventId)
-          if (r.liveEventIds.length > 64) r.liveEventIds.shift()
-        }
-        trace('live_event_send_success', msg, null, null, { bytes })
-        if (!dispatchNextLiveLatest()) scheduleFlush()
-      },
-      fail: fail,
-    })
-    return true
-  } catch (error) {
-    fail('exception', error)
-    return false
-  }
-}
-function dispatchNextLiveLatest() {
-  const r = rpcState(), pending = r.liveLatest ||= Object.create(null)
-  if (r.sending || r.liveEventSending) return false
-  if (!r.connected || !r.connect || !r.v4Ready) {
-    r.liveLatest = Object.create(null)
-    return false
-  }
-  const keys = Object.keys(pending)
-  if (!keys.length) return false
-  const key = keys[0], msg = pending[key]
-  delete pending[key]
-  if (liveControlReady(msg)) dispatchV4LiveControl(msg)
-  else return dispatchNextLiveLatest()
-  return true
 }
 
 /** Send the latest phone-led value without adding it to the persistent outbox. */
@@ -1286,8 +1202,9 @@ export function sendLiveValue(value) {
   const presence = runtime().phoneSessionPresence
   if (!sid || !r.connected || !r.v4Ready || !s.active || s.sessionOrigin !== 'phone' || s.sid !== sid ||
       !isPhoneSessionLive({ sid }, presence)) return false
-  const number = Number(value[value.t])
-  if (!Number.isFinite(number) || number < 0 || number > 99999) return false
+  const number = value[value.t] === '' ? '' : Number(value[value.t])
+  if (number !== '' && (!Number.isFinite(number) || number < 0 ||
+      (value.t === 'weight' ? number > 99999.999 : number > 99999 || !Number.isInteger(number)))) return false
   r.liveValueSequence = (r.liveValueSequence || 0) + 1
   const msg = { t: value.t, protocolVersion: 4, phoneLed: true, sid,
     eventId: 'watch-live:' + sid + ':' + Date.now() + ':' + r.liveValueSequence,
@@ -1299,16 +1216,6 @@ export function sendLiveValue(value) {
     [value.t]: number, at: Number(value.at) || Date.now(), source: 'watch',
     phoneSessionGeneration: presence.generation }
   return sendControl(msg)
-}
-
-export function canSendLiveEvent(value) {
-  const r = rpcState(), s = loadState('rpc'), sid = String(value?.sid || '')
-  if (!r.v4Ready || !r.connected || !s.active || s.sessionOrigin !== 'phone' || s.sid !== sid ||
-      !isPhoneSessionLive({ sid }, runtime().phoneSessionPresence)) return true
-  if (r.liveEventSending) return false
-  if (value.t !== 'session_close') return true
-  const isValue = type => type === 'weight' || type === 'reps'
-  return !isValue(r.sending?.type) && !Object.values(r.liveLatest || {}).some(msg => isValue(msg.t))
 }
 
 export function pendingCount() { initialize(); return rpcState().outbox.length }

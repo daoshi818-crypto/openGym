@@ -1109,20 +1109,13 @@ async function sendWatchEvent(obj, stillCurrent = () => true, workoutStartToken)
 
 // ---- 实时同步：手机 → 手表 ----
 
-let restSeq = 0
-const lastSentRest = { leftSec: -1, at: 0 }
-
 /** 手机调整了休息（±15s、暂停续跑、跳过）：立即推给手表。 */
-export async function pushRestToWatch(sid, leftSec, timer = null) {
+export async function pushRestToWatch(sid, leftSec, timer = null, seq = timer?.seq || Date.now()) {
   if (!MOBILE || !sid) return
-  const now = Date.now()
-  lastSentRest.leftSec = leftSec
-  lastSentRest.at = now
-  restSeq += 1
   await sendWatchEvent({ t: 'rest', sid, leftSec, totalSec: timer?.total || 0,
     restId: timer?.restId || '', startedAt: timer?.startedAt || 0,
     endsAt: timer && !timer.paused && !timer.ready ? timer.endsAt : 0,
-    paused: !!timer?.paused, seq: timer?.seq || now, source: 'phone' })
+    paused: !!timer?.paused, seq, source: 'phone' })
 }
 
 /** 手机改了某组的重量（ex=动作下标，set=第几组，1 起）。 */
