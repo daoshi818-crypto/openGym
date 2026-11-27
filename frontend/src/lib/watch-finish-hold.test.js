@@ -9,7 +9,7 @@ import { sourceTemplate } from '../../../watch-app/scripts/source-template.mjs'
 
 // Native Page contract: bound methods, raw staticData, strong object proxies.
 // In particular an in-flight Promise must not be put in a reactive Page field.
-function setup({ rest = false } = {}) {
+function setup({ rest = false, protocolVersion = 3 } = {}) {
   vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-19T07:00:00Z'))
   const h = watchPersistence(), c = h.ctx, router = { replace: vi.fn(), push: vi.fn() }
   Object.assign(c, watchInteractionDeps, effort, protocol, { Date, console, lastTimeView, router,
@@ -20,9 +20,10 @@ function setup({ rest = false } = {}) {
   loadWatchModule('event-id', c, ['allocateEventIdentity', 'rememberEventAt'])
   loadWatchModule('close-journal', c, ['prepareClose', 'releaseCandidate', 'pendingSummaries', 'pendingEntry', 'journalEntry', 'markPhase', 'markDelivered'])
   loadWatchModule('session', c, ['loadState', 'startSession', 'save', 'toggleSet', 'nextUndone', 'calories', 'addRestTime'])
-  const s = c.startSession({ sid: 'hold', name: '推部训练', protocolVersion: 3, exercises: [
+  const s = c.startSession({ sid: 'hold', name: '推部训练', protocolVersion, exercises: [
     { entryInstanceId: 'bench', name: '哑铃推肩', sets: 3, reps: 10, weight: 12, restSec: 90 },
   ] })
+  if (protocolVersion === 4) { s.sessionOrigin = 'phone'; s.phoneSession = { sid: s.sid }; c.save(s) }
   if (rest) { s.restUntil = Date.now() + 90000; s.restId = 'rest'; s.restVersion = Date.now(); s.restTargetSec = 90; c.save(s) }
   runInNewContext(stripImports(watchSource('Workout/index.ux').match(/<script>([\s\S]*?)<\/script>/)[1]).replace('export default', 'this.definition ='), c)
   const definition = c.definition, data = structuredClone(definition.data), raw = structuredClone(definition.staticData), methods = {}, retained = new Map()
@@ -90,6 +91,31 @@ it('a hold waits behind an already committing group instead of silently dropping
   expect(c.loadState().active).toBe(false)
   expect(c.journalEntry('hold').closeEvent.completedSets).toHaveLength(1)
   expect(router.replace).toHaveBeenCalledExactlyOnceWith({ uri: '/Summary' })
+})
+it('keeps the close choice open while another live event is in flight', async () => {
+  const { p, c, router } = setup({ protocolVersion: 4 })
+  c.canSendLiveEvent = vi.fn(() => false)
+  p.askEnd()
+  await p.saveEnd()
+  expect(c.canSendLiveEvent).toHaveBeenCalledWith({ sid: 'hold', t: 'session_close' })
+  expect(c.loadState().active).toBe(true)
+  expect(p.closeMode).toBe('end')
+  expect(p.closeError).toBe('同步繁忙，请稍后再操作')
+  expect(router.replace).not.toHaveBeenCalled()
+  c.canSendLiveEvent.mockReturnValue(true)
+  await p.saveEnd()
+  expect(c.loadState().active).toBe(false)
+  expect(router.replace).toHaveBeenCalledExactlyOnceWith({ uri: '/Summary' })
+})
+it('keeps the effort draft open while another live event is in flight', async () => {
+  const { p, c } = setup({ protocolVersion: 4 })
+  c.canSendLiveEvent = vi.fn(() => false)
+  p.effortOn = true; p.effortDraft = 8
+  expect(await p.commitEffort(8)).toBe(false)
+  expect(c.canSendLiveEvent).toHaveBeenCalledWith({ sid: 'hold', t: 'effort' })
+  expect(p.effortOn).toBe(true)
+  expect(p.effortDraft).toBe(8)
+  expect(p.effortNotice).toBe('同步繁忙，请稍后再操作')
 })
 it('a transport failure cannot strand a workout page after the local close was already saved', async () => {
   const { p, c, router } = setup()
@@ -179,8 +205,10 @@ it('connection wording stays on the home screen while training only reports pend
   c.isPhoneConnected = () => false
   p.tickSyncStatus(true)
   expect(p.syncLabel).toBe(''); expect(p.syncWarning).toBe(false)
-  c.pendingCount = () => 3; p.tickSyncStatus(true)
+  c.pendingCount = () => 3; c.synchronizationStatus = () => ({ pending: 3, phonePending: 0 }); p.tickSyncStatus(true)
   expect(p.syncLabel).toBe('待上传 3 条')
+  c.synchronizationStatus = () => ({ pending: 0, phonePending: 0, historicalPending: 3 }); p.tickSyncStatus(true)
+  expect(p.syncLabel).toBe(''); expect(p.syncWarning).toBe(false)
   expect(watchSource('Workout/index.ux')).not.toMatch(/手机已连接|手机未连接/)
   expect(watchSource('Index/index.ux')).toMatch(/手机已连接/)
   expect(watchSource('Index/index.ux')).toMatch(/手机未连接/)

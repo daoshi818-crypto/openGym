@@ -7,8 +7,9 @@ import { readStored, writeStored, writeStoredConfirmed, writeStoredAtomic, retry
 import { wireHash, wireBytes, acceptWireChunk, expandWireDelta } from './sync-wire.js'
 // 手表侧传输层：vivo 智能终端 SDK（穿戴业务 Kit）。
 //
-// 手机是唯一权威；手表只做辅助显示与记录。所有动作先进本地 outbox，
-// 连接可用时按顺序发送，收到手机 ack 后清除。闪退重开后继续补发。
+// 手机是唯一权威；手机发起的会话在同 sid 的 App 在线租约内实时同步。
+// App 离线时，手表仍本地交互，但不把离线编辑变成恢复后逐项重放的 Outbox。
+// 手表独立发起训练与既有关闭日志仍保留耐久补传。
 //
 // 三条提交边界必须分清（这里是历史 bug 的来源）：
 //  - 传输层 code:0 只代表收包；业务的“已保存”要等手机对同一 eventId 回 ack。
@@ -17,11 +18,12 @@ import { wireHash, wireBytes, acceptWireChunk, expandWireDelta } from './sync-wi
 //    日志重建 outbox，而不是依赖打烊前是否调用过 sendEvent。
 import interconnect from '@blueos.bluexlink.connectionManager'
 import storage from '@blueos.storage.storage'
-import { loadState, buildSessionSummary, summaryEventOf, closeSession, save, stageSessionEvent, recoverLocalClose, commitWireSnapshot, reconcileCommittedSnapshot, phoneConflict, recordPhoneConflict, completePhoneConflict } from './session.js'
+import { commitPhoneStart, loadState, buildSessionSummary, summaryEventOf, closeSession, save, stageSessionEvent, recoverLocalClose, commitWireSnapshot, reconcileCommittedSnapshot, phoneConflict, recordPhoneConflict, completePhoneConflict } from './session.js'
 import { allocateEventIdentity, rememberEventAt } from './event-id.js'
+import { confirmPhoneSession, applyPhonePresence, isPhoneSessionLive } from './session-presence.js'
 import { pendingSummaries, pendingCloseEvents, pendingEntry, journalEntry, prepareClose, releaseCandidate, markPhase, markEntry, markDelivered } from './close-journal.js'
 import { WATCH_VERSION } from './version.js'
-import { recordDiagnostic, diagnosticLogPage } from './diagnostic-log.js'
+import { recordDiagnostic, diagnosticLog, diagnosticLogPage } from './diagnostic-log.js'
 
 const PHONE_PACKAGE = 'ch.duartesantos.opengym'
 const PHONE_FINGERPRINT = '8bf64970048540fe913005d05becee1ecad819e7171518dabcd15817301a0149'
@@ -30,6 +32,7 @@ const WRITE_TIMEOUT_MS = 5000
 const SEND_GAP_MS = 120
 const REPLAY_BATCH = 2
 const rpcState = () => runtime().rpc ||= { ...{"connect":null,"handlers":{},"connected":false,"outbox":[],"sending":false,"retryTimer":null,"lastEventAt":0,"initialized":false,"connectionGeneration":0,"sendingTimer":null,"writeBusy":false,"writeDirty":false,"persistFailed":false}, durable: new Set(), lifecycleQueue: null }
+const isPhoneLedEvent = event => !!event?.phoneLed || journalEntry(event?.sid)?.closeEvent?.phoneLed === true
 
 
 // Metadata only; the independent bounded journal never enters training storage/outbox.
@@ -50,7 +53,9 @@ function trace(stage, msg = {}, error = null, code = null, meta = {}) {
     const events = r.trace ||= []
     events.push(entry)
     if (events.length > 40) events.splice(0, events.length - 40)
-    recordDiagnostic(stage, { ...entry, type: entry.type, status: msg.status, rev: msg.commitRev })
+    recordDiagnostic(stage, { ...entry, status: msg.status, attempts: meta.attempts, receivedAt: meta.receivedAt,
+      nextAttemptAt: meta.nextAttemptAt, durable: meta.durable, readyState: meta.readyState,
+      connectionGeneration: meta.connectionGeneration, headEventId: entry.headEventId })
     console.info?.('[watch-rpc] ' + JSON.stringify(entry))
   } catch { /* diagnostic failure must not affect delivery */ }
 }
@@ -93,9 +98,18 @@ function enqueue(msg, { persistOutbox = true } = {}) {
   if (rpcState().outbox.some(e => e.msg.eventId === msg.eventId)) return true
   const entry = { at: msg.at || Date.now(), msg, sent: false }
   if (rpcState().outbox.length >= 4096 || wireBytes(JSON.stringify([...rpcState().outbox, entry])) > 2 * 1024 * 1024) {
-    rpcState().handlers.onError?.({ code: 'outbox_capacity' }); return false
+    const r = rpcState()
+    r.lastEnqueueCapacityRejected = true
+    if (!r.capacityErrorReported) {
+      r.capacityErrorReported = true
+      r.handlers.onError?.({ code: 'outbox_capacity' })
+    }
+    return false
   }
   rpcState().outbox.push(entry)
+  rpcState().lastEnqueueCapacityRejected = false
+  rpcState().capacityErrorReported = false
+  rpcState().replayCapacityBlockedAt = null
   trace('enqueue', msg)
   if (persistOutbox) persist()
   return true
@@ -179,34 +193,15 @@ function parseMessage(data) {
   return fail('envelope_depth_limit')
 }
 
-async function applyCatalog(msg) {
-  if (!Array.isArray(msg.plans) || !/^\d{4}-\d{2}-\d{2}$/.test(msg.date || '')) return { ok: false, error: 'invalid_catalog' }
-  if (msg.contentHash && (!Number.isSafeInteger(msg.at) || msg.at <= 0 || typeof msg.catalogId !== 'string')) return { ok: false, error: 'invalid_catalog' }
-  if (msg.contentHash) {
-    const { contentHash, ...body } = msg
-    if (wireHash(body) !== contentHash) return { ok: false, error: 'catalog_checksum' }
-  }
-  let status = 'applied'
-  const result = await writeStoredAtomic('plan_catalog', previous => {
-    if (previous?.at > msg.at) { status = 'retained'; return previous }
-    if (previous?.at === msg.at && previous.contentHash && previous.contentHash !== msg.contentHash) throw Error('catalog_conflict')
-    return msg
-  })
-  if (result.ok && status === 'applied') {
-    try { rpcState().handlers.onCatalog?.(msg) } catch (error) { trace('page_catalog_error', null, error) }
-  }
-  return { ok: result.ok, status, error: result.ok ? '' : 'transfer_storage' }
-}
-
 function sendHello() {
-  const s = loadState()
+  const s = loadState('rpc')
   rpcState().installationId ||= allocateEventIdentity('', 'link').installationId
   sendControl({
     t: 'hello',
     linkEpoch: rpcState().linkEpoch || (rpcState().linkEpoch = Date.now().toString(36) + ':' + Math.random().toString(36).slice(2, 10)),
     installationId: rpcState().installationId,
-    watchVersion: WATCH_VERSION, protocolVersion: 3, stableIds: true,
-    capabilities: { sessionConflict: true, inlineSnapshots: true, deviceSelection: true, planCatalogChunks: true, snapshotGenerations: true, narrowDependencies: true, causalFrontier: true, durableCommit: true, snapshotChunks: true, deltas: true, dependencyEvents: true, selectiveChunkAck: true, persistentTransfers: true, commandReceipts: true, watchEventChunks: true },
+    helloId: rpcState().linkEpoch, watchVersion: WATCH_VERSION, protocolVersion: 4, stableIds: true,
+    capabilities: { stateSnapshot: true, sessionConflict: true, inlineSnapshots: true, deviceSelection: true, snapshotGenerations: true, narrowDependencies: true, causalFrontier: true, sessionPresence: true, durableCommit: true, snapshotChunks: true, deltas: true, dependencyEvents: true, selectiveChunkAck: true, persistentTransfers: true, commandReceipts: true, watchEventChunks: true },
     receipts: true,
     sid: s.sid || '',
     rev: s.rev || 0,
@@ -217,9 +212,103 @@ function sendHello() {
   })
 }
 
+function resetPeer(r) {
+  runtime().phoneSessionPresence = null
+  r.peerProtocol = 0; r.v4Ready = false; r.controls = []; r.transfers = {}; r.lastPhoneAt = 0
+  r.liveLatest = Object.create(null)
+  cancelAppTimeout(r.liveEventTimer); r.liveEventTimer = null; r.liveEventSending = null
+  r.liveEventIds = []
+}
+
+const V4_EVENT_FIELDS = ['t', 'sid', 'eventId', 'rev', 'at', 'source', 'phoneLed', 'protocolVersion', 'phoneSessionGeneration']
+const V4_EVENT_TARGET = ['entryInstanceId', 'setId', 'ex', 'set']
+const V4_EVENT_PAYLOAD = Object.assign(Object.create(null), {
+  set: V4_EVENT_TARGET,
+  unset: V4_EVENT_TARGET,
+  focus: V4_EVENT_TARGET,
+  weight: [...V4_EVENT_TARGET, 'weight', 'weightUnit'],
+  reps: [...V4_EVENT_TARGET, 'reps'],
+  add_set: ['entryInstanceId', 'ex', 'sets', 'newSetIds', 'structureRevision', 'weight', 'reps', 'weightUnit'],
+  remove_set: ['entryInstanceId', 'ex', 'sets', 'removedSetIds', 'structureRevision'],
+  effort: [...V4_EVENT_TARGET, 'scale', 'value', 'clear', 'effortVersion', 'baseEffortVersion'],
+  rest: ['restId', 'startedAt', 'endsAt', 'totalSec', 'leftSec', 'paused', 'seq'],
+  pause: ['paused', 'seq'],
+  session_close: ['disposition', 'closedAt'],
+})
+
+function sendLiveEvent(event) {
+  const r = rpcState()
+  if (!r.v4Ready || !r.connected || event.liveGeneration !== r.connectionGeneration || !isPhoneSessionLive({ sid: event.sid }, runtime().phoneSessionPresence)) return false
+  // Completion is an edge: only its stable target and revision cross the wire.
+  const fields = [...V4_EVENT_FIELDS, ...(V4_EVENT_PAYLOAD[event.t] || [])]
+  const msg = Object.fromEntries(fields.filter(key => event[key] !== undefined).map(key => [key, event[key]]))
+  return sendControl(msg)
+}
+
+const legacyPhoneEditTypes = new Set(['weight', 'reps', 'set', 'unset', 'effort', 'rest', 'pause', 'focus', 'add_set', 'remove_set'])
+function discardLegacyPhoneEditsForV4() {
+  const r = rpcState(), state = loadState('replay')
+  const stale = event => event && event.protocolVersion !== 4 && legacyPhoneEditTypes.has(event.t) &&
+    (event.phoneLed === true || state.sessionOrigin === 'phone' && event.sid === state.sid)
+  const staleIds = new Set(r.outbox.filter(item => stale(item.msg)).map(item => item.msg.eventId).filter(Boolean))
+  const before = r.outbox.length
+  r.outbox = r.outbox.filter(item => !stale(item.msg))
+  const removed = before - r.outbox.length
+  if (removed) {
+    persist()
+    trace('v4_legacy_edits_discarded', { count: removed })
+  }
+  const pending = state.pendingEdits || []
+  const kept = pending.filter(event => !stale(event) && !staleIds.has(event.eventId))
+  if (kept.length !== pending.length) {
+    state.pendingEdits = kept
+    save(state)
+  }
+  return removed
+}
+
+function handleV4(msg) {
+  const r = rpcState(), generation = r.connectionGeneration
+  if (msg.t === 'STATE_SNAPSHOT_ACK') return true
+  if (msg.t === 'STATE_QUERY') {
+    if (typeof msg.requestId !== 'string' || !msg.requestId || msg.requestId.length > 128) return true
+    r.peerProtocol = 4; r.v4Ready = true
+    serial(() => {
+      if (!r.connected || r.connectionGeneration !== generation) return
+      discardLegacyPhoneEditsForV4()
+      const s = loadState(), ex = s.workout?.exercises?.[s.exIdx], row = s.workout?.rows?.[s.exIdx]?.[s.setIdx]
+      if (s.active && s.sessionOrigin === 'phone') confirmPhoneSession(runtime(), s.sid, s.phoneSession?.generation || s.sid)
+      const closed = readStored('closed_sessions') || [], last = closed[closed.length - 1], entry = last && readStored('watch_close_journal_v1', { entries: { [last]: { closedAt: true, disposition: true } } })?.entries?.[last]
+      const marker = readStored('phone_terminal_v4')
+      const terminal = marker && (!entry || marker.closedAt >= entry.closedAt) ? marker : entry ? { sid: last, disposition: entry.disposition, closedAt: entry.closedAt || 0 } : null
+      const value = { t: 'STATE_SNAPSHOT', protocolVersion: 4, requestId: msg.requestId, sid: s.active ? s.sid : terminal?.sid || last || '', active: !!s.active,
+        terminal, workout: s.workout?.name || '', exercises: ex ? [{ id: ex.id, entryInstanceId: ex.entryInstanceId, name: ex.name }] : [], rows: row ? [[row]] : [],
+        exIdx: s.exIdx || 0, setIdx: s.setIdx || 0, startedAt: s.startedAt || 0, pausedAt: s.pausedAt || 0, pausedMs: s.pausedMs || 0,
+        restUntil: s.restUntil || 0, restTargetSec: s.restTargetSec || 0, restLeftSec: s.restLeftSec || 0,
+        rev: Math.max(s.rev || 0, r.liveRevisionSid === s.sid ? r.liveRevision || 0 : 0), commitRev: s.commitRev || 0, structureRevision: s.structureRevision || null }
+      sendControl({ ...value, wireHash: wireHash(value) })
+    }); return true
+  }
+  if (msg.t === 'START_SESSION') {
+    const reply = { t: 'SESSION_ACCEPTED', protocolVersion: 4, sid: msg.sid || '', requestId: msg.requestId || '' }
+    if (!r.v4Ready || msg.protocolVersion !== 4) { sendControl({ ...reply, status: 'rejected', reason: 'query_required' }); return true }
+    serial(async () => {
+      if (!r.connected || r.connectionGeneration !== generation) return
+      const result = await commitPhoneStart(msg)
+      if (r.connected && r.connectionGeneration === generation) {
+        if (result.status === 'accepted') confirmPhoneSession(runtime(), msg.sid, msg.sessionGeneration || msg.sid)
+        sendControl({ ...reply, status: result.status, ...(result.reason ? { reason: result.reason } : {}) })
+      }
+      if (result.created) r.handlers.onPhoneStart?.()
+    }); return true
+  }
+  return false
+}
+
 function resumeConnection() {
   const r = rpcState()
   if (r.connected || !r.connect) return
+  resetPeer(r)
   r.connected = true
   r.lastPhoneAt = 0
   r.peerCapabilities = {} // Every connection must negotiate extension features again.
@@ -269,8 +358,24 @@ function scheduleFlush(delay = SEND_GAP_MS) {
 export function replayPendingEvents() {
   if (runtime().destroyed || rpcState().stopped) return
   const r = rpcState()
-  if (runtime().sessionDraft) return
+  if (runtime().sessionDraft || !r.peerProtocol || r.peerProtocol >= 4) return
   initialize()
+  // A failed capacity insertion stays journaled. Retry only after the outbox
+  // changes or the transport reconnects, avoiding replay/flush retry loops.
+  if (r.replayCapacityBlockedAt != null) {
+    if (r.outbox.length === r.replayCapacityBlockedAt) return
+    r.replayCapacityBlockedAt = null
+  }
+  let state
+  try { state = loadState('replay') }
+  catch (error) {
+    // A transient storage read must not escape the UI/SDK callback. No replay
+    // lock has been acquired yet, so a later wake can retry from durable state.
+    trace('replay_failed', { reason: String(error?.message || error) })
+    return
+  }
+  const phoneSession = state.sessionOrigin === 'phone' && state.phoneSession?.sid === state.sid ? state.phoneSession : null
+  if (phoneSession && !isPhoneSessionLive(phoneSession, runtime().phoneSessionPresence)) return
   if (r.replaying) return
   r.replaying = true
   const step = () => {
@@ -278,14 +383,33 @@ export function replayPendingEvents() {
     try {
       const queued = new Set(r.outbox.map(e => e.msg.eventId))
       const decisions = readStored('event_decisions') || {}, seen = new Set()
-      const candidates = [...(loadState().pendingEdits || []), ...pendingCloseEvents(),
+      const rawCandidates = [...(state.pendingEdits || []), ...pendingCloseEvents(),
         ...pendingSummaries().map(e => e.summaryEvent)]
+      const presence = runtime().phoneSessionPresence
+      const candidates = rawCandidates.filter(e => {
+        if (isPhoneLedEvent(e)) {
+          if (e.t === 'session_close') return e.sid === presence?.sid && isPhoneSessionLive({ sid: e.sid }, presence)
+          return state.active && state.sid === e.sid && e.phoneSessionGeneration != null &&
+            e.phoneSessionGeneration === presence?.generation && isPhoneSessionLive({ sid: e.sid }, presence)
+        }
+        if (phoneSession) return e.sid === phoneSession.sid && e.phoneSessionGeneration != null &&
+          e.phoneSessionGeneration === presence?.generation && isPhoneSessionLive(phoneSession, presence)
+        return true
+      })
       const missing = candidates.filter(e => {
         if (e.committedRev != null || decisions[e.eventId] || queued.has(e.eventId) || seen.has(e.eventId)) return false
         seen.add(e.eventId); return true
       })
       let accepted = 0
-      for (const event of missing.slice(0, REPLAY_BATCH)) if (sendEvent(event)) accepted++
+      for (const event of missing.slice(0, REPLAY_BATCH)) {
+        r.lastEnqueueCapacityRejected = false
+        if (sendEvent(event)) accepted++
+        else {
+          if (r.lastEnqueueCapacityRejected) r.replayCapacityBlockedAt = r.outbox.length
+          break
+        }
+      }
+      if (r.replayCapacityBlockedAt != null) { r.replaying = false; return }
       // Capacity/storage failures retain the journal. Let the normal transport
       // retry/receipt wake replay instead of spinning every 120ms without progress.
       if (missing.length > REPLAY_BATCH && accepted > 0) r.replayTimer = appTimeout(step, SEND_GAP_MS)
@@ -312,39 +436,58 @@ export function canResolvePhoneConflict() { return rpcState().peerProtocol >= 3 
 function flush() {
   if (runtime().destroyed || rpcState().stopped) return
   initialize()
-  const decisions = readStored('event_decisions') || {}
+  const decisions = rpcState().peerProtocol > 0 && rpcState().peerProtocol < 4 ? readStored('event_decisions') || {} : {}
   // A normal send/ACK turn must not clone the active workout just to discover
   // that its already queued edits are present. Only missing journals wake replay.
   const missing = event => !decisions[event.eventId] && !rpcState().outbox.some(e => e.msg.eventId === event.eventId)
-  if (!rpcState().replaying && (pendingCloseEvents().some(missing) || pendingSummaries().some(e => missing(e.summaryEvent)))) replayPendingEvents()
+  if (rpcState().peerProtocol > 0 && rpcState().peerProtocol < 4 && !rpcState().replaying && (pendingCloseEvents().some(missing) || pendingSummaries().some(e => missing(e.summaryEvent)))) replayPendingEvents()
   const expired = runtime().expiredEvents || []
   if (expired.length) { runtime().expiredEvents = []; for (const event of expired) sendEvent(event) }
   retryStorage()
   if (rpcState().persistFailed && !rpcState().writeBusy) persist()
   if (!rpcState().connected) { probeConnection(); return }
   if (!rpcState().connected || !rpcState().connect || rpcState().sending) return
+  if (rpcState().v4Ready && dispatchNextLiveLatest()) return
   if (!(rpcState().controls || []).some(e => Date.now() >= (e.nextAttemptAt || 0)) && Date.now() < (rpcState().nextSendAt || 0)) { scheduleFlush(rpcState().nextSendAt - Date.now()); return }
   const r = rpcState()
+  if (r.v4Ready && !isPhoneSessionLive(runtime().phoneSessionPresence, runtime().phoneSessionPresence)) r.controls = (r.controls || []).filter(e => !e.live)
   let control = (r.controls ||= []).find(e => Date.now() >= (e.nextAttemptAt || 0))
+  const current = loadState('rpc'), phoneSession = current.phoneSession
+  // Legacy/outstanding phone-led events are retained in place for history and
+  // diagnostics, but never replayed into a reattached phone session. Only events
+  // created under the currently confirmed same-sid lease can enter the send pump.
+  const phoneLed = current.sessionOrigin === 'phone' && phoneSession?.sid === current.sid
+  const presence = runtime().phoneSessionPresence
+  const presenceLive = phoneLed && isPhoneSessionLive(phoneSession, presence)
+  const sendableOutbox = !r.peerProtocol || r.peerProtocol >= 4 ? [] : r.outbox.filter(e => {
+    if (isPhoneLedEvent(e.msg)) {
+      if (e.msg.t === 'session_close') return e.msg.sid === presence?.sid && isPhoneSessionLive({ sid: e.msg.sid }, presence)
+      return current.active && current.sid === e.msg.sid && e.msg.phoneSessionGeneration != null &&
+        e.msg.phoneSessionGeneration === presence?.generation && isPhoneSessionLive({ sid: e.msg.sid }, presence)
+    }
+    if (phoneLed) return presenceLive && e.msg.sid === phoneSession.sid && e.msg.phoneSessionGeneration != null && e.msg.phoneSessionGeneration === presence.generation
+    return true
+  })
   const eligible = e => r.durable.has(e.msg.eventId) && Date.now() >= (e.nextAttemptAt || 0) && (!e.sent || Date.now() >= (e.nextAttemptAt || (e.sentAt || 0) + 4000))
   // Frozen extension intentions require head confirmation on old peers. Original v2
   // payloads retain their established FIFO send-order pipeline and exact ACK semantics.
-  const business = r.peerProtocol >= 3 || r.outbox[0]?.msg.dependencyEvents
-    ? selectReadyEvent(r.outbox, r.durable, decisions, Date.now(), r.peerProtocol >= 3 && !!r.peerCapabilities?.dependencyEvents)
-    : (r.outbox.find(e => !e.sent && eligible(e)) || r.outbox.find(eligible))
+  const business = r.peerProtocol >= 3 || sendableOutbox[0]?.msg.dependencyEvents
+    ? selectReadyEvent(sendableOutbox, r.durable, decisions, Date.now(), r.peerProtocol >= 3 && !!r.peerCapabilities?.dependencyEvents)
+    : (sendableOutbox.find(e => !e.sent && eligible(e)) || sendableOutbox.find(eligible))
   if ((r.controlBurst || 0) >= 8 && business) control = null
   const next = control || business
   if (!next) {
-    const waiting = [...r.controls, ...r.outbox.filter(e => r.durable.has(e.msg.eventId))]
+    const waiting = [...r.controls, ...sendableOutbox.filter(e => r.durable.has(e.msg.eventId))]
     if (waiting.length) scheduleFlush(Math.max(SEND_GAP_MS, Math.min(4000, ...waiting.map(e => Math.max(1000, (e.nextAttemptAt || 0) - Date.now())))))
     return
   }
   r.controlBurst = control ? (r.controlBurst || 0) + 1 : 0
-  const token = { generation: rpcState().connectionGeneration, eventId: next.msg.eventId, control: next }
+  const token = { generation: rpcState().connectionGeneration, eventId: next.msg.eventId, control: control ? next : null }
   rpcState().sending = token
   if (!control) rpcState().nextSendAt = Date.now() + SEND_GAP_MS
   const release = () => { if (rpcState().sending !== token || token.generation !== rpcState().connectionGeneration) return false; cancelAppTimeout(rpcState().sendingTimer); rpcState().sending = false; return true }
   const backoff = () => {
+    if (control?.live || control && r.v4Ready && ++control.failures >= 2) { r.controls = r.controls.filter(e => e !== control); return }
     if (!control) r.eventWire = null // Retry the entire event; partial SDK sends are never receipts.
     next.sent = true; next.lastSendFailed = true; next.attempts = (next.attempts || 0) + 1
     next.nextAttemptAt = Date.now() + Math.min(60000, 2000 * Math.pow(2, Math.min(5, next.attempts - 1)))
@@ -364,17 +507,19 @@ function flush() {
       frame = nextEventFrame(r.eventWire)
       data = frame.data
     } else if (!control && r.peerCapabilities?.commandReceipts) {
-      const state = loadState()
+      const state = loadState('rpc')
       const base = state.active && state.sid === next.msg.sid ? state.syncBase : null
       if (base?.wireHash) data = { ...data, appliedHash: base.wireHash, appliedRev: base.commitRev }
     }
     if (r.peerCapabilities?.deviceSelection && r.installationId) data = { ...data, sourceInstallationId: r.installationId }
     const bytes = wireBytes(JSON.stringify(data))
-    trace('send_attempt', next.msg, null, null, { bytes })
+    trace('send_attempt', next.msg, null, null, { bytes, attempts: next.attempts || 0, receivedAt: next.receivedAt || 0,
+      nextAttemptAt: next.nextAttemptAt || 0, durable: rpcState().durable.has(next.msg.eventId) })
     rpcState().connect.send({ data,
       success: () => {
         if (!release()) return
-        trace('send_success', next.msg, null, null, { bytes })
+        trace('send_success', next.msg, null, null, { bytes, attempts: next.attempts || 0, receivedAt: next.receivedAt || 0,
+        nextAttemptAt: next.nextAttemptAt || 0, durable: rpcState().durable.has(next.msg.eventId) })
         if (control) { r.controls = r.controls.filter(e => e !== control); scheduleFlush(); return }
         if (frame && r.eventWire) {
           r.eventWire.offset = frame.end
@@ -385,7 +530,8 @@ function flush() {
         if (item) { item.lastSendFailed = false; item.sent = true; item.sentAt = Date.now(); item.attempts = (item.attempts || 0) + 1; item.nextAttemptAt = Date.now() + Math.min(60000, 4000 * Math.pow(2, Math.min(4, item.attempts - 1))) + Math.floor(Math.random() * 1000) }
         scheduleFlush()
       },
-      fail: (error, code) => { if (!release()) return; trace('send_fail', next.msg, error, code, { bytes }); backoff(); scheduleFlush() }
+      fail: (error, code) => { if (!release()) return; trace('send_fail', next.msg, error, code, { bytes, attempts: next.attempts || 0, receivedAt: next.receivedAt || 0,
+        nextAttemptAt: next.nextAttemptAt || 0, durable: rpcState().durable.has(next.msg.eventId) }); backoff(); scheduleFlush() }
     })
   } catch (error) { if (release()) { trace('send_exception', next.msg, error); backoff(); scheduleFlush() } }
 }
@@ -401,7 +547,10 @@ function ackEvent(upto, eventId) {
     if (entry) {
       const drop = () => {
         rpcState().outbox = rpcState().outbox.filter(e => e.msg.eventId !== eventId)
-        if (rpcState().outbox.length !== before) persist()
+        if (rpcState().outbox.length !== before) {
+          rpcState().replayCapacityBlockedAt = null
+          persist()
+        }
       }
       const p = markDelivered(entry.sid)
       if (p && typeof p.then === 'function') p.then(ok => { if (ok) drop() }, () => {})
@@ -410,7 +559,10 @@ function ackEvent(upto, eventId) {
     }
     rpcState().outbox = rpcState().outbox.filter(e => e.msg.eventId !== eventId)
   }
-  if (rpcState().outbox.length !== before) persist()
+  if (rpcState().outbox.length !== before) {
+    rpcState().replayCapacityBlockedAt = null
+    persist()
+  }
 }
 
 function decisionPins() {
@@ -518,6 +670,7 @@ async function handleEnded(msg) {
 }
 
 export function startServer(h) {
+  runtime().sendLiveEvent = sendLiveEvent
   if (runtime().destroyed) return
   rpcState().stopped = false
   rpcState().stop = stopServer
@@ -547,11 +700,13 @@ export function startServer(h) {
   const binding = {}; owner.callbackBinding = binding
   // 页面模块共享 application runtime；当前页面只接管 UI 回调。
   callbacks.onOpen = () => {
+    resetPeer(rpcState())
     rpcState().connected = true
     rpcState().lastPhoneAt = 0
     rpcState().peerCapabilities = {}
     trace('connection_open')
     rpcState().connectionGeneration++; rpcState().sending = false; cancelAppTimeout(rpcState().sendingTimer)
+    rpcState().replayCapacityBlockedAt = null
     rpcState().linkEpoch = ''
     initialize()
     rpcState().nextSendAt = 0
@@ -562,16 +717,14 @@ export function startServer(h) {
     flush()
   }
   callbacks.onClose = () => {
-    trace('connection_close')
+    resetPeer(rpcState()); trace('connection_close')
     rpcState().connected = false
-    rpcState().controls = (rpcState().controls || []).filter(e => !e.liveKey)
     rpcState().connectionGeneration++; rpcState().sending = false; cancelAppTimeout(rpcState().sendingTimer)
     if (rpcState().handlers.onState) rpcState().handlers.onState(false)
   }
   callbacks.onError = (err) => {
-    trace('connection_error', {}, err)
+    resetPeer(rpcState()); trace('connection_error', {}, err)
     rpcState().connected = false
-    rpcState().controls = (rpcState().controls || []).filter(e => !e.liveKey)
     rpcState().connectionGeneration++; rpcState().sending = false; cancelAppTimeout(rpcState().sendingTimer)
     if (rpcState().handlers.onState) rpcState().handlers.onState(false)
     if (rpcState().handlers.onError) rpcState().handlers.onError(err || {})
@@ -585,6 +738,9 @@ export function startServer(h) {
         reason: decoded.reason, decodePath: decoded.decodePath, layers: decoded.layers })
       return
     }
+    // Older phones can still send library traffic. Discard it before transport
+    // bookkeeping or creating a receiver for an unrelated workout.
+    if (msg.t === 'plan_catalog' || (typeof msg.transferId === 'string' && msg.transferId.startsWith('c:'))) return
     const target = msg.targetInstallationId
     if (target) rpcState().installationId ||= allocateEventIdentity('', 'link').installationId
     if (target && target !== rpcState().installationId) return
@@ -593,14 +749,33 @@ export function startServer(h) {
     // 能收到有效业务包就是连接已恢复的证据，不依赖遗漏的 onOpen。
     if (!rpcState().connected) resumeConnection()
     rpcState().lastPhoneAt = Date.now()
+    if (msg.t === 'sync_chunk' && rpcState().v4Ready) {
+      if (!msg.transferId?.startsWith('start:')) return
+      try { msg = acceptWireChunk(rpcState().transfers ||= {}, msg, Date.now()); if (msg?.t !== 'START_SESSION') return }
+      catch (error) { trace('invalid_start_chunk', {}, error); return }
+    }
+    if (handleV4(msg)) return
+    if (rpcState().v4Ready && (['sync', 'plan', 'sync_delta'].includes(msg.t) || /^p:/.test(msg.transferId || ''))) return
     if (msg.t === 'link_probe') { sendControl({ t: 'link_probe_ack', requestId: msg.requestId, installationId: rpcState().installationId, sourceInstallationId: rpcState().installationId }); return }
     if (msg.t === 'link_discover') { sendHello(); return }
     if (msg.t === 'watch_log_request') { sendControl(diagnosticLogPage(msg, WATCH_VERSION)); return }
-    if (!['watch_diagnostics_request', 'watch_log_request'].includes(msg.t)) recordDiagnostic('rpc_receive', { type: msg.t, sid: msg.sid, eventId: msg.eventId, status: msg.status, rev: msg.commitRev })
-    if (msg.t === 'hello_ack') { rpcState().peerProtocol = msg.protocolVersion >= 3 ? 3 : 2; rpcState().peerCapabilities = msg.capabilities || {}; serial(resumePhoneConflict); replayPendingEvents(); flush(); return }
+    if (!['watch_diagnostics_request', 'watch_log_request'].includes(msg.t)) recordDiagnostic('rpc_receive', { type: msg.t, status: msg.status, pending: rpcState().outbox.length })
+    if (msg.t === 'session_presence') {
+      const state = loadState('rpc'), phoneSession = state.sessionOrigin === 'phone' && state.phoneSession?.sid === state.sid ? state.phoneSession : null
+      const hasPhoneLedClose = !phoneSession && (rpcState().v4Ready ? readStored('phone_terminal_v4')?.sid === msg.sid : journalEntry(msg.sid)?.closeEvent?.phoneLed === true)
+      const expectedSid = phoneSession?.sid === msg.sid ? phoneSession.sid : hasPhoneLedClose ? msg.sid : ''
+      if (expectedSid) {
+        const valid = applyPhonePresence(runtime(), msg, expectedSid)
+        if (valid && msg.active) { replayPendingEvents(); flush() }
+      }
+      return
+    }
+    if (msg.t === 'hello_ack') { rpcState().peerProtocol = rpcState().v4Ready || msg.protocolVersion >= 4 ? 4 : msg.protocolVersion >= 3 ? 3 : 2; rpcState().peerCapabilities = msg.capabilities || {}; serial(resumePhoneConflict); replayPendingEvents(); flush(); return }
     if (msg.t === 'watch_diagnostics_request') {
+      const log = diagnosticLog()
       const snapshot = { t: 'watch_diagnostics', watchVersion: WATCH_VERSION,
-        sid: String(loadState().sid || '').slice(0, 80),
+        log: { watchVersion: log.watchVersion, boot: log.boot, storageFailed: log.storageFailed,
+          dropped: log.dropped, droppedInteractions: log.droppedInteractions, unflushed: log.unflushed, count: log.events.length },
         requestId: String(msg.requestId || '').slice(0, 80), ...transportDiagnostics(8) }
       // Match the normal wire budget without introducing chunking or queue entries.
       while (snapshot.events.length && wireBytes(JSON.stringify(snapshot)) > 6000) snapshot.events.shift()
@@ -712,17 +887,6 @@ export function startServer(h) {
       })
       return
     }
-    if (msg.transferId?.startsWith('c:') && ['sync_begin', 'sync_chunk', 'sync_resume', 'sync_cancel'].includes(msg.t)) {
-      if (!rpcState().peerCapabilities?.planCatalogChunks) return
-      serial(async () => {
-        const r = rpcState()
-        r.catalogReceiver ||= persistentReceiver({ read: key => readStored(key),
-          write: async (key, value) => (await writeStoredAtomic(key, () => value)).ok },
-          applyCatalog, () => Date.now(), { channel: 'catalog', types: ['plan_catalog'], fenced: () => rpcState().peerCapabilities?.snapshotGenerations === true })
-        for (const reply of await r.catalogReceiver.receive(msg)) sendControl(reply)
-      }, 'catalogQueue')
-      return
-    }
     if (msg.transferId?.startsWith('p:') && ['sync_begin', 'sync_chunk', 'sync_resume', 'sync_cancel', 'sync_inline'].includes(msg.t)) {
       const caps = rpcState().peerCapabilities || {}
       if (!caps.selectiveChunkAck || !caps.persistentTransfers) return
@@ -761,13 +925,6 @@ export function startServer(h) {
       // Legacy exact ACK is the old protocol's durable business receipt, not received/code=0.
       // Never let a v2 ACK downgrade a v3 transaction, and never cumulatively clear IDs.
       if ((rpcState().peerProtocol || 0) < 3 && msg.eventId) serial(() => acceptLegacyAck(msg.eventId))
-      return
-    }
-    if (msg.t === 'plan_catalog') {
-      serial(async () => {
-        const result = await applyCatalog(msg)
-        sendControl({ t: 'plan_catalog_ack', at: msg.at, catalogId: msg.catalogId, contentHash: msg.contentHash, status: result.ok ? result.status : 'storage_failed' })
-      }, 'catalogQueue')
       return
     }
     if (msg.t === 'watch_start_ack') {
@@ -875,6 +1032,7 @@ export function startServer(h) {
 
 export function stopServer() {
   const r = rpcState()
+  resetPeer(r); runtime().sendLiveEvent = null
   r.stopped = true
   r.callbackBinding = null
   r.handlers = {}
@@ -898,8 +1056,24 @@ export function sendEvent(obj) {
   if (runtime().sessionDraft) { stageSessionEvent(runtime().sessionDraft, obj); return true }
   initialize()
   // A page replay must not re-clone/rewrite the full session or restart delivery.
+  if (obj.protocolVersion === 4 && obj.phoneLed) return sendLiveEvent(obj)
+  if (rpcState().v4Ready && (obj.phoneLed || obj.t === 'summary')) return false
   if (obj.eventId && rpcState().outbox.some(e => e.msg.eventId === obj.eventId)) return true
-  const frozen = obj.eventId && loadState().pendingEdits?.find(e => e.dependencyEvents === true && e.eventId === obj.eventId)
+  const s = loadState(), presence = runtime().phoneSessionPresence
+  const phoneSession = s.sessionOrigin === 'phone' && s.phoneSession?.sid === s.sid ? s.phoneSession : null
+  const phoneLed = !!phoneSession || isPhoneLedEvent(obj)
+  const expectedSid = phoneSession?.sid || (obj.phoneLed ? obj.sid : '')
+  const livePhoneSession = phoneLed && obj.sid === expectedSid && isPhoneSessionLive({ sid: expectedSid }, presence)
+  if (phoneLed && obj.t === 'summary') return true // Phone-led close summaries remain watch-local.
+  if (phoneLed && obj.t !== 'session_close' && obj.phoneSessionGeneration != null && obj.phoneSessionGeneration !== presence?.generation) return true
+  if (phoneLed && obj.t !== 'session_close' && (!s.active || s.sid !== obj.sid)) return true
+  if (phoneLed && obj.t === 'session_close') {
+    if (!livePhoneSession) return true // The durable close journal retries it only under same-sid foreground presence.
+    obj = { t: 'session_close', sid: obj.sid, eventId: obj.eventId, seq: obj.seq, at: obj.at,
+      closedAt: obj.closedAt, disposition: obj.disposition, source: 'watch', protocolVersion: 3, phoneLed: true }
+  } else if (phoneLed && !livePhoneSession) return true
+  else if (phoneLed) { obj.phoneLed = true; obj.phoneSessionGeneration = presence.generation }
+  const frozen = obj.eventId && s.pendingEdits?.find(e => e.dependencyEvents === true && e.eventId === obj.eventId)
   if (frozen || obj.dependencyEvents === true) { const ok = enqueue(JSON.parse(JSON.stringify(frozen || obj))); if (ok) flush(); return ok }
   if (obj.at == null) obj.at = Date.now()
   if (!obj.eventId) {
@@ -913,7 +1087,6 @@ export function sendEvent(obj) {
   } else {
     rememberEventAt(Number(obj.seq || obj.at) || 0)
   }
-  const s = loadState()
   if (rpcState().peerProtocol >= 3) {
     obj.protocolVersion = 3
     obj.baseCommitRev ??= s.commitRev || 0
@@ -961,37 +1134,195 @@ function freezeOwnClose(obj) {
 export function sendControl(obj) {
   const r = rpcState()
   if (!r.connected || !r.connect || !obj) return false
-  const controls = r.controls ||= []
-  const liveKey = obj.liveValue ? [obj.sid, obj.entryInstanceId || obj.ex, obj.setId || obj.set, obj.t].join(':') : ''
-  if (liveKey) {
-    const existing = controls.find(e => e.liveKey === liveKey)
-    if (existing && r.sending?.control !== existing) {
-      existing.msg = JSON.parse(JSON.stringify(obj)); existing.key = JSON.stringify(existing.msg)
-      return true
-    }
+  const live = obj.protocolVersion === 4 && obj.phoneLed === true
+  if (live) {
+    const latestKey = obj.t === 'focus' ? ['focus', obj.sid].join(':')
+      : ['weight', 'reps', 'rest', 'pause', 'row_value'].includes(obj.t)
+        ? [obj.t, obj.sid, obj.entryInstanceId || '', obj.setId || '', obj.field || ''].join(':') : ''
+    return sendV4LiveControl(obj, latestKey)
   }
+  const controls = r.controls ||= []
   const key = JSON.stringify(obj)
   if (controls.some(e => e.key === key)) return true
   if (controls.length >= 64) { trace('control_queue_full', obj); return false }
-  controls.push({ key, liveKey, msg: JSON.parse(key), nextAttemptAt: 0 })
+  controls.push({ key, msg: JSON.parse(key), latestKey: '', live: false, failures: 0, nextAttemptAt: 0 })
   flush()
   return true
 }
 
-/** Best-effort value update. A disconnected edit is intentionally discarded. */
-export function sendLiveValue(obj) {
-  if (!obj || !['weight', 'reps'].includes(obj.t) || !rpcState().connected) return false
-  const value = obj.t === 'weight' ? obj.weight : obj.reps
-  return sendControl({ ...obj, liveValue: true, at: Number(obj.at) || Date.now(), [obj.t]: value })
+const V4_LIVE_LATEST_KEYS = 32
+function liveControlReady(msg) {
+  const r = rpcState(), presence = runtime().phoneSessionPresence
+  return !!(r.connected && r.connect && r.v4Ready && msg?.protocolVersion === 4 && msg.phoneLed === true &&
+    msg.sid && isPhoneSessionLive({ sid: msg.sid }, presence))
+}
+function sendV4LiveControl(msg, latestKey) {
+  const r = rpcState()
+  if (!liveControlReady(msg)) return false
+  if (r.sending || r.liveEventSending) {
+    if (!latestKey) return dispatchV4LiveEvent(msg)
+    const pending = r.liveLatest ||= Object.create(null)
+    const existed = Object.prototype.hasOwnProperty.call(pending, latestKey)
+    if (!existed && Object.keys(pending).length >= V4_LIVE_LATEST_KEYS) {
+      const oldest = Object.keys(pending)[0]
+      if (oldest) delete pending[oldest]
+    }
+    pending[latestKey] = JSON.parse(JSON.stringify(msg))
+    return true
+  }
+  if (!latestKey) return dispatchV4LiveEvent(msg)
+  return dispatchV4LiveControl(msg)
+}
+function stampV4LiveRevision(r, msg) {
+  const state = loadState('rpc')
+  const storedRev = state.sid === msg.sid ? Number(state.rev) || 0 : 0
+  const liveRev = r.liveRevisionSid === msg.sid ? Number(r.liveRevision) || 0 : 0
+  r.liveRevisionSid = msg.sid
+  r.liveRevision = Math.max(storedRev, liveRev, Number(msg.rev) || 0) + 1
+  msg.rev = r.liveRevision
+}
+function dispatchV4LiveControl(msg) {
+  const r = rpcState()
+  if (!liveControlReady(msg) || r.sending) return false
+  stampV4LiveRevision(r, msg)
+  const token = { generation: r.connectionGeneration, control: null, live: true, type: msg.t, eventId: msg.eventId }
+  r.sending = token
+  const release = () => {
+    if (r.sending !== token || token.generation !== r.connectionGeneration) return false
+    cancelAppTimeout(r.sendingTimer); r.sendingTimer = null; r.sending = false
+    return true
+  }
+  const after = () => {
+    if (dispatchNextLiveLatest()) return
+    scheduleFlush()
+  }
+  const bytes = wireBytes(JSON.stringify(msg))
+  trace('live_send_attempt', msg, null, null, { bytes })
+  r.sendingTimer = appTimeout(() => {
+    if (!release()) return
+    trace('live_send_timeout', msg, null, null, { bytes })
+    r.handlers.onError?.({ code: 'live_state_send_failed', sid: msg.sid, operation: msg.t })
+    after()
+  }, 6000)
+  try {
+    r.connect.send({ data: msg,
+      success: () => { if (!release()) return; trace('live_send_success', msg, null, null, { bytes }); after() },
+      fail: (error, code) => { if (!release()) return; trace('live_send_fail', msg, error, code, { bytes }); r.handlers.onError?.({ code: 'live_state_send_failed', sid: msg.sid, operation: msg.t }); after() }
+    })
+    return true
+  } catch (error) {
+    if (release()) { trace('live_send_exception', msg, error); r.handlers.onError?.({ code: 'live_state_send_failed', sid: msg.sid, operation: msg.t }); after() }
+    return false
+  }
+}
+function dispatchV4LiveEvent(msg) {
+  const r = rpcState()
+  if (!liveControlReady(msg)) return false
+  if (msg.eventId && r.liveEventIds?.includes(msg.eventId)) return true
+  if (r.liveEventSending?.eventId && r.liveEventSending.eventId === msg.eventId) return true
+  if (r.liveEventSending) {
+    trace('live_event_rejected_busy', msg, null, null, { activeEventId: r.liveEventSending.eventId })
+    r.handlers.onError?.({ code: 'live_event_busy', sid: msg.sid, eventId: msg.eventId, operation: msg.t })
+    return false
+  }
+  stampV4LiveRevision(r, msg)
+  const token = { generation: r.connectionGeneration, eventId: msg.eventId || '' }
+  r.liveEventSending = token
+  const release = () => {
+    if (r.liveEventSending !== token || token.generation !== r.connectionGeneration) return false
+    cancelAppTimeout(r.liveEventTimer); r.liveEventTimer = null; r.liveEventSending = null
+    return true
+  }
+  const fail = (code, error) => {
+    if (!release()) return
+    trace('live_event_send_fail', msg, error, code)
+    r.handlers.onError?.({ code: 'live_event_send_failed', sid: msg.sid, eventId: msg.eventId, operation: msg.t })
+    if (!dispatchNextLiveLatest()) scheduleFlush()
+  }
+  const bytes = wireBytes(JSON.stringify(msg))
+  trace('live_event_send_attempt', msg, null, null, { bytes })
+  r.liveEventTimer = appTimeout(() => fail('timeout'), 6000)
+  try {
+    r.connect.send({ data: msg,
+      success: () => {
+        if (!release()) return
+        if (msg.eventId) {
+          r.liveEventIds ||= []
+          r.liveEventIds.push(msg.eventId)
+          if (r.liveEventIds.length > 64) r.liveEventIds.shift()
+        }
+        trace('live_event_send_success', msg, null, null, { bytes })
+        if (!dispatchNextLiveLatest()) scheduleFlush()
+      },
+      fail: fail,
+    })
+    return true
+  } catch (error) {
+    fail('exception', error)
+    return false
+  }
+}
+function dispatchNextLiveLatest() {
+  const r = rpcState(), pending = r.liveLatest ||= Object.create(null)
+  if (r.sending || r.liveEventSending) return false
+  if (!r.connected || !r.connect || !r.v4Ready) {
+    r.liveLatest = Object.create(null)
+    return false
+  }
+  const keys = Object.keys(pending)
+  if (!keys.length) return false
+  const key = keys[0], msg = pending[key]
+  delete pending[key]
+  if (liveControlReady(msg)) dispatchV4LiveControl(msg)
+  else return dispatchNextLiveLatest()
+  return true
+}
+
+/** Send the latest phone-led value without adding it to the persistent outbox. */
+export function sendLiveValue(value) {
+  if (!value || !['weight', 'reps'].includes(value.t)) return false
+  initialize()
+  const r = rpcState(), s = loadState('rpc'), sid = String(value.sid || '')
+  const presence = runtime().phoneSessionPresence
+  if (!sid || !r.connected || !r.v4Ready || !s.active || s.sessionOrigin !== 'phone' || s.sid !== sid ||
+      !isPhoneSessionLive({ sid }, presence)) return false
+  const number = Number(value[value.t])
+  if (!Number.isFinite(number) || number < 0 || number > 99999) return false
+  r.liveValueSequence = (r.liveValueSequence || 0) + 1
+  const msg = { t: value.t, protocolVersion: 4, phoneLed: true, sid,
+    eventId: 'watch-live:' + sid + ':' + Date.now() + ':' + r.liveValueSequence,
+    ex: Number.isInteger(value.ex) && value.ex >= 0 ? value.ex : 0,
+    set: Number.isInteger(value.set) && value.set > 0 ? value.set : 1,
+    ...(value.entryInstanceId ? { entryInstanceId: String(value.entryInstanceId).slice(0, 120) } : {}),
+    ...(value.setId ? { setId: String(value.setId).slice(0, 120) } : {}),
+    ...(value.weightUnit ? { weightUnit: String(value.weightUnit).slice(0, 8) } : {}),
+    [value.t]: number, at: Number(value.at) || Date.now(), source: 'watch',
+    phoneSessionGeneration: presence.generation }
+  return sendControl(msg)
+}
+
+export function canSendLiveEvent(value) {
+  const r = rpcState(), s = loadState('rpc'), sid = String(value?.sid || '')
+  if (!r.v4Ready || !r.connected || !s.active || s.sessionOrigin !== 'phone' || s.sid !== sid ||
+      !isPhoneSessionLive({ sid }, runtime().phoneSessionPresence)) return true
+  if (r.liveEventSending) return false
+  if (value.t !== 'session_close') return true
+  const isValue = type => type === 'weight' || type === 'reps'
+  return !isValue(r.sending?.type) && !Object.values(r.liveLatest || {}).some(msg => isValue(msg.t))
 }
 
 export function pendingCount() { initialize(); return rpcState().outbox.length }
 export function persistenceStatus() { return { pending: rpcState().writeBusy || rpcState().writeDirty, failed: rpcState().persistFailed } }
 export function isConnected() { return rpcState().connected }
 export function isPhoneConnected() { const r = rpcState(); return !!r.connected && !!r.lastPhoneAt && Date.now() - r.lastPhoneAt < 15000 }
+export function isPhoneSessionConnected(sid) {
+  const state = loadState(), session = state.phoneSession
+  return !!rpcState().connected && state.sid === sid && session?.sid === sid && isPhoneSessionLive(session, runtime().phoneSessionPresence)
+}
 export function synchronizationStatus() {
   initialize()
   const conflicts = readStored('sync_conflicts') || []
-  return { pending: rpcState().outbox.length, phonePending: rpcState().outbox.filter(e => e.receivedAt).length,
-    conflicts: conflicts.filter(c => !c.reviewed).length, lastCommitAt: rpcState().lastCommitAt || 0 }
+  const r = rpcState(), legacy = r.outbox.length, v4 = r.peerProtocol >= 4
+  return { pending: v4 ? 0 : legacy, phonePending: v4 ? 0 : r.outbox.filter(e => e.receivedAt).length,
+    historicalPending: v4 ? legacy : 0, conflicts: conflicts.filter(c => !c.reviewed).length, lastCommitAt: r.lastCommitAt || 0 }
 }

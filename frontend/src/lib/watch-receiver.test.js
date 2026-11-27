@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { applyEdit, applyRest, restOf, applyFocus } from '../../../watch-app/src/lib/protocol.js'
 import { loadWatchModule, watchPersistence, watchInteractionDeps } from './watch-test-harness.js'
 import { effortScaleOf, effortValueOf, effortKindOf, stepEffortValue, effortMeaning, effortSummaryText, formatEffort } from '../../../watch-app/src/lib/effort-scale.js'
+import { createDurableWatchLifecycle } from './watch-commit.js'
 
 // Execute the shipped watch JS and page scripts with only the device APIs replaced.
 const source = path => readFileSync(new URL('../../../watch-app/src/' + path, import.meta.url), 'utf8')
@@ -32,16 +33,19 @@ function connection() {
   return { sent, send({ data, success }) { sent.push(data); success() },
     getReadyState({ success }) { success({ status: 1 }) } }
 }
+function acknowledgePeer(c, protocolVersion = 2) {
+  c.onMessage({ data: { t: 'hello_ack', protocolVersion } })
+}
 function page(path, deps) {
   const script = source(path).match(/<script>([\s\S]*?)<\/script>/)[1]
-  const context = { ...watchInteractionDeps, phoneConflict: () => null, setInterval: () => 1, clearInterval() {}, replayPendingEvents() {}, setTimeout: () => 1, clearTimeout() {}, console, WATCH_VERSION: 'test-watch', applyEdit, applyRest, restOf, applyFocus, persistenceStatus: () => ({}), storageStatus: () => ({}), synchronizationStatus: () => ({}),
-    effortScaleOf, effortValueOf, effortKindOf, stepEffortValue, effortMeaning, effortSummaryText, formatEffort,
+  const context = { ...watchInteractionDeps, phoneConflict: () => null, setInterval: () => 1, clearInterval() {}, replayPendingEvents() {}, setTimeout: () => 1, clearTimeout() {}, console, WATCH_VERSION: 'test-watch', applyEdit, applyRest, restOf, applyFocus, persistenceStatus: () => ({}), storageStatus: () => ({}), synchronizationStatus: () => ({}), pendingCount: () => 0,
+    effortScaleOf, effortValueOf, effortKindOf, stepEffortValue, effortMeaning, effortSummaryText, formatEffort, crownTick: () => {},
     storage: { getSync: () => null, set() {} }, replacePlan() {}, ...deps }
   runInNewContext(script.replace(imports, '').replace('export default', 'this.page ='), context)
   return { ...context.page, ...context.page.data }
 }
-function session() {
-  const { disk, ctx } = watchPersistence()
+function session(shared = {}) {
+  const { disk, ctx } = watchPersistence(new Map(), shared)
   Object.assign(ctx, { console, Date, applyEdit, applyRest })
   loadWatchModule('event-id', ctx, ['allocateEventIdentity', 'rememberEventAt'])
   loadWatchModule('close-journal', ctx, ['prepareClose', 'releaseCandidate', 'pendingSummaries', 'pendingEntry', 'journalEntry', 'markPhase', 'markDelivered'])
@@ -146,6 +150,51 @@ describe('watch completed sets and rest clock', () => {
     expect(writes.mock.calls.filter(([w]) => w.key === 'session_state')).toHaveLength(1)
     expect(sendControl).toHaveBeenCalledOnce()
     expect(sendControl.mock.calls[0][0]).toMatchObject({ t: 'rest', leftSec: 460 })
+  })
+
+  it('keeps crown edits responsive during a pending write and flushes only the latest value', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-19T12:00:00Z'))
+    const sessions = session(), connection = transport({ sent: [], send({ data, success }) { this.sent.push(data); success() }, getReadyState({ success }) { success({ status: 1 }) } })
+    sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+    const workout = training(sessions, connection, { Date, setTimeout, clearTimeout, setInterval, clearInterval })
+    workout.onInit(); workout.showCurrent(); workout.editReps()
+    const writes = [], originalSet = sessions.storage.set
+    sessions.storage.set = item => item.key === 'session_state' ? writes.push(item) : originalSet(item)
+
+    workout.onRotation({ delta: 1, state: 2 })
+    expect(workout.repsNum).toBe('9')
+    await vi.advanceTimersByTimeAsync(350)
+    expect(writes).toHaveLength(1)
+
+    workout.localCommitPending = true
+    workout.onRotation({ delta: 1, state: 2 })
+    expect(workout.repsNum).toBe('10')
+    workout.localCommitPending = false
+    await vi.advanceTimersByTimeAsync(350)
+    writes.shift().success()
+    await vi.waitFor(() => expect(writes).toHaveLength(1))
+    writes.shift().success()
+    await vi.waitFor(() => expect(sessions.loadState().workout.rows[0][0].r).toBe('10'))
+    expect(connection.sent.some(message => message.t === 'set')).toBe(false)
+  })
+
+  it('flushes a dirty crown draft on page hide without sending a set event', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-19T12:00:00Z'))
+    const sessions = session(), c = connection(), rpc = transport(c)
+    sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+    const workout = training(sessions, rpc, { Date, setTimeout, clearTimeout, setInterval, clearInterval })
+    workout.onInit(); workout.showCurrent(); workout.editReps()
+    const writes = vi.spyOn(sessions.storage, 'set')
+    workout.onRotation({ delta: 1, state: 2 })
+    workout.onRotation({ delta: 1, state: 2 })
+    expect(writes).not.toHaveBeenCalled()
+
+    await workout.onHide()
+    expect(writes.mock.calls.filter(([item]) => item.key === 'session_state')).toHaveLength(1)
+    expect(sessions.loadState().workout.rows[0][0].r).toBe('10')
+    expect(c.sent.some(message => message.t === 'set')).toBe(false)
   })
 
   it('keeps rest rendering at a display-sized cadence and batches a crown focus save', async () => {
@@ -501,14 +550,16 @@ describe('watch direct workout entry', () => {
     expect(router.replace).not.toHaveBeenCalled()
   })
 
-  it('keeps cached plans idle and does not navigate a hidden home page', async () => {
+  it('stays idle and waits until the hidden home page is visible to open a phone workout', async () => {
     const sessions = session(), { index, router } = home(sessions)
     index.onReady()
-    index.onCatalog({ plans: [{ id: 'p', name: 'Plan', exercises: plan.exercises }] })
+    expect(index.canResume).toBe(false)
     expect(sessions.loadState().active).toBe(false)
     index.onHide()
     index.onPlan(plan)
     expect(router.replace).not.toHaveBeenCalled()
+    index.onShow()
+    expect(router.replace).toHaveBeenCalledExactlyOnceWith({ uri: '/Workout' })
   })
 })
 
@@ -629,6 +680,7 @@ describe('watch business message boundary', () => {
     sessions.save(state)
     const replace = vi.fn(), workout = training(sessions, rpc, { router: { replace } })
     workout.onInit()
+    acknowledgePeer(c)
     workout.hrDirty = true
     c.onMessage({ data: { t: 'ended', sid: plan.sid, endedAt: Date.now() - 300000, reason: 'finished' } })
     // The close is committed through the durable journal before the session is cleared.
@@ -643,6 +695,7 @@ describe('watch business message boundary', () => {
     expect(c.sent.at(-1)).toMatchObject({ t: 'plan_ack', status: 'closed' })
     expect(sessions.loadState().active).toBe(false)
     c.onClose(); c.onOpen()
+    acknowledgePeer(c)
     await new Promise(r => setTimeout(r, 300))
     expect(c.sent.filter(m => m.t === 'summary')).toHaveLength(2)
   })
@@ -753,23 +806,68 @@ describe('watch business message boundary', () => {
     expect(workout.groupLabel).toBe('第 2 组，共 3 组')
   })
 
+  it('sends the real Workout completion edge through the v4 phone receiver and commits by stable set ID', async () => {
+    const shared = { phoneSessionPresence: null }, sessions = session(shared), c = connection()
+    sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+    const watchState = sessions.loadState()
+    watchState.sessionOrigin = 'phone'; watchState.protocolVersion = 4
+    watchState.phoneSession = { sid: watchState.sid, generation: watchState.sid }
+    sessions.save(watchState)
+    shared.phoneSessionPresence = { active: true, sid: watchState.sid, generation: watchState.sid, lastSeenAt: Date.now() }
+    const rows = watchState.workout.rows, exercise = watchState.workout.exercises[0]
+    exercise.entryInstanceId ||= 'bench-entry'
+    rows[0].forEach((row,index)=>{ row.setId ||= `bench-set-${index+1}` })
+    sessions.save(watchState)
+    const phone = { unit:'kg', active:{ start:Date.now(), watchSid:watchState.sid, watchPhoneSession:true,
+      watchSessionGeneration:watchState.sid, cur:0, entries:[{ id:'bench', entryInstanceId:exercise.entryInstanceId,
+        sets:rows[0].map(row=>({setId:row.setId,w:row.w,r:row.r,done:false})) }] } }
+    const receiver = createDurableWatchLifecycle({ getState:()=>phone, update:mutate=>mutate(phone), isForeground:()=>true,
+      checkpoint:async()=>{}, finish:()=>{}, rest:()=>{}, stop:()=>{}, send:()=>{}, sendSync:()=>{} })
+    try {
+      const rpc = transport(c, sessions, shared)
+      rpc.startServer({}); c.onOpen()
+      c.onMessage({ data:{ t:'STATE_QUERY',protocolVersion:4,requestId:'phone-route' } })
+      shared.phoneSessionPresence = { active:true,sid:watchState.sid,generation:watchState.sid,lastSeenAt:Date.now() }
+      const workout = training(sessions, rpc); workout.onInit()
+      workout.selectField('w'); workout.adjustSelectedField(1)
+      expect(c.sent.filter(message=>message.t==='weight'&&message.phoneLed===true)).toHaveLength(1)
+      await workout.flushNumberDraft()
+      const valueFrames = c.sent.filter(message=>message.t==='weight'&&message.phoneLed===true)
+      expect(valueFrames.length).toBeGreaterThan(0)
+      expect(valueFrames.every(message=>Object.keys(message).filter(key=>['weight','reps'].includes(key)).length===1)).toBe(true)
+      valueFrames.forEach(frame=>receiver(frame)); await receiver.idle()
+      expect(phone.active.entries[0].sets[0].w).toBe(60.5)
+      await workout.onComplete()
+      const frames = c.sent.filter(message=>message.t==='set'&&message.phoneLed===true)
+      expect(frames).toHaveLength(1)
+      expect(frames[0]).toMatchObject({ protocolVersion:4,sid:watchState.sid,setId:rows[0][0].setId,entryInstanceId:exercise.entryInstanceId })
+      expect(frames[0]).not.toHaveProperty('weight')
+      expect(frames[0]).not.toHaveProperty('reps')
+      expect(frames[0]).not.toHaveProperty('rest')
+      frames.forEach(frame=>receiver(frame)); await receiver.idle()
+      expect(phone.active.entries[0].sets[0].done).toBe(true)
+      expect(phone.active.entries[0].sets[1].done).toBe(false)
+    } finally { receiver.dispose() }
+  })
+
   it.each([['w', 'weight', '72.5'], ['r', 'reps', '12']])(
     'completes the inline %s draft in one set event while preserving other rows', async (field, type, value) => {
       const sessions = session(), c = connection()
       sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
       const rpc = transport(c, { loadState: sessions.loadState })
       const workout = training(sessions, rpc); workout.onInit()
+      acknowledgePeer(c)
       workout.selectField(field); workout.selectField(field)
       const changed = sessions.loadState(); sessions.setRowValue(changed, 0, 1, 'w', '90')
       for (const key of value) workout.numberKey(key)
       workout.saveNumberKeypad()
       expect(sessions.loadState().workout.rows[0][1].w).toBe('90')
       expect(field === 'w' ? workout.weightNum : workout.repsNum).toBe(value)
-      expect(c.sent.find(m => m.t === type && m.liveValue)).toMatchObject({ [type]: value, set: 1 })
+      expect(c.sent.some(m => m.t === type && m.liveValue)).toBe(false)
       await workout.onComplete()
       expect(sessions.loadState().workout.rows[0][0]).toMatchObject({ [field]: value, done: true })
       expect(c.sent.find(m => m.t === 'set')).toMatchObject({ set: 1 })
-      expect(c.sent.find(m => m.t === type && m.liveValue)).toMatchObject({ [type]: value, set: 1 })
+      expect(c.sent.some(m => m.t === type && m.liveValue)).toBe(false)
     })
 
   it('keeps the shown value when the inline keyboard is confirmed without typing', () => {
@@ -787,20 +885,22 @@ describe('watch business message boundary', () => {
     workout.editWeight(); workout.editWeight(); workout.numberKey8(); workout.numberKey0(); workout.saveNumberKeypad()
     for (let i = 0; i < 3; i++) c.onMessage({ data: { ...plan, t: 'sync', rows: [[{ w: '60', r: '8', done: false }]] } })
     expect(workout.weightNum).toBe('80')
-    expect(c.sent.filter(m => m.t === 'weight' && m.liveValue)).toHaveLength(1)
-    expect(c.sent.find(m => m.t === 'weight' && m.liveValue)).toMatchObject({ weight: '80', set: 1 })
+    expect(c.sent.filter(m => m.t === 'weight' && m.liveValue)).toHaveLength(0)
   })
 
   it('retries unacknowledged edits after reconnecting instead of leaving them permanently sent', async () => {
     const c = connection(), rpc = transport(c)
     rpc.startServer({})
+    acknowledgePeer(c)
     rpc.sendEvent({ t: 'weight', sid: plan.sid, ex: 0, set: 1, weight: '80', at: 100 })
     c.onClose(); c.onOpen()
+    acknowledgePeer(c)
     await new Promise(r => setTimeout(r, 300))
     expect(c.sent.filter(m => m.t === 'weight')).toHaveLength(2)
     c.onMessage({ data: { t: 'ack', eventId: c.sent.find(m => m.t === 'weight').eventId, upto: 100 } })
     await new Promise(r => setTimeout(r, 0))
     c.onClose(); c.onOpen()
+    acknowledgePeer(c)
     await new Promise(r => setTimeout(r, 300))
     expect(c.sent.filter(m => m.t === 'weight')).toHaveLength(2)
   })
@@ -1050,3 +1150,4 @@ describe('watch local diagnostic viewer', () => {
     expect(deps.save).not.toHaveBeenCalled()
   })
 })
+

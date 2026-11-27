@@ -72,7 +72,7 @@ export function summaryCaloriesOf(summary) {
 /**
  * 同步文案：只从真实业务状态推导，优先级自高而低。
  *
- * `delivered` 必须是本总结 sid 的关闭日志状态（Summary 页读 journalEntry(sid).delivery），
+ * `delivered` 必须是本总结 sid 的关闭日志状态（Summary 页只读该记录的 delivery 字段），
  * `pending` 是全局 outbox 数量（不能宣称都是这一场训练的），`connected` 只说明连接在。
  */
 export function summarySyncLabel({ delivered, pending, connected } = {}) {

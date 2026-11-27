@@ -98,6 +98,18 @@ it('set dots select a completed row for undo without completing another row', as
   expect(p.state.pendingEdits.filter(e => e.t === 'unset')).toHaveLength(1)
 })
 
+it('records refresh and action-to-refresh durations without touching session persistence', () => {
+  vi.useFakeTimers(); vi.setSystemTime(1000000)
+  const h = boot(); h.c.startSession(plan()); h.c.recordDiagnostic = vi.fn()
+  const { ctx: p } = bluePage(h, true)
+  p.refresh()
+  expect(h.c.recordDiagnostic).toHaveBeenLastCalledWith('workout_refresh', expect.objectContaining({ sid: 's', active: true, duration: 0 }))
+  vi.setSystemTime(1000010); p.logInteraction('local_commit_begin')
+  vi.setSystemTime(1000045); p.refresh()
+  expect(h.c.recordDiagnostic).toHaveBeenLastCalledWith('workout_refresh', expect.objectContaining({ sid: 's', active: true, duration: 0, actionDuration: 35 }))
+  expect([...h.disk.keys()]).not.toContain('watch_diagnostic_log_v1')
+})
+
 it('keeps native dot array and row identities through refreshes and cursor changes', () => {
   vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const { ctx: p } = bluePage(h, true)
   p.refresh()
@@ -155,12 +167,15 @@ it('retains the last tap during slow storage with only one write in flight', asy
 })
 
 it('renders the tapped group immediately while session storage takes two seconds', async () => {
-  vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const { ctx: p } = bluePage(h, true)
+  vi.useFakeTimers(); const h = boot(); h.c.startSession(plan()); const { ctx: p, bound } = bluePage(h, true)
+  const refresh = vi.spyOn(bound, 'refresh')
   const s = h.c.loadState(); s.workout.rows[0][2].w = '77.5'; h.c.save(s)
   p.state = h.c.loadState(); p.refresh()
   const writes = [], original = h.storage.set
   h.storage.set = item => item.key === 'session_state' ? writes.push(item) : original(item)
+  refresh.mockClear()
   const picked = p.pickSetDot(p.setDots[2])
+  expect(refresh).toHaveBeenCalledTimes(1)
   expect(p.state.setIdx).toBe(2)
   expect(p.weightNum).toBe('77.5')
   expect(p.setDots.map(d => d.current)).toEqual([false, false, true, false, false])
@@ -168,6 +183,7 @@ it('renders the tapped group immediately while session storage takes two seconds
   await vi.advanceTimersByTimeAsync(2000)
   expect(writes).toHaveLength(1); expect(p.state.setIdx).toBe(2)
   original(writes.shift()); expect(await picked).toBe(true)
+  expect(refresh).toHaveBeenCalledTimes(2) // One preview and one final reconciliation.
   expect(h.c.loadState().setIdx).toBe(2)
 })
 
@@ -531,7 +547,8 @@ it('records a page callback failure separately from a durable phone receipt', as
     expect(a.c.pendingCount()).toBe(0)
     expect(a.c.loadState().workout.rows[0][0].done).toBe(true)
     expect(a.c.diagnosticLog().events).toEqual(expect.arrayContaining([
-      expect.objectContaining({ stage: 'page_sync_error', detail: 'page refresh failed' }),
+      // Watch diagnostics store bounded tokens, stripping spaces and punctuation.
+      expect.objectContaining({ stage: 'page_sync_error', detail: 'pagerefreshfailed' }),
     ]))
   } finally { a.receive.dispose() }
 })
@@ -718,6 +735,7 @@ it('boots atomically from the full phone snapshot before the first completion', 
   vi.useFakeTimers(); const a = paired(false)
   // New peers receive the full snapshot, without first activating a bare plan.
   await a.sync({ ...watchSnapshotOf(a.S, null), t: 'sync', protocolVersion: 3 })
+  a.connection.onMessage({ t: 'session_presence', sid: 's', sessionGeneration: 1, active: true, sentAt: Date.now(), commitRev: a.S.active.syncRev })
   try {
     expect(await a.p.onComplete()).toBe(true)
     await a.pump()

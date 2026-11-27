@@ -25,19 +25,20 @@ function harness() {
     return { startServer: ctx.startServer, sendEvent: ctx.sendEvent, pendingCount: ctx.pendingCount, persistenceStatus: ctx.persistenceStatus }
   }
   const commit = index => { const item = writes[index]; disk.set(item.key, structuredClone(item.value)); item.success?.() }
-  return { shared, disk, writes, sent, failures, persistence, connection, transport, commit }
+  const negotiateV2 = () => connection.onMessage({ t: 'hello_ack', protocolVersion: 2, capabilities: {} })
+  return { shared, disk, writes, sent, failures, persistence, connection, transport, commit, negotiateV2 }
 }
 afterEach(() => vi.useRealTimers())
 
 it('does not send a new event when only an older outbox batch reached disk', () => {
   vi.useFakeTimers()
   const h = harness(), rpc = h.transport()
-  rpc.startServer({}); h.connection.onOpen(); h.commit(0)
+  rpc.startServer({}); h.connection.onOpen(); h.negotiateV2(); h.commit(0)
   rpc.sendEvent({t:'set',sid:'s',ex:0,set:1,eventId:'a',at:1})
   rpc.sendEvent({t:'set',sid:'s',ex:0,set:2,eventId:'b',at:2})
   h.commit(1) // only a is on disk; b's write has started but has not succeeded
   h.writes[2].fail()
-  h.connection.onOpen() // reconnect flushes even with the next write outstanding
+  h.connection.onOpen(); h.negotiateV2() // reconnect flushes even with the next write outstanding
   expect(h.sent.filter(x=>x.data.eventId==='b')).toHaveLength(0)
   expect(rpc.pendingCount()).toBe(2)
   for (let i=3;i<h.writes.length;i++) h.commit(i)
@@ -60,7 +61,7 @@ it('serializes session snapshots and retains the latest state while a write is d
 it('shares one outbox across independent page bundles and sends only durable events', async () => {
   vi.useFakeTimers()
   const h = harness(), first = h.transport(), second = h.transport()
-  first.startServer({onError:e=>h.failures.push(e)}); h.connection.onOpen()
+  first.startServer({onError:e=>h.failures.push(e)}); h.connection.onOpen(); h.negotiateV2()
   h.commit(0) // Persist empty outbox at connection setup, if any.
   first.sendEvent({t:'weight',sid:'s',ex:0,set:1,weight:20,eventId:'a',at:1})
   second.startServer({})
@@ -82,7 +83,7 @@ it('shares one outbox across independent page bundles and sends only durable eve
 it('releases a lost send callback after six seconds and ignores its later completion', () => {
   vi.useFakeTimers()
   const h = harness(), rpc = h.transport()
-  rpc.startServer({}); h.connection.onOpen(); h.commit(0); h.connection.hang = true
+  rpc.startServer({}); h.connection.onOpen(); h.negotiateV2(); h.commit(0); h.connection.hang = true
   rpc.sendEvent({t:'set',sid:'s',ex:0,set:1,eventId:'a',at:1}); h.commit(1)
   const first = h.sent.find(x=>x.data.eventId==='a')
   expect(first).toBeTruthy()

@@ -58,7 +58,17 @@ function startWatch(h, S) {
   h.ctx.startSession({ name: plan.workout.name, sid: plan.sid, exercises: plan.workout.exercises })
   h.rpc.startServer({})
   h.connection.onOpen()
+  negotiateV3(h)
   return h.ctx.loadState()
+}
+
+function negotiateV3(h, capabilities = {}) {
+  h.connection.onMessage({ t: 'hello_ack', protocolVersion: 3, capabilities })
+}
+
+function commitV3(h, event, commitRev = 1) {
+  h.connection.onMessage({ t: 'committed', sid: event.sid, eventId: event.eventId,
+    status: 'applied', commitRev })
 }
 
 function completeCurrent(h) {
@@ -74,7 +84,7 @@ function completeCurrent(h) {
 
 describe('watch → phone completed set (W06)', () => {
   afterEach(() => vi.useRealTimers())
-  it('recovers uplink on a valid downlink after an SDK error without another onOpen', async () => {
+  it('recovers V3 uplink after an SDK error when the phone renegotiates without another onOpen', async () => {
     vi.useFakeTimers()
     const h = device(), S = phoneSession(), app = phone(S)
     startWatch(h, S)
@@ -83,17 +93,18 @@ describe('watch → phone completed set (W06)', () => {
     const before = h.sent.length
     completeCurrent(h)
     expect(h.sent.slice(before).filter(e => e.t === 'set')).toHaveLength(0)
-    h.connection.onMessage({ data: { t: 'sync', sid: S.active.watchSid } })
+    negotiateV3(h)
+    await vi.advanceTimersByTimeAsync(120)
     const event = h.sent.slice(before).find(e => e.t === 'set')
     expect(event).toBeTruthy()
     app.receive(event)
     expect(S.active.entries[0].sets[0].done).toBe(true)
-    h.connection.onMessage({ t: 'ack', eventId: event.eventId })
-    await vi.advanceTimersByTimeAsync(0) // exact ACK updates durable decision + session first
+    commitV3(h, event)
+    await vi.advanceTimersByTimeAsync(0)
     expect(h.rpc.pendingCount()).toBe(0)
   })
 
-  it('probes readiness and uploads offline edits when the firmware omits onOpen', () => {
+  it('probes readiness, renegotiates V3, and uploads offline edits when firmware omits onOpen', async () => {
     vi.useFakeTimers()
     const h = device(), S = phoneSession(), app = phone(S)
     startWatch(h, S)
@@ -103,13 +114,15 @@ describe('watch → phone completed set (W06)', () => {
     completeCurrent(h)
     h.connection.getReadyState = ({ success }) => success({ status: 1 })
     vi.advanceTimersByTime(4000)
+    negotiateV3(h)
+    await vi.advanceTimersByTimeAsync(120)
     const event = h.sent.slice(before).find(e => e.t === 'set')
     expect(event).toBeTruthy()
     app.receive(event)
     expect(S.active.entries[0].sets[0].done).toBe(true)
   })
 
-  it('ignores a late readiness callback from before a disconnect', () => {
+  it('ignores a late readiness callback and renegotiates V3 after a later probe', async () => {
     vi.useFakeTimers()
     const h = device(), S = phoneSession()
     startWatch(h, S)
@@ -124,10 +137,12 @@ describe('watch → phone completed set (W06)', () => {
     expect(h.rpc.pendingCount()).toBe(1)
     h.connection.getReadyState = ({ success }) => success({ status: 1 })
     vi.advanceTimersByTime(4000)
+    negotiateV3(h)
+    await vi.advanceTimersByTimeAsync(120)
     expect(h.sent.slice(before).some(e => e.t === 'set')).toBe(true)
   })
 
-  it('retries readiness when a firmware probe callback is lost', () => {
+  it('retries a lost readiness probe, renegotiates V3, and uploads the pending event', async () => {
     vi.useFakeTimers()
     const h = device(), S = phoneSession()
     startWatch(h, S)
@@ -137,6 +152,8 @@ describe('watch → phone completed set (W06)', () => {
     const before = h.sent.length
     h.connection.getReadyState = ({ success }) => success({ status: 1 })
     vi.advanceTimersByTime(8000)
+    negotiateV3(h)
+    await vi.advanceTimersByTimeAsync(120)
     expect(h.sent.slice(before).some(e => e.t === 'set')).toBe(true)
     expect(h.rpc.pendingCount()).toBe(1)
   })
@@ -159,8 +176,8 @@ describe('watch → phone completed set (W06)', () => {
     expect(app.acks.at(-1)).toEqual({ upto: ev.at, eventId: uplink[0].eventId })
     expect(app.rejected).toHaveLength(0)
 
-    h.connection.onMessage({ t: 'ack', upto: ev.at, eventId: uplink[0].eventId })
-    await vi.advanceTimersByTimeAsync(0) // exact ACK updates durable decision + session first
+    commitV3(h, uplink[0])
+    await vi.advanceTimersByTimeAsync(0) // V3 clears only after the exact durable commit receipt.
     expect(h.rpc.pendingCount()).toBe(0)
   })
 
@@ -177,26 +194,27 @@ describe('watch → phone completed set (W06)', () => {
     expect(app.acks.filter(a => a.eventId === msg.eventId)).toHaveLength(10)
   })
 
-  it('keeps an unconfirmed set in the outbox when only a later event is acknowledged', async () => {
+  it('keeps an earlier independent event when a later V3 event receives its exact commit', async () => {
     vi.useFakeTimers()
-    const h = device(), S = phoneSession(), app = phone(S)
+    const h = device(), S = phoneSession()
     startWatch(h, S)
+    negotiateV3(h, { dependencyEvents: true })
     const before = h.sent.length
-    completeCurrent(h)
-    const setMsg = h.sent[before]
-    // A focus for the next set: an independent event with its own identity.
-    h.rpc.sendEvent({ t: 'focus', sid: S.active.watchSid, ex: 1, set: 1, at: Date.now(), source: 'watch' })
+    const first = { t: 'weight', sid: S.active.watchSid, ex: 0, set: 1, eventId: 'independent-weight',
+      entryInstanceId: 'entry-a', setId: 'row-a', weight: 51, protocolVersion: 3, dependencyEvents: true, dependsOn: [] }
+    const later = { t: 'focus', sid: S.active.watchSid, ex: 1, set: 1, eventId: 'independent-focus',
+      entryInstanceId: 'entry-b', setId: 'row-b', protocolVersion: 3, dependencyEvents: true, dependsOn: [], narrowDependencies: true }
+    h.rpc.sendEvent(first)
+    h.rpc.sendEvent(later)
     vi.advanceTimersByTime(120) // paced uplink, not recursive SDK draining
-    const focusMsg = h.sent.at(-1)
-    expect(focusMsg.t).toBe('focus')
+    const sent = h.sent.slice(before).filter(e => e.eventId)
+    expect(sent.map(e => e.eventId)).toEqual([first.eventId, later.eventId])
     expect(h.rpc.pendingCount()).toBe(2)
-    // The phone applies the focus only; the set stays unconfirmed until its own ack.
-    app.receive(focusMsg)
-    h.connection.onMessage({ t: 'ack', upto: focusMsg.at, eventId: focusMsg.eventId })
+    // A later independent durable commit cannot cumulatively clear the earlier event.
+    commitV3(h, later, 2)
     await vi.advanceTimersByTimeAsync(0)
     expect(h.rpc.pendingCount()).toBe(1)
-    app.receive(setMsg)
-    expect(S.active.entries[0].sets[0].done).toBe(true)
+    expect(h.disk.get('rpc_outbox')[0].msg.eventId).toBe(first.eventId)
   })
 
   it('still lets a phone-side completion reach the watch (no regression)', () => {
@@ -218,11 +236,10 @@ describe('watch → phone completed set (W06)', () => {
 
 describe('frozen extension intention with a legacy phone', () => {
   afterEach(() => vi.useRealTimers())
-  it('preserves identity and FIFO through v2 exact acknowledgements on the real phone lifecycle', async () => {
+  it('preserves V3 identity and FIFO without dependency capability using exact committed receipts', async () => {
     vi.useFakeTimers()
     const h=device(), S=phoneSession(), app=phone(S)
     startWatch(h,S)
-    h.connection.onMessage({t:'hello_ack',protocolVersion:2,capabilities:{}})
     h.connection.onClose()
     h.connection.getReadyState=({success})=>success({status:0})
     const frozen=[]
@@ -239,21 +256,24 @@ describe('frozen extension intention with a legacy phone', () => {
     expect(frozen[1].dependsOn).toContain(frozen[0].eventId)
     const before=h.sent.length
     h.connection.onOpen()
+    h.connection.onMessage({ t: 'hello_ack', protocolVersion: 3, capabilities: {} })
     await vi.advanceTimersByTimeAsync(500) // No second event before the exact legacy head ACK.
     const first=h.sent.slice(before).filter(m=>m.t==='weight')
     expect(first).toEqual([frozen[0]])
     app.receive(first[0])
     expect(S.active.entries[0].sets[0].w).toBe(61)
-    h.connection.onMessage({t:'ack',...app.acks.at(-1)})
+    commitV3(h, first[0], 1)
     await vi.advanceTimersByTimeAsync(200)
     const sent=h.sent.slice(before).filter(m=>m.t==='weight')
     expect(sent).toEqual(frozen)
     app.receive(sent[1])
-    h.connection.onMessage({t:'ack',...app.acks.at(-1)})
+    commitV3(h, sent[1], 2)
     await vi.advanceTimersByTimeAsync(0)
     expect(S.active.entries[0].sets[0].w).toBe(62)
     expect(h.rpc.pendingCount()).toBe(0)
-    expect(h.ctx.loadState().pendingEdits).toHaveLength(0)
+    const committedEdits = h.ctx.loadState().pendingEdits
+    expect(committedEdits).toHaveLength(2)
+    expect(committedEdits.map(event => event.committedRev)).toEqual([1, 2])
     expect(app.rejected).toHaveLength(0)
   })
 })

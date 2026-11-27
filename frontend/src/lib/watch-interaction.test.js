@@ -49,8 +49,8 @@ describe('watch stable targets and step rules', () => {
     expect(valueStep('0.1', 'w', 1, 0.2)).toBe('0.3')
     expect(valueStep(0, 'r', -1)).toBe('0')
     expect(valueStep(99999, 'r', 1)).toBe('99999')
-    expect(rotationStep({ delta: 50 })).toBe(5)
-    expect(rotationStep({ delta: -3 })).toBe(-3)
+    expect(rotationStep({ delta: 50 })).toBe(1)
+    expect(rotationStep({ delta: -3 })).toBe(-1)
     expect(rotationStep({ delta: 1, state: 3 })).toBe(0)
     expect(valueStep('10', 'r', 3)).toBe('13')
   })
@@ -81,12 +81,12 @@ describe('actual watch workout page wiring', () => {
     const { page } = workout(); page.stepSet = vi.fn(); await page.onRotation({ delta: 1 })
     expect(page.stepSet).not.toHaveBeenCalled()
   })
-  it('applies multi-notch crown deltas to the selected value', () => {
+  it('limits large crown deltas to one low-sensitivity detent per callback', () => {
     const { page } = workout()
     page.editWeight(); page.onRotation({ delta: 3 })
-    expect(page.weightNum).toBe('1.5')
+    expect(page.weightNum).toBe('0.5')
     page.editReps(); page.onRotation({ delta: -2 })
-    expect(page.repsNum).toBe('6')
+    expect(page.repsNum).toBe('7')
   })
   it('cycles pages once per horizontal swipe', () => {
     const { page } = workout()

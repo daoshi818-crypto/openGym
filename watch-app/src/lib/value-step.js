@@ -5,8 +5,9 @@ export function rotationStep(ev) {
   if (!ev || ev.state === 3) return 0
   const delta = Number(ev.delta)
   if (Number.isFinite(delta) && delta !== 0) {
-    const steps = Math.min(5, Math.max(1, Math.round(Math.abs(delta))))
-    return delta > 0 ? steps : -steps
+    // BlueOS sensitivity 1 reports a low sensitivity stream. Treat each callback
+    // as one detent so firmware burst deltas cannot jump a weight/reps value.
+    return delta > 0 ? 1 : -1
   }
   return ev.direction === true ? 1 : ev.direction === false ? -1 : 0
 }

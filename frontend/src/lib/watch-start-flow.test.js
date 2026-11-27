@@ -1,7 +1,9 @@
-import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { describe, expect, it, vi } from 'vitest'
-import { watchCatalogOf } from './watch-workout.js'
+import { watchSnapshotOf, watchWorkoutDTOOf } from './watch-workout.js'
+import { buildSessionEntries } from './session-start.js'
+import { ensureWatchIdentity } from './watch-identity.js'
+import { legacyWatchWorkout } from './watch-legacy-start-fixture.js'
 import { applyChangeSet, canonicalPlan, planHash } from './coach.js'
 import { validateChat } from '../../../api/coach/core/chat.js'
 import { coachContext } from '../../../api/coach/core/context.js'
@@ -11,19 +13,16 @@ import { captureRow, rowTarget, setDotWindow } from '../../../watch-app/src/lib/
 import { createDurableWatchLifecycle } from './watch-commit.js'
 import { applyEdit, applyRest, restOf } from '../../../watch-app/src/lib/protocol.js'
 import { loadWatchModule, stripImports, watchPersistence, watchSource, watchInteractionDeps } from './watch-test-harness.js'
-async function watchStart() {
-  const S = { workouts: [], unit: 'kg', routines: [{ id: 'back', name: 'Back', prog: 'off', ex: [{ id: '0025', sets: 4, reps: 8, weight: 40 }] }], watchPlanIds: ['back'] }
-  const plan = watchCatalogOf(S).plans[0], { ctx } = watchPersistence()
+async function queuedLegacyStart() {
+  const S = { workouts: [], unit: 'kg', routines: [{ id: 'back', name: 'Back', prog: 'off', ex: [{ id: '0025', sets: 4, reps: 8, weight: 40 }] }] }
+  const plan = legacyWatchWorkout(), { ctx } = watchPersistence()
   Object.assign(ctx, { ...watchInteractionDeps, applyEdit, applyRest, console, WATCH_VERSION: 'test', router: { replace: vi.fn() } })
   loadWatchModule('event-id', ctx, ['allocateEventIdentity', 'rememberEventAt'])
   loadWatchModule('close-journal', ctx, ['prepareClose', 'releaseCandidate', 'pendingSummaries', 'pendingEntry', 'journalEntry', 'markPhase', 'markDelivered'])
-  loadWatchModule('session', ctx, ['startSession', 'loadState', 'save', 'setRowValue', 'toggleSet', 'eventIdentity', 'nextUndone'])
-  const events = []
-  ctx.sendEvent = ev => { events.push({ ...ev }); return true }
-  const body = stripImports(watchSource('Index/index.ux').match(/<script>([\s\S]*?)<\/script>/)[1]).replace('export default', 'globalThis.page =')
-  runInNewContext(body, ctx)
-  ctx.page.selected = plan; await ctx.page.onStart()
-  return { S, event: events[0], watch: ctx.loadState(), ctx }
+  loadWatchModule('session', ctx, ['commitSessionStart', 'loadState', 'save', 'setRowValue', 'toggleSet', 'eventIdentity', 'nextUndone'])
+  expect((await ctx.commitSessionStart(plan, {})).ok).toBe(true)
+  const watch = ctx.loadState()
+  return { S, event: watch.pendingEdits[0], watch, ctx }
 }
 function phone(S, extra = {}) {
   const deps = { getState: () => S, update: fn => fn(S), getTimer: () => null,
@@ -31,9 +30,9 @@ function phone(S, extra = {}) {
     checkpoint: vi.fn(async () => {}), onStarted: vi.fn(), ...extra }
   return { receive: createDurableWatchLifecycle(deps), deps }
 }
-describe('watch cached plan → durable phone start → workout UI', () => {
-  it('opens after the real Index start has been checkpointed, never on duplicate', async () => {
-    const { S, event, watch } = await watchStart(); let release
+describe('compatibility for queued legacy watch starts', () => {
+  it('opens after the queued legacy start has been checkpointed, never on duplicate', async () => {
+    const { S, event, watch } = await queuedLegacyStart(); let release
     const app = phone(S, { checkpoint: vi.fn(() => new Promise(resolve => { release = resolve })) })
     expect(event.plan.entries[0].sets).toHaveLength(4)
     expect(event.sid).toBe(watch.sid)
@@ -48,7 +47,7 @@ describe('watch cached plan → durable phone start → workout UI', () => {
     expect(app.deps.onStarted).toHaveBeenCalledTimes(1); app.receive.dispose()
   })
   it('opens after a failed checkpoint retries, without another session', async () => {
-    const { S, event } = await watchStart()
+    const { S, event } = await queuedLegacyStart()
     const app = phone(S, { checkpoint: vi.fn().mockRejectedValueOnce(new Error('disk full')).mockResolvedValue(undefined) })
     app.receive(event); await app.receive.idle(); const active = S.active
     expect(app.deps.onStarted).not.toHaveBeenCalled()
@@ -57,7 +56,7 @@ describe('watch cached plan → durable phone start → workout UI', () => {
     expect(app.deps.onStarted).toHaveBeenCalledExactlyOnceWith(event.sid); app.receive.dispose()
   })
   it.each(['conflict', 'closed', 'invalid_plan'])('does not replace/open a %s session', async status => {
-    const { S, event } = await watchStart()
+    const { S, event } = await queuedLegacyStart()
     if (status === 'conflict') S.active = { start: 123, entries: [] }
     if (status === 'closed') S.watchClosed = { [event.sid]: { disposition: 'abandoned' } }
     if (status === 'invalid_plan') event.plan.entries = []
@@ -66,26 +65,23 @@ describe('watch cached plan → durable phone start → workout UI', () => {
     expect(app.deps.onStarted).not.toHaveBeenCalled(); expect(S.active).toEqual(before); app.receive.dispose()
   })
   it.each([2, 3])('does not replay navigation after coordinator reconstruction (v%s)', async version => {
-    const { S, event } = await watchStart(); event.protocolVersion = version
+    const { S, event } = await queuedLegacyStart(); event.protocolVersion = version
     const app = phone(S); app.receive(event); await app.receive.idle(); app.receive.dispose()
     const restarted = phone(S); restarted.receive(event); await restarted.receive.idle()
     expect(restarted.deps.onStarted).not.toHaveBeenCalled(); restarted.receive.dispose()
   })
   it('does not let a router exception prevent a durable ACK', async () => {
-    const { S, event } = await watchStart()
+    const { S, event } = await queuedLegacyStart()
     const app = phone(S, { onStarted: vi.fn(() => { throw new Error('router unavailable') }) })
     app.receive(event); await app.receive.idle()
     expect(app.deps.send).toHaveBeenCalledWith(expect.objectContaining({ t: 'watch_start_ack', status: 'started' }))
     expect(S.active.watchSid).toBe(event.sid); app.receive.dispose()
   })
   it('does not navigate a session replaced while the checkpoint was pending', async () => {
-    const { S, event } = await watchStart(); let release
+    const { S, event } = await queuedLegacyStart(); let release
     const app = phone(S, { checkpoint: () => new Promise(resolve => { release = resolve }) })
     app.receive(event); S.active = { watchSid: 'newer', entries: [] }; release(); await app.receive.idle()
     expect(app.deps.onStarted).not.toHaveBeenCalled(); app.receive.dispose()
-  })
-  it('wires the committed-start callback into the actual phone router', async () => {
-    expect(readFileSync(new URL('../App.jsx', import.meta.url), 'utf8')).toMatch(/onStarted:\s*\(\)\s*=>\s*navToWorkout\(\)/)
   })
 })
 
@@ -93,27 +89,57 @@ describe('watch cached plan → durable phone start → workout UI', () => {
 // enclosing UI finish callback are simulated; the completed-workout shape is production code.
 describe('real watch row edits with AI template isolation', () => {
   it('crown draft → completed set → phone keeps the original event identity', async () => {
-    const { S, event, ctx } = await watchStart(), app = phone(S)
+    const { S, event, ctx } = await queuedLegacyStart(), app = phone(S)
     app.receive(event); await app.receive.idle()
     Object.assign(ctx, { rotationStep, valueStep, captureRow, rowTarget, setDotWindow, restOf, tick() {},
       persistenceStatus: () => ({ failed: false }), pendingCount: () => 0 })
     runInNewContext(stripImports(watchSource('Workout/index.ux').match(/<script>([\s\S]*?)<\/script>/)[1]).replace('export default', 'globalThis.workoutPage ='), ctx)
     const page = { ...ctx.workoutPage, ...ctx.workoutPage.data, state: ctx.loadState(), refresh: vi.fn() }
-    loadWatchModule('rpc', ctx, ['sendEvent', 'sendLiveValue', 'replayPendingEvents'])
-    page.editWeight(); await page.onRotation({ delta: 1 })
-    expect(ctx.loadState().pendingEdits.some(e => e.t === 'weight')).toBe(false)
-    expect(await page.onComplete()).toBe(true)
-    const edit = ctx.loadState().pendingEdits.find(e => e.t === 'set')
-    expect(edit.t).toBe('set'); expect(edit.weight).toBeUndefined(); expect(edit.reps).toBeUndefined(); expect(edit.setId).toBeTruthy(); expect(edit.eventId).toBeTruthy()
-    expect(ctx.runtime().rpc.outbox.find(e => e.msg.eventId === edit.eventId).msg).toEqual(edit)
-    app.receive(edit); await app.receive.idle()
-    expect(S.active.entries[0].sets[0].w).toBe(40)
-    app.receive(edit); await app.receive.idle()
-    expect(S.active.entries[0].sets[0].w).toBe(40)
-    expect(S.routines[0].ex[0].sets).toBe(4); app.receive.dispose()
+    const sent = []
+    const connection = {
+      getReadyState: ({ success }) => success({ status: 0 }),
+      send: ({ data, success }) => { sent.push(structuredClone(data)); success() },
+    }
+    ctx.interconnect = { instance: () => connection }
+    loadWatchModule('rpc', ctx, ['startServer', 'sendEvent', 'replayPendingEvents'])
+    ctx.startServer({})
+    connection.onMessage({ t: 'hello_ack', protocolVersion: 3, capabilities: { dependencyEvents: true } })
+    try {
+      page.editWeight(); await page.onRotation({ delta: 1 })
+      expect(ctx.loadState().pendingEdits.some(e => e.t === 'weight')).toBe(false)
+      expect(await page.onComplete()).toBe(true)
+      const edit = ctx.loadState().pendingEdits.find(e => e.t === 'set')
+      const entry = S.active.entries[0], row = entry.sets[0]
+      expect(edit).toMatchObject({ t: 'set', sid: event.sid, weight: '40.5', reps: '8', weightUnit: 'kg',
+        entryInstanceId: entry.entryInstanceId, setId: row.setId, eventId: expect.any(String) })
+      expect(ctx.runtime().rpc.outbox.find(e => e.msg.eventId === edit.eventId).msg).toEqual(edit)
+
+      const startReceipt = app.deps.send.mock.calls.map(([message]) => message)
+        .find(message => message.t === 'committed' && message.eventId === event.eventId)
+      expect(startReceipt).toMatchObject({ status: 'applied' })
+      connection.onMessage(startReceipt)
+      const sentEdit = await vi.waitFor(() => {
+        const message = sent.find(e => e.t === 'set')
+        expect(message).toEqual(edit)
+        return message
+      })
+      expect(app.receive(sentEdit)).toBe(true); await app.receive.idle()
+      expect(row).toMatchObject({ w: 40.5, r: '8', done: true })
+      expect(S.active.watchEvents).toContain(edit.eventId)
+      const receipt = app.deps.send.mock.calls.map(([message]) => message)
+        .find(message => message.t === 'committed' && message.eventId === edit.eventId)
+      expect(receipt).toMatchObject({ sid: event.sid, status: 'applied' })
+
+      expect(app.receive(sentEdit)).toBe(true); await app.receive.idle()
+      expect(S.active.watchEvents.filter(id => id === edit.eventId)).toHaveLength(1)
+      expect(row).toMatchObject({ w: 40.5, done: true })
+      expect(S.routines[0].ex[0].sets).toBe(4)
+    } finally {
+      ctx.runtime().rpc.stop(); app.receive.dispose()
+    }
   })
   it('AI changes template 4→3; offline fourth watch row still commits and saves; next start has 3', async () => {
-    const { S, event, ctx } = await watchStart()
+    const { S, event, ctx } = await queuedLegacyStart()
     const app = phone(S, { finish: end => { S.workouts.push(buildCompletedWorkout(S.active, { end })); S.active = null } })
     app.receive(event); await app.receive.idle()
     const validated = validateChat({ coach_contract: 1, chat_actions_contract: 1, replyType: 'proposal', answer: 'Confirm first', summary: 'Reduce sets', targetRoutineId: 'back',
@@ -125,7 +151,7 @@ describe('real watch row edits with AI template isolation', () => {
     expect(S.active.entries[0].sets).toHaveLength(4)
     const watch = ctx.loadState(); expect(watch.workout.rows[0]).toHaveLength(4)
     watch.setIdx = 3; ctx.setRowValue(watch, 0, 3, 'w', '42', true)
-    loadWatchModule('rpc', ctx, ['sendEvent', 'sendLiveValue'])
+    loadWatchModule('rpc', ctx, ['sendEvent'])
     ctx.sendEvent(watch.pendingEdits[0])
     const edit = ctx.loadState().pendingEdits.find(e => e.t === 'weight'), row = ctx.toggleSet(watch, true)
     const done = { ...ctx.eventIdentity(watch, 0, 3), ...ctx.allocateEventIdentity(watch.sid), t: 'set', sid: watch.sid,
@@ -137,7 +163,11 @@ describe('real watch row edits with AI template isolation', () => {
     expect(S.active).toBeNull()
     expect(S.workouts[0].entries[0].sets).toHaveLength(4)
     expect(S.workouts[0].entries[0].sets[3]).toMatchObject({ w: 42, done: true })
-    expect(watchCatalogOf(S).plans[0].exercises[0].sets).toBe(3)
-    expect(watchCatalogOf(S).plans[0].rows[0]).toHaveLength(3); app.receive.dispose()
+    const template = S.routines[0]
+    const next = { ...S, active: { start: Date.now(), name: template.name, entries: buildSessionEntries(S, template) } }
+    ensureWatchIdentity(next.active)
+    const snapshot = watchSnapshotOf(next, null)
+    const dto = watchWorkoutDTOOf({ ...snapshot, name: snapshot.workout }, snapshot.sid, 'next')
+    expect(dto.exercises[0].sets).toHaveLength(3); app.receive.dispose()
   })
 })

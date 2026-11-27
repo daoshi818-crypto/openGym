@@ -9,7 +9,6 @@ import { useUI } from '../store/useUI.js'
 import { bindUI } from '../components/ui.jsx'
 import { collectWatchDiagnosticReport } from '../lib/watch-diagnostic-export.js'
 import { shareExport, isAndroid } from '../lib/mobile.js'
-import { pushWatchCatalog, selectWatchDevice } from '../lib/watch-link.js'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 globalThis.__APP_VERSION__ = 'test'
@@ -34,10 +33,8 @@ vi.mock('../lib/watch-link.js', async importOriginal => ({ ...await importOrigin
   watchAvailable: async () => ({ available: true }), onWatchState: () => () => {}, watchDevice: () => null,
   onWatchCommitStatus: () => () => {}, watchConnection: () => mocks.connection,
   onWatchConnection: cb => { cb(mocks.connection); return () => {} },
-  watchCatalogStatus: () => ({ phase: 'idle' }), onWatchCatalogStatus: () => () => {},
   discoverWatchDevices: vi.fn(async () => true), probeWatchConnection: vi.fn(async () => false),
-  getWatchDeviceInfo: vi.fn(async () => null), pushWatchCatalog: vi.fn(async () => true), selectWatchDevice: vi.fn(async () => ({ ok: true })) }))
-vi.mock('../lib/watch-workout.js', () => ({ watchCatalogOf: S => ({ t: 'plan_catalog', date: '2026-11-19', plans: S.routines, todayPlan: null }) }))
+  getWatchDeviceInfo: vi.fn(async () => null) }))
 vi.mock('../lib/watch-diagnostic-export.js', () => ({ collectWatchDiagnosticReport: vi.fn() }))
 
 let root, host
@@ -49,7 +46,6 @@ beforeEach(() => {
   useStore.getState().S.routines = []
   useStore.getState().S.watchPlanIds = []
   mocks.connection = { devices: [], selectedId: '', sdkConnected: false, appConnected: false }
-  pushWatchCatalog.mockClear(); selectWatchDevice.mockClear()
   isAndroid.mockResolvedValue(true)
   host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host)
   shareExport.mockReset().mockResolvedValue(undefined)
@@ -72,15 +68,17 @@ describe('watch controls in integrations', () => {
     await openSheet()
     expect(exportButton()).toBeTruthy()
   })
-  it('shows actual app connection and syncs the full catalog without displaying historical installations as devices', async () => {
+  it('shows the actual connection and explains current-workout sync without listing other plans or watches', async () => {
     useStore.getState().S.routines = [{ id: 'plan-a', name: 'Strength A' }]
     mocks.connection = { devices: [{ id: 'watch-one', name: 'WATCH GT' }, { id: 'watch-two', name: 'WATCH GT' }], selectedId: 'watch-one', sdkConnected: true, appConnected: false }
     await openSheet()
     expect(host.textContent).toContain('手表连接：通道已连接，等待手表应用确认')
     expect(host.textContent).not.toContain('watch-two')
     expect([...host.querySelectorAll('button')].some(e => e.textContent === '选择')).toBe(false)
-    await act(async () => [...host.querySelectorAll('button')].find(e => e.textContent === '同步全部训练计划').click())
-    expect(pushWatchCatalog).toHaveBeenCalledWith(expect.objectContaining({ t: 'plan_catalog', plans: [{ id: 'plan-a', name: 'Strength A' }] }), true)
+    expect(host.textContent).toContain('训练中可点训练页的手表按钮启动并同步')
+    expect(host.textContent).toContain('手表应用主动打开时')
+    expect(host.textContent).not.toContain('同步全部训练计划')
+    expect(host.textContent).not.toContain('Strength A')
   })
   it('removes device controls from workout settings', async () => {
     await act(async () => root.render(<Settings page="workout" />))

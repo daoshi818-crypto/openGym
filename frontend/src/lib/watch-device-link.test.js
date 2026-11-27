@@ -1,6 +1,5 @@
 // @vitest-environment node
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { persistentReceiver } from '../../../watch-app/src/lib/persistent-transfer.js'
 
 const native = vi.hoisted(() => ({ callbacks: {}, disk: new Map(), addListener: vi.fn(), connect: vi.fn(), disconnect: vi.fn(),
   getDeviceInfo: vi.fn(), sendEvent: vi.fn(), loadSyncTransfer: vi.fn(), saveSyncTransfer: vi.fn(), drainInbox: vi.fn() }))
@@ -40,7 +39,7 @@ it('requires current-route proof before following a different installation or ac
   hello('watch-two')
   native.callbacks.watchEvent({ t: 'set', sourceInstallationId: 'watch-two', installationId: 'watch-two', eventId: 'two:1' })
   expect(event).not.toHaveBeenCalled()
-  expect(link.watchConnection()).toMatchObject({ selectedId: 'watch-one', peerId: 'watch-one', differentDevice: false, appConnected: false })
+  expect(link.watchConnection()).toMatchObject({ selectedId: 'watch-one', peerId: 'watch-one', differentDevice: true, appConnected: false })
   expect(await link.sendToWatch({ t: 'ack', eventId: 'two:1' })).toBe(false)
   expect(messages().every(m => m.t === 'link_probe')).toBe(true); off()
 })
@@ -150,33 +149,15 @@ it('never adopts a candidate from an expired challenge or an ACK received after 
   expect(link.watchConnection()).toMatchObject({ selectedId: '', appConnected: false })
 })
 
-it('streams the complete catalog on its own durable channel and reports synced only after watch apply succeeds', async () => {
+it('does not read, resume or send an existing durable plan catalog after a legacy hello', async () => {
+  native.disk.set('catalog:watch-one', JSON.stringify({ active: { transferId: 'c:old', phase: 'stream' } }))
   hello('watch-one'); await link.selectWatchDevice('watch-one'); hello('watch-one'); await drain()
-  const disk = new Map(), applied = [], options = { channel: 'catalog', types: ['plan_catalog'] }
-  let canApply = false
-  const receiver = persistentReceiver({ read: async k => structuredClone(disk.get(k)), write: async (k, v) => { disk.set(k, structuredClone(v)); return true } },
-    async msg => { if (!canApply) return { ok: false, error: 'transfer_storage' }; applied.push(msg); return { ok: true } }, () => Date.now(), options)
-  native.sendEvent.mockImplementation(async ({ json }) => {
-    const { targetInstallationId, ...m } = JSON.parse(json)
-    if (m.transferId?.startsWith('c:')) {
-      expect(targetInstallationId).toBe('watch-one')
-      for (const reply of await receiver.receive(m)) native.callbacks.watchEvent({ ...reply, sourceInstallationId: 'watch-one' })
-    }
-    return { ok: true }
-  })
-  const catalog = { t: 'plan_catalog', date: '2026-11-19', todayIds: ['b'], plans: [{ id: 'a', name: '中文'.repeat(1800) }, { id: 'b', name: '今日训练' }] }
-  expect(await link.pushWatchCatalog(catalog)).toBe(true)
-  for (let i = 0; i < 35; i++) await vi.advanceTimersByTimeAsync(100)
-  expect(link.watchCatalogStatus()).toMatchObject({ phase: 'failed', error: 'transfer_storage' })
-  expect(applied).toHaveLength(0)
-  expect([...native.disk.keys()]).toEqual(['catalog:watch-one'])
-  canApply = true
+  expect(messages().find(m => m.t === 'hello_ack').capabilities.planCatalogChunks).toBe(false)
+  expect(await link.sendToWatch({ t: 'plan_catalog', plans: [{ id: 'private' }] })).toBe(false)
+  expect(await link.sendToWatch({ t: 'sync_begin', transferId: 'c:old' })).toBe(false)
+  native.callbacks.watchEvent({ t: 'sync_resume', transferId: 'c:old', sourceInstallationId: 'watch-one' })
   await vi.advanceTimersByTimeAsync(6000)
-  expect(applied).toHaveLength(1)
-  expect(applied[0].plans.map(p => p.id)).toEqual(['a', 'b'])
-  expect(link.watchCatalogStatus()).toMatchObject({ phase: 'synced', count: 2, date: '2026-11-19' })
-  const sentCount = messages().filter(m => m.t !== 'link_probe').length
-  expect(await link.pushWatchCatalog(catalog)).toBe(true)
-  await vi.advanceTimersByTimeAsync(1000)
-  expect(messages().filter(m => m.t !== 'link_probe')).toHaveLength(sentCount)
+  expect(native.loadSyncTransfer.mock.calls.every(([v]) => v.channel !== 'catalog')).toBe(true)
+  expect(native.saveSyncTransfer.mock.calls.every(([v]) => v.channel !== 'catalog')).toBe(true)
+  expect(messages().some(m => m.t === 'plan_catalog' || m.transferId?.startsWith('c:'))).toBe(false)
 })

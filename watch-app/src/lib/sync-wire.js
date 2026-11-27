@@ -54,7 +54,7 @@ export function acceptWireChunk(pending, msg, now) {
   delete pending[msg.transferId]
   if (wireHash(text) !== transfer.hash) throw new Error('snapshot_checksum')
   const message = JSON.parse(text)
-  if (!['sync', 'sync_delta'].includes(message.t) || message.sid !== msg.sid) throw new Error('invalid_snapshot')
+  if (!(msg.transferId.startsWith('start:') ? message.t === 'START_SESSION' : ['sync', 'sync_delta'].includes(message.t)) || message.sid !== msg.sid) throw new Error('invalid_snapshot')
   return message
 }
 const exerciseStructure = exercise => {

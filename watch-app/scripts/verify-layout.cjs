@@ -23,6 +23,8 @@ for(const page of Object.keys(manifest.router.pages)) {
     }
   }
   if(page==='Workout') {
+    assert.equal(template.attr.rotationSensitivity,'1','Crown input must use native low sensitivity')
+    assert.equal(template.attr.vibrationEffectenabled,'false','The training surface must avoid duplicate native crown feedback')
     const live=has('screen live-screen');assert.ok(live && !nodes(live).some(n=>n.type==='list'),'Set/rest never scroll')
     assert.equal(has('overview-scroll').type,'list')
     for(const name of ['screen overview-screen','screen live-screen','screen metrics-screen']) {
@@ -69,7 +71,9 @@ for(const page of Object.keys(manifest.router.pages)) {
     assert.ok(px('.num-number-row','width')<=334 && px('.num-ok','width')<=304,'Keyboard top and bottom controls stay inside square corners')
     for(const action of ['closeNumberKeypad','saveNumberKeypad','numberBackspace'])assert.ok(tree.some(n=>n.events?.click===action))
   } else if(page==='Index') {
-    assert.equal(has('home-scroll').type,'list');assert.ok(has('today-card') && has('stats'));assert.ok(!has('start-circle'))
+    assert.equal(has('home-scroll').type,'list');assert.ok(has('workout-card') && has('stats'))
+    assert.equal(has('empty-title').attr.value,'请打开手机端的 OpenGym')
+    assert.ok(!tree.some(n=>n.repeat || n.events?.click==='choose'),'Idle home displays no plan library')
     assert.equal(sheet['.primary'].backgroundColor,'#A3E635')
     assert.equal(sheet['.overlay'].flexDirection,'column','Center the 336px conflict list inside the 390px square')
     for(const action of ['saveConflict','discardConflict','retryConflict'])assert.ok(tree.some(n=>n.events?.click===action))

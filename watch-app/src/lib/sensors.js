@@ -4,6 +4,7 @@ import vibrator from '@blueos.hardware.vibrator.vibrator'
 import { runtime } from './runtime.js'
 import { loadState, addHr, flushHr } from './session.js'
 import { appTimeout, cancelAppTimeout } from './app-timers.js'
+import { recordDiagnostic } from './diagnostic-log.js'
 
 function captureActive(state, capture) {
   return state.active && !state.pausedAt && !state.closeIntent && state.sid === capture.sid &&
@@ -13,7 +14,12 @@ function persistCaptureHr(capture, state) {
   cancelAppTimeout(capture.timer)
   capture.timer = null
   capture.persistedAt = Date.now(); capture.persistedBpm = state.hr.last
-  return flushHr(state).then(result => { if (!result.ok) capture.persistedAt = null })
+  const sampleCount = capture.sampleCount || 0, startedAt = capture.lastFlushStartedAt || capture.startedAt
+  capture.sampleCount = 0; capture.lastFlushStartedAt = Date.now()
+  return flushHr(state).then(result => {
+    try { recordDiagnostic('hr_samples_flushed', { sampleCount, duration: Math.max(0, Date.now() - startedAt), ok: !!result.ok }) } catch {}
+    if (!result.ok) capture.persistedAt = null
+  })
 }
 
 // The subscription belongs to the training session, across page bundles and navigation.
@@ -25,7 +31,8 @@ export function startSessionHr() {
   const segmentStartedAt = state.segmentStartedAt || state.startedAt
   if (shared.hrCapture?.sid === state.sid && shared.hrCapture.segmentStartedAt === segmentStartedAt) return
   stopSessionHr()
-  const capture = { sid: state.sid, segmentStartedAt, stop: stopSessionHr, persistedAt: null, persistedBpm: null, timer: null }
+  const capture = { sid: state.sid, segmentStartedAt, stop: stopSessionHr, persistedAt: null, persistedBpm: null, timer: null,
+    sampleCount: 0, startedAt: Date.now(), lastFlushStartedAt: Date.now() }
   shared.hrCapture = capture
   startHr(bpm => {
     if (shared.hrCapture !== capture) return
@@ -35,6 +42,7 @@ export function startSessionHr() {
     if (!captureActive(latest, capture)) { stopSessionHr(); return }
     if (!Number.isFinite(bpm) || bpm < 30 || bpm > 220) return
     addHr(latest, bpm)
+    capture.sampleCount++
     const at = Date.now()
     if (capture.persistedAt == null || at - capture.persistedAt >= 10000 || Math.abs(bpm - capture.persistedBpm) >= 10) {
       persistCaptureHr(capture, latest)
@@ -48,7 +56,12 @@ export function startSessionHr() {
         persistCaptureHr(capture, current)
       }, 10000 - (at - capture.persistedAt))
     }
-  }, () => { if (shared.hrCapture === capture) stopSessionHr() })
+  }, code => {
+    if (shared.hrCapture === capture) {
+      try { recordDiagnostic('hr_sensor_error', { code: String(code ?? 'unknown') }) } catch {}
+      stopSessionHr()
+    }
+  })
 }
 
 export function stopSessionHr() {
@@ -79,13 +92,16 @@ export function stopHr() {
   } catch (e) { /* 未订阅时忽略 */ }
 }
 
-// Explicit haptic for a crown input; rate-limit bursts without delaying input.
+// One brief pulse per crown detent; leave a quiet gap without delaying input.
 let lastCrownVibrationAt = 0
 export function crownTick() {
   const now = Date.now()
-  if (now - lastCrownVibrationAt < 100) return
+  if (now - lastCrownVibrationAt < 140) return
   lastCrownVibrationAt = now
-  try { vibrator.vibrate({ mode: 'short' }) } catch (e) { /* Haptics must not block workout input. */ }
+  try {
+    vibrator.start({ priority: 8, duration: 24, interval: 140, count: 1,
+      fail: (msg, code) => console.log('crown vibration failed', msg, code) })
+  } catch (e) { /* Haptics must not block workout input. */ }
 }
 
 // 记一组的轻反馈

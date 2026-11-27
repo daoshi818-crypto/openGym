@@ -2,96 +2,82 @@
 import { runInNewContext } from 'node:vm'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { loadWatchModule, stripImports, watchPersistence, watchSource } from './watch-test-harness.js'
-import { watchCatalogOf } from './watch-workout.js'
-import { startFromWatch } from './watch-events.js'
-import { wireHash } from '../../../watch-app/src/lib/sync-wire.js'
-import { makeTransfer } from '../../../watch-app/src/lib/persistent-transfer.js'
 
-beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-19T12:00:00')) })
+beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
-const drain = async () => { for (let i = 0; i < 220; i++) await Promise.resolve() }
-function home() {
-  const ctx = { Date, setTimeout, clearTimeout, setInterval, clearInterval, WATCH_VERSION: 'test', loadState: () => ({}), storage: { getSync: () => null },
-    startServer() {}, router: {}, bindRuntime() {} }
-  const source = stripImports(watchSource('Index/index.ux').match(/<script>([\s\S]*?)<\/script>/)[1])
-  runInNewContext(source.replace('export default', 'this.page ='), ctx)
-  return Object.assign(ctx.page, ctx.page.data, { catalogModel: { current: null } })
-}
-const routine = id => ({ id, name: id, ex: [{ id: '0025', sets: 3, reps: 8 }] })
-const state = () => ({ routines: ['a', 'b', 'c'].map(routine), week: { 4: ['b', 'a'] }, dayPlan: {}, workouts: [], unit: 'kg' })
 
-it('shows ordered combined today and only other routines below, with a small reactive projection', () => {
-  const p = home(), catalog = watchCatalogOf(state(), '2026-11-19')
-  p.onCatalog(catalog)
-  expect(p.hasToday).toBe(true)
-  expect(p.workoutName).toBe('b + a')
-  expect(p.plans.map(p => p.id)).toEqual(['c'])
-  expect(p.selected).toEqual({ id: 'today:2026-11-19', name: 'b + a' })
-  expect(p.plans[0]).not.toHaveProperty('entries')
-  expect(p.catalogModel.current).toBe(catalog)
-  p.onCatalog({ ...catalog, todayPlan: { ...catalog.todayPlan, name: '更新后的今日训练' } })
-  expect(p.workoutName).toBe('更新后的今日训练')
-  p.onCatalog({ t: 'plan_catalog', date: '2026-11-19', todayPlan: null, plans: [] })
-  expect(p.needSync).toBe(false); expect(p.hasToday).toBe(false); expect(p.selected).toBeNull()
-  expect(p.workoutName).toBe(''); expect(p.setCount).toBe(0)
-})
-it('expires the today card across midnight, retains the offline library and clears the page timer', async () => {
-  const p = home(); p.onCatalog(watchCatalogOf(state(), '2026-11-19')); p.visible = true; p.checkDay()
-  expect(p.hasToday).toBe(true)
-  vi.setSystemTime(new Date('2026-11-20T00:01:00'))
-  await vi.advanceTimersByTimeAsync(60000)
-  expect(p.hasToday).toBe(false); expect(p.plans).toHaveLength(3)
-  p.onHide(); expect(vi.getTimerCount()).toBe(0)
-})
-it('starts a combined today session on the phone without losing routine provenance or order', () => {
-  const S = state(), plan = watchCatalogOf(S, '2026-11-19').todayPlan
-  expect(startFromWatch(S, { t: 'watch_start', sid: 's', startedAt: Date.now(), plan })).toBe('started')
-  expect(S.active.routineIds).toEqual(['b', 'a'])
-  expect(S.active.entries.map(e => e.rid)).toEqual(['b', 'a'])
-})
-it('publishes the catalog and an applied receipt only after confirmed storage, and preserves a newer catalog', async () => {
-  const { ctx, storage, disk } = watchPersistence(), sent = [], changed = vi.fn()
-  const connection = { getReadyState({ success }) { success({ status: 1 }) }, send({ data, success }) { sent.push(data); success() } }
-  Object.assign(ctx, { console, Date, setTimeout, clearTimeout, setInterval: () => 1, clearInterval() {},
-    interconnect: { instance: () => connection }, loadState: () => ({}), save() {}, WATCH_VERSION: 'test',
-    pendingSummaries: () => [], pendingCloseEvents: () => [] })
+function boot() {
+  const h = watchPersistence(), { ctx, storage } = h, sent = []
+  const connection = { getReadyState: ({ success }) => success({ status: 0 }),
+    send: ({ data, success }) => { sent.push(data); success() } }
+  const router = { replace: vi.fn() }
+  Object.assign(ctx, { interconnect: { instance: () => connection }, console, router, WATCH_VERSION: 'test',
+    bindRuntime() {}, pendingSummaries: () => [], pendingCloseEvents: () => [] })
   loadWatchModule('event-id', ctx, ['allocateEventIdentity', 'rememberEventAt'])
-  loadWatchModule('rpc', ctx, ['startServer'])
-  ctx.startServer({ onCatalog: changed }); await drain()
-  const original = storage.set, message = { t: 'plan_catalog', date: '2026-11-19', plans: [], at: Date.now(), catalogId: 'catalog:1' }
-  message.contentHash = wireHash(message)
-  let release
-  storage.set = value => { if (value.key === 'plan_catalog') release = () => original(value); else original(value) }
-  connection.onMessage({ data: message }); await drain()
-  expect(changed).not.toHaveBeenCalled()
-  expect(sent.filter(m => m.t === 'plan_catalog_ack')).toEqual([])
-  release(); await drain()
-  expect(changed).toHaveBeenCalledOnce()
-  expect(sent.findLast(m => m.t === 'plan_catalog_ack').status).toBe('applied')
-  const old = { ...message, at: message.at - 1000, catalogId: 'catalog:0' }; delete old.contentHash; old.contentHash = wireHash(old)
-  connection.onMessage({ data: old }); await drain(); release(); await drain()
-  expect(sent.findLast(m => m.t === 'plan_catalog_ack').status).toBe('retained')
-  expect(disk.get('plan_catalog').catalogId).toBe('catalog:1')
-  expect(changed).toHaveBeenCalledOnce()
+  loadWatchModule('session', ctx, ['loadState', 'commitPhoneStart'])
+  loadWatchModule('session-presence', ctx, ['confirmPhoneSession', 'applyPhonePresence', 'isPhoneSessionLive'])
+  loadWatchModule('rpc', ctx, ['startServer', 'isPhoneConnected'])
+  const script = stripImports(watchSource('Index/index.ux').match(/<script>([\s\S]*?)<\/script>/)[1])
+  runInNewContext(script.replace('export default', 'this.page ='), ctx)
+  const home = Object.assign(ctx.page, ctx.page.data, ctx.page.staticData)
+  return { ...h, home, connection, router, sent, reads: vi.spyOn(storage, 'getSync'), writes: vi.spyOn(storage, 'set') }
+}
+
+const start = { t: 'START_SESSION', protocolVersion: 4, requestId: 'start1', sid: 's1', workout: '上肢',
+  exercises: [{ entryInstanceId: 'e1', exerciseId: 'bench', name: '卧推', sets: [{ setId: 'set1', reps: 8, weight: 40 }] }] }
+const finishRpc = () => vi.advanceTimersByTimeAsync(350)
+
+it('ignores old inline/chunk catalog traffic without loading the old cache or blocking START', async () => {
+  const h = boot(), previous = { plans: [{ id: 'old' }] }
+  h.disk.set('plan_catalog', previous)
+  h.home.onInit(); h.home.onReady(); h.connection.onOpen()
+  h.connection.onMessage({ t: 'hello_ack', protocolVersion: 3, capabilities: { planCatalogChunks: true } })
+  h.connection.onMessage({ t: 'plan_catalog', plans: [{ id: 'new' }] })
+  for (const t of ['sync_begin', 'sync_chunk', 'sync_resume', 'sync_cancel', 'sync_inline']) {
+    h.connection.onMessage({ t, transferId: 'c:library' })
+  }
+  await finishRpc()
+  expect(h.sent.find(m => m.t === 'hello').capabilities).not.toHaveProperty('planCatalogChunks')
+  expect(h.sent.some(m => m.t === 'plan_catalog_ack' || m.transferId === 'c:library')).toBe(false)
+  expect(h.shared.rpc).not.toHaveProperty('catalogReceiver')
+  expect(h.reads.mock.calls.some(([item]) => item.key.includes('catalog'))).toBe(false)
+  expect(h.writes.mock.calls.some(([item]) => item.key.includes('catalog'))).toBe(false)
+  expect(h.disk.get('plan_catalog')).toEqual(previous)
+  expect(h.router.replace).not.toHaveBeenCalled()
+  h.connection.onMessage({ t: 'STATE_QUERY', requestId: 'query1' })
+  h.connection.onMessage(start)
+  await finishRpc()
+  expect(h.disk.get('session_state').workout.exercises.map(ex => ex.name)).toEqual(['卧推'])
+  expect(h.sent).toContainEqual(expect.objectContaining({ t: 'SESSION_ACCEPTED', sid: 's1', status: 'accepted' }))
+  expect(h.router.replace).toHaveBeenCalledExactlyOnceWith({ uri: '/Workout' })
 })
-it('does not block training transfer receipts behind a delayed catalog disk write', async () => {
-  const { ctx, storage } = watchPersistence(), sent = []
-  const connection = { getReadyState({ success }) { success({ status: 1 }) }, send({ data, success }) { sent.push(data); success() } }
-  Object.assign(ctx, { console, Date, setTimeout, clearTimeout, setInterval: () => 1, clearInterval() {},
-    interconnect: { instance: () => connection }, loadState: () => ({}), save() {}, WATCH_VERSION: 'test',
-    pendingSummaries: () => [], pendingCloseEvents: () => [] })
-  loadWatchModule('rpc', ctx, ['startServer'])
-  ctx.startServer({}); await drain()
-  connection.onMessage({ data: { t: 'hello_ack', protocolVersion: 3, capabilities: { planCatalogChunks: true, persistentTransfers: true, selectiveChunkAck: true } } })
-  const original = storage.set, held = []
-  storage.set = item => { if (item.key.startsWith('catalog_')) held.push(item); else original(item) }
-  const library = makeTransfer({ t: 'plan_catalog', sid: 'catalog', commitRev: 1, plans: [], date: '2026-11-19' }, 1, Date.now(), { channel: 'catalog', types: ['plan_catalog'] })
-  const training = makeTransfer({ t: 'sync', sid: 'training', commitRev: 1, exercises: [] }, 1, Date.now())
-  connection.onMessage({ data: { ...library.meta, t: 'sync_begin' } }); await drain()
-  expect(held).toHaveLength(1)
-  connection.onMessage({ data: { ...training.meta, t: 'sync_begin' } }); await drain()
-  await vi.advanceTimersByTimeAsync(150)
-  expect(sent).toContainEqual(expect.objectContaining({ t: 'sync_begin_ack', transferId: training.meta.transferId }))
-  for (const item of held) original(item)
-  await drain()
+
+it('opens a durable START exactly once if it arrives before Index is ready', async () => {
+  const h = boot()
+  h.home.onInit(); h.connection.onOpen()
+  h.connection.onMessage({ t: 'STATE_QUERY', requestId: 'query1' })
+  h.connection.onMessage(start)
+  await finishRpc()
+  expect(h.disk.get('session_state').sid).toBe('s1')
+  expect(h.router.replace).not.toHaveBeenCalled()
+  h.home.onReady(); h.home.onShow()
+  h.connection.onMessage(start)
+  await finishRpc()
+  expect(h.router.replace).toHaveBeenCalledExactlyOnceWith({ uri: '/Workout' })
+})
+
+it('does not open a START that fails storage, and opens once after a valid retry', async () => {
+  const h = boot(), write = h.storage.set
+  h.home.onInit(); h.home.onReady(); h.connection.onOpen()
+  h.storage.set = args => { if (args.key === 'session_state') args.fail(); else write(args) }
+  h.connection.onMessage({ t: 'STATE_QUERY', requestId: 'query1' })
+  h.connection.onMessage(start)
+  await finishRpc()
+  expect(h.router.replace).not.toHaveBeenCalled()
+  expect(h.ctx.loadState().active).toBe(false)
+  expect(h.sent).toContainEqual(expect.objectContaining({ t: 'SESSION_ACCEPTED', status: 'rejected', reason: 'storage_failed' }))
+  h.storage.set = write
+  h.connection.onMessage(start)
+  await finishRpc()
+  expect(h.router.replace).toHaveBeenCalledExactlyOnceWith({ uri: '/Workout' })
 })

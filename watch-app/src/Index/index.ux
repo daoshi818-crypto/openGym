@@ -2,45 +2,38 @@
 import { bindRuntime } from '../lib/runtime.js'
 import router from '@blueos.app.appmanager.router'
 import storage from '@blueos.storage.storage'
-import { commitLocalClose, commitSessionStart, loadState, startSession, applySync, replacePlan, closeSession, save, phoneConflict, recoverLocalClose } from '../lib/session.js'
-import { startServer, sendEvent, pendingCount, isConnected, replayPendingEvents, resumePhoneConflict, canResolvePhoneConflict, isPhoneConnected } from '../lib/rpc.js'
+import { commitLocalClose, loadState, startSession, applySync, replacePlan, phoneConflict, recoverLocalClose } from '../lib/session.js'
+import { startServer, sendEvent, replayPendingEvents, resumePhoneConflict, canResolvePhoneConflict, isPhoneConnected } from '../lib/rpc.js'
 import { WATCH_VERSION } from '../lib/version.js'
 
 export default {
-  staticData: { catalogModel: { current: null } },
-  catalogOf(value) {
-    if (this.catalogModel) { if (arguments.length) this.catalogModel.current = value; return this.catalogModel.current }
-    if (arguments.length) this.catalog = value
-    return this.catalog
-  },
-  data: { version: WATCH_VERSION, status: '正在连接手机', plans: [], selected: null, workoutName: '',
-    exerciseCount: 0, setCount: 0, canResume: false, conflict: null, conflictBusy: false, conflictWaiting: false, conflictHint: '', hasSummary: false, phoneLinkLabel: '手机未连接',
-    // 文案由数据决定：有今日计划就是“开始训练”，只有缓存计划就是“快速开始”；
-    // 本地没有缓存、手机也没下发过时提示去同步，而不是假装“今日没有计划”。
-    todayLabel: '今天', startLabel: '快速开始', needSync: false, hasToday: false },
-  onInit(params) {
+  staticData: { linkOwner: { rpcDetach: null } },
+  data: { version: WATCH_VERSION, status: '', workoutName: '', exerciseCount: 0, setCount: 0, canResume: false,
+    conflict: null, conflictBusy: false, conflictWaiting: false, conflictHint: '', hasSummary: false, phoneLinkLabel: '手机未连接' },
+  onInit() {
     if (this.$app && this.$app.$def) bindRuntime(this.$app.$def)
     this.visible = true
-    this.readLocal()
     this.bindRpc()
+    this.readLocal()
     this.startLinkStatus()
   },
-  onReady() { this.ready = true; this.enterWorkout() },
-  onShow() { this.visible = true; this.readLocal(); this.bindRpc(); this.startLinkStatus(); this.enterWorkout(); this.checkDay() },
-  onHide() { this.visible = false; this.navigating = false; clearTimeout(this.dayTimer); this.dayTimer = null; clearInterval(this.linkTimer); this.linkTimer = null },
-  onDestroy() { this.visible = false; clearTimeout(this.dayTimer); clearInterval(this.linkTimer); const owner = this.catalogModel || this; if (typeof owner.rpcDetach === 'function') owner.rpcDetach(); owner.rpcDetach = null; if (this.catalogModel) this.catalogModel.current = null },
+  onReady() { this.ready = true; this.openAvailableWorkout() },
+  onShow() { this.visible = true; this.bindRpc(); this.openAvailableWorkout(); this.startLinkStatus() },
+  onHide() { this.visible = false; this.navigating = false; clearInterval(this.linkTimer); this.linkTimer = null },
+  onDestroy() {
+    this.onHide()
+    const owner = this.linkOwner || this
+    if (typeof owner.rpcDetach === 'function') owner.rpcDetach()
+    owner.rpcDetach = null
+  },
   startLinkStatus() { clearInterval(this.linkTimer); this.updatePhoneLink(); this.linkTimer = setInterval(() => this.updatePhoneLink(), 2000) },
   updatePhoneLink() { const label = isPhoneConnected() ? '手机已连接' : '手机未连接'; if (this.phoneLinkLabel !== label) this.phoneLinkLabel = label },
   onBackPress() { return !!this.conflict },
-  checkDay() {
-    clearTimeout(this.dayTimer)
-    if (!this.visible) return
-    this.dayTimer = setTimeout(() => { if (!this.visible) return; const c = this.catalogOf(); if (c && this.catalogDate !== new Date().toDateString()) this.onCatalog(c); this.checkDay() }, 60000)
-  },
-  enterWorkout() {
+  openAvailableWorkout() { if (this.visible) this.enterWorkout(this.readLocal()) },
+  enterWorkout(s) {
     if (!this.ready || !this.visible || this.navigating || this.conflict) return
-    const s = loadState()
-    if (!s.active || !s.workout || !s.workout.exercises.length) return
+    s ||= loadState()
+    if (!s?.active || !s.workout?.exercises?.length) return
     this.navigating = true
     router.replace({ uri: '/Workout' })
   },
@@ -51,50 +44,27 @@ export default {
     if (this.conflictWaiting) this.conflictHint = '正在处理手表训练，等待手机确认…'
     this.canResume = !!s.active
     this.hasSummary = !!storage.getSync({ key: 'summary_last' })
-    const catalog = storage.getSync({ key: 'plan_catalog' })
-    if (catalog) this.onCatalog(catalog)
-    if (s.active) {
+    if (s.active && s.workout) {
       this.workoutName = s.workout.name; this.exerciseCount = s.workout.exercises.length
+      this.setCount = (s.workout.rows || []).reduce((n, rows) => n + rows.length, 0)
       this.status = s.pendingStart ? '离线训练 · 待同步' : '训练进行中'
     } else {
       const notice = storage.getSync({ key: 'last_notice' })
       this.status = notice === '存在同步冲突，离线操作及其依赖已保留，请核对手机训练记录'
-        ? '两端状态以手机为准' : notice || (this.hasToday || this.plans.length ? '缓存计划 · 待同步' : '今日暂无计划')
+        ? '两端状态以手机为准' : notice || ''
     }
-    // 本地没有计划缓存、手机也没下发过计划：说明还没同步过，不是“今天没有计划”。
-    this.needSync = !catalog && !this.plans.length && !s.active
+    return s
   },
   bindRpc() {
-    const rpcOwner = this.catalogModel || this
+    const rpcOwner = this.linkOwner || this
     rpcOwner.rpcDetach = startServer({
-      onCatalog: msg => { this.onCatalog(msg); if (!this.canResume) this.status = this.hasToday || this.plans.length ? '选择训练计划' : '今日暂无计划' },
-      onPlan: msg => this.onPlan(msg), onSync: (msg, options) => this.onSync(msg, options),
+      onPhoneStart: () => this.openAvailableWorkout(), onPlan: msg => this.onPlan(msg), onSync: (msg, options) => this.onSync(msg, options),
       onConflict: () => { this.readLocal(); this.conflictHint = this.conflictWaiting ? '正在处理手表训练，等待手机确认…' : '手机训练将继续，请保存或放弃手表训练。' },
-      onConflictResolved: () => { this.readLocal(); this.status = '手表训练已处理' },
+      onConflictResolved: () => this.openAvailableWorkout(),
       onError: () => { if (this.conflict) this.conflictHint = '尚未完成，记录已保留，请重试同步。' },
-      onEnded: () => { this.canResume = false; this.readLocal() },
-      onState: connected => { if (!this.canResume) this.status = connected ? this.hasToday || this.plans.length ? '选择训练计划' : '今日暂无计划' : '缓存计划 · 待同步' },
+      onEnded: () => this.readLocal(),
+      onState: () => this.updatePhoneLink(),
     })
-  },
-  onCatalog(msg) {
-    this.catalogOf(msg)
-    this.catalogDate = new Date().toDateString()
-    const now = new Date(), date = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0')
-    const current = msg.date === date
-    this.plans = (msg.plans || []).filter(p => p.available !== false && !(current && p.today)).map(p => ({
-      id: p.id, name: p.name, today: current && !!p.today,
-      // 计划行第二行：最多三个动作名，超出用“等 N 个动作”收尾（方形/圆形都不裁切）。
-      preview: (p.exercises || []).slice(0, 3).map(e => (e && e.name) || '').filter(Boolean).join('、')
-        + ((p.exercises || []).length > 3 ? ' 等 ' + p.exercises.length + ' 个动作' : ''),
-    }))
-    const today = current ? msg.todayPlan || (msg.plans || []).find(p => p.today && p.available !== false) : null
-    this.hasToday = !!today
-    const selected = today || (msg.plans || []).find(p => p.id === this.selected?.id && p.available !== false) || (msg.plans || []).find(p => p.available !== false)
-    this.selected = selected ? { id: selected.id, name: selected.name } : null
-    this.startLabel = today ? '开始训练' : '快速开始'
-    // 手机刚下发计划：立即不再提示“请先同步”，否则要等到下一次 onShow 才更新。
-    this.needSync = false // A confirmed empty catalog is still a successful synchronization.
-    if (!this.canResume) { this.workoutName = selected?.name || ''; this.exerciseCount = (selected?.exercises || []).length; this.setCount = (selected?.exercises || []).reduce((n,e) => n + Number(e.sets || 0), 0) }
   },
   onPlan(msg) {
     if (!msg || !Array.isArray(msg.exercises) || !msg.exercises.length) return { status: 'rejected', reason: 'empty_exercises', page: 'Index' }
@@ -103,8 +73,7 @@ export default {
     const retained = !!s.active
     if (retained) replacePlan(s, { name: msg.workout, exercises: msg.exercises })
     else startSession({ ...msg, name: msg.workout, exercises: msg.exercises }, msg.profile)
-    this.readLocal()
-    this.enterWorkout()
+    this.openAvailableWorkout()
     return { status: retained ? 'retained' : 'applied', page: 'Index', exercises: msg.exercises.length }
   },
   onSync(msg, options) {
@@ -114,34 +83,11 @@ export default {
     if (options && options.persisted && !s.active) return { status: 'retained', page: 'Index' }
     if (!s.active) s = startSession({ name: msg.workout, sid: msg.sid, exercises: msg.exercises }, msg.profile)
     if (!(options && options.persisted)) applySync(s, msg)
-    this.canResume = true; this.readLocal()
-    this.enterWorkout()
+    this.openAvailableWorkout()
     return { status: 'applied', page: 'Index' }
   },
-  startPlan(p) { this.choose(p); return this.onStart() },
-  choose(p) {
-    const raw = this.catalogOf()?.plans?.find(plan => plan.id === p.id) || p
-    this.selected = { id: raw.id, name: raw.name }; this.workoutName = raw.name
-    this.exerciseCount = (raw.exercises || []).length; this.setCount = (raw.exercises || []).reduce((n,e) => n + Number(e.sets || 0), 0)
-  },
-  async onStart() {
-    if (this.startSaving) return
-    if (loadState().active) { this.onResume(); return }
-    const catalog = this.catalogOf()
-    const p = catalog?.todayPlan?.id === this.selected?.id ? catalog.todayPlan : catalog?.plans?.find(p => p.id === this.selected?.id) || this.selected
-    if (!p?.exercises?.length) return
-    this.startSaving = true
-    try {
-      const result = await commitSessionStart(p, p.profile)
-      if (!result.ok) { this.startLabel = '存储失败，请重试'; return }
-      for (const event of result.value.pendingEdits || []) sendEvent(event)
-      this.onResume()
-    } catch (_) { this.startLabel = '存储失败，请重试' }
-    finally { this.startSaving = false }
-  },
-  onResume() {
-    this.enterWorkout()
-  },
+
+  onResume() { this.openAvailableWorkout() },
   saveConflict() { return this.resolveConflict('saved') },
   discardConflict() { return this.resolveConflict('abandoned') },
   async resolveConflict(disposition) {
@@ -168,24 +114,20 @@ export default {
   showSummary() { router.push({ uri: '/Summary' }) },
 }
 </script>
-<template><div class="page"><list class="home-scroll" if="{{ !conflict }}"><list-item type="today" class="home-section"><text class="today" if="{{ hasToday }}">今天</text><div class="today-card" if="{{ hasToday || canResume }}"><text class="card-name">{{ workoutName }}</text><div class="stats"><div class="stat"><text class="stat-number">{{ exerciseCount }}</text><text class="quiet">动作库</text></div><div class="stat"><text class="stat-number">{{ setCount }}</text><text class="quiet">组数</text></div></div><input class="primary" type="button" value="{{ canResume ? '继续训练' : startLabel }}" onclick="onStart" /></div><div class="empty-state" if="{{ !hasToday && !canResume }}"><image class="logo" src="/common/icons/wear-logo.svg" /><text class="empty-title">{{ needSync ? '尚未同步' : '没有进行中的训练' }}</text><text class="quiet empty-hint">{{ needSync ? '在手机上连接此手表并同步训练计划。' : '今日暂无训练安排，可从下方选择计划开始。' }}</text></div></list-item><list-item type="plan" class="plan" for="{{ p in (canResume ? [] : plans) }}" tid="id" onclick="startPlan(p)"><image class="play-icon" src="/common/icons/wear-play.svg" /><text class="plan-name">{{ p.name }}</text></list-item><list-item type="status" class="home-section"><text class="quiet sync-line">{{ phoneLinkLabel }}</text><text class="quiet sync-line">{{ status }}</text><text class="version">v{{ version }}</text><input class="row-button" type="button" if="{{ hasSummary }}" value="最近训练结果" onclick="showSummary" /></list-item></list><div class="overlay" if="{{ conflict }}"><list class="modal-scroll"><list-item type="conflict" class="home-section"><text class="empty-title">当前存在冲突训练</text><text class="quiet empty-hint">{{ conflictHint || '手机训练将继续，请保存或放弃手表训练。' }}</text><input class="primary" type="button" if="{{ !conflictWaiting }}" disabled="{{ conflictBusy }}" value="保存手表训练" onclick="saveConflict" /><input class="row-button" type="button" if="{{ !conflictWaiting }}" disabled="{{ conflictBusy }}" value="放弃手表训练" onclick="discardConflict" /><input class="row-button" type="button" if="{{ conflictWaiting }}" disabled="{{ conflictBusy }}" value="重试同步" onclick="retryConflict" /></list-item></list></div></div></template>
+<template><div class="page"><list class="home-scroll" if="{{ !conflict }}"><list-item type="workout" class="home-section"><div class="workout-card" if="{{ canResume }}"><text class="card-name">{{ workoutName }}</text><div class="stats"><div class="stat"><text class="stat-number">{{ exerciseCount }}</text><text class="quiet">动作</text></div><div class="stat"><text class="stat-number">{{ setCount }}</text><text class="quiet">组数</text></div></div><input class="primary" type="button" value="继续训练" onclick="onResume" /></div><div class="empty-state" else><image class="logo" src="/common/icons/wear-logo.svg" /><text class="empty-title">请打开手机端的 OpenGym</text><text class="quiet empty-hint">连接手表并在手机上开始训练。</text></div></list-item><list-item type="status" class="home-section"><text class="quiet sync-line">{{ phoneLinkLabel }}</text><text class="quiet sync-line" if="{{ status }}">{{ status }}</text><text class="version">v{{ version }}</text><input class="row-button" type="button" if="{{ hasSummary }}" value="最近训练结果" onclick="showSummary" /></list-item></list><div class="overlay" if="{{ conflict }}"><list class="modal-scroll"><list-item type="conflict" class="home-section"><text class="empty-title">当前存在冲突训练</text><text class="quiet empty-hint">{{ conflictHint || '手机训练将继续，请保存或放弃手表训练。' }}</text><input class="primary" type="button" if="{{ !conflictWaiting }}" disabled="{{ conflictBusy }}" value="保存手表训练" onclick="saveConflict" /><input class="row-button" type="button" if="{{ !conflictWaiting }}" disabled="{{ conflictBusy }}" value="放弃手表训练" onclick="discardConflict" /><input class="row-button" type="button" if="{{ conflictWaiting }}" disabled="{{ conflictBusy }}" value="重试同步" onclick="retryConflict" /></list-item></list></div></div></template>
 <style>
-/* Screens.kt StartScreen/TodayCard; source dp/sp ×1.6. */
+/* Screens.kt IdleScreen; source dp/sp ×1.6. */
 .page { width: 100%; height: 100%; background-color: #000000; flex-direction: column; align-items: center; }
 /* Keep the scrolling viewport inside the square display's corner safe area too. */
 .home-scroll { width: 336px; height: 354px; margin-top: 48px; margin-bottom: 48px; padding-bottom: 16px; }
 .home-section { width: 336px; flex-direction: column; align-items: center; }
-.today { width: 336px; height: 30px; color: #FFFFFF; font-size: 19px; text-align: center; }
-.today-card { width: 336px; flex-direction: column; align-items: center; margin-bottom: 8px; }
+.workout-card { width: 336px; flex-direction: column; align-items: center; margin-bottom: 8px; }
 .card-name { width: 336px; min-height: 68px; line-height: 34px; font-size: 28px; color: #FFFFFF; font-weight: bold; text-align: center; lines: 2; }
 .stats { width: 230px; height: 70px; flex-direction: row; justify-content: center; margin-top: 6px; margin-bottom: 10px; }
 .stat { width: 103px; height: 70px; flex-direction: column; align-items: center; }
 .stat-number { color: #FFFFFF; font-size: 30px; font-weight: bold; }
 .quiet { color: #8D8D93; font-size: 19px; text-align: center; lines: 3; }
 .primary { width: 336px; height: 64px; border-radius: 32px; background-color: #A3E635; color: #0C0E12; font-size: 22px; font-weight: bold; margin-top: 10px; margin-bottom: 8px; }
-.plan { width: 336px; min-height: 68px; padding: 10px 19px; border-radius: 22px; background-color: #1C1C1E; align-items: center; margin-bottom: 8px; }
-.play-icon { width: 21px; height: 21px; margin-right: 10px; }
-.plan-name { flex: 1; color: #FFFFFF; font-size: 22px; lines: 2; text-align: center; line-height: 28px; }
 .empty-state { width: 336px; flex-direction: column; align-items: center; }
 .logo { width: 96px; height: 48px; margin-top: 40px; margin-bottom: 16px; }
 .empty-title { width: 336px; min-height: 52px; font-size: 26px; font-weight: bold; color: #FFFFFF; text-align: center; lines: 2; }

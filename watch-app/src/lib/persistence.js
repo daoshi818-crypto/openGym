@@ -1,6 +1,7 @@
 import storage from '@blueos.storage.storage'
 import { appTimeout, cancelAppTimeout } from './app-timers.js'
 import { runtime } from './runtime.js'
+import { recordDiagnostic } from './diagnostic-log.js'
 // 存储封装：内存缓存 + 按 key 串行写。
 //
 // 两个曾经被误当真的点（真机/测试都能复现）：
@@ -34,6 +35,31 @@ const cancel = t => { try { if (t != null) cancelAppTimeout(t) } catch { /* 无�
 function notifyCommitted(key, value) {
   if (key === 'session_state') { try { runtime().trainingRuntime?.observe(value) } catch {} }
 }
+function storageKind(key) {
+  if (key === 'session_state') return 'session'
+  if (key === 'rpc_outbox') return 'outbox'
+  if (key === 'watch_close_journal_v1') return 'close_journal'
+  return 'other'
+}
+function traceStorageWrite(key, startedAt, ok) {
+  try { recordDiagnostic('storage_write', { kind: storageKind(key), duration: Math.max(0, Date.now() - startedAt), ok }) } catch {}
+}
+
+// Nested maps select descendants; arrays select keys from the immediate object.
+function selectProjection(source, projection) {
+  if (!source || typeof source !== 'object') return source
+  const selected = {}
+  for (const [field, nested] of Object.entries(projection || {})) {
+    if (!Object.prototype.hasOwnProperty.call(source, field) || !nested) continue
+    const item = source[field]
+    if (Array.isArray(nested) && item && typeof item === 'object') {
+      selected[field] = {}
+      for (const child of nested) if (Object.prototype.hasOwnProperty.call(item, child)) selected[field][child] = item[child]
+    } else if (nested && typeof nested === 'object') selected[field] = selectProjection(item, nested)
+    else selected[field] = item
+  }
+  return selected
+}
 
 // Project before cloning: clock ticks must not copy rows, snapshots and pending events.
 // Both full reads and projections remain detached from the mutable shared cache.
@@ -46,11 +72,8 @@ export function readStored(key, fields) {
   }
   const value = state.values[key]
   if (!fields || value == null) return clone(value)
-  const selected = {}
-  for (const field of fields) {
-    if (Object.prototype.hasOwnProperty.call(value, field)) selected[field] = value[field]
-  }
-  return clone(selected)
+  const projection = Array.isArray(fields) ? Object.fromEntries(fields.map(field => [field, true])) : fields
+  return clone(selectProjection(value, projection))
 }
 
 export function writeStored(key, value) {
@@ -131,6 +154,7 @@ function sameSessionSegment(a, b) {
 }
 function atomicDrain(key, state, q) {
   const job = q.transactions.shift(), overlays = []
+  const startedAt = Date.now()
   let value
   try { value = clone(job.transform(readStored(key))) }
   catch (error) { job.resolve({ ok: false, error: String(error?.message || error) }); drain(key, state, q); return }
@@ -141,6 +165,7 @@ function atomicDrain(key, state, q) {
     if (runtime().destroyed) ok = false
     finished = true; cancel(timer); q.busy = false; q.atomic = null
     q.cancelInFlight = null
+    traceStorageWrite(key, startedAt, ok)
     if (ok) {
       let published = value
       for (const overlay of overlays) {
@@ -184,6 +209,7 @@ function drain(key, state, q) {
   if (!q.dirty) { if (q.transactions?.length) atomicDrain(key, state, q); return }
   q.busy = true; q.dirty = false
   const revision = state.revisions[key] || 0
+  const startedAt = Date.now()
   const value = clone(state.values[key])
   let settled = false, timer = null
   const done = ok => {
@@ -193,6 +219,7 @@ function drain(key, state, q) {
     q.cancelInFlight = null
     cancel(timer)
     q.busy = false
+    traceStorageWrite(key, startedAt, ok)
     if (ok) {
       delete state.errors[key]
       q.confirmed = Math.max(q.confirmed || 0, revision)

@@ -1393,7 +1393,7 @@ export const useStore = create((set, get) => {
         const sid = watchSidOf(prev.active)
         if (sid && !S.watchClosed?.[sid]) {
           const saved = S.workouts.find(w => w.watchSid === sid || String(w.start) === sid || w.watchSids?.includes(sid))
-          rememberClose(S, { sid, disposition: saved ? 'saved' : 'discarded', closedAt: saved?.finishedAt || Date.now(), entries: prev.active.entries, elapsedBeforeMs: prev.active.elapsedBeforeMs || 0 })
+          rememberClose(S, { sid, disposition: saved ? 'saved' : 'discarded', closedAt: saved?.finishedAt || Date.now(), entries: prev.active.entries, elapsedBeforeMs: prev.active.elapsedBeforeMs || 0, ...(prev.active.watchPhoneSession === true ? { phoneLedSession: true, sessionGeneration: prev.active.watchSessionGeneration } : {}) })
         }
       }
       // What the change removed, and which routines, workouts, settings and plan days it touched,
