@@ -2006,7 +2006,7 @@ const pageDefinition = {
 export default pageDefinition
 </script>
 <template>
-<div class="page" id="training" touch-focusable="true" vibration-effectEnabled="true" rotation-sensitivity="1" onrotation="onRotation" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
+<div class="page" id="training" touch-focusable="true" vibration-effectEnabled="false" rotation-sensitivity="1" onrotation="onRotation" ontouchstart="touchStart" ontouchmove="touchMove" ontouchend="touchEnd" ontouchcancel="touchCancel">
   <div class="topbar" if="{{ !effortOn && !lastOpen && !diagnosticOn && !keypadOn }}"><text class="top-lead" if="{{ !syncWarning }}">{{ hrLabel }}</text><text class="sync-pill" if="{{ syncWarning }}">{{ syncLabel }}</text><text class="clock">{{ clockLabel }}</text></div>
   <div class="pager" if="{{ !closeMode && !effortOn && !lastOpen && !diagnosticOn && !keypadOn }}">
     <div class="screen overview-screen" show="{{ pageIndex === 0 }}">
