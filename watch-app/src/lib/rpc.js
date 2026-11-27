@@ -436,6 +436,7 @@ function flush() {
   if (rpcState().persistFailed && !rpcState().writeBusy) persist()
   if (!rpcState().connected) { probeConnection(); return }
   if (!rpcState().connected || !rpcState().connect || rpcState().sending) return
+  if (rpcState().v4Ready && dispatchNextLiveLatest()) return
   if (!(rpcState().controls || []).some(e => Date.now() >= (e.nextAttemptAt || 0)) && Date.now() < (rpcState().nextSendAt || 0)) { scheduleFlush(rpcState().nextSendAt - Date.now()); return }
   const r = rpcState()
   if (r.v4Ready && !isPhoneSessionLive(runtime().phoneSessionPresence, runtime().phoneSessionPresence)) r.controls = (r.controls || []).filter(e => !e.live)
@@ -1264,9 +1265,7 @@ function dispatchNextLiveLatest() {
   return true
 }
 
-/** Latest-only phone-led weight/reps update. It is transient: no eventId, outbox,
- * persistence or retry after disconnect. flush() serializes one SDK send at a time.
- */
+/** Send the latest phone-led value without adding it to the persistent outbox. */
 export function sendLiveValue(value) {
   if (!value || !['weight', 'reps'].includes(value.t)) return false
   initialize()

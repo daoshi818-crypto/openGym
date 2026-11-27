@@ -46,6 +46,18 @@ try {
  const liveFrame=sent.slice(beforeLive).find(m=>m.t==='weight')
  assert.equal(liveFrame.protocolVersion,4); assert.ok(liveFrame.eventId); assert.ok(Number.isSafeInteger(liveFrame.rev)); await phoneReceiver.idle()
  assert.equal(phoneState.active.entries[0].sets[0].w,41); assert.equal(rpc.pendingCount(),4)
+ // A regular control releases the same SDK slot as a live value. Its callback
+ // must also make progress on a solitary value waiting for that slot.
+ const duringControl=sent.length; holdNext=true
+ assert.equal(rpc.sendControl({t:'link_probe_ack',requestId:'held-probe'}),true)
+ await waitFor(()=>!!releaseSend)
+ assert.equal(rpc.sendLiveValue({t:'weight',sid:'s1',ex:0,set:1,entryInstanceId:'entry1',setId:'r1',weight:41.5,weightUnit:'kg'}),true)
+ assert.ok(!sent.slice(duringControl).some(m=>m.t==='weight'))
+ const releaseControl=releaseSend; releaseSend=null; releaseControl()
+ await waitFor(()=>sent.slice(duringControl).some(m=>m.t==='weight'&&m.weight===41.5))
+ await phoneReceiver.idle()
+ assert.equal(phoneState.active.entries[0].sets[0].w,41.5)
+ assert.equal(rpc.pendingCount(),4)
  const controlStart=sent.length; holdNext=true
  assert.equal(rpc.sendLiveValue({t:'weight',sid:'s1',ex:0,set:1,entryInstanceId:'entry1',setId:'r1',weight:42,weightUnit:'kg'}),true)
  await waitFor(()=>!!releaseSend)
