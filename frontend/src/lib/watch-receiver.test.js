@@ -830,10 +830,10 @@ describe('watch business message boundary', () => {
       shared.phoneSessionPresence = { active:true,sid:watchState.sid,generation:watchState.sid,lastSeenAt:Date.now() }
       const workout = training(sessions, rpc); workout.onInit()
       workout.selectField('w'); workout.adjustSelectedField(1)
-      expect(c.sent.filter(message=>message.t==='weight'&&message.phoneLed===true)).toHaveLength(1)
+      expect(c.sent.filter(message=>message.t==='weight'&&message.phoneLed===true)).toHaveLength(0)
       await workout.flushNumberDraft()
       const valueFrames = c.sent.filter(message=>message.t==='weight'&&message.phoneLed===true)
-      expect(valueFrames.length).toBeGreaterThan(0)
+      expect(valueFrames).toHaveLength(1)
       expect(valueFrames.every(message=>Object.keys(message).filter(key=>['weight','reps'].includes(key)).length===1)).toBe(true)
       valueFrames.forEach(frame=>receiver(frame)); await receiver.idle()
       expect(phone.active.entries[0].sets[0].w).toBe(60.5)

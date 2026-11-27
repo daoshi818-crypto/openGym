@@ -28,10 +28,13 @@ import { lastTimeView } from '../lib/watch-last-time.js'
 import { zoneView, muscleView } from '../lib/official-metrics.js'
 import { summarizeWorkoutRows } from '../lib/workout-summary.js'
 
+const NUMBER_STEP_MS = 70
+const NUMBER_IDLE_MS = 350
+
 const pageDefinition = {
   // Native reactiveMap retains proxies until Page destruction. Business documents
   // must stay in staticData; only the small display projection belongs in data.
-  staticData: { sessionModel: { current: null, restFlush: null, numberDraft: null, numberFlush: null, numberTimer: null, numberGeneration: 0, keypadDraft: null, touchPoints: { start: { x: 0, y: 0 }, last: { x: 0, y: 0 } } } },
+  staticData: { sessionModel: { current: null, restFlush: null, numberDraft: null, numberFlush: null, numberTimer: null, numberGeneration: 0, numberCrown: null, keypadDraft: null, touchPoints: { start: { x: 0, y: 0 }, last: { x: 0, y: 0 } } } },
   stateOf(value) {
     // Detached transaction drafts (and legacy page callers) own their state.
     if (this.sessionActionDraft || !this.sessionModel) {
@@ -68,6 +71,11 @@ const pageDefinition = {
     if (arguments.length) owner.numberGeneration = value
     return owner.numberGeneration || 0
   },
+  numberCrownOf(value) {
+    const owner = this.sessionModel || this
+    if (arguments.length) owner.numberCrown = value
+    return owner.numberCrown
+  },
   keypadDraftOf(value) {
     const owner = this.sessionModel || this
     if (arguments.length) owner.keypadDraft = value
@@ -76,9 +84,17 @@ const pageDefinition = {
   updateNumbers() {
     const draft = numberDraft(this.stateOf(), this.numberDraftOf())
     this.numberDraftOf(draft)
+    let crown = this.numberCrownOf()
+    if (crown && crown.draft !== draft) {
+      this.cancelNumberCrown()
+      crown = null
+    }
     if (this.keypadOn && (!draft || this.keypadDraftOf() !== draft)) this.closeNumberKeypad()
     if (draft) {
-      this.weightNum = draft.w || '—'; this.repsNum = draft.r || '—'
+      const weight = (crown?.field === 'w' ? crown.shown : draft.w) || '—'
+      const reps = (crown?.field === 'r' ? crown.shown : draft.r) || '—'
+      if (this.weightNum !== weight) this.weightNum = weight
+      if (this.repsNum !== reps) this.repsNum = reps
     }
     return draft
   },
@@ -265,7 +281,7 @@ const pageDefinition = {
     if (!delta) return
     crownTick()
     if (this.isRest || this.restCrownDirty) this.queueRestNudge(delta > 0 ? 5 : -5)
-    else return this.adjustSelectedField(rotationStep(ev))
+    else return this.adjustSelectedField(delta)
   },
   onBackPress() {
     if (this.closeSaving || this.stateOf()?.closeIntent) return true
@@ -410,7 +426,7 @@ const pageDefinition = {
   },
 
   onDestroy() {
-    this.flushNumberDraft()
+    const numbers = this.flushNumberDraft()
     const rpcOwner = this.sessionModel || this
     if (typeof rpcOwner.rpcDetach === 'function') rpcOwner.rpcDetach()
     rpcOwner.rpcDetach = null
@@ -425,8 +441,9 @@ const pageDefinition = {
     this.timer = null
     const pending = this.flushRestNudge()
     this.setRestScreenLock(false)
-    if (this.sessionModel) { this.sessionModel.current = null; this.sessionModel.numberDraft = null; this.sessionModel.keypadDraft = null }
-    return pending
+    return Promise.all([pending, numbers]).finally(() => {
+      if (this.sessionModel) { this.sessionModel.current = null; this.sessionModel.numberDraft = null; this.sessionModel.keypadDraft = null }
+    })
   },
 
   setRestScreenLock(keepOn) {
@@ -609,19 +626,50 @@ const pageDefinition = {
     const draft = this.numberDraftOf()
     return !!(draft && (draft.dirtyW || draft.dirtyR))
   },
-  scheduleNumberDraftFlush() {
+  cancelNumberCrown() {
+    const crown = this.numberCrownOf()
+    if (!crown) return
+    if (crown.timer != null) clearTimeout(crown.timer)
+    this.numberCrownOf(null)
+  },
+  finishNumberCrown() {
+    if (!this.numberCrownOf()) return
+    this.cancelNumberCrown()
+    this.updateNumbers()
+  },
+  paceNumberCrown(crown) {
+    crown.timer = setTimeout(() => {
+      crown.timer = null
+      if (this.numberCrownOf() !== crown) return
+      if (numberDraft(this.stateOf(), this.numberDraftOf()) !== crown.draft) {
+        this.updateNumbers()
+        return
+      }
+      if (!crown.values.length) return
+      crown.shown = crown.values.shift()
+      if (crown.field === 'w') this.weightNum = crown.shown
+      else this.repsNum = crown.shown
+      this.paceNumberCrown(crown)
+      if (!crown.values.length && this.numberTimerOf() == null) this.scheduleNumberDraftFlush(0)
+    }, NUMBER_STEP_MS)
+  },
+  scheduleNumberDraftFlush(delay = NUMBER_IDLE_MS) {
     const old = this.numberTimerOf()
     if (old != null) clearTimeout(old)
     this.numberTimerOf(setTimeout(() => {
       this.numberTimerOf(null)
-      this.flushNumberDraft()
-    }, 350))
+      this.flushNumberDraft(false)
+    }, delay))
   },
-  async flushNumberDraft() {
-    const timer = this.numberTimerOf()
-    if (timer != null) clearTimeout(timer)
-    this.numberTimerOf(null)
+  async flushNumberDraft(force = true) {
+    if (force) {
+      this.finishNumberCrown()
+      const timer = this.numberTimerOf()
+      if (timer != null) clearTimeout(timer)
+      this.numberTimerOf(null)
+    }
     for (;;) {
+      if (!force && (this.numberTimerOf() != null || this.numberCrownOf()?.values.length)) return true
       const pending = this.numberFlushOf()
       if (pending) {
         const ok = await pending
@@ -634,8 +682,7 @@ const pageDefinition = {
       const generation = this.numberGenerationOf()
       const sid = snapshot.target.sid
       const operation = commitSessionAction(sid, state => {
-        const found = rowTarget(state, snapshot.target)
-        if (!found || found.row.done) return 'superseded'
+        if (numberDraft(state, snapshot) !== snapshot) return 'superseded'
         applyNumberDraft(state, snapshot)
         // Phone-led v4 edits become single-field live events only after local durability.
         if (state.protocolVersion === 4 && state.sessionOrigin === 'phone') {
@@ -668,10 +715,12 @@ const pageDefinition = {
       if (latest.sid !== sid || !latest.active) return true
       if (generation === this.numberGenerationOf()) {
         const current = this.numberDraftOf()
-        if (current && current.target.setId === snapshot.target.setId) {
-          current.dirtyW = false; current.dirtyR = false
+        if (current === draft) {
+          this.cancelNumberCrown()
+          current.dirtyW = false; current.dirtyR = false; current.crownEdited = false
         }
         this.stateOf(latest)
+        this.updateNumbers()
         return true
       }
     }
@@ -691,6 +740,7 @@ const pageDefinition = {
     if (this.selectedField === field && this.fieldTarget && this.fieldTarget.setId === target.setId) {
       this.openNumberKeypad(field); return
     }
+    this.finishNumberCrown()
     this.weightStep = storage.getSync({ key: 'weight_step' })
     this.updateNumbers()
     this.selectedField = field; this.fieldTarget = target; this.inputNotice = ''
@@ -705,23 +755,42 @@ const pageDefinition = {
     if (this.numberEditLocked || this.keypadOn) return
     const s = this.stateOf(), found = rowTarget(s, this.fieldTarget)
     if (!found || found.row.done || s.pausedAt || s.restUntil || this.fieldTarget.weightUnit !== (s.weightUnit || 'kg') || found.exIdx !== s.exIdx || found.setIdx !== s.setIdx) {
-      this.clearFieldSelection(); this.inputNotice = '目标已变化，请重新选择'; return
+      this.clearFieldSelection(); this.updateNumbers(); this.inputNotice = '目标已变化，请重新选择'; return
     }
     const draft = this.updateNumbers()
     if (!draft) { this.clearFieldSelection(); return }
-    const value = valueStep(draft[this.selectedField], this.selectedField, direction, this.weightStep)
-    changeNumber(draft, this.selectedField, value)
+    const field = this.selectedField
+    let crown = this.numberCrownOf()
+    if (crown?.field !== field) {
+      this.cancelNumberCrown()
+      crown = null
+    }
+    const previous = draft[field], value = valueStep(previous, field, Math.sign(direction), this.weightStep)
+    if (value === previous || (Number(value) - Number(previous)) * direction < 0) {
+      if (crown && this.numberDraftDirty()) this.scheduleNumberDraftFlush()
+      return
+    }
+    if (!changeNumber(draft, field, value)) return
+    draft.crownEdited = true
     this.numberGenerationOf(this.numberGenerationOf() + 1)
+    // Store the accepted value immediately for completion and lifecycle flushes.
+    // The display takes one queued value per timer tick.
+    if (!crown) {
+      crown = { draft, field, values: [], shown: previous, timer: null }
+      this.numberCrownOf(crown)
+    }
+    if (crown.timer != null) crown.values.push(value)
+    else {
+      crown.shown = value
+      if (field === 'w') this.weightNum = value
+      else this.repsNum = value
+      this.paceNumberCrown(crown)
+    }
     this.scheduleNumberDraftFlush()
-    if (this.selectedField === 'w') this.weightNum = value
-    else this.repsNum = value
-    const target = draft.target, type = this.selectedField === 'w' ? 'weight' : 'reps'
-    sendLiveValue({ t: type, sid: s.sid, ex: target.exIdx, set: target.setIdx + 1,
-      entryInstanceId: target.entryInstanceId, setId: target.setId, weightUnit: target.weightUnit,
-      [type]: value, at: Date.now(), source: 'watch' })
   },
   openNumberKeypad(field) {
     if (this.localCommitPending || this.interactionBlocked()) return
+    this.finishNumberCrown()
     const draft = this.updateNumbers()
     if (!draft) return
     this.keypadDraftOf(draft); this.keypadField = field
@@ -803,6 +872,7 @@ const pageDefinition = {
     const found = rowTarget(this.stateOf(), target)
     if (!found) return this.logDotBlocked(target, 'stale_target', 'tap')
     if (!this.setDotPicker?.pending() && found.exIdx === this.stateOf().exIdx && found.setIdx === this.stateOf().setIdx) return this.logDotBlocked(target, 'current_set', 'tap')
+    if (this.numberDraftDirty()) return this.flushNumberDraft().then(ok => ok ? this.pickSetDot(target) : false)
     if (!this.setDotPicker) this.setDotPicker = createSetDotPicker(next => this.commitSetDot(next))
     if (!this.setDotPicker.pending()) this.logInteraction('dot_queued', { setId: target.setId, set: target.setIdx })
     // Browsing a group is immediate; only the persisted focus intention waits for
@@ -896,11 +966,19 @@ const pageDefinition = {
         return ok ? this.onComplete(expectedTarget) : false
       })
     }
+    this.finishNumberCrown()
+    const state = this.stateOf(), input = this.numberDraftOf()
+    if (input?.crownEdited && state.protocolVersion === 4 && state.sessionOrigin === 'phone') {
+      this.numberEditLocked = true
+      return this.flushNumberDraft().then(ok => {
+        this.numberEditLocked = false
+        return ok ? this.onComplete(expectedTarget || input.target) : false
+      })
+    }
     const timer = this.numberTimerOf()
     if (timer != null) clearTimeout(timer)
     this.numberTimerOf(null)
     this.numberEditLocked = true
-    const input = this.numberDraftOf()
     // Freeze only these bounded scalars; an arriving phone snapshot may reconcile the live draft.
     const numbers = input ? { ...input, target: { ...input.target } } : null
     const completion = commitPageAction(this, function() {
@@ -1115,6 +1193,11 @@ const pageDefinition = {
 
   onRemoteEnded() {
     this.logInteraction('remote_end', {}, true)
+    this.cancelNumberCrown()
+    const numberTimer = this.numberTimerOf()
+    if (numberTimer != null) clearTimeout(numberTimer)
+    this.numberTimerOf(null)
+    this.numberDraftOf(null)
     this.cancelSetDotPick()
     this.cancelRestNudge()
     this.setRestScreenLock(false)
@@ -1912,6 +1995,7 @@ const pageDefinition = {
     this.setPaused(!!msg.paused, msg.at || Date.now(), false)
   },
   async setPaused(paused, at, notify) {
+    if (notify && this.numberDraftDirty() && !(await this.flushNumberDraft())) return false
     if ((await this.flushRestNudge()) === false) return false
     return commitPageAction(this, function() {
     const s = this.stateOf()

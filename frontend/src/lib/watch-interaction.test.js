@@ -100,13 +100,78 @@ describe('actual watch workout page wiring', () => {
     const { page, ctx, s } = workout()
     page.editWeight(); expect(page.selectedField).toBe('w')
     for (let i = 0; i < 400; i++) page.onRotation({ delta: 1 })
-    expect(page.weightNum).toBe('200')
+    expect(page.weightNum).toBe('0.5')
     expect(s.workout.rows[0][0].w).toBe('')
     expect(ctx.setRowValue).not.toHaveBeenCalled()
     expect(ctx.replayPendingEvents).not.toHaveBeenCalled()
     expect(ctx.save).not.toHaveBeenCalled()
     page.editWeight(); expect(page.keypadOn).toBe(true)
+    expect(page.keypadValue).toBe('200')
+    page.closeNumberKeypad()
     expect(ctx.router.push).not.toHaveBeenCalled()
+  })
+  it('renders each accepted detent at its own cadence and commits once after the burst', async () => {
+    vi.useFakeTimers()
+    try {
+      const { page, ctx, s } = workout()
+      const commit = vi.spyOn(ctx, 'commitSessionAction')
+      const send = vi.spyOn(ctx, 'sendLiveValue')
+      s.workout.rows[0][0].r = '1'
+      page.editReps()
+      for (let i = 0; i < 9; i++) page.onRotation({ delta: 4, state: 2 })
+      expect(page.repsNum).toBe('2')
+      expect(page.numberDraftOf().r).toBe('10')
+      for (let expected = 3; expected <= 10; expected++) {
+        await vi.advanceTimersByTimeAsync(69)
+        expect(page.repsNum).toBe(String(expected - 1))
+        expect(commit).not.toHaveBeenCalled()
+        expect(send).not.toHaveBeenCalled()
+        await vi.advanceTimersByTimeAsync(1)
+        expect(page.repsNum).toBe(String(expected))
+      }
+      await vi.advanceTimersByTimeAsync(1)
+      expect(commit).toHaveBeenCalledOnce()
+      expect(s.workout.rows[0][0].r).toBe('10')
+    } finally { vi.useRealTimers() }
+  })
+  it('renders reversals in order and ignores detents beyond either bound', async () => {
+    vi.useFakeTimers()
+    try {
+      const { page, ctx, s } = workout()
+      const commit = vi.spyOn(ctx, 'commitSessionAction')
+      const row = s.workout.rows[0][0]
+      row.r = '99998'
+      page.editReps()
+      for (const delta of [1, 1, -1, -1, 1]) page.onRotation({ delta })
+      expect(page.repsNum).toBe('99999')
+      for (const value of ['99998', '99997', '99998']) {
+        await vi.advanceTimersByTimeAsync(70)
+        expect(page.repsNum).toBe(value)
+      }
+      await vi.advanceTimersByTimeAsync(140)
+      expect(commit).toHaveBeenCalledOnce()
+      row.r = '0'
+      page.updateNumbers()
+      page.onRotation({ delta: -1 })
+      await vi.advanceTimersByTimeAsync(400)
+      expect(page.repsNum).toBe('0')
+      expect(commit).toHaveBeenCalledOnce()
+    } finally { vi.useRealTimers() }
+  })
+  it('cancels queued rendering and saves when the captured row is replaced remotely', async () => {
+    vi.useFakeTimers()
+    try {
+      const { page, ctx, s } = workout()
+      const commit = vi.spyOn(ctx, 'commitSessionAction')
+      page.editReps()
+      page.onRotation({ delta: 1 })
+      page.onRotation({ delta: 1 })
+      s.workout.rows[0][0] = { setId: 'replacement', w: '', r: '42', done: false }
+      page.updateNumbers()
+      await vi.advanceTimersByTimeAsync(500)
+      expect(page.repsNum).toBe('42')
+      expect(commit).not.toHaveBeenCalled()
+    } finally { vi.useRealTimers() }
   })
   it('stops on stale units, deleted targets, completed rows and pause', async () => {
     for (const change of [s => { s.weightUnit = 'lb' }, s => { s.workout.rows[0][0].setId = 'new' }, s => { s.workout.rows[0][0].done = true }, s => { s.pausedAt = 1 }]) {
