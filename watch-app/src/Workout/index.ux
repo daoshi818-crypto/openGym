@@ -923,7 +923,10 @@ const pageDefinition = {
       name: s.workout.exercises[exIdx]?.name || '', setNo: setIdx + 1 }
     this.restStartAt = Date.now()
     this.setRestScreenLock(!!s.restUntil)
-    this.emitEvent({ t: 'set', sid: s.sid, ex: exIdx, set: setIdx + 1, at: row.at, rest: restOf(s) })
+    const phoneLedV4 = s.protocolVersion === 4 && s.sessionOrigin === 'phone' && s.phoneSession?.sid === s.sid
+    // Legacy sessions carry the saved row values with the completion event.
+    this.emitEvent({ t: 'set', sid: s.sid, ex: exIdx, set: setIdx + 1, at: row.at, rest: restOf(s),
+      ...(phoneLedV4 ? {} : { weight: String(row.w ?? ''), reps: String(row.r ?? '') }) })
     tick()
     const next = nextUndone(s)
     if (next) {

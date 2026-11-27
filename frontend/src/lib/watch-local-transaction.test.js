@@ -44,9 +44,13 @@ it('does not publish success UI or Outbox before disk, then replays the same fro
   const frozen = h.disk.get('session_state').pendingEdits[0]
   expect(frozen.protocolVersion).toBe(3)
   const restarted = boot(h.disk), c = restarted.c
-  c.interconnect = { instance: () => ({ getReadyState: ({ success }) => success({ status: 0 }), send() {} }) }
+  const connection = { getReadyState: ({ success }) => success({ status: 0 }), send() {} }
+  c.interconnect = { instance: () => connection }
   loadWatchModule('rpc', c, ['startServer', 'replayPendingEvents', 'pendingCount'])
-  c.startServer({}); c.replayPendingEvents(); await drain()
+  c.startServer({})
+  connection.onMessage({ t: 'hello_ack', protocolVersion: 3,
+    capabilities: { durableCommit: true, snapshotChunks: true, dependencyEvents: true } })
+  c.replayPendingEvents(); await drain()
   expect(c.pendingCount()).toBe(1)
   expect(h.disk.get('rpc_outbox')[0].msg).toEqual(frozen)
 })

@@ -36,6 +36,7 @@ function device() {
 function open(h) {
   h.rpc.startServer({})
   h.connection.onOpen()
+  h.connection.onMessage({ t: 'hello_ack', protocolVersion: 2, capabilities: {} })
 }
 
 function watchSession(h, { startedAt = Date.now() - 600000 } = {}) {

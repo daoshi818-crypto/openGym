@@ -82,6 +82,7 @@ describe('phone-led RPC replay fence', () => {
     loadWatchModule('close-journal', c, ['journalEntry', 'pendingCloseEvents', 'pendingSummaries', 'pendingEntry', 'prepareClose', 'releaseCandidate', 'markPhase', 'markEntry', 'markDelivered'])
     loadWatchModule('rpc', c, ['startServer', 'sendEvent', 'pendingCount'])
     c.startServer({}); connection.onOpen()
+    connection.onMessage({ t: 'hello_ack', protocolVersion: 3, capabilities: { sessionPresence: true, dependencyEvents: true } })
 
     expect(c.sendEvent({ t: 'set', sid: state.sid, eventId: 'offline-set', ex: 0, set: 1, at: 1 })).toBe(true)
     expect(c.pendingCount()).toBe(0)

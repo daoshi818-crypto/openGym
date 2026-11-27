@@ -95,23 +95,48 @@ describe('real watch row edits with AI template isolation', () => {
       persistenceStatus: () => ({ failed: false }), pendingCount: () => 0 })
     runInNewContext(stripImports(watchSource('Workout/index.ux').match(/<script>([\s\S]*?)<\/script>/)[1]).replace('export default', 'globalThis.workoutPage ='), ctx)
     const page = { ...ctx.workoutPage, ...ctx.workoutPage.data, state: ctx.loadState(), refresh: vi.fn() }
-    const connection = { getReadyState: ({ success }) => success({ status: 0 }), send: ({ success }) => success() }
+    const sent = []
+    const connection = {
+      getReadyState: ({ success }) => success({ status: 0 }),
+      send: ({ data, success }) => { sent.push(structuredClone(data)); success() },
+    }
     ctx.interconnect = { instance: () => connection }
     loadWatchModule('rpc', ctx, ['startServer', 'sendEvent', 'replayPendingEvents'])
-    ctx.startServer({}); connection.onOpen()
+    ctx.startServer({})
     connection.onMessage({ t: 'hello_ack', protocolVersion: 3, capabilities: { dependencyEvents: true } })
-    page.editWeight(); await page.onRotation({ delta: 1 })
-    expect(ctx.loadState().pendingEdits.some(e => e.t === 'weight')).toBe(false)
-    expect(await page.onComplete()).toBe(true)
-    const edit = ctx.loadState().pendingEdits.find(e => e.t === 'set')
-    expect(edit.t).toBe('set'); expect(edit.weight).toBe('40.5'); expect(edit.eventId).toBeTruthy()
-    expect(ctx.runtime().rpc.outbox.find(e => e.msg.eventId === edit.eventId).msg).toEqual(edit)
-    app.receive(edit); await app.receive.idle()
-    expect(S.active.entries[0].sets[0].w).toBe(40.5)
-    app.receive(edit); await app.receive.idle()
-    expect(S.active.entries[0].sets[0].w).toBe(40.5)
-    expect(S.routines[0].ex[0].sets).toBe(4)
-    ctx.runtime().rpc.stop(); app.receive.dispose()
+    try {
+      page.editWeight(); await page.onRotation({ delta: 1 })
+      expect(ctx.loadState().pendingEdits.some(e => e.t === 'weight')).toBe(false)
+      expect(await page.onComplete()).toBe(true)
+      const edit = ctx.loadState().pendingEdits.find(e => e.t === 'set')
+      const entry = S.active.entries[0], row = entry.sets[0]
+      expect(edit).toMatchObject({ t: 'set', sid: event.sid, weight: '40.5', reps: '8', weightUnit: 'kg',
+        entryInstanceId: entry.entryInstanceId, setId: row.setId, eventId: expect.any(String) })
+      expect(ctx.runtime().rpc.outbox.find(e => e.msg.eventId === edit.eventId).msg).toEqual(edit)
+
+      const startReceipt = app.deps.send.mock.calls.map(([message]) => message)
+        .find(message => message.t === 'committed' && message.eventId === event.eventId)
+      expect(startReceipt).toMatchObject({ status: 'applied' })
+      connection.onMessage(startReceipt)
+      const sentEdit = await vi.waitFor(() => {
+        const message = sent.find(e => e.t === 'set')
+        expect(message).toEqual(edit)
+        return message
+      })
+      expect(app.receive(sentEdit)).toBe(true); await app.receive.idle()
+      expect(row).toMatchObject({ w: 40.5, r: '8', done: true })
+      expect(S.active.watchEvents).toContain(edit.eventId)
+      const receipt = app.deps.send.mock.calls.map(([message]) => message)
+        .find(message => message.t === 'committed' && message.eventId === edit.eventId)
+      expect(receipt).toMatchObject({ sid: event.sid, status: 'applied' })
+
+      expect(app.receive(sentEdit)).toBe(true); await app.receive.idle()
+      expect(S.active.watchEvents.filter(id => id === edit.eventId)).toHaveLength(1)
+      expect(row).toMatchObject({ w: 40.5, done: true })
+      expect(S.routines[0].ex[0].sets).toBe(4)
+    } finally {
+      ctx.runtime().rpc.stop(); app.receive.dispose()
+    }
   })
   it('AI changes template 4→3; offline fourth watch row still commits and saves; next start has 3', async () => {
     const { S, event, ctx } = await queuedLegacyStart()

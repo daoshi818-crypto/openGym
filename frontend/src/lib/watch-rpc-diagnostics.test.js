@@ -95,7 +95,7 @@ describe('watch RPC transport diagnostics without delivery changes', () => {
     const d = device('fail'); d.emit(); d.emit()
     d.connection.onMessage({ t: 'watch_diagnostics_request', requestId: 'probe-1' })
     const reply = d.sent.find(m => m.t === 'watch_diagnostics')
-    expect(reply).toMatchObject({ requestId: 'probe-1', sid: 's', pending: 2, phonePending: 0 })
+    expect(reply).toMatchObject({ requestId: 'probe-1', pending: 2, phonePending: 0, head: { type: 'rest', sid: 's' } })
     expect(reply.events.length).toBeLessThanOrEqual(8)
     expect(JSON.stringify(reply).length).toBeLessThan(4096)
     expect(reply.head).toMatchObject({ type: 'rest', eventId: d.controls[0].data.eventId })
