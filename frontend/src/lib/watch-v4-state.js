@@ -22,17 +22,46 @@ export function watchTerminalOf(S, sid) {
   return w ? { sid, disposition: 'saved', closedAt: w.finishedAt || w.end || w.start } : null
 }
 
-function targetOf(active, ev, type) {
-  if (type === 'add_set' || type === 'remove_set') {
-    if (!validId(ev.entryInstanceId)) return null
-    return resolveWatchTarget(active, ev)
-  }
+function targetOf(active, ev) {
   const setId = ev.setId || ev.groupId
   if (!validId(setId)) return null
   const entry = active.entries.find(e => (ev.entryInstanceId ? e.entryInstanceId === ev.entryInstanceId : e.sets.some(r => r.setId === setId)))
   if (!entry) return null
   const target = resolveWatchTarget(active, { ...ev, entryInstanceId: entry.entryInstanceId, setId })
   return target?.row ? target : null
+}
+
+function applyWatchV4Structure(S, ev, revisions, fresh) {
+  if (!validId(ev.entryInstanceId)) return false
+  const active = S.active
+  const target = resolveWatchTarget(active, ev)
+  if (!target) return false
+  const { entry, rows, ex } = target
+  const adding = ev.t === 'add_set'
+  const idField = adding ? 'newSetIds' : 'removedSetIds'
+  if (!Array.isArray(ev[idField])) return false
+
+  const keyOf = setId => watchFieldKey(entry, { setId }, 'structure')
+  const ids = ev[idField].filter(id => {
+    if (!validId(id) || !fresh(keyOf(id))) return false
+    const owner = active.entries.find(e => e.sets.some(row => row.setId === id))
+    if (adding) return !owner && id.startsWith('watch-set:') && !active.watchRemovedSets?.includes(id)
+    return owner ? owner === entry && rows.some(row => row.setId === id) : id.startsWith('watch-set:')
+  })
+  if (!ids.length) return false
+
+  // Watch adds append, so their revisions give the order even when frames
+  // arrive in reverse. Existing rows through the snapshot watermark stay put.
+  const beforeSetId = adding ? rows.find(row => revisions[keyOf(row.setId)] > ev.rev)?.setId : undefined
+  const focus = active.watchFocus
+  const focused = focus?.ex === ex ? rows[focus.set - 1] : null
+  if (!applyWatchEvent(S, { ...ev, [idField]: ids }, { beforeSetId })) return false
+  for (const id of ids) revisions[keyOf(id)] = ev.rev
+  if (focused) {
+    const set = entry.sets.filter(row => !isWarmupRow(row)).indexOf(focused) + 1
+    if (set) focus.set = set
+  }
+  return true
 }
 
 function restState(S, value, sid, now) {
@@ -89,7 +118,7 @@ function reconcileSnapshot(deps, ev, now) {
     const watchEntry = ev.exercises?.[0], watchRow = ev.rows?.[0]?.[0]
     const byIdentity = watchRow?.setId && targetOf(A, {
       ex: ev.exIdx, entryInstanceId: watchEntry?.entryInstanceId, setId: watchRow.setId,
-    }, 'focus')
+    })
     const target = byIdentity || (!watchRow?.setId && row && (!watchEntry?.entryInstanceId || ex.entryInstanceId === watchEntry.entryInstanceId)
       ? { ex: ev.exIdx, set: ev.setIdx + 1 } : null)
     if (target) {
@@ -122,7 +151,10 @@ export function applyWatchV4Lifecycle(deps, ev, now = Date.now()) {
     const revisions = a.watchV4FieldRevs ?? { legacy: a.watchV4Rev ?? -1 }
     const fresh = field => ev.rev >= (revisions.legacy ?? -1) && ev.rev > (revisions[field] ?? -1)
     let field = type
-    if (type === 'pause') {
+    if (type === 'add_set' || type === 'remove_set') {
+      if (!applyWatchV4Structure(S, ev, revisions, fresh)) return
+      field = null
+    } else if (type === 'pause') {
       if (!fresh(field)) return
       const at = revision(ev.at) && ev.at ? ev.at : now
       if (typeof ev.paused !== 'boolean') return
@@ -138,11 +170,10 @@ export function applyWatchV4Lifecycle(deps, ev, now = Date.now()) {
       rest = restState(S, ev, ev.sid, now)
       a.watchEvents = [...(a.watchEvents || []), ev.eventId].slice(-4000)
     } else {
-      const target = targetOf(a, ev, type)
+      const target = targetOf(a, ev)
       if (!target) return
-      const key = name => watchFieldKey(target.entry, name === 'structure' ? null : target.row, name)
+      const key = name => watchFieldKey(target.entry, target.row, name)
       if (type === 'set' || type === 'unset') field = key('done')
-      else if (type === 'add_set' || type === 'remove_set') field = key('structure')
       else if (type !== 'focus') field = key(type)
       if (!fresh(field)) return
       const routed = { ...ev, t: type, ex: target.ex, set: target.set, entryInstanceId: target.entry.entryInstanceId,
@@ -158,7 +189,7 @@ export function applyWatchV4Lifecycle(deps, ev, now = Date.now()) {
         // cannot overwrite the phone's measurements while undoing a group.
         // Older senders may also bundle measurements with a completion edge.
         // Each measurement has its own clock, independent of the edge.
-        if (!['add_set', 'remove_set', 'focus'].includes(type)) {
+        if (type !== 'focus') {
           if (type === 'unset' || !fresh(key('weight'))) delete routed.weight
           if (type === 'unset' || !fresh(key('reps'))) delete routed.reps
         }
@@ -173,7 +204,7 @@ export function applyWatchV4Lifecycle(deps, ev, now = Date.now()) {
         }
       }
     }
-    revisions[field] = ev.rev
+    if (field) revisions[field] = ev.rev
     a.watchV4FieldRevs = revisions
     a.watchV4Rev = Math.max(a.watchV4Rev ?? -1, ev.rev)
   })

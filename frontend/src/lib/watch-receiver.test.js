@@ -866,6 +866,44 @@ describe('watch business message boundary', () => {
     } finally { receiver.dispose(); vi.useRealTimers() }
   })
 
+  it('keeps two real v4 watch adds in watch order when the phone receives them in reverse', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const shared = { phoneSessionPresence: null }, sessions = session(shared), c = connection()
+    sessions.startSession({ name: plan.workout, sid: plan.sid, exercises: plan.exercises })
+    const watchState = sessions.loadState()
+    watchState.sessionOrigin = 'phone'; watchState.protocolVersion = 4
+    watchState.phoneSession = { sid: watchState.sid, generation: watchState.sid }
+    const exercise = watchState.workout.exercises[0]
+    exercise.entryInstanceId ||= 'squat-entry'
+    const rows = watchState.workout.rows[0]
+    rows.forEach((row, index) => { row.setId ||= 'squat-set-' + (index + 1) })
+    sessions.save(watchState)
+    const phone = { unit: 'kg', active: { start: Date.now(), watchSid: watchState.sid, watchPhoneSession: true,
+      watchSessionGeneration: watchState.sid, cur: 0, entries: [{ id: 'squat', entryInstanceId: exercise.entryInstanceId,
+        sets: rows.map(row => ({ setId: row.setId, w: row.w, r: row.r, done: false })) }] } }
+    const receiver = createDurableWatchLifecycle({ getState: () => phone, update: mutate => mutate(phone),
+      isForeground: () => true, checkpoint: async () => {}, send: () => {} })
+    try {
+      const rpc = transport(c, sessions, shared)
+      rpc.startServer({}); c.onOpen()
+      c.onMessage({ data: { t: 'STATE_QUERY', protocolVersion: 4, requestId: 'phone-route' } })
+      shared.phoneSessionPresence = { active: true, sid: watchState.sid, generation: watchState.sid, lastSeenAt: Date.now() }
+      const workout = training(sessions, rpc); workout.onInit()
+      await workout.onMenuAddSet()
+      vi.setSystemTime(Date.now() + 1000)
+      await workout.onMenuAddSet()
+      const frames = c.sent.filter(frame => frame.t === 'add_set' && frame.phoneLed === true)
+      expect(frames).toHaveLength(2)
+      expect(frames[0].at).toBeLessThan(frames[1].at)
+      const watchIds = sessions.loadState().workout.rows[0].map(row => row.setId)
+      expect(frames.map(frame => frame.newSetIds)).toEqual(watchIds.slice(-2).map(id => [id]))
+      for (const frame of frames.reverse()) {
+        receiver(frame)
+        await receiver.idle()
+      }
+      expect(phone.active.entries[0].sets.map(row => row.setId)).toEqual(watchIds)
+    } finally { receiver.dispose(); vi.useRealTimers() }
+  })
   it.each([['w', 'weight', '72.5'], ['r', 'reps', '12']])(
     'completes the inline %s draft in one set event while preserving other rows', async (field, type, value) => {
       const sessions = session(), c = connection()

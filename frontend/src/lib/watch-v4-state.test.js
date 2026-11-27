@@ -118,6 +118,39 @@ describe('v4 phone session reconciliation', () => {
     expect(a.disk().active.watchV4Rev).toBe(15)
   })
 
+  it('keeps a remove for an unseen set across reload and still accepts an older add for a different set', async () => {
+    const a = rig()
+    const removedId = 'watch-set:a:removed', retainedId = 'watch-set:a:retained'
+    await a.dispatch(live({ t: 'remove_set', eventId: 'remove', rev: 13, sets: 2, removedSetIds: [removedId] }))
+    const b = rig(a.disk())
+    await b.dispatch(live({ t: 'add_set', eventId: 'late-add', rev: 12, sets: 3, newSetIds: [removedId] }))
+    await b.dispatch(live({ t: 'add_set', eventId: 'other-add', rev: 11, sets: 2, newSetIds: [retainedId] }))
+    expect(b.disk().active.entries[1].sets.map(row => row.setId)).toEqual(['b1', retainedId])
+    expect(b.disk().active.watchV4Rev).toBe(13)
+  })
+
+  it('ignores invalid structural IDs and preserves tombstones across an accepted snapshot', async () => {
+    const a = rig()
+    const removedId = 'watch-set:a:removed'
+    await a.dispatch(live({ t: 'remove_set', eventId: 'remove', rev: 11, removedSetIds: [null, '', 'a1', 'unknown', removedId] }))
+    expect(a.disk().active.watchRemovedSets).toEqual([removedId])
+    await a.dispatch(snapshot({ rev: 12 }))
+    await a.dispatch(live({ t: 'add_set', eventId: 'repeat-add', rev: 13, newSetIds: [removedId, 'invalid'] }))
+    expect(a.disk().active.entries.map(entry => entry.sets.map(row => row.setId))).toEqual([['a1'], ['b1']])
+    expect(a.disk().active.watchV4Rev).toBe(12)
+  })
+  it('uses the accepted snapshot watermark for structural frames and keeps newer sets on stale snapshots', async () => {
+    const a = rig()
+    const oldId = 'watch-set:a:old', freshId = 'watch-set:a:fresh'
+    await a.dispatch(snapshot({ rev: 12 }))
+    await a.dispatch(live({ t: 'add_set', eventId: 'old-add', rev: 12, sets: 2, newSetIds: [oldId] }))
+    await a.dispatch(live({ t: 'add_set', eventId: 'fresh-add', rev: 14, sets: 2, newSetIds: [freshId] }))
+    await a.dispatch(snapshot({ rev: 13, requestId: 'stale-query' }))
+    await a.dispatch(live({ t: 'remove_set', eventId: 'old-remove', rev: 12, sets: 1, removedSetIds: [freshId] }))
+    expect(a.disk().active.entries[1].sets.map(row => row.setId)).toEqual(['b1', freshId])
+    expect(a.disk().active.watchV4SnapshotRev).toBe(12)
+    expect(a.disk().active.watchV4Rev).toBe(14)
+  })
   it('settles a matching terminal against phone rows only and never resaves an already finished workout', async () => {
     const a = rig()
     await a.dispatch(snapshot())

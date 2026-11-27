@@ -45,7 +45,7 @@ export function applyWatchEffort(S, ev) {
   rememberEvent(A, key)
   return { status: 'applied', version: row.effortVersion, value: cleared ? null : row[scale], scale }
 }
-export function applyWatchEvent(S, ev) {
+export function applyWatchEvent(S, ev, { beforeSetId } = {}) {
   const A = S.active
   if (!A || watchSidOf(A) !== ev.sid || A.editingWorkoutId) return false
   ensureWatchIdentity(A)
@@ -75,16 +75,22 @@ export function applyWatchEvent(S, ev) {
     const added = stable ? ev.newSetIds.filter(id => typeof id === 'string' && id.startsWith('watch-set:') && !rows.some(r => r.setId === id)) : []
     if (added.some(id => A.watchRemovedSets?.includes(id)) || new Set(added).size !== added.length || rows.length + added.length > 100) return false
     const target = stable ? rows.length + added.length : Math.min(100, Number(ev.sets || ev.set) || rows.length + 1)
-    let nextId = 0
-    while (entry.sets.filter(r => !isWarmupRow(r)).length < target) entry.sets.push({
-      ...(rows.at(-1) || {}), setId: stable ? added[nextId++] : undefined, w: ev.weight === '' ? undefined : Number(ev.weight ?? rows.at(-1)?.w) || undefined,
-      r: String(ev.reps ?? rows.at(-1)?.r ?? ''), done: false, at: 0,
+    const before = rows.findIndex(r => r.setId === beforeSetId)
+    const previous = before < 0 ? rows.at(-1) : rows[before - 1]
+    const additions = []
+    while (rows.length + additions.length < target) additions.push({
+      ...previous, setId: stable ? added[additions.length] : undefined, w: ev.weight === '' ? undefined : Number(ev.weight ?? previous?.w) || undefined,
+      r: String(ev.reps ?? previous?.r ?? ''), done: false, at: 0,
     })
+    const index = before < 0 ? entry.sets.length : entry.sets.indexOf(rows[before])
+    entry.sets.splice(index, 0, ...additions)
   } else if (ev.t === 'remove_set') {
     const target = Math.max(1, Number(ev.sets != null ? ev.sets : ev.set - 1))
     const removed = ev.entryInstanceId ? rows.filter(r => ev.removedSetIds?.includes(r.setId)) : rows.slice(target)
     if (ev.entryInstanceId && !Array.isArray(ev.removedSetIds) || !rows || removed.some(r => r.done) || rows.length - removed.length < 1) return false
-    A.watchRemovedSets = [...new Set([...(A.watchRemovedSets || []), ...removed.map(r => r.setId).filter(Boolean)])].slice(-4000)
+    // A V4 remove can arrive before the add for the same stable set ID.
+    const removedIds = ev.protocolVersion === 4 && ev.entryInstanceId ? ev.removedSetIds : removed.map(r => r.setId).filter(Boolean)
+    A.watchRemovedSets = [...new Set([...(A.watchRemovedSets || []), ...removedIds])].slice(-4000)
     entry.sets = entry.sets.filter(r => !removed.includes(r))
   } else if (['weight', 'reps', 'set', 'unset'].includes(ev.t)) {
     if (!row) return false
