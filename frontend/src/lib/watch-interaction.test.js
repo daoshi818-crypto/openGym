@@ -110,31 +110,72 @@ describe('actual watch workout page wiring', () => {
     page.closeNumberKeypad()
     expect(ctx.router.push).not.toHaveBeenCalled()
   })
-  it('renders each accepted detent at its own cadence and commits once after the burst', async () => {
+  it('renders every rep from 2 through 10 during a rapid burst and stages one final V4 edit', async () => {
+    vi.useFakeTimers()
+    try {
+      const { page, ctx, s } = workout()
+      s.protocolVersion = 4
+      s.sessionOrigin = 'phone'
+      s.workout.rows[0][0].r = '1'
+      const commit = vi.spyOn(ctx, 'commitSessionAction')
+      ctx.stageSessionEvent = vi.fn(() => ({ protocolVersion: 4, rev: 1 }))
+      page.editReps()
+      const rendered = vi.fn()
+      let shown = page.repsNum
+      Object.defineProperty(page, 'repsNum', {
+        get: () => shown,
+        set: value => { shown = value; rendered(value) },
+      })
+      for (let i = 0; i < 9; i++) page.onRotation({ delta: 4, state: 2 })
+      expect(rendered).toHaveBeenCalledExactlyOnceWith('2')
+      expect(page.numberDraftOf().r).toBe('10')
+      await vi.advanceTimersByTimeAsync(69)
+      expect(page.repsNum).toBe('2')
+      await vi.advanceTimersByTimeAsync(1)
+      expect(page.repsNum).toBe('3')
+      await vi.advanceTimersByTimeAsync(279)
+      expect(rendered.mock.calls.flat()).toEqual(['2', '3', '4', '5', '6', '7', '8', '9', '10'])
+      expect(commit).not.toHaveBeenCalled()
+      expect(ctx.stageSessionEvent).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(commit).toHaveBeenCalledOnce()
+      expect(ctx.stageSessionEvent).toHaveBeenCalledExactlyOnceWith(s, expect.objectContaining({
+        t: 'reps', reps: '10', sid: 's', entryInstanceId: 'e', setId: 'r0',
+      }))
+      expect(s.workout.rows[0][0].r).toBe('10')
+    } finally { vi.useRealTimers() }
+  })
+  it('saves a sustained burst after idle while the display finishes showing each weight increment', async () => {
     vi.useFakeTimers()
     try {
       const { page, ctx, s } = workout()
       const commit = vi.spyOn(ctx, 'commitSessionAction')
-      const send = vi.spyOn(ctx, 'sendLiveValue')
-      s.workout.rows[0][0].r = '1'
-      page.editReps()
-      for (let i = 0; i < 9; i++) page.onRotation({ delta: 4, state: 2 })
-      expect(page.repsNum).toBe('2')
-      expect(page.numberDraftOf().r).toBe('10')
-      for (let expected = 3; expected <= 10; expected++) {
-        await vi.advanceTimersByTimeAsync(69)
-        expect(page.repsNum).toBe(String(expected - 1))
-        expect(commit).not.toHaveBeenCalled()
-        expect(send).not.toHaveBeenCalled()
-        await vi.advanceTimersByTimeAsync(1)
-        expect(page.repsNum).toBe(String(expected))
+      page.editWeight()
+      const rendered = []
+      let shown = page.weightNum
+      Object.defineProperty(page, 'weightNum', {
+        get: () => shown,
+        set: value => { shown = value; rendered.push(value) },
+      })
+      for (let batch = 0; batch < 50; batch++) {
+        for (let step = 0; step < 10; step++) page.onRotation({ delta: batch < 40 ? 1 : -1 })
+        await vi.advanceTimersByTimeAsync(70)
       }
+      expect(page.numberDraftOf().w).toBe('150')
+      expect(s.workout.rows[0][0].w).toBe('')
+      await vi.advanceTimersByTimeAsync(279)
+      expect(commit).not.toHaveBeenCalled()
       await vi.advanceTimersByTimeAsync(1)
       expect(commit).toHaveBeenCalledOnce()
-      expect(s.workout.rows[0][0].r).toBe('10')
+      expect(s.workout.rows[0][0].w).toBe('150')
+      expect(Number(page.weightNum)).toBeLessThan(150)
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(page.weightNum).toBe('150')
+      expect(rendered).toEqual(Array.from({ length: 300 }, (_, step) => String((step + 1) / 2)))
+      expect(commit).toHaveBeenCalledOnce()
     } finally { vi.useRealTimers() }
   })
-  it('renders reversals in order and ignores detents beyond either bound', async () => {
+  it('coalesces a reversal and ignores detents beyond either bound', async () => {
     vi.useFakeTimers()
     try {
       const { page, ctx, s } = workout()
@@ -144,11 +185,9 @@ describe('actual watch workout page wiring', () => {
       page.editReps()
       for (const delta of [1, 1, -1, -1, 1]) page.onRotation({ delta })
       expect(page.repsNum).toBe('99999')
-      for (const value of ['99998', '99997', '99998']) {
-        await vi.advanceTimersByTimeAsync(70)
-        expect(page.repsNum).toBe(value)
-      }
-      await vi.advanceTimersByTimeAsync(140)
+      await vi.advanceTimersByTimeAsync(70)
+      expect(page.repsNum).toBe('99998')
+      await vi.advanceTimersByTimeAsync(280)
       expect(commit).toHaveBeenCalledOnce()
       row.r = '0'
       page.updateNumbers()

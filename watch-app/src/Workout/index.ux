@@ -29,6 +29,7 @@ import { zoneView, muscleView } from '../lib/official-metrics.js'
 import { summarizeWorkoutRows } from '../lib/workout-summary.js'
 
 const NUMBER_STEP_MS = 70
+const NUMBER_CATCHUP_MS = 16
 const NUMBER_IDLE_MS = 350
 
 const pageDefinition = {
@@ -85,7 +86,7 @@ const pageDefinition = {
     const draft = numberDraft(this.stateOf(), this.numberDraftOf())
     this.numberDraftOf(draft)
     let crown = this.numberCrownOf()
-    if (crown && crown.draft !== draft) {
+    if (crown && (crown.draft !== draft || draft[crown.field] !== crown.target)) {
       this.cancelNumberCrown()
       crown = null
     }
@@ -631,29 +632,32 @@ const pageDefinition = {
     this.cancelNumberCrown()
     this.updateNumbers()
   },
-  paceNumberCrown(crown) {
+  paceNumberCrown(crown, delay = NUMBER_STEP_MS) {
     crown.timer = setTimeout(() => {
       crown.timer = null
       if (this.numberCrownOf() !== crown) return
-      if (numberDraft(this.stateOf(), this.numberDraftOf()) !== crown.draft) {
+      if (numberDraft(this.stateOf(), this.numberDraftOf()) !== crown.draft || crown.draft[crown.field] !== crown.target) {
         this.updateNumbers()
         return
       }
-      if (!crown.values.length) return
-      crown.shown = crown.values.shift()
-      if (crown.field === 'w') this.weightNum = crown.shown
-      else this.repsNum = crown.shown
-      this.paceNumberCrown(crown)
-      if (!crown.values.length && this.numberTimerOf() == null) this.scheduleNumberDraftFlush(0)
-    }, NUMBER_STEP_MS)
+      const target = crown.target
+      if (target === crown.shown) return
+      const direction = Math.sign(Number(target) - Number(crown.shown))
+      const next = valueStep(crown.shown, crown.field, direction, this.weightStep)
+      const value = (Number(target) - Number(next)) * direction > 0 ? next : target
+      crown.shown = value
+      if (crown.field === 'w') this.weightNum = value
+      else this.repsNum = value
+      this.paceNumberCrown(crown, value === target ? NUMBER_STEP_MS : NUMBER_CATCHUP_MS)
+    }, delay)
   },
-  scheduleNumberDraftFlush(delay = NUMBER_IDLE_MS) {
+  scheduleNumberDraftFlush() {
     const old = this.numberTimerOf()
     if (old != null) clearTimeout(old)
     this.numberTimerOf(setTimeout(() => {
       this.numberTimerOf(null)
       this.flushNumberDraft(false)
-    }, delay))
+    }, NUMBER_IDLE_MS))
   },
   async flushNumberDraft(force = true) {
     if (force) {
@@ -663,7 +667,7 @@ const pageDefinition = {
       this.numberTimerOf(null)
     }
     for (;;) {
-      if (!force && (this.numberTimerOf() != null || this.numberCrownOf()?.values.length)) return true
+      if (!force && this.numberTimerOf() != null) return true
       const pending = this.numberFlushOf()
       if (pending) {
         const ok = await pending
@@ -710,7 +714,9 @@ const pageDefinition = {
       if (generation === this.numberGenerationOf()) {
         const current = this.numberDraftOf()
         if (current === draft) {
-          this.cancelNumberCrown()
+          // A long burst can still be stepping through display values after its idle save.
+          const crown = this.numberCrownOf()
+          if (crown?.shown === crown?.target) this.cancelNumberCrown()
           current.dirtyW = false; current.dirtyR = false; current.crownEdited = false
         }
         this.stateOf(latest)
@@ -767,14 +773,13 @@ const pageDefinition = {
     if (!changeNumber(draft, field, value)) return
     draft.crownEdited = true
     this.numberGenerationOf(this.numberGenerationOf() + 1)
-    // Store the accepted value immediately for completion and lifecycle flushes.
-    // The display takes one queued value per timer tick.
+    // Keep one target and advance the display one increment at a time.
     if (!crown) {
-      crown = { draft, field, values: [], shown: previous, timer: null }
+      crown = { draft, field, shown: previous, target: value, timer: null }
       this.numberCrownOf(crown)
     }
-    if (crown.timer != null) crown.values.push(value)
-    else {
+    crown.target = value
+    if (crown.timer == null) {
       crown.shown = value
       if (field === 'w') this.weightNum = value
       else this.repsNum = value
