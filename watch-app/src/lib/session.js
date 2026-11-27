@@ -231,7 +231,10 @@ export function stageSessionEvent(state, event) {
       source: 'watch', phoneLed: true, protocolVersion: 4,
       rev: Math.max(state.rev || 0, runtime().rpc?.liveRevisionSid === state.sid ? runtime().rpc.liveRevision || 0 : 0) + 1,
       phoneSessionGeneration: presence?.generation, liveGeneration: runtime().rpc?.connectionGeneration }
-    if (msg.t === 'add_set') msg.newSetIds = (state.workout.rows[msg.ex] || []).map(row => row.setId)
+    if (msg.t === 'add_set') {
+      const addedId = state.workout.rows[msg.ex]?.[msg.set - 1]?.setId
+      msg.newSetIds = addedId ? [addedId] : []
+    }
     if (live && runtime().rpc?.v4Ready) runtime().stagedLive?.push(msg)
     return msg
   }

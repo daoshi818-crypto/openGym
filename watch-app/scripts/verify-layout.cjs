@@ -24,7 +24,7 @@ for(const page of Object.keys(manifest.router.pages)) {
   }
   if(page==='Workout') {
     assert.equal(template.attr.rotationSensitivity,'1','Crown input must use native low sensitivity')
-    assert.equal(template.attr.vibrationEffectenabled,'true','Crown detents must use native haptics')
+    assert.equal(template.attr.vibrationEffectenabled,'false','The training surface must avoid duplicate native crown feedback')
     const live=has('screen live-screen');assert.ok(live && !nodes(live).some(n=>n.type==='list'),'Set/rest never scroll')
     assert.equal(has('overview-scroll').type,'list')
     for(const name of ['screen overview-screen','screen live-screen','screen metrics-screen']) {

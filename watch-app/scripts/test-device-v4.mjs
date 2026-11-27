@@ -4,8 +4,9 @@ import { registerHooks } from 'node:module'
 import { setTimeout as delay } from 'node:timers/promises'
 import { createDurableWatchLifecycle } from '../../frontend/src/lib/watch-commit.js'
 const disk = new Map(), sent = []; let holdNext=false, releaseSend=null
-const phoneState = { unit:'kg', active:{ start:Date.now(), watchSid:'s1', watchPhoneSession:true, watchSessionGeneration:'s1', cur:0,
- exercises:undefined, entries:[{ id:'bench', entryInstanceId:'entry1', sets:[{setId:'r1',w:40,r:'8',done:false},{setId:'r2',w:45,r:'6',done:false}] }] } }
+const phoneSession = sid => ({ start:Date.now(), watchSid:sid, watchPhoneSession:true, watchSessionGeneration:sid, cur:0,
+ exercises:undefined, entries:[{ id:'bench', entryInstanceId:'entry1', sets:[{setId:'r1',w:40,r:'8',done:false},{setId:'r2',w:45,r:'6',done:false}] }] })
+const phoneState = { unit:'kg', active:phoneSession('s1') }
 const phoneReceiver = createDurableWatchLifecycle({ getState:()=>phoneState, update:mutate=>mutate(phoneState), isForeground:()=>true,
  checkpoint:async()=>{}, finish:()=>{}, rest:()=>{}, stop:()=>{}, send:()=>{}, sendSync:()=>{} })
 const errors=[]
@@ -110,12 +111,51 @@ try {
  assert.equal(rpc.synchronizationStatus().pending,0); assert.equal(rpc.synchronizationStatus().historicalPending,2)
  assert.deepEqual(rt().rpc.outbox.map(e=>e.msg.eventId),['keep-close','keep-summary'])
  assert.deepEqual(sent.filter(m=>['old-weight','old-reps'].includes(m.eventId)),[])
+ const transact = (t, fields) => session.commitSessionAction('s1', () => rpc.sendEvent({ t, sid: 's1', at: Date.now(), ...fields }))
+ assert.ok((await transact('effort', { ex: 0, set: 1, scale: 'rpe', value: 8, effortVersion: Date.now() })).ok)
+ await phoneReceiver.idle()
+ assert.equal(phoneState.active.entries[0].sets[0].rpe, 8)
+ const endsAt = Date.now() + 60000
+ assert.ok((await transact('rest', { restId: 'test-rest', startedAt: endsAt - 60000, endsAt, totalSec: 60, leftSec: 60, paused: false })).ok)
+ await phoneReceiver.idle()
+ assert.equal(phoneState.watchRest?.endsAt, endsAt)
+ const addStart = sent.length
+ let addedId
+ assert.ok((await session.commitSessionAction('s1', s => {
+   session.addSet(s, 0); addedId = s.workout.rows[0].at(-1).setId
+   rpc.sendEvent({ t: 'add_set', sid: 's1', ex: 0, set: 3, sets: 3, at: Date.now() })
+ })).ok)
+ await phoneReceiver.idle()
+ assert.deepEqual(sent.slice(addStart).find(m => m.t === 'add_set')?.newSetIds, [addedId])
+ assert.equal(phoneState.active.entries[0].sets.at(-1).setId, addedId)
+ assert.ok((await session.commitSessionAction('s1', s => {
+   session.removeSet(s, 0)
+   rpc.sendEvent({ t: 'remove_set', sid: 's1', ex: 0, set: 3, sets: 2, removedSetIds: [addedId], at: Date.now() })
+ })).ok)
+ await phoneReceiver.idle()
+ assert.deepEqual(phoneState.active.entries[0].sets.map(row => row.setId), ['r1', 'r2'])
  const complete = (n)=>session.commitSessionAction('s1',s=>{ const row=s.workout.rows[0][n]; row.done=true; s.setIdx=n; rpc.sendEvent({ t:'set',sid:'s1',ex:0,set:n+1,at:Date.now() }) })
  const beforeActualSet=sent.length; assert.ok((await complete(0)).ok); await waitFor(()=>sent.slice(beforeActualSet).some(m=>m.t==='set'&&m.setId==='r1')); await phoneReceiver.idle(); assert.equal(phoneState.active.entries[0].sets[0].done,true); assert.equal(rpc.pendingCount(),2)
+ const sendEffort = async (value, baseEffortVersion) => {
+  const boundary = sent.length, effortVersion = Date.now()
+  const result = await session.commitSessionAction('s1', state => {
+   session.setEffort(state, 0, 0, 'rpe', value, effortVersion)
+   rpc.sendEvent({ t:'effort',sid:'s1',ex:0,set:1,scale:'rpe',value,clear:value==null,effortVersion,baseEffortVersion,at:effortVersion })
+  })
+  assert.ok(result.ok)
+  const frame = sent.slice(boundary).find(m=>m.t==='effort')
+  assert.ok(frame)
+  assert.deepEqual([frame.scale,frame.value,frame.clear,frame.effortVersion,frame.baseEffortVersion], ['rpe',value,value==null,effortVersion,baseEffortVersion])
+  await phoneReceiver.idle()
+  assert.equal(phoneState.active.entries[0].sets[0].rpe,value ?? undefined)
+ }
+ await sendEffort(8,0)
+ await sendEffort(null,1)
  const setFrame=sent.slice(beforeActualSet).find(m=>m.t==='set'&&m.setId==='r1'); assert.notEqual(setFrame.eventId,'idle-set'); assert.equal(setFrame.weight,undefined); assert.equal(setFrame.reps,undefined); assert.equal(setFrame.rest,undefined); assert.equal(setFrame.workout,undefined); assert.equal(setFrame.summary,undefined); assert.ok(setFrame.setId)
  holdNext=true; assert.equal(rpc.sendLiveValue({t:'weight',sid:'s1',ex:0,set:2,entryInstanceId:'entry1',setId:'r2',weight:46,weightUnit:'kg'}),true); await waitFor(()=>!!releaseSend)
  assert.equal(rpc.sendLiveValue({t:'weight',sid:'s1',ex:0,set:2,entryInstanceId:'entry1',setId:'r2',weight:47,weightUnit:'kg'}),true)
  assert.equal(Object.keys(rt().rpc.liveLatest).length,1)
+ assert.equal(rpc.canSendLiveEvent({sid:'s1',t:'session_close'}),false)
  holdNext=true
  assert.equal(rpc.sendControl({t:'set',protocolVersion:4,phoneLed:true,sid:'s1',eventId:'disconnect-set',setId:'r2'}),true)
  assert.equal(rt().rpc.liveEventSending.eventId,'disconnect-set')
@@ -125,5 +165,18 @@ try {
  assert.ok((await complete(1)).ok); assert.equal(sent.length,boundary); assert.equal(session.loadState().workout.rows[0][1].done,true); assert.equal(rpc.pendingCount(),2)
  conn.onOpen(); const restored=await query('reconnect'); assert.ok(!sent.slice(boundary).some(m=>m.t==='weight'&&m.weight===47)); assert.ok(!sent.slice(boundary).some(m=>m.t==='focus'&&m.eventId==='offline-focus')); assert.equal(restored.setIdx,1); assert.deepEqual(restored.rows.map(rows=>rows.map(r=>r.setId)),[['r2']]); assert.equal(entered,1); assert.ok(!sent.slice(boundary).some(m=>m.t==='set')); conn.onClose()
  const closed = await session.commitLocalClose('s1','saved'); assert.ok(closed.ok, JSON.stringify(closed)); rpc.stopServer(); (await import('../src/lib/runtime.js')).bindRuntime({}); rpc.startServer({}); conn.onOpen(); const terminal=await query('reboot'); assert.equal(terminal.active,false); assert.equal(terminal.terminal.disposition,'saved'); assert.equal(terminal.terminal.sid,'s1'); assert.equal((await accept(start)).reason,'session_closed'); assert.ok(!sent.slice(boundary).some(m=>m.t==='session_close')); assert.equal(disk.get('watch_close_journal_v1')?.entries?.s1,undefined)
- console.log('PASS: durable start, conflict, transient v4 value, bounded busy-edge delivery to phone receiver, legacy outbox cleanup, offline progress, compact reconnect and terminal snapshot.')
+ const next = {...start,sid:'s2',requestId:'start2'}
+ phoneState.active = phoneSession('s2')
+ assert.equal((await accept(next)).status,'accepted')
+ const closeBoundary = sent.length, closedAt = Date.now()
+ const liveClose = await session.commitLocalClose('s2','discarded',closedAt)
+ assert.ok(liveClose.ok)
+ const closeFrame = sent.slice(closeBoundary).find(m=>m.t==='session_close')
+ assert.ok(closeFrame)
+ assert.deepEqual([closeFrame.sid,closeFrame.disposition,closeFrame.closedAt], ['s2','discarded',closedAt])
+ await phoneReceiver.idle()
+ assert.equal(phoneState.active,null)
+ assert.equal(phoneState.watchClosed.s2.disposition,'discarded')
+ assert.equal(rpc.pendingCount(),2)
+ console.log('PASS: V4 start, transient values and effort, bounded live events, legacy cleanup, offline progress, reconnect snapshots, and immediate close.')
 } finally { phoneReceiver.dispose(); rpc.stopServer(); rt().destroyed=true }

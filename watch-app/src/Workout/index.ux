@@ -1447,6 +1447,7 @@ const pageDefinition = {
     return this.commitEffort(null)
   },
   commitEffort(value) {
+    if (!this.canSendEventNow('effort')) { this.effortNotice = this.syncLabel; return false }
     return commitPageAction(this, function() {
     const found = this.effortTargetRow()
     if (!this.effortTargetValid()) {
@@ -1969,6 +1970,10 @@ const pageDefinition = {
     if (this.closeSaving || !this.stateOf()?.active) return
     const sid = this.stateOf().sid
     this.cancelFinishHold(); this.closeError = ''
+    if (this.stateOf().protocolVersion === 4 && (this.localCommitPending || !this.canSendEventNow('session_close'))) {
+      this.closeError = '同步繁忙，请稍后再操作'
+      return false
+    }
     this.cancelSetDotPick()
     this.closeSaving = true
     try {

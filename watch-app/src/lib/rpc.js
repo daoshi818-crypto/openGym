@@ -220,17 +220,27 @@ function resetPeer(r) {
   r.liveEventIds = []
 }
 
+const V4_EVENT_FIELDS = ['t', 'sid', 'eventId', 'rev', 'at', 'source', 'phoneLed', 'protocolVersion', 'phoneSessionGeneration']
+const V4_EVENT_TARGET = ['entryInstanceId', 'setId', 'ex', 'set']
+const V4_EVENT_PAYLOAD = Object.assign(Object.create(null), {
+  set: V4_EVENT_TARGET,
+  unset: V4_EVENT_TARGET,
+  focus: V4_EVENT_TARGET,
+  weight: [...V4_EVENT_TARGET, 'weight', 'weightUnit'],
+  reps: [...V4_EVENT_TARGET, 'reps'],
+  add_set: ['entryInstanceId', 'ex', 'sets', 'newSetIds', 'structureRevision', 'weight', 'reps', 'weightUnit'],
+  remove_set: ['entryInstanceId', 'ex', 'sets', 'removedSetIds', 'structureRevision'],
+  effort: [...V4_EVENT_TARGET, 'scale', 'value', 'clear', 'effortVersion', 'baseEffortVersion'],
+  rest: ['restId', 'startedAt', 'endsAt', 'totalSec', 'leftSec', 'paused', 'seq'],
+  pause: ['paused', 'seq'],
+  session_close: ['disposition', 'closedAt'],
+})
+
 function sendLiveEvent(event) {
   const r = rpcState()
   if (!r.v4Ready || !r.connected || event.liveGeneration !== r.connectionGeneration || !isPhoneSessionLive({ sid: event.sid }, runtime().phoneSessionPresence)) return false
   // Completion is an edge: only its stable target and revision cross the wire.
-  const fields = event.t === 'set' || event.t === 'unset'
-    ? ['t', 'sid', 'entryInstanceId', 'setId', 'ex', 'set', 'eventId', 'rev', 'at', 'source', 'phoneLed', 'protocolVersion', 'phoneSessionGeneration']
-    : event.t === 'add_set'
-      ? ['t', 'sid', 'entryInstanceId', 'ex', 'sets', 'newSetIds', 'structureRevision', 'eventId', 'rev', 'at', 'source', 'phoneLed', 'protocolVersion', 'phoneSessionGeneration']
-      : event.t === 'remove_set'
-        ? ['t', 'sid', 'entryInstanceId', 'ex', 'removedSetIds', 'sets', 'structureRevision', 'eventId', 'rev', 'at', 'source', 'phoneLed', 'protocolVersion', 'phoneSessionGeneration']
-        : ['t', 'sid', 'entryInstanceId', 'setId', 'ex', 'set', 'field', 'weight', 'reps', 'weightUnit', 'restUntil', 'paused', 'eventId', 'rev', 'at', 'source', 'phoneLed', 'protocolVersion', 'phoneSessionGeneration']
+  const fields = [...V4_EVENT_FIELDS, ...(V4_EVENT_PAYLOAD[event.t] || [])]
   const msg = Object.fromEntries(fields.filter(key => event[key] !== undefined).map(key => [key, event[key]]))
   return sendControl(msg)
 }
@@ -274,7 +284,8 @@ function handleV4(msg) {
       const value = { t: 'STATE_SNAPSHOT', protocolVersion: 4, requestId: msg.requestId, sid: s.active ? s.sid : terminal?.sid || last || '', active: !!s.active,
         terminal, workout: s.workout?.name || '', exercises: ex ? [{ id: ex.id, entryInstanceId: ex.entryInstanceId, name: ex.name }] : [], rows: row ? [[row]] : [],
         exIdx: s.exIdx || 0, setIdx: s.setIdx || 0, startedAt: s.startedAt || 0, pausedAt: s.pausedAt || 0, pausedMs: s.pausedMs || 0,
-        restUntil: s.restUntil || 0, restTargetSec: s.restTargetSec || 0, restLeftSec: s.restLeftSec || 0, rev: s.rev || 0, commitRev: s.commitRev || 0, structureRevision: s.structureRevision || null }
+        restUntil: s.restUntil || 0, restTargetSec: s.restTargetSec || 0, restLeftSec: s.restLeftSec || 0,
+        rev: Math.max(s.rev || 0, r.liveRevisionSid === s.sid ? r.liveRevision || 0 : 0), commitRev: s.commitRev || 0, structureRevision: s.structureRevision || null }
       sendControl({ ...value, wireHash: wireHash(value) })
     }); return true
   }
@@ -1162,18 +1173,19 @@ function sendV4LiveControl(msg, latestKey) {
   if (!latestKey) return dispatchV4LiveEvent(msg)
   return dispatchV4LiveControl(msg)
 }
+function stampV4LiveRevision(r, msg) {
+  const state = loadState('rpc')
+  const storedRev = state.sid === msg.sid ? Number(state.rev) || 0 : 0
+  const liveRev = r.liveRevisionSid === msg.sid ? Number(r.liveRevision) || 0 : 0
+  r.liveRevisionSid = msg.sid
+  r.liveRevision = Math.max(storedRev, liveRev, Number(msg.rev) || 0) + 1
+  msg.rev = r.liveRevision
+}
 function dispatchV4LiveControl(msg) {
   const r = rpcState()
   if (!liveControlReady(msg) || r.sending) return false
-  if (msg.t === 'weight' || msg.t === 'reps') {
-    const state = loadState('rpc')
-    const storedRev = state.sid === msg.sid ? Number(state.rev) || 0 : 0
-    const liveRev = r.liveRevisionSid === msg.sid ? Number(r.liveRevision) || 0 : 0
-    r.liveRevisionSid = msg.sid
-    r.liveRevision = Math.max(storedRev, liveRev) + 1
-    msg.rev = r.liveRevision
-  }
-  const token = { generation: r.connectionGeneration, control: null, live: true, eventId: msg.eventId }
+  stampV4LiveRevision(r, msg)
+  const token = { generation: r.connectionGeneration, control: null, live: true, type: msg.t, eventId: msg.eventId }
   r.sending = token
   const release = () => {
     if (r.sending !== token || token.generation !== r.connectionGeneration) return false
@@ -1213,6 +1225,7 @@ function dispatchV4LiveEvent(msg) {
     r.handlers.onError?.({ code: 'live_event_busy', sid: msg.sid, eventId: msg.eventId, operation: msg.t })
     return false
   }
+  stampV4LiveRevision(r, msg)
   const token = { generation: r.connectionGeneration, eventId: msg.eventId || '' }
   r.liveEventSending = token
   const release = () => {
@@ -1292,7 +1305,10 @@ export function canSendLiveEvent(value) {
   const r = rpcState(), s = loadState('rpc'), sid = String(value?.sid || '')
   if (!r.v4Ready || !r.connected || !s.active || s.sessionOrigin !== 'phone' || s.sid !== sid ||
       !isPhoneSessionLive({ sid }, runtime().phoneSessionPresence)) return true
-  return !r.liveEventSending
+  if (r.liveEventSending) return false
+  if (value.t !== 'session_close') return true
+  const isValue = type => type === 'weight' || type === 'reps'
+  return !isValue(r.sending?.type) && !Object.values(r.liveLatest || {}).some(msg => isValue(msg.t))
 }
 
 export function pendingCount() { initialize(); return rpcState().outbox.length }
