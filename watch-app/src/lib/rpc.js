@@ -1322,7 +1322,7 @@ export function isPhoneSessionConnected(sid) {
 export function synchronizationStatus() {
   initialize()
   const conflicts = readStored('sync_conflicts') || []
-  const r = rpcState(), legacy = r.outbox.length, v4 = r.peerProtocol >= 4
-  return { pending: v4 ? 0 : legacy, phonePending: v4 ? 0 : r.outbox.filter(e => e.receivedAt).length,
-    historicalPending: v4 ? legacy : 0, conflicts: conflicts.filter(c => !c.reviewed).length, lastCommitAt: r.lastCommitAt || 0 }
+  const r = rpcState(), legacy = r.outbox.length, legacyPeer = r.peerProtocol > 0 && r.peerProtocol < 4
+  return { pending: legacyPeer ? legacy : 0, phonePending: legacyPeer ? r.outbox.filter(e => e.receivedAt).length : 0,
+    historicalPending: legacyPeer ? 0 : legacy, conflicts: conflicts.filter(c => !c.reviewed).length, lastCommitAt: r.lastCommitAt || 0 }
 }

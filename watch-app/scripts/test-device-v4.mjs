@@ -108,7 +108,13 @@ try {
  await phoneReceiver.idle()
  await query('legacy-cleanup')
  await waitFor(()=>rpc.pendingCount()===2)
- assert.equal(rpc.synchronizationStatus().pending,0); assert.equal(rpc.synchronizationStatus().historicalPending,2)
+ const assertLegacyArchiveIsHistorical = () => {
+  const status = rpc.synchronizationStatus()
+  assert.equal(status.pending, 0)
+  assert.equal(status.phonePending, 0)
+  assert.equal(status.historicalPending, 2)
+ }
+ assertLegacyArchiveIsHistorical()
  assert.deepEqual(rt().rpc.outbox.map(e=>e.msg.eventId),['keep-close','keep-summary'])
  assert.deepEqual(sent.filter(m=>['old-weight','old-reps'].includes(m.eventId)),[])
  const transact = (t, fields) => session.commitSessionAction('s1', () => rpc.sendEvent({ t, sid: 's1', at: Date.now(), ...fields }))
@@ -161,10 +167,10 @@ try {
  assert.equal(rt().rpc.liveEventSending.eventId,'disconnect-set')
  assert.equal(rpc.sendControl({t:'focus',protocolVersion:4,phoneLed:true,sid:'s1',eventId:'offline-focus',rev:99,entryInstanceId:'entry1',setId:'r2',ex:0,set:2,at:Date.now(),phoneSessionGeneration:'s1'}),true)
  assert.ok(rt().rpc.liveLatest['focus:s1'])
- conn.onClose(); const boundary=sent.length; assert.equal(Object.keys(rt().rpc.liveLatest).length,0); assert.equal(rt().rpc.liveEventSending,null); const lateRelease=releaseSend; releaseSend=null; lateRelease()
+ conn.onClose(); assertLegacyArchiveIsHistorical(); const boundary=sent.length; assert.equal(Object.keys(rt().rpc.liveLatest).length,0); assert.equal(rt().rpc.liveEventSending,null); const lateRelease=releaseSend; releaseSend=null; lateRelease()
  assert.ok((await complete(1)).ok); assert.equal(sent.length,boundary); assert.equal(session.loadState().workout.rows[0][1].done,true); assert.equal(rpc.pendingCount(),2)
- conn.onOpen(); const restored=await query('reconnect'); assert.ok(!sent.slice(boundary).some(m=>m.t==='weight'&&m.weight===47)); assert.ok(!sent.slice(boundary).some(m=>m.t==='focus'&&m.eventId==='offline-focus')); assert.equal(restored.setIdx,1); assert.deepEqual(restored.rows.map(rows=>rows.map(r=>r.setId)),[['r2']]); assert.equal(entered,1); assert.ok(!sent.slice(boundary).some(m=>m.t==='set')); conn.onClose()
- const closed = await session.commitLocalClose('s1','saved'); assert.ok(closed.ok, JSON.stringify(closed)); rpc.stopServer(); (await import('../src/lib/runtime.js')).bindRuntime({}); rpc.startServer({}); conn.onOpen(); const terminal=await query('reboot'); assert.equal(terminal.active,false); assert.equal(terminal.terminal.disposition,'saved'); assert.equal(terminal.terminal.sid,'s1'); assert.equal((await accept(start)).reason,'session_closed'); assert.ok(!sent.slice(boundary).some(m=>m.t==='session_close')); assert.equal(disk.get('watch_close_journal_v1')?.entries?.s1,undefined)
+ conn.onOpen(); assertLegacyArchiveIsHistorical(); const restored=await query('reconnect'); assertLegacyArchiveIsHistorical(); assert.ok(!sent.slice(boundary).some(m=>m.t==='weight'&&m.weight===47)); assert.ok(!sent.slice(boundary).some(m=>m.t==='focus'&&m.eventId==='offline-focus')); assert.equal(restored.setIdx,1); assert.deepEqual(restored.rows.map(rows=>rows.map(r=>r.setId)),[['r2']]); assert.equal(entered,1); assert.ok(!sent.slice(boundary).some(m=>m.t==='set')); conn.onClose()
+ const closed = await session.commitLocalClose('s1','saved'); assert.ok(closed.ok, JSON.stringify(closed)); rpc.stopServer(); (await import('../src/lib/runtime.js')).bindRuntime({}); rpc.startServer({}); assertLegacyArchiveIsHistorical(); conn.onOpen(); assertLegacyArchiveIsHistorical(); const terminal=await query('reboot'); assertLegacyArchiveIsHistorical(); assert.equal(terminal.active,false); assert.equal(terminal.terminal.disposition,'saved'); assert.equal(terminal.terminal.sid,'s1'); assert.equal((await accept(start)).reason,'session_closed'); assert.ok(!sent.slice(boundary).some(m=>m.t==='session_close')); assert.equal(disk.get('watch_close_journal_v1')?.entries?.s1,undefined)
  const next = {...start,sid:'s2',requestId:'start2'}
  phoneState.active = phoneSession('s2')
  assert.equal((await accept(next)).status,'accepted')
